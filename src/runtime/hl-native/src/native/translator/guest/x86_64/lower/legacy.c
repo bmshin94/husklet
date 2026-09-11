@@ -229,6 +229,7 @@ int lower_group45(struct insn *instruction, uint64_t guest_pc, uint64_t next) {
         int value = rm_load_access(instruction, next, width, &memory, access);
         if (instruction->lock && memory) {
             e_movconst(19, operation == 0 ? 1 : (uint64_t)-1);
+            emit_rm_fold_address(); /* a folded rm_load left no EA in x17 */
             e_lse(LSE_LDADD, width, 19, 20, 17);
             if (width >= 4) {
                 if (operation == 0)

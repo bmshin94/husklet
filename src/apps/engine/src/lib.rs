@@ -142,6 +142,12 @@ struct LaunchArguments {
     /// Control the strict FS-load bridge (enabled by default for x86-64 transliteration).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, requires = "translit")]
     translit_fs_load_bridge: Option<TranslitFeatureControl>,
+    /// Elide the x86 guest effective-address snapshot where no fault path can read it (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_ea_record_elide: Option<TranslitFeatureControl>,
+    /// Fold [base+displacement] x86 r/m memory loads into one addressing-mode load (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_rmload_fold: Option<TranslitFeatureControl>,
     /// Control automatic same-ISA native syscall supervision.
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true)]
     native_supervised: Option<NativeSupervisedControl>,
@@ -580,6 +586,8 @@ fn rootfs_plan(
             .map_err(|error| Failure::Request(format!("cannot set the engine launch option HL_NATIVE_SUPERVISED: {error:?}")))?;
     }
     for (control, name) in [
+        (launch.x86_ea_record_elide, "HL_X86_EA_RECORD_ELIDE"),
+        (launch.x86_rmload_fold, "HL_X86_RMLOAD_FOLD"),
         (launch.translit_riprel_readonly, "HL_TRANSLIT_RIPREL_READONLY"),
         (launch.translit_riprel_load_bridge, "HL_TRANSLIT_RIPREL_LOAD_BRIDGE"),
         (launch.translit_fs_load_bridge, "HL_TRANSLIT_FS_LOAD_BRIDGE"),

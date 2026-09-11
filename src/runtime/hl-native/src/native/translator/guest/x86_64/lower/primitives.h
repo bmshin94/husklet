@@ -101,6 +101,8 @@ void emit_ea_core(struct insn *insn, uint64_t next, int bias);
 void emit_load_mem(struct insn *insn, uint64_t next, int width, int destination);
 int ea_imm_fold(struct insn *insn, int width, int *base, int *offset);
 void emit_bus_guard(int address_register, uint64_t size, uint64_t rip);
+void emit_rm_fold_discard(void);
+void emit_rm_fold_address(void);
 
 void emit_memory_guard(int address_register, uint64_t size, uint64_t rip, uint32_t required);
 int emit_soft_memory_active(void);
@@ -118,6 +120,8 @@ void e_store(int width, int source, int address);
 void e_ldrs(int width, int destination, int address);
 void e_store_uoff(int width, int source, int base, unsigned offset);
 void e_stur(int width, int source, int base, int offset);
+void e_load_uoff(int width, int destination, int base, unsigned offset);
+void e_ldur(int width, int destination, int base, int offset);
 void e_mov_rr(int destination, int source, int sixty_four_bit);
 void e_sxt(int destination, int source, int width);
 void e_addi(int destination, int source, unsigned immediate, int sixty_four_bit);

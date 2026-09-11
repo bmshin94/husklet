@@ -32,6 +32,7 @@ uint64_t g_x86_mech_ea_guard;
 uint64_t g_x86_mech_pfaf_attempt;
 uint64_t g_x86_mech_pfaf_dead;
 uint64_t g_x86_mech_rmload_mem;
+uint64_t g_x86_mech_rmload_folded;
 uint64_t g_x86_mech_rmload_foldable;
 
 uint64_t coldprof_now_ns(const hl_host_services *services) {

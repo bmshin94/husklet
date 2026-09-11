@@ -156,7 +156,7 @@ void e_ldrs(int w, int rt, int rn) {                                        // s
 
 // Address-mode-folded load/store: fold a [base+disp] memory operand into ONE ldr/str.
 // Scaled unsigned-offset form (disp a multiple of w, disp/w in [0,4095]):
-static void e_load_uoff(int w, int rt, int rn, unsigned disp) {
+void e_load_uoff(int w, int rt, int rn, unsigned disp) {
     uint32_t b = w == 1 ? 0x39400000u : w == 2 ? 0x79400000u : w == 4 ? 0xB9400000u : 0xF9400000u;
     emit32(b | (((disp / (unsigned)w) & 0xFFF) << 10) | (rn << 5) | rt);
     e_dmb_ishld();
@@ -169,7 +169,7 @@ void e_store_uoff(int w, int rt, int rn, unsigned disp) { // str{b,h,,} rt,[rn,#
 }
 
 // Unscaled signed-offset form (simm9 in [-256,255]) -- covers small negative disps:
-static void e_ldur(int w, int rt, int rn, int simm9) {
+void e_ldur(int w, int rt, int rn, int simm9) {
     uint32_t b = w == 1 ? 0x38400000u : w == 2 ? 0x78400000u : w == 4 ? 0xB8400000u : 0xF8400000u;
     emit32(b | (((uint32_t)simm9 & 0x1FF) << 12) | (rn << 5) | rt);
     e_dmb_ishld();
@@ -1051,6 +1051,34 @@ static void emit_direct_store_span_guard(int address_register, uint64_t size, ui
     *cached = 0x14000000u | ((uint32_t)((resume - (uint8_t *)cached) / 4) & 0x03ffffffu);
 }
 
+/* HL_X86_EA_RECORD_ELIDE: emit the guest-EA snapshot below only where a reader
+   can exist.  Launch-scoped and read once; unset keeps the unconditional store. */
+static int ea_record_elide_enabled(void) {
+    static int cached = -1;
+    if (cached < 0) cached = hl_option_flag_value("HL_X86_EA_RECORD_ELIDE", 0);
+    return cached;
+}
+
+/*
+ * cpu->soft_guest_ea has exactly one reader: HL_DISPATCH_FAULT_ADDRESS, which
+ * consults it only when cpu->bus_ea is nonzero AND equals the faulting address.
+ * bus_ea is written only by code emit_memory_guard emits BELOW this point --
+ * the executable-alias record, the direct cross-page store span guard's miss
+ * exit, the soft guard's miss exit and the BUS guard's slow path.  A guard that
+ * emits none of those can never publish a bus_ea to pair with the snapshot, and
+ * any bus_ea left over from an earlier access is still paired with the
+ * soft_guest_ea recorded alongside it (they are always written together, for the
+ * same address), so the stale pair stays self-consistent.  The snapshot store is
+ * then architecturally unobservable and may be elided.  This is the same
+ * reasoning the folded `mov reg,[base+disp]` path already relies on: it emits no
+ * guard, and therefore no snapshot, at all.
+ */
+static int ea_record_observable(uint64_t size, uint32_t required) {
+    if (jit_guest_soft_active() || g_rwx_guest || jit_guest_bus_active()) return 1;
+    /* emit_direct_store_span_guard's miss exit publishes BUS_EA. */
+    return (required & X86_SOFT_WRITE) != 0 && size > 1;
+}
+
 void emit_memory_guard(int address_register, uint64_t size, uint64_t rip, uint32_t required) {
     /*
      * The post-store executable-alias observer consumes the original guest
@@ -1062,7 +1090,7 @@ void emit_memory_guard(int address_register, uint64_t size, uint64_t rip, uint32
      * address_register to its host backing address.
      */
     g_x86_mech_ea_guard++;
-    if (!g_address_recorded) {
+    if (!g_address_recorded && (!ea_record_elide_enabled() || ea_record_observable(size, required))) {
         g_x86_mech_ea_deadstore++;
         e_str(address_register, 28, OFF_SOFT_GUEST_EA);
     }

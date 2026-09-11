@@ -57,6 +57,7 @@ extern uint64_t g_x86_mech_pfaf_attempt;   /* PF/AF-writing insn offered to the 
 extern uint64_t g_x86_mech_pfaf_dead;      /* ... of which the test proved PF+AF dead */
 extern uint64_t g_x86_mech_rmload_mem;     /* rm_load taking its memory-operand path */
 extern uint64_t g_x86_mech_rmload_foldable;/* ... of which ea_imm_fold WOULD have folded */
+extern uint64_t g_x86_mech_rmload_folded;  /* ... of which the fold was actually emitted */
 
 uint64_t coldprof_now_ns(const hl_host_services *services);
 void hl_x86_count_rep_movs(void);

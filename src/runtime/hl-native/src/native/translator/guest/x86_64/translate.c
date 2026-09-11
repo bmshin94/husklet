@@ -371,14 +371,15 @@ static int hl_x86_a64_route_report(char *out, size_t size) {
     hl_x86_a64_appendf(out, size, &written,
                        "[prof] x86-a64-mech: dmb_emit=%llu dmb_elide=%llu ea_guard=%llu ea_record=%llu"
                        " ea_deadstore=%llu pfaf_attempt=%llu pfaf_dead=%llu rmload_mem=%llu"
-                       " rmload_foldable=%llu xflag=%llu xflag_scan=%llu t2fold=%llu threaded=%d"
+                       " rmload_foldable=%llu rmload_folded=%llu xflag=%llu xflag_scan=%llu t2fold=%llu threaded=%d"
                        " shared_obs=%d\n",
                        (unsigned long long)g_x86_mech_dmb_emit, (unsigned long long)g_x86_mech_dmb_elide,
                        (unsigned long long)g_x86_mech_ea_guard, (unsigned long long)g_x86_mech_ea_record,
                        (unsigned long long)g_x86_mech_ea_deadstore,
                        (unsigned long long)g_x86_mech_pfaf_attempt, (unsigned long long)g_x86_mech_pfaf_dead,
                        (unsigned long long)g_x86_mech_rmload_mem,
-                       (unsigned long long)g_x86_mech_rmload_foldable, (unsigned long long)g_prof_xflag,
+                       (unsigned long long)g_x86_mech_rmload_foldable, (unsigned long long)g_x86_mech_rmload_folded,
+                       (unsigned long long)g_prof_xflag,
                        (unsigned long long)g_prof_xflag_scan, (unsigned long long)g_prof_t2fold, g_threaded,
                        g_shared_obs);
     return written;
@@ -1047,7 +1048,10 @@ static int lower_double_shift(struct insn *instruction, uint64_t next) {
         if (!bycl) {
             int n = (int)(instruction->imm & 31);
             if (n == 0) {
-                if (mem) e_store(2, dst, 17);
+                if (mem) {
+                    emit_rm_fold_address(); /* a folded rm_load left no EA in x17 */
+                    e_store(2, dst, 17);
+                }
                 return TX_NEXT;
             } // count 0 -> no change, flags intact
             if (isleft) {
@@ -1086,7 +1090,10 @@ static int lower_double_shift(struct insn *instruction, uint64_t next) {
     if (!bycl) {
         int n = (int)(instruction->imm & (ssf ? 63 : 31));
         if (n == 0) {
-            if (mem) e_store(w, dst, 17);
+            if (mem) {
+                emit_rm_fold_address(); /* a folded rm_load left no EA in x17 */
+                e_store(w, dst, 17);
+            }
             return TX_NEXT;
         } // count 0 -> no change, flags intact
         if (isleft)
@@ -1678,6 +1685,7 @@ static void *translate_block(uint64_t gpc) {
     for (;;) {
         struct insn I;
         g_emit_gpc = gpc; // IRQSLIM: tag chain emission with the current branch's rip
+        emit_rm_fold_discard(); // a deferred rm_load EA never outlives its instruction
         if (hl_x86_decode(gpc, &I) < 0) {
             /* Logical execute permission/range failure is a guest instruction
                fetch fault, not an engine-side dereference crash. */

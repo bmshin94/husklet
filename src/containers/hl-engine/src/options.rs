@@ -208,6 +208,16 @@ const DEFINITIONS: &[Definition] = &[
         Flag
     ),
     launch!(
+        "HL_X86_EA_RECORD_ELIDE",
+        "elide the x86 guest effective-address snapshot where no fault path can read it",
+        Flag
+    ),
+    launch!(
+        "HL_X86_RMLOAD_FOLD",
+        "fold [base+displacement] x86 r/m memory loads into one addressing-mode load",
+        Flag
+    ),
+    launch!(
         "HL_TRANSLIT_DIRECT_JMP_IBTC_DISABLE",
         "disable direct-JMP late linking through the same-ISA IBTC",
         Flag
