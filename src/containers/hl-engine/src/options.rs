@@ -188,6 +188,11 @@ const DEFINITIONS: &[Definition] = &[
         Flag
     ),
     launch!(
+        "HL_TRANSLIT_JCC_SELF_LINK",
+        "link a same-ISA descriptor's own backward JCC edge straight to its entry",
+        Flag
+    ),
+    launch!(
         "HL_TRANSLIT_JCC_IBTC_DISABLE",
         "disable unresolved constant-JCC late linking through the same-ISA IBTC",
         Flag

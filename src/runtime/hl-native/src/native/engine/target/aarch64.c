@@ -576,7 +576,12 @@ static int translit_report(char *out, size_t size) {
                     (unsigned long long)hl_backend_tree_a64_x86_reset_fork_count(),
                     (unsigned long long)g_x86_rel32_reset_thread);
 #else
-    return snprintf(out, size, "[prof] translit: absent, aarch64 guest\n");
+    return snprintf(out, size,
+                    "[prof] translit: absent, aarch64 guest\n"
+                    "[prof] a64-a64-expand: regions=%llu region_words=%llu guest_hull_insns=%llu decoded=%llu\n",
+                    (unsigned long long)g_a64_expand_regions, (unsigned long long)g_a64_expand_words,
+                    (unsigned long long)g_a64_expand_guest_insns,
+                                    (unsigned long long)g_a64_expand_decoded);
 #endif
 }
 
@@ -960,10 +965,15 @@ static int run_loaded(int argc, char *const argv[], struct loaded *lm, uint64_t 
         (void)hl_backend_tree_finalize_from(1, HL_BACKEND_FINALIZE_RUN_EPILOGUE);
     if (g_untrusted) sentry_shutdown(); // signal quit + waitpid (reap, no orphan)
     if (g_prof && g_profile_output_owner) {
-        char profile[160];
-        int profile_size = snprintf(profile, sizeof profile, "[prof] dispatcher crossings=%llu translations=%llu\n",
+        char profile[320];
+        int profile_size = snprintf(profile, sizeof profile,
+                                    "[prof] dispatcher crossings=%llu translations=%llu\n"
+                                    "[prof] a64-a64-expand: regions=%llu region_words=%llu guest_insns=%llu\n",
                                     (unsigned long long)g_dispatch_profile.crossings,
-                                    (unsigned long long)g_dispatch_profile.translations);
+                                    (unsigned long long)g_dispatch_profile.translations,
+                                    (unsigned long long)g_a64_expand_regions,
+                                    (unsigned long long)g_a64_expand_words,
+                                    (unsigned long long)g_a64_expand_guest_insns);
         if (profile_size > 0) {
             size_t bounded = (size_t)profile_size < sizeof profile ? (size_t)profile_size : sizeof profile - 1u;
             (void)hl_linux_write(g_linux_box, STDERR_FILENO, profile, bounded);

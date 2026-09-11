@@ -111,12 +111,20 @@ static void emit_host_ptr(int rd, uint64_t v, int kind) {
 static int g_shared_obs;
 
 static void e_dmb_ish(void) {
-    if (!g_threaded && !g_shared_obs) return; // no peer thread AND no shared mapping -> nothing can observe
+    if (!g_threaded && !g_shared_obs) { // no peer thread AND no shared mapping -> nothing can observe
+        g_x86_mech_dmb_elide++;         // translate-time census only
+        return;
+    }
+    g_x86_mech_dmb_emit++;
     emit32(0xD5033ABFu);                      // DMB ISHST -- StoreStore only (see above; loads self-fence via ISHLD)
 }
 
 static void e_dmb_ishld(void) {
-    if (!g_threaded && !g_shared_obs) return; // no peer thread AND no shared mapping -> nothing can observe
+    if (!g_threaded && !g_shared_obs) { // no peer thread AND no shared mapping -> nothing can observe
+        g_x86_mech_dmb_elide++;
+        return;
+    }
+    g_x86_mech_dmb_emit++;
     emit32(0xD50339BFu);
 }
 
@@ -1053,7 +1061,11 @@ void emit_memory_guard(int address_register, uint64_t size, uint64_t rip, uint32
      * armed executable-memory generation, before a soft guard can translate
      * address_register to its host backing address.
      */
-    if (!g_address_recorded) e_str(address_register, 28, OFF_SOFT_GUEST_EA);
+    g_x86_mech_ea_guard++;
+    if (!g_address_recorded) {
+        g_x86_mech_ea_deadstore++;
+        e_str(address_register, 28, OFF_SOFT_GUEST_EA);
+    }
     g_address_recorded = 0;
     if (!jit_guest_soft_active() && g_rwx_guest) e_str(address_register, 28, OFF_BUS_EA);
     emit_direct_store_span_guard(address_register, size, rip, required);

@@ -45,6 +45,19 @@ extern uint64_t g_prof_t2fold;
 extern uint64_t g_prof_xflag;
 extern uint64_t g_prof_xflag_scan;
 
+/* x86->ARM64 static-expansion mechanism census (translate-time only; every one of
+   these is incremented while a block is being BUILT, never while it executes).
+   Wired into the diagnostics record by hl_x86_a64_route_report in translate.c. */
+extern uint64_t g_x86_mech_dmb_emit;       /* DMB ISHST/ISHLD actually emitted */
+extern uint64_t g_x86_mech_dmb_elide;      /* barrier site reached with no observer -> elided */
+extern uint64_t g_x86_mech_ea_record;      /* address_record_guest str of the guest EA */
+extern uint64_t g_x86_mech_ea_deadstore;   /* emit_memory_guard's !g_address_recorded EA str */
+extern uint64_t g_x86_mech_ea_guard;       /* emit_memory_guard call sites reached */
+extern uint64_t g_x86_mech_pfaf_attempt;   /* PF/AF-writing insn offered to the liveness test */
+extern uint64_t g_x86_mech_pfaf_dead;      /* ... of which the test proved PF+AF dead */
+extern uint64_t g_x86_mech_rmload_mem;     /* rm_load taking its memory-operand path */
+extern uint64_t g_x86_mech_rmload_foldable;/* ... of which ea_imm_fold WOULD have folded */
+
 uint64_t coldprof_now_ns(const hl_host_services *services);
 void hl_x86_count_rep_movs(void);
 void hl_x86_count_rep_stos(void);

@@ -124,6 +124,9 @@ struct LaunchArguments {
     /// Late-link unresolved constant JCC targets through the same-ISA IBTC.
     #[arg(long, value_enum, value_name = "on|off")]
     translit_jcc_ibtc: Option<JccIbtcControl>,
+    /// Link a same-ISA descriptor's own backward JCC edge straight to its entry (experimental, off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, requires = "translit", hide = true)]
+    translit_jcc_self_link: Option<TranslitFeatureControl>,
     /// Late-link direct JMP targets through the same-ISA IBTC.
     #[arg(long, value_enum, value_name = "on|off")]
     translit_direct_jmp_ibtc: Option<DirectJmpIbtcControl>,
@@ -412,6 +415,11 @@ fn execute(guest: Guest, launch: &LaunchArguments) -> Result<hl_engine::engine::
             "--translit-jcc-ibtc is available only in the x86-64 worker".to_owned(),
         ));
     }
+    if launch.translit_jcc_self_link.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--translit-jcc-self-link is available only in the x86-64 worker".to_owned(),
+        ));
+    }
     if launch.translit_direct_jmp_ibtc.is_some() && !launch.translit {
         return Err(Failure::Request(
             "--translit-direct-jmp-ibtc requires --translit".to_owned(),
@@ -546,6 +554,10 @@ fn rootfs_plan(
         (
             launch.translit && launch.a64_x86_jcc_link != Some(TranslitFeatureControl::Off),
             "HL_A64_X86_JCC_LINK",
+        ),
+        (
+            launch.translit && launch.translit_jcc_self_link == Some(TranslitFeatureControl::On),
+            "HL_TRANSLIT_JCC_SELF_LINK",
         ),
     ] {
         if enabled {
@@ -1444,6 +1456,7 @@ mod tests {
         assert_eq!(defaults.options.get("HL_TRANSLIT"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_MIXED_SSE_DISABLE"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_JCC_IBTC_DISABLE"), None);
+        assert_eq!(defaults.options.get("HL_TRANSLIT_JCC_SELF_LINK"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_DIRECT_JMP_IBTC_DISABLE"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_RIPREL_LOAD_BRIDGE"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_FS_LOAD_BRIDGE"), None);

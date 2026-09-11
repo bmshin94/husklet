@@ -436,6 +436,7 @@ static void address_record_guest(void *context, int reg, int rip_relative) {
     // Effective addresses are architectural guest coordinates. Displaced ET_EXEC PCs are now
     // canonical throughout x86 lowering, so a RIP-relative address is already LOW; subtracting the
     // storage bias here wrapped it into 0xffff... and exposed that engine-private value as si_addr.
+    g_x86_mech_ea_record++;
     e_str(reg, 28, OFF_SOFT_GUEST_EA);
     g_address_recorded = 1;
 }
@@ -508,9 +509,16 @@ static int translit_enabled(void) {
 static void translit_profile_options_refresh(void) {}
 
 static int translit_report(char *out, size_t size) {
+    /* Length-correct two-part record. The old form returned after the first line whenever the
+       buffer was already full -- including the `size == 0` SIZING call every caller makes first --
+       so the reported requirement covered one line while the rendered record covered the whole
+       census. profile_record_write compares the two and dropped the record, which is why neither
+       this line nor the x86-a64 expansion census has ever reached a diagnostics run. */
     int written = snprintf(out, size, "[prof] translit: absent, this host takes the JIT\n");
-    if (written < 0 || (size_t)written >= size) return written;
-    int route = hl_x86_a64_route_report(out + written, size - (size_t)written);
+    if (written < 0) return written;
+    size_t offset = (size_t)written;
+    int fits = out != NULL && offset < size;
+    int route = hl_x86_a64_route_report(fits ? out + offset : NULL, fits ? size - offset : 0);
     return route < 0 ? route : written + route;
 }
 

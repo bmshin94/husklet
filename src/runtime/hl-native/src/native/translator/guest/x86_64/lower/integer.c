@@ -37,6 +37,11 @@ void report_unimpl(uint64_t pc, struct insn *I);
 
 int rm_load(struct insn *I, uint64_t next, int w, int *mem) {
     if (I->is_mem) {
+        /* Census only: rm_load never takes the folded [base+#imm] form that
+           hl_x86_address_load does; record how often the fold WOULD apply. */
+        int fold_base, fold_offset;
+        g_x86_mech_rmload_mem++;
+        if (ea_imm_fold(I, w, &fold_base, &fold_offset)) g_x86_mech_rmload_foldable++;
         emit_ea(I, next);
         emit_bus_guard(17, (uint64_t)w, next - (uint64_t)I->len);
         e_load(w, 16, 17);
@@ -685,6 +690,7 @@ void hl_x86_integer_prepare_flags(const struct insn *instruction, uint64_t guest
 
     g_pfaf_dead = 0;
     if (!pfaf_elim_on() || !insn_writes_pfaf(instruction)) return;
+    g_x86_mech_pfaf_attempt++;
     struct insn following;
     if (hl_x86_decode(next, &following) < 0) memset(&following, 0, sizeof following);
     g_pfaf_dead = insn_kills_pfaf(&following);
@@ -692,4 +698,5 @@ void hl_x86_integer_prepare_flags(const struct insn *instruction, uint64_t guest
         g_pfaf_dead = hl_x86_trace_pfaf_dead(trace_state, &following, next, guest_pc);
     if (!g_pfaf_dead && trace_state->flag_elision)
         g_pfaf_dead = !(hl_x86_trace_flags_livein(trace_state, next, guest_pc) & (HL_X86_FLAG_PF | HL_X86_FLAG_AF));
+    if (g_pfaf_dead) g_x86_mech_pfaf_dead++;
 }

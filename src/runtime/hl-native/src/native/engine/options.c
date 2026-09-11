@@ -128,6 +128,8 @@ static const hl_option_definition hl_option_definitions[] = {
                      "disable legacy register MULSS same-ISA descriptor admission", HL_OPTION_FLAG),
     HL_INJECTION_OPTION("HL_TRANSLIT_JCC_LINK_DISABLE",
                         "test-only disable already-published same-page JCC links", HL_OPTION_FLAG),
+    HL_LAUNCH_OPTION("HL_TRANSLIT_JCC_SELF_LINK",
+                     "link a same-ISA descriptor's own backward JCC edge straight to its entry", HL_OPTION_FLAG),
     HL_LAUNCH_OPTION("HL_TRANSLIT_JCC_IBTC_DISABLE",
                      "disable late publication for unresolved same-ISA constant JCC targets", HL_OPTION_FLAG),
     HL_LAUNCH_OPTION("HL_A64_X86_JCC_LINK",
