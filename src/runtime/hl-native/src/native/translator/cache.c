@@ -1958,7 +1958,7 @@ static void ibtc_clear_lazy(void) {
    Unset, the default, keeps the eager write and is byte-for-byte today's behaviour. */
 static int g_exec_ibtc_lazy_state = -1;
 static int exec_ibtc_lazy_selected(void) {
-    if (g_exec_ibtc_lazy_state < 0) g_exec_ibtc_lazy_state = hl_option_get("HL_EXEC_IBTC_LAZY") != NULL;
+    if (g_exec_ibtc_lazy_state < 0) g_exec_ibtc_lazy_state = hl_option_flag_value("HL_EXEC_IBTC_LAZY", 0);
     return g_exec_ibtc_lazy_state;
 }
 

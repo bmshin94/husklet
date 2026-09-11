@@ -137,10 +137,10 @@ struct LaunchArguments {
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, requires = "translit")]
     translit_riprel_load_bridge: Option<TranslitFeatureControl>,
     /// Route unresolved constant-rip x86 block exits through one shared per-arena thunk (off by default).
-    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true)]
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
     x86_exit_thunk: Option<TranslitFeatureControl>,
     /// Route the x86 region prologue through one shared per-arena trampoline (off by default).
-    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true)]
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
     x86_prologue_thunk: Option<TranslitFeatureControl>,
     /// Control the strict FS-load bridge (enabled by default for x86-64 transliteration).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, requires = "translit")]
@@ -161,9 +161,9 @@ struct LaunchArguments {
     /// Publish same-ISA block maps for sampling-only profiling.
     #[arg(long, value_name = "PATH", hide = true, requires = "translit", value_parser = parse_translit_perf_map)]
     translit_perf_map: Option<PathBuf>,
-    /// Keep the indirect-branch cache lazily cleared across a guest exec instead of rewriting it.
-    #[arg(long)]
-    exec_ibtc_lazy: bool,
+    /// Keep the indirect-branch cache lazily cleared across a guest exec instead of rewriting it (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    exec_ibtc_lazy: Option<TranslitFeatureControl>,
     /// Existing container root used to resolve the guest entry and `PT_INTERP`.
     #[arg(long)]
     rootfs: Option<PathBuf>,
@@ -465,6 +465,16 @@ fn execute(guest: Guest, launch: &LaunchArguments) -> Result<hl_engine::engine::
             "--x86-prologue-thunk is available only in the x86-64 worker".to_owned(),
         ));
     }
+    if launch.x86_ea_record_elide.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-ea-record-elide is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.x86_rmload_fold.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-rmload-fold is available only in the x86-64 worker".to_owned(),
+        ));
+    }
     if launch.translit_fs_load_bridge.is_some() && guest != Guest::X86_64 {
         return Err(Failure::Request(
             "--translit-fs-load-bridge is available only in the x86-64 worker".to_owned(),
@@ -604,6 +614,7 @@ fn rootfs_plan(
         (launch.translit_fs_load_bridge, "HL_TRANSLIT_FS_LOAD_BRIDGE"),
         (launch.x86_exit_thunk, "HL_X86_EXIT_THUNK"),
         (launch.x86_prologue_thunk, "HL_X86_PROLOGUE_THUNK"),
+        (launch.exec_ibtc_lazy, "HL_EXEC_IBTC_LAZY"),
     ] {
         if let Some(control) = control {
             let value = if control == TranslitFeatureControl::On {
@@ -669,11 +680,6 @@ fn rootfs_plan(
         options
             .set("HL_TRANSLIT_PERF_MAP", &path.to_string_lossy(), false)
             .map_err(|error| Failure::Request(format!("cannot set --translit-perf-map: {error:?}")))?;
-    }
-    if launch.exec_ibtc_lazy {
-        options
-            .set("HL_EXEC_IBTC_LAZY", "1", true)
-            .map_err(|error| Failure::Request(format!("cannot select the lazy exec IBTC clear: {error:?}")))?;
     }
     if launch.translation_cache_observe {
         options
@@ -955,6 +961,9 @@ mod tests {
         assert_eq!(defaults.translit_fs_load_bridge, None);
         assert_eq!(defaults.x86_exit_thunk, None);
         assert_eq!(defaults.x86_prologue_thunk, None);
+        assert_eq!(defaults.x86_ea_record_elide, None);
+        assert_eq!(defaults.x86_rmload_fold, None);
+        assert_eq!(defaults.exec_ibtc_lazy, None);
         assert_eq!(defaults.native_supervised, None);
 
         let selected = launch(&[
@@ -968,6 +977,9 @@ mod tests {
             "--translit-fs-load-bridge",
             "--x86-exit-thunk=on",
             "--x86-prologue-thunk=on",
+            "--x86-ea-record-elide=on",
+            "--x86-rmload-fold=off",
+            "--exec-ibtc-lazy=on",
             "--native-supervised",
             "--rootfs",
             "/image",
@@ -995,6 +1007,9 @@ mod tests {
         );
         assert_eq!(selected.x86_exit_thunk, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.x86_prologue_thunk, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_ea_record_elide, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_rmload_fold, Some(super::TranslitFeatureControl::Off));
+        assert_eq!(selected.exec_ibtc_lazy, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.native_supervised, Some(super::NativeSupervisedControl::On));
         assert_eq!(selected.rootfs.as_deref(), Some(std::path::Path::new("/image")));
 
@@ -1501,6 +1516,9 @@ mod tests {
         assert_eq!(defaults.options.get("HL_TRANSLIT_RIPREL_LOAD_BRIDGE"), None);
         assert_eq!(defaults.options.get("HL_X86_EXIT_THUNK"), None);
         assert_eq!(defaults.options.get("HL_X86_PROLOGUE_THUNK"), None);
+        assert_eq!(defaults.options.get("HL_X86_EA_RECORD_ELIDE"), None);
+        assert_eq!(defaults.options.get("HL_X86_RMLOAD_FOLD"), None);
+        assert_eq!(defaults.options.get("HL_EXEC_IBTC_LAZY"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_FS_LOAD_BRIDGE"), None);
         assert_eq!(defaults.options.get("HL_NATIVE_SUPERVISED"), None);
 
