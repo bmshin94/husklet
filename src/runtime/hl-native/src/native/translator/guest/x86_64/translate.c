@@ -1011,6 +1011,16 @@ static int lower_sse_horizontal(struct insn *instruction, uint64_t guest_pc, uin
     return TX_NEXT;
 }
 
+// Masked shift count register for the by-CL double shifts. NOT x17: for a MEMORY destination rm_load
+// leaves the effective address in x17 and rm_store stores through it ("EA already in x17"), so parking
+// the count there overwrote the address and the result went to the COUNT reinterpreted as a pointer.
+// The masked count is 0..63, so `shld %cl,%rsi,[mem]` stored 1-8 bytes at a near-null address -- a
+// SIGSEGV for every addressing mode, every operand width and every CL value including zero, and the
+// real destination was left stale. The immediate-count forms never touched x17 and were always right.
+// x26 is a translator scratch no emitter between the count computation and rm_store touches: the same
+// register (and the same reason) as the `shr [mem],cl` operand stash in lower/shift.c.
+#define DSHIFT_COUNT 26
+
 static int lower_double_shift(struct insn *instruction, uint64_t next) {
     uint8_t opcode = instruction->op;
     if (opcode != 0xA4 && opcode != 0xA5 && opcode != 0xAC && opcode != 0xAD) return TX_FALL;
@@ -1041,16 +1051,16 @@ static int lower_double_shift(struct insn *instruction, uint64_t next) {
             }
         } else {
             e_movconst(23, 31);
-            e_rrr(A_AND, 17, RCX, 23, 0, 0); // n = cl & 31
+            e_rrr(A_AND, DSHIFT_COUNT, RCX, 23, 0, 0); // n = cl & 31
             if (isleft) {
                 e_lsl_i(19, 19, 16, 0);
                 e_rrr(A_ORR, 19, 19, 20, 0, 0); // (dst<<16)|src
-                e_shv(S_LSLV, 19, 19, 17, 0);   // <<= n
+                e_shv(S_LSLV, 19, 19, DSHIFT_COUNT, 0); // <<= n
                 e_lsr_i(16, 19, 16, 0);
             } else {
                 e_lsl_i(20, 20, 16, 0);
                 e_rrr(A_ORR, 19, 20, 19, 0, 0); // (src<<16)|dst
-                e_shv(S_LSRV, 16, 19, 17, 0);   // >>= n
+                e_shv(S_LSRV, 16, 19, DSHIFT_COUNT, 0); // >>= n
             }
             // n==0: dst unchanged. The concat-shift already yields dst for n==0, so no csel needed.
         }
@@ -1087,18 +1097,18 @@ static int lower_double_shift(struct insn *instruction, uint64_t next) {
     // ---- SHLD/SHRD by CL ----
     e_mov_rr(22, dst, ssf); // preserve orig dst for the n==0 select + CF
     e_movconst(19, ssf ? 63 : 31);
-    e_rrr(A_AND, 17, RCX, 19, ssf, 0); // n = cl & (W-1)
+    e_rrr(A_AND, DSHIFT_COUNT, RCX, 19, ssf, 0); // n = cl & (W-1)
     e_movconst(20, width);
-    e_rrr(A_SUB, 20, 20, 17, ssf, 0); // 20 = W - n
+    e_rrr(A_SUB, 20, 20, DSHIFT_COUNT, ssf, 0); // 20 = W - n
     if (isleft) {
-        e_shv(S_LSLV, 19, dst, 17, ssf);
+        e_shv(S_LSLV, 19, dst, DSHIFT_COUNT, ssf);
         e_shv(S_LSRV, 20, src, 20, ssf);
     } else {
-        e_shv(S_LSRV, 19, dst, 17, ssf);
+        e_shv(S_LSRV, 19, dst, DSHIFT_COUNT, ssf);
         e_shv(S_LSLV, 20, src, 20, ssf);
     }
     e_rrr(A_ORR, 16, 19, 20, ssf, 0); // combined = t1 | t2
-    e_tst(17, ssf);
+    e_tst(DSHIFT_COUNT, ssf);
     e_csel(16, 22, 16, 0 /*EQ: n==0*/, ssf); // n==0 -> dst unchanged
     // M: x86 flags. If the masked count n==0 ALL flags are unchanged; else SF/ZF/PF from the
     // result and CF = the last bit shifted out of the ORIGINAL dst (x22): SHLD bit (W-n), SHRD
@@ -1108,9 +1118,9 @@ static int lower_double_shift(struct insn *instruction, uint64_t next) {
     emit32(0xD53B4200u | 20); // mrs x20, nzcv (N/Z valid; C/V stale)
     if (isleft) {
         e_movconst(19, width);
-        e_rrr(A_SUB, 19, 19, 17, ssf, 0); // x19 = W - n
+        e_rrr(A_SUB, 19, 19, DSHIFT_COUNT, ssf, 0); // x19 = W - n
     } else {
-        e_subi(19, 17, 1, ssf); // x19 = n - 1
+        e_subi(19, DSHIFT_COUNT, 1, ssf); // x19 = n - 1
     }
     e_shv(S_LSRV, 21, 22, 19, ssf);
     e_movconst(19, 1);
@@ -1119,7 +1129,7 @@ static int lower_double_shift(struct insn *instruction, uint64_t next) {
     e_movconst(19, 1u << 29);
     e_rrr(A_BIC, 20, 20, 19, 1, 0);  // clear stored C (bit 29)
     e_rrr(A_ORR, 20, 20, 21, 1, 29); // stored C = (NOT CF) << 29
-    e_tst(17, ssf);                  // Z = (n == 0)
+    e_tst(DSHIFT_COUNT, ssf);        // Z = (n == 0)
     e_csel(20, 24, 20, 0 /*EQ*/, 1); // n==0 -> keep old flags
     e_str(20, 28, OFF_NZCV);
     if (!hl_x86_legacy_pfaf_dead()) { // PF: n==0 keeps old, else result low byte (live Z still = n==0 here)
@@ -1131,6 +1141,8 @@ static int lower_double_shift(struct insn *instruction, uint64_t next) {
     rm_store(instruction, w, 16);
     return TX_NEXT;
 }
+
+#undef DSHIFT_COUNT
 
 static int lower_scalar_two_byte(struct insn *instruction, uint64_t guest_pc, uint64_t next, int sf,
                                  const hl_x86_trace_state *trace_state) {

@@ -1234,6 +1234,162 @@ HL_API int hl_x86_64_reserved_register_test(void) {
 #undef HL_X86_RESERVED_GPR
 #endif
 
+#if defined(HL_NATIVE_TEST_HOOKS)
+/*
+ * `rm_load` leaves a memory operand's effective address in x17 and `rm_store` stores through it --
+ * "EA already in x17" is the read-modify-write contract every memory-destination lowering obeys.
+ * SHLD/SHRD by CL broke it: it parked the masked shift count in x17, so `shld %cl,%rsi,(%rbx)` stored
+ * the result to the COUNT reinterpreted as a pointer.  The masked count is 0..63, so that is a
+ * near-null store -- a SIGSEGV for every addressing mode, every operand width and every CL value
+ * including zero, with the real destination left stale.  The immediate-count forms never touched x17,
+ * which is why it survived review; the operand matrix below spans both.
+ *
+ * Emit the double-shift lowering for every memory-destination shape and read the emitted words back:
+ * between the load through [x17] and the store through [x17], no instruction may name x17 as its
+ * destination.  That states the contract directly, so it also catches the next lowering that borrows
+ * the effective-address register for a temporary.
+ *
+ * Returns 0 clean, 1 when a fixture clobbers the address between the load and the store, 2 when a
+ * fixture emitted no load/store pair at all (a scan of nothing must never read as a pass), and 3 when
+ * the scan met an instruction class it cannot decode a destination for.
+ */
+
+/* Destination register of one emitted word: -1 for "writes no GPR", -2 for "unrecognized class". */
+static int x86_double_shift_gpr_dest(uint32_t word) {
+    int rd = (int)(word & 31u);
+    if ((word & 0xFFFFFFE0u) == 0xD53B4200u) return rd;                            /* mrs xd, nzcv */
+    if ((word & 0xFFFFFFE0u) == 0xD51B4200u) return -1;                            /* msr nzcv, xs */
+    if ((word & 0x3B000000u) == 0x39000000u) return (word & 0x00400000u) ? rd : -1; /* ldr/str, uoff */
+    if ((word & 0x3B200C00u) == 0x38000000u) return (word & 0x00400000u) ? rd : -1; /* ldur/stur */
+    if ((word & 0x1F800000u) == 0x12800000u) return rd;                            /* movz/movk/movn */
+    if ((word & 0x1F000000u) == 0x0A000000u) return rd;                            /* logical, shifted reg */
+    if ((word & 0x1F000000u) == 0x0B000000u) return rd;                            /* add/sub, shifted/ext */
+    if ((word & 0x1F800000u) == 0x11000000u) return rd;                            /* add/sub, immediate */
+    if ((word & 0x1F800000u) == 0x12000000u) return rd;                            /* logical, immediate */
+    if ((word & 0x1F800000u) == 0x13000000u) return rd;                            /* sbfm/bfm/ubfm */
+    if ((word & 0x1F800000u) == 0x13800000u) return rd;                            /* extr */
+    if ((word & 0x1FE00000u) == 0x1A800000u) return rd;                            /* csel family */
+    if ((word & 0x1FE00000u) == 0x1AC00000u) return rd;                            /* lslv/lsrv/asrv/rorv */
+    return -2;
+}
+
+#define HL_X86_DOUBLE_SHIFT_EA 17
+
+HL_API int hl_x86_64_double_shift_memory_ea_test(void) {
+#if !defined(HL_HOST_CPU_AARCH64)
+    return 4; /* no emitted code on a host without the JIT; see hl_x86_64_reserved_register_test */
+#else
+    static uint32_t code[4096];
+    /* SHLD and SHRD, by CL and by imm8, at every operand width the lowering has a path for. */
+    static const uint8_t opcodes[4] = {0xA5, 0xAD, 0xA4, 0xAC};
+    static const int widths[3] = {8, 4, 2};
+    uint8_t *saved_cp = g_cp;
+    int saved_recorded = g_address_recorded;
+    int saved_rwx = g_rwx_guest;
+    int pairs = 0, verdict = 0;
+    g_address_recorded = 0;
+    g_rwx_guest = 0; /* scan the plain direct-store lowering, not the soft-mapping one */
+
+    for (int shape = 0; shape < 6 && verdict == 0; ++shape)
+        for (int which = 0; which < 4 && verdict == 0; ++which)
+            for (int size = 0; size < 3 && verdict == 0; ++size) {
+                struct insn insn;
+                memset(&insn, 0, sizeof insn);
+                insn.len = 5;
+                insn.two = 1;
+                insn.op = opcodes[which];
+                insn.opsize = widths[size];
+                insn.p66 = widths[size] == 2;
+                insn.rexW = widths[size] == 8;
+                insn.has_rex = insn.rexW;
+                insn.is_mem = 1;
+                insn.reg = 6; /* source operand: guest rsi */
+                insn.imm = 5; /* immediate-count forms */
+                switch (shape) {
+                case 0: /* [base] */
+                    insn.m_hasbase = 1;
+                    insn.m_base = 3;
+                    break;
+                case 1: /* [base + disp8] */
+                    insn.m_hasbase = 1;
+                    insn.m_base = 3;
+                    insn.disp = 8;
+                    break;
+                case 2: /* [base + index*8] */
+                    insn.m_hasbase = 1;
+                    insn.m_base = 3;
+                    insn.m_hasindex = 1;
+                    insn.m_index = 2;
+                    insn.m_scale = 3;
+                    break;
+                case 3: /* [base + index*8 + disp32] */
+                    insn.m_hasbase = 1;
+                    insn.m_base = 3;
+                    insn.m_hasindex = 1;
+                    insn.m_index = 2;
+                    insn.m_scale = 3;
+                    insn.disp = 0x120;
+                    break;
+                case 4: /* [rip + disp32] */
+                    insn.rip_rel = 1;
+                    insn.disp = 0x40;
+                    break;
+                default: /* [disp32] -- absolute, no base and no index */
+                    insn.disp = 0x1000;
+                    break;
+                }
+
+                uint32_t *base = code;
+                g_cp = (uint8_t *)code;
+                (void)lower_double_shift(&insn, UINT64_C(0x401000));
+                size_t count = (size_t)((uint32_t *)g_cp - base);
+                if (count == 0 || count > sizeof code / sizeof code[0]) {
+                    verdict = 2;
+                    break;
+                }
+
+                /* The load through the effective address opens the window; the store closes it. */
+                size_t load = count, store = count;
+                for (size_t index = 0; index < count; ++index) {
+                    uint32_t word = code[index];
+                    if ((word & 0x3B000000u) != 0x39000000u) continue;
+                    if ((int)((word >> 5) & 31u) != HL_X86_DOUBLE_SHIFT_EA) continue;
+                    if (word & 0x00400000u) {
+                        if (load == count) load = index;
+                    } else
+                        store = index;
+                }
+                if (load == count || store == count || store <= load) {
+                    verdict = 2;
+                    break;
+                }
+                pairs++;
+
+                for (size_t index = load + 1; index < store; ++index) {
+                    int dest = x86_double_shift_gpr_dest(code[index]);
+                    if (dest == -2) {
+                        verdict = 3;
+                        break;
+                    }
+                    if (dest == HL_X86_DOUBLE_SHIFT_EA) {
+                        verdict = 1;
+                        break;
+                    }
+                }
+            }
+
+    g_cp = saved_cp;
+    g_address_recorded = saved_recorded;
+    g_rwx_guest = saved_rwx;
+    hl_x86_integer_reset_flags();
+    if (verdict) return verdict;
+    return pairs == 6 * 4 * 3 ? 0 : 2;
+#endif
+}
+
+#undef HL_X86_DOUBLE_SHIFT_EA
+#endif
+
 static int x86_signal_cache_contains(void *context, uint64_t pc) {
     (void)context;
     return jit_pc_in_retained_cache(pc);
