@@ -161,6 +161,8 @@ static const hl_option_definition hl_option_definitions[] = {
                      HL_OPTION_FLAG),
     HL_LAUNCH_OPTION("HL_CWD", "initial guest working directory", HL_OPTION_PATH),
     HL_LAUNCH_OPTION("HL_EGRESS_SOCKS", "SOCKS5 endpoint for external TCP egress", HL_OPTION_TEXT),
+    HL_LAUNCH_OPTION("HL_EXEC_IBTC_LAZY", "leave the indirect-branch cache lazily cleared across guest exec",
+                     HL_OPTION_FLAG),
     HL_LAUNCH_OPTION("HL_FSGEN_FILE", "shared overlay filesystem-generation file", HL_OPTION_PATH),
     HL_LAUNCH_OPTION("HL_FILE_OWNERS", "initial guest file ownership records", HL_OPTION_RECORDS),
     HL_LAUNCH_OPTION("HL_FILE_NAMES", "encoded snapshot name projection records", HL_OPTION_RECORDS),

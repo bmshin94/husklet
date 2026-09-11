@@ -1938,6 +1938,30 @@ static void ibtc_clear_lazy(void) {
     memset(g_ibtc, 0, sizeof g_ibtc);
 }
 
+/* Exec-boundary IBTC reset policy.  map_clear() already leaves this table all-zero -- it
+   ends in ibtc_clear_lazy() above -- and on Linux it gets there by DROPPING the pages with
+   MADV_DONTNEED rather than by writing them.  The eager `memset(g_ibtc, 0, sizeof g_ibtc)`
+   that has historically followed map_clear() on the execve path therefore re-materialises
+   all 2,048 pages of an 8 MiB table that the image being loaded has not indexed a single
+   entry of yet, and it does so while every one of those pages is guaranteed to be a fresh
+   zero-filled anonymous fault.  Measured on an x86_64 Linux host by attributing page-fault
+   addresses to BSS symbols across 60 guest fork+execs of /bin/true: g_ibtc took 127,403 of
+   the 284,677 faults, 44.75% of the total and 2,123 per guest process out of that
+   process's 4,546.  Re-running the same census with the eager write dropped, that process
+   demand-faults 183 IBTC pages: the write commits an 8 MiB table per exec so that the new
+   image can index 0.7 MiB of it.
+
+   HL_EXEC_IBTC_LAZY keeps the lazy clear map_clear() has already performed and lets the
+   new image fault in only the IBTC pages it actually indexes.  The table's CONTENTS are
+   identical under either policy -- all-zero on entry to the new image -- so this moves
+   only the moment the host commits the table's pages, never what a lookup observes.
+   Unset, the default, keeps the eager write and is byte-for-byte today's behaviour. */
+static int g_exec_ibtc_lazy_state = -1;
+static int exec_ibtc_lazy_selected(void) {
+    if (g_exec_ibtc_lazy_state < 0) g_exec_ibtc_lazy_state = hl_option_get("HL_EXEC_IBTC_LAZY") != NULL;
+    return g_exec_ibtc_lazy_state;
+}
+
 static inline uint32_t ibtc_index(uint64_t target) {
     return (uint32_t)((target >> 2) & (IBTC_N - 1));
 }

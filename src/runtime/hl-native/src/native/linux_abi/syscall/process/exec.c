@@ -919,7 +919,12 @@ static void exec_reload_image(struct cpu *cpu, exec_prepared *prepared) {
     G_CACHE_REWIND();
     map_clear();
     pend_reset();
-    memset(g_ibtc, 0, sizeof g_ibtc);
+    /* map_clear() above has already returned the shared IBTC to all-zero, lazily where the
+       host supports it.  Writing it again is redundant, and on Linux it faults the whole
+       8 MiB table back in before the new image indexes any of it; see
+       exec_ibtc_lazy_selected() for the measurement and for why the eager write is still
+       what an unset launch gets. */
+    if (!exec_ibtc_lazy_selected()) memset(g_ibtc, 0, sizeof g_ibtc);
 #ifdef PCACHE_EXEC_HOOKS
     pcache_exec_reload(prepared->main_image.identity, prepared->program_interpreter.identity,
                        prepared->has_program_interpreter, prepared->cache_identity_authorized,

@@ -161,6 +161,9 @@ struct LaunchArguments {
     /// Publish same-ISA block maps for sampling-only profiling.
     #[arg(long, value_name = "PATH", hide = true, requires = "translit", value_parser = parse_translit_perf_map)]
     translit_perf_map: Option<PathBuf>,
+    /// Keep the indirect-branch cache lazily cleared across a guest exec instead of rewriting it.
+    #[arg(long)]
+    exec_ibtc_lazy: bool,
     /// Existing container root used to resolve the guest entry and `PT_INTERP`.
     #[arg(long)]
     rootfs: Option<PathBuf>,
@@ -666,6 +669,11 @@ fn rootfs_plan(
         options
             .set("HL_TRANSLIT_PERF_MAP", &path.to_string_lossy(), false)
             .map_err(|error| Failure::Request(format!("cannot set --translit-perf-map: {error:?}")))?;
+    }
+    if launch.exec_ibtc_lazy {
+        options
+            .set("HL_EXEC_IBTC_LAZY", "1", true)
+            .map_err(|error| Failure::Request(format!("cannot select the lazy exec IBTC clear: {error:?}")))?;
     }
     if launch.translation_cache_observe {
         options
