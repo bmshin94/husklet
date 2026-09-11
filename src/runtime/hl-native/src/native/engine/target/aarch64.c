@@ -967,13 +967,23 @@ static int run_loaded(int argc, char *const argv[], struct loaded *lm, uint64_t 
     if (g_prof && g_profile_output_owner) {
         char profile[320];
         int profile_size = snprintf(profile, sizeof profile,
-                                    "[prof] dispatcher crossings=%llu translations=%llu\n"
-                                    "[prof] a64-a64-expand: regions=%llu region_words=%llu guest_insns=%llu\n",
+                                    "[prof] dispatcher crossings=%llu translations=%llu\n",
                                     (unsigned long long)g_dispatch_profile.crossings,
-                                    (unsigned long long)g_dispatch_profile.translations,
-                                    (unsigned long long)g_a64_expand_regions,
-                                    (unsigned long long)g_a64_expand_words,
-                                    (unsigned long long)g_a64_expand_guest_insns);
+                                    (unsigned long long)g_dispatch_profile.translations);
+        // The a64-a64 expansion census lives in the same-ISA translator, which is only textually
+        // included on an AArch64 host. Other hosts publish the dispatcher line alone rather than
+        // referencing counters absent from this translation unit. The dispatcher schema is authored
+        // exactly once above so build_support's drift assertion keeps seeing a single occurrence.
+#if defined(HL_HOST_CPU_AARCH64) && !defined(HL_A64_INTERPRETER_SMOKE)
+        if (profile_size > 0 && (size_t)profile_size < sizeof profile) {
+            int census_size = snprintf(profile + profile_size, sizeof profile - (size_t)profile_size,
+                                       "[prof] a64-a64-expand: regions=%llu region_words=%llu guest_insns=%llu\n",
+                                       (unsigned long long)g_a64_expand_regions,
+                                       (unsigned long long)g_a64_expand_words,
+                                       (unsigned long long)g_a64_expand_guest_insns);
+            if (census_size > 0) profile_size += census_size;
+        }
+#endif
         if (profile_size > 0) {
             size_t bounded = (size_t)profile_size < sizeof profile ? (size_t)profile_size : sizeof profile - 1u;
             (void)hl_linux_write(g_linux_box, STDERR_FILENO, profile, bounded);
