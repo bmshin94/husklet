@@ -1211,7 +1211,12 @@ static void emit_bus_guard_mem17(uint64_t size, int offset) {
         e_addi(17, 16, (unsigned)-offset, 1);
 }
 
+/* Static-expansion census for the constant-rip exit: how many sites take the full inline
+   sequence and how many host words they cost.  Translate-time only. */
+static uint64_t g_exit_inline_sites, g_exit_inline_words;
+
 void emit_exit_const(uint64_t rip, uint64_t reason) {
+    uint32_t *census_begin = (uint32_t *)g_cp;
     hl_x86_a64_route_note_exit(reason);
     // a plain R_SYSCALL exit skips the xmm spill WHEN cpu->V is current (cpu->vdirty==0); else
     // full. Runtime check (blocks chain without spilling). x16 is engine scratch here (guest is x0..x15).
@@ -1236,6 +1241,111 @@ void emit_exit_const(uint64_t rip, uint64_t reason) {
     e_str(16, 28, OFF_RSN);
     emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
     e_br(16); // block_return uses x28 (still cpu)
+    g_exit_inline_sites++;
+    g_exit_inline_words += (uint64_t)((uint32_t *)g_cp - census_begin);
+}
+
+// ---------------- shared out-of-line constant-rip exit thunk (HL_X86_EXIT_THUNK) ----------------
+// Every UNRESOLVED direct edge -- a Jcc's taken and fall-through arms, a direct jmp/call whose
+// target is not translated yet, and the IRQ-poll tail stub -- emits a full inline exit today:
+// the 27-word spill, the guest target, the reason, the baked block_return pointer and `br`.
+// Only the guest target differs between sites; every other word is identical at all of them.
+//
+// With this option on the site emits instead
+//      bl   <thunk>              // x30 -> the two literal words that follow
+//      .word target_lo, .word target_hi
+// and ONE copy of the invariant body is laid down per code arena.  Obligations:
+//   * ABI.  Guest GPRs live in x0..x15, guest xmm in v0..v15, guest flags in the live ARM NZCV,
+//     cpu pinned in x28.  x16/x17 are engine scratch at every exit point and x20 is the flag
+//     scratch the spill itself uses.  x30 is dead in emitted code: run_block stores the host x30
+//     into cpu->host_save and block_return reloads it, and emitted code already clobbers it
+//     (`blr x16` in the bus-fault, store-alias and rep-string helpers).  So `bl` is free.
+//     The thunk reads its literals BEFORE the spill and touches no guest register.
+//   * Reach.  `bl` is +/-128MB; the arena is CACHE_SZ (64MB) and the thunk lives in the SAME
+//     arena as its callers, so every site reaches it.  The range is still checked and the site
+//     falls back to the inline exit if it ever could not.
+//   * Chaining.  The `bl` IS the patch slot add_pend3 records, exactly as the first word of the
+//     inline exit was; patch_links_to rewrites that one word to `b body` (is_bl == 0) and
+//     publishes 4 bytes, after which the two literals are unreachable dead bytes.
+//   * Publication.  The thunk is emitted from translate_block, i.e. inside the dispatcher's
+//     jit_wprot(0) window and inside [g_emit_start, g_cp), so the existing jit_publish_code
+//     covers it with no new bracket.
+//   * Safepoints.  The thunk performs the same spill and the same block_return hand-off, so the
+//     dispatcher round-trip and the successor body's entry IRQ poll are unchanged.
+//   * Invalidation.  The entry is tagged with the arena generation and must lie inside the live
+//     arena; a wholesale flush, an in-place rewind or a rotation all move g_cache_gen (or g_cp),
+//     so the next region lays a fresh thunk instead of calling into dropped code.
+static int g_exit_thunk;                // 0 -> byte-identical to the historical emission
+
+void hl_x86_emit_set_exit_thunk(int enabled) {
+    g_exit_thunk = enabled != 0;
+}
+static uint32_t *g_exit_thunk_entry;    // constant-rip thunk entry in the CURRENT arena
+static uint32_t *g_ibranch_thunk_entry; // IBTC-miss thunk entry (guest target already in x16)
+static uint64_t g_exit_thunk_gen;       // arena generation both entries belong to
+static uint64_t g_exit_thunk_bodies, g_exit_thunk_body_words, g_exit_thunk_sites, g_ibranch_thunk_sites;
+
+static int exit_thunk_live(void) {
+    return g_exit_thunk_entry != NULL && g_exit_thunk_gen == g_cache_gen &&
+           (uint8_t *)g_exit_thunk_entry >= (uint8_t *)g_cache && (uint8_t *)g_exit_thunk_entry < (uint8_t *)g_cp;
+}
+
+// Lay the one invariant body for this arena.  Called at the head of a region, before its
+// prologue, so nothing can fall into it (a region is only ever entered at its body) and the
+// dispatcher's publish window already covers it.
+static void emit_exit_thunk_body(void) {
+    if (!g_exit_thunk || exit_thunk_live()) return;
+    uint32_t *begin = (uint32_t *)g_cp;
+    g_exit_thunk_entry = begin;
+    g_exit_thunk_gen = g_cache_gen;
+    // x30 addresses the caller's literal pair; load it as two words so the 4-byte-aligned
+    // instruction stream never needs an unaligned 8-byte access.
+    emit32(0x29400000u | (17 << 10) | (30 << 5) | 16); // ldp w16, w17, [x30]
+    e_rrr(A_ORR, 16, 16, 17, 1, 32);                   // orr x16, x16, x17, lsl #32  -> guest target
+    emit_spill();                                      // x16 survives (spill uses x20)
+    e_str(16, 28, OFF_RIP);
+    e_movconst(16, R_BRANCH);
+    e_str(16, 28, OFF_RSN);
+    emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
+    e_br(16);
+    // Second body: the IBTC-miss tail shared by every `ret` / `jmp reg` / `call reg`.  It needs no
+    // literal at all -- emit_ibranch already leaves the guest target in x16 -- so the site collapses
+    // to a single `b`.  x30 is not touched here, and the sequence is a verbatim copy of the inline
+    // miss tail (rip, spill, reason, ic_miss = 1, block_return).
+    g_ibranch_thunk_entry = (uint32_t *)g_cp;
+    e_str(16, 28, OFF_RIP);
+    emit_spill();
+    e_movconst(16, R_BRANCH);
+    e_str(16, 28, OFF_RSN);
+    e_movconst(16, 1);
+    e_str(16, 28, OFF_ICMISS); // dispatcher fills the IBTC for cpu->rip
+    emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
+    e_br(16);
+    g_exit_thunk_bodies++;
+    g_exit_thunk_body_words += (uint64_t)((uint32_t *)g_cp - begin);
+}
+
+// Emit the 3-word call site in place of a full R_BRANCH exit.  0 -> caller must emit the
+// inline exit (option off, no live thunk, or out of `bl` reach).
+static int emit_exit_thunk_site(uint64_t target) {
+    if (!g_exit_thunk || !exit_thunk_live()) return 0;
+    int64_t d = ((uint8_t *)g_exit_thunk_entry - (uint8_t *)g_cp) / 4;
+    if (d < -(INT64_C(1) << 25) || d >= (INT64_C(1) << 25)) return 0;
+    emit32(0x94000000u | ((uint32_t)d & 0x3FFFFFFu)); // bl thunk  (the add_pend3 patch slot)
+    emit32((uint32_t)(target & 0xFFFFFFFFu));
+    emit32((uint32_t)(target >> 32));
+    g_exit_thunk_sites++;
+    return 1;
+}
+
+// The IBTC-miss tail: one `b` to the shared body in place of the 37-word inline copy.
+static int emit_ibranch_thunk_site(void) {
+    if (!g_exit_thunk || !exit_thunk_live() || g_ibranch_thunk_entry == NULL) return 0;
+    int64_t d = ((uint8_t *)g_ibranch_thunk_entry - (uint8_t *)g_cp) / 4;
+    if (d < -(INT64_C(1) << 25) || d >= (INT64_C(1) << 25)) return 0;
+    emit32(0x14000000u | ((uint32_t)d & 0x3FFFFFFu)); // b thunk
+    g_ibranch_thunk_sites++;
+    return 1;
 }
 
 // ---------------- S1: inline vDSO-style time fast path (cntvct-based) ----------------
@@ -1625,7 +1735,7 @@ void emit_chain_exit(uint64_t target) {
         return;
     }
     add_pend3(slot, target, 0, fwd);
-    emit_exit_const(target, R_BRANCH);
+    if (!emit_exit_thunk_site(target)) emit_exit_const(target, R_BRANCH);
 }
 
 // Indirect branch (ret / jmp reg / call reg) with the guest target already in x16.
@@ -1654,14 +1764,16 @@ void emit_ibranch(void) {
     e_br(21);
     *p_w1 = 0xB5000000u | (((uint32_t)(((uint8_t *)Lway1 - (uint8_t *)p_w1) / 4) & 0x7FFFF) << 5) | 20;
     uint32_t *miss = (uint32_t *)g_cp;
-    e_str(16, 28, OFF_RIP);
-    emit_spill(); // MISS: slow path
-    e_movconst(16, R_BRANCH);
-    e_str(16, 28, OFF_RSN);
-    e_movconst(16, 1);
-    e_str(16, 28, OFF_ICMISS); // dispatcher fills the IBTC for cpu->rip
-    emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
-    e_br(16);
+    if (!emit_ibranch_thunk_site()) {
+        e_str(16, 28, OFF_RIP);
+        emit_spill(); // MISS: slow path
+        e_movconst(16, R_BRANCH);
+        e_str(16, 28, OFF_RSN);
+        e_movconst(16, 1);
+        e_str(16, 28, OFF_ICMISS); // dispatcher fills the IBTC for cpu->rip
+        emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
+        e_br(16);
+    }
     *p_miss =
         0xB5000000u | (((uint32_t)(((uint8_t *)miss - (uint8_t *)p_miss) / 4) & 0x7FFFF) << 5) | 20; // cbnz->Lmiss
 }

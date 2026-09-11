@@ -323,6 +323,17 @@ static int hl_x86_a64_route_report(char *out, size_t size) {
                                                                 memory_order_relaxed),
                        (unsigned long long)atomic_load_explicit(&g_x86_a64_block_tail_words,
                                                                 memory_order_relaxed));
+    /* Constant-rip exit accounting: the full inline sequence vs the 3-word shared-thunk call
+       site, plus the per-arena thunk bodies (which live OUTSIDE the per-region word census
+       above, so a total must add thunk_body_words to region_words). */
+    hl_x86_a64_appendf(
+        out, size, &written,
+        "[prof] x86-a64-exit: inline_sites=%llu inline_words=%llu thunk_sites=%llu"
+        " thunk_words=%llu ibranch_sites=%llu ibranch_words=%llu thunk_bodies=%llu thunk_body_words=%llu\n",
+        (unsigned long long)g_exit_inline_sites, (unsigned long long)g_exit_inline_words,
+        (unsigned long long)g_exit_thunk_sites, (unsigned long long)(g_exit_thunk_sites * 3u),
+        (unsigned long long)g_ibranch_thunk_sites, (unsigned long long)g_ibranch_thunk_sites,
+        (unsigned long long)g_exit_thunk_bodies, (unsigned long long)g_exit_thunk_body_words);
     static const char *const other_name[HL_X86_A64_OTHER_COUNT] = {"stack", "move", "address", "system", "unknown"};
     for (unsigned other = 0; other < HL_X86_A64_OTHER_COUNT; ++other)
         hl_x86_a64_appendf(out, size, &written,
@@ -1624,6 +1635,9 @@ static void *translate_block(uint64_t gpc) {
     };
     const int stitch = 1;
     uint64_t start = gpc;
+    // Lay this arena's shared out-of-line exit thunk before the region proper, so `host` (and every
+    // recorded body/provenance range) still starts at the prologue and nothing can fall into it.
+    emit_exit_thunk_body();
     void *host = g_cp;
     emit_prologue();
     void *body = g_cp;
@@ -1732,7 +1746,7 @@ static void *translate_block(uint64_t gpc) {
         uint32_t *p = g_irq_patch;
         g_irq_patch = NULL;
         *p = 0xB5000000u | (((uint32_t)(((uint8_t *)g_cp - (uint8_t *)p) / 4) & 0x7FFFF) << 5) | 16; // cbnz x16
-        emit_exit_const(start, R_BRANCH);
+        if (!emit_exit_thunk_site(start)) emit_exit_const(start, R_BRANCH);
     }
     // W5B tier-2: the promoter (g_tier2_build) recompiles in place and updates the EXISTING map entry
     // itself, so don't insert a duplicate and don't chain pending edges here (the promoter does both

@@ -30,6 +30,13 @@ typedef struct hl_x86_signal_queue {
     volatile uint64_t *pending;
 } hl_x86_signal_queue;
 
+/* HL_X86_EXIT_THUNK: route unresolved constant-rip block exits and the IBTC miss tail through one
+   shared per-arena thunk body. The flag lives in the AArch64 emitter (emit.c), which is textually
+   included only on an AArch64 host; every other host takes the transliterator/interpreter, has no
+   exit thunks at all, and links the no-op stub in engine/target/x86_64.c. Launch code therefore sets
+   the option through this seam rather than touching the emitter's static directly. */
+void hl_x86_emit_set_exit_thunk(int enabled);
+
 uint64_t hl_x86_signal_nzcv_to_eflags(uint64_t nzcv);
 uint64_t hl_x86_signal_eflags_to_nzcv(uint64_t eflags);
 void hl_x86_signal_build(struct cpu *cpu, int signal_number, const hl_x86_signal_state *state);

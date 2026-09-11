@@ -222,6 +222,9 @@ static const hl_option_definition hl_option_definitions[] = {
     HL_LAUNCH_OPTION("HL_TRANSLIT_RIPREL_LOAD_BRIDGE",
                      "control default-off natural RIP-relative register-load lowering",
                      HL_OPTION_FLAG),
+    HL_LAUNCH_OPTION("HL_X86_EXIT_THUNK",
+                     "route unresolved constant-rip x86 block exits through one shared per-arena thunk",
+                     HL_OPTION_FLAG),
     HL_DEBUG_OPTION("HL_LOG", "debug-build logging tag selector", HL_OPTION_TEXT),
     HL_DEBUG_OPTION("HL_FATAL_DIAGNOSTICS", "fatal guest register publication", HL_OPTION_FLAG),
 };

@@ -188,6 +188,11 @@ const DEFINITIONS: &[Definition] = &[
         Flag
     ),
     launch!(
+        "HL_X86_EXIT_THUNK",
+        "route unresolved constant-rip x86 block exits through one shared per-arena thunk",
+        Flag
+    ),
+    launch!(
         "HL_TRANSLIT_JCC_SELF_LINK",
         "link a same-ISA descriptor's own backward JCC edge straight to its entry",
         Flag

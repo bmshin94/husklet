@@ -1462,6 +1462,15 @@ static void sigframe_resume_dispatch(struct cpu *c, void *native_context) {
 }
 #endif
 
+#if !defined(HL_HOST_CPU_AARCH64)
+/* No AArch64 emitter on this host, so there are no exit thunks to route through: the option is
+   accepted (the Rust and C registries must agree on the whole option set regardless of host) and
+   has no emission to change. Mirrors translit_enabled()/translit_report() above. */
+void hl_x86_emit_set_exit_thunk(int enabled) {
+    (void)enabled;
+}
+#endif
+
 static int fastclk_fault_fixup(siginfo_t *info, void *native_context) {
     struct cpu *c = (struct cpu *)pthread_getspecific(g_cpu_key);
     return hl_x86_signal_fast_clock_fault(c, (uintptr_t)(info != NULL ? info->si_addr : NULL), native_context);
@@ -2020,6 +2029,9 @@ int hl_run_linux_guest(const hl_host_services *host, hl_linux_abi *box, const ch
     /* Restore enters engine_global_init and translated execution from inside ckpt_restore_tree, so the
        execution-scoped diagnostic and symbol-publication snapshot must exist before that early return. */
     g_prof = hl_option_get("HL_C_DIAGNOSTICS") != NULL;
+    /* Route unresolved constant-rip exits through one shared per-arena thunk instead of a full
+       inline exit at every edge.  Unset -> the historical inline emission, byte for byte. */
+    hl_x86_emit_set_exit_thunk(hl_option_flag_value("HL_X86_EXIT_THUNK", 0));
     translit_profile_options_refresh();
     const char *rdir = hl_option_get("HL_RESTORE");
     if (rdir != NULL) return hl_vfs_cursor_state_finish(ckpt_restore_tree(rootfs));
