@@ -798,7 +798,13 @@ void hl_x86_emit_block_return(void) {
 
 // ---------------- prologue / spill / exits ----------------
 // Prologue: entered x0 = &cpu. Pin cpu in x28, restore flags + 16 guest GPRs (x0 last).
-static void emit_prologue(void) {
+// EVERY word below is a compile-time constant encoding (register numbers and cpu-struct byte
+// offsets only -- no guest pc, no host pointer, no PC-relative displacement), so the sequence is
+// byte-identical at all 40,702 region heads.  HL_X86_PROLOGUE_WORDS records its length; the
+// out-of-line trampoline below asserts the two agree.
+#define HL_X86_PROLOGUE_WORDS 27u
+
+static void emit_prologue_inline(void) {
     emit32(0xAA0003FCu); // mov x28, x0   (cpu)
     e_nzcv_load();       // restore flags
     for (int t = 0; t < 16; t += 2)
@@ -1374,6 +1380,97 @@ static int emit_ibranch_thunk_site(void) {
     emit32(0x14000000u | ((uint32_t)d & 0x3FFFFFFu)); // b thunk
     g_ibranch_thunk_sites++;
     return 1;
+}
+
+// ---------------- shared out-of-line region prologue (HL_X86_PROLOGUE_THUNK) ----------------
+// emit_prologue_inline() lays a byte-identical HL_X86_PROLOGUE_WORDS-word block at EVERY region head
+// (mov x28,x0; ldr x20/msr nzcv; 8x ldp_q; 16x ldr).  It runs only on DISPATCHER entry: chained edges
+// enter at `body` / `body + g_fwdskip` and never see it.  With this option on the head collapses to
+//      bl   <prologue trampoline>
+// and one copy of the reload lives per code arena, ending in `br x30`.  Obligations:
+//   * x30.  `bl` writes x30 = the address of the NEXT instruction, which is exactly `body` -- so the
+//     trampoline needs no adr/adrp (whose +/-1MB reach would not span the 64MB arena anyway) and no
+//     literal.  x30 is dead in emitted code: run_block spills the host x30 into cpu->host_save and
+//     block_return reloads it, and emitted code already clobbers it (`blr x16` in the bus-fault,
+//     store-alias and rep-string helpers; `bl` at every HL_X86_EXIT_THUNK site).  The exit thunk also
+//     wants x30, but the two uses cannot overlap: this one is produced by the region's own first
+//     instruction and consumed by the trampoline's terminal `br x30` with no guest code in between,
+//     while the exit thunk's is produced at a block terminator.  Neither value is live across any
+//     guest instruction.
+//   * Entry points.  `host` (the dispatcher's entry, the value map_put records and tier2_promote
+//     replaces) is still the first word of the region; `body` is still the word after the prologue,
+//     now host+4.  The two-instruction IRQ poll header still occupies body+0/body+4 and a forward
+//     chain still lands on body+g_fwdskip (= body+8) -- the trampoline is BEFORE `body`, so the
+//     body+0 / body[2] slots tier2_promote rewrites and the add_pend3/patch_links_to branch slots are
+//     bit-for-bit the layout they were.  `body` stays 4-byte aligned (it was host+108 before, also
+//     4- but not 16-aligned, so no alignment property is lost).
+//   * Reach.  `bl` is +/-128MB and the trampoline lives in the SAME 64MB arena as its callers; the
+//     range is still checked and the head falls back to the inline prologue if it ever could not.
+//   * Faults.  The trampoline only loads from the pinned cpu struct, exactly as the inline copy did,
+//     and jit_pc_in_retained_cache() is a plain arena range test, so a PC inside it classifies as
+//     in-cache identically.  jit_instruction_map_put records only per-guest-instruction ranges
+//     starting at `body`, so provenance is unchanged (the prologue never had an entry either).
+//   * Relocation.  The body contains no baked host pointer, so it adds no PRELOC_* entry and cannot
+//     poison a persistent-cache save; the `bl` is arena-internal and PC-relative, so an arena that is
+//     re-slid wholesale (HL_PCACHE / the HL_CHECKPOINT forced bases, which force GUEST image bases and
+//     move the arena as one block) keeps the displacement valid.
+//   * Invalidation.  Tagged with the arena generation and required to lie inside the live arena, so a
+//     wholesale flush, jit_cache_rewind_in_place or a rotation (each bumps g_cache_gen or resets g_cp)
+//     makes the next region lay a fresh trampoline instead of calling into dropped code.  A fork child
+//     inherits the arena and the entry pointer together; exec replaces both.
+//   * Publication.  Laid from translate_block inside the dispatcher's jit_wprot(0) window and inside
+//     [g_emit_start, g_cp), so the existing jit_publish_code covers it with no new bracket -- the same
+//     seam the exit thunk body uses.  Both bodies are laid at the head of the same region, each
+//     terminated by an unconditional branch, so neither can be fallen into.
+static int g_prologue_thunk;       // 0 -> byte-identical to the historical inline emission
+static uint32_t *g_prologue_entry; // trampoline entry in the CURRENT arena
+static uint64_t g_prologue_thunk_gen;
+static uint64_t g_prologue_thunk_bodies, g_prologue_thunk_body_words, g_prologue_thunk_sites, g_prologue_inline_sites;
+
+void hl_x86_emit_set_prologue_thunk(int enabled) {
+    g_prologue_thunk = enabled != 0;
+}
+
+static int prologue_thunk_live(void) {
+    return g_prologue_entry != NULL && g_prologue_thunk_gen == g_cache_gen &&
+           (uint8_t *)g_prologue_entry >= (uint8_t *)g_cache && (uint8_t *)g_prologue_entry < (uint8_t *)g_cp;
+}
+
+// Lay this arena's one shared prologue trampoline.  Called at the head of a region, before `host`.
+static void emit_prologue_thunk_body(void) {
+    if (!g_prologue_thunk || prologue_thunk_live()) return;
+    uint32_t *begin = (uint32_t *)g_cp;
+    g_prologue_entry = begin;
+    g_prologue_thunk_gen = g_cache_gen;
+    emit_prologue_inline();
+    e_br(30); // br x30 -> the caller's `body` (the word after its `bl`)
+    uint64_t words = (uint64_t)((uint32_t *)g_cp - begin);
+    if (words != HL_X86_PROLOGUE_WORDS + 1u) {
+        // The inline prologue changed length: the trampoline is still correct (it is the same
+        // emitter), but HL_X86_PROLOGUE_WORDS -- which the region stitch budget uses to stay
+        // identical with the option off -- is stale.  Refuse the option rather than silently
+        // changing region composition.
+        g_prologue_thunk = 0;
+        g_prologue_entry = NULL;
+        g_cp = (uint8_t *)begin;
+        return;
+    }
+    g_prologue_thunk_bodies++;
+    g_prologue_thunk_body_words += words;
+}
+
+// The region head: one `bl` in place of the inline reload.  0 -> caller emitted the inline prologue.
+static void emit_prologue(void) {
+    if (g_prologue_thunk && prologue_thunk_live()) {
+        int64_t d = ((uint8_t *)g_prologue_entry - (uint8_t *)g_cp) / 4;
+        if (d >= -(INT64_C(1) << 25) && d < (INT64_C(1) << 25)) {
+            emit32(0x94000000u | ((uint32_t)d & 0x3FFFFFFu)); // bl <trampoline>; x30 == body
+            g_prologue_thunk_sites++;
+            return;
+        }
+    }
+    g_prologue_inline_sites++;
+    emit_prologue_inline();
 }
 
 // ---------------- S1: inline vDSO-style time fast path (cntvct-based) ----------------

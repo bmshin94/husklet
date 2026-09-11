@@ -139,6 +139,9 @@ struct LaunchArguments {
     /// Route unresolved constant-rip x86 block exits through one shared per-arena thunk (off by default).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true)]
     x86_exit_thunk: Option<TranslitFeatureControl>,
+    /// Route the x86 region prologue through one shared per-arena trampoline (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true)]
+    x86_prologue_thunk: Option<TranslitFeatureControl>,
     /// Control the strict FS-load bridge (enabled by default for x86-64 transliteration).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, requires = "translit")]
     translit_fs_load_bridge: Option<TranslitFeatureControl>,
@@ -454,6 +457,11 @@ fn execute(guest: Guest, launch: &LaunchArguments) -> Result<hl_engine::engine::
             "--x86-exit-thunk is available only in the x86-64 worker".to_owned(),
         ));
     }
+    if launch.x86_prologue_thunk.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-prologue-thunk is available only in the x86-64 worker".to_owned(),
+        ));
+    }
     if launch.translit_fs_load_bridge.is_some() && guest != Guest::X86_64 {
         return Err(Failure::Request(
             "--translit-fs-load-bridge is available only in the x86-64 worker".to_owned(),
@@ -592,6 +600,7 @@ fn rootfs_plan(
         (launch.translit_riprel_load_bridge, "HL_TRANSLIT_RIPREL_LOAD_BRIDGE"),
         (launch.translit_fs_load_bridge, "HL_TRANSLIT_FS_LOAD_BRIDGE"),
         (launch.x86_exit_thunk, "HL_X86_EXIT_THUNK"),
+        (launch.x86_prologue_thunk, "HL_X86_PROLOGUE_THUNK"),
     ] {
         if let Some(control) = control {
             let value = if control == TranslitFeatureControl::On {
@@ -937,6 +946,7 @@ mod tests {
         assert_eq!(defaults.translit_riprel_load_bridge, None);
         assert_eq!(defaults.translit_fs_load_bridge, None);
         assert_eq!(defaults.x86_exit_thunk, None);
+        assert_eq!(defaults.x86_prologue_thunk, None);
         assert_eq!(defaults.native_supervised, None);
 
         let selected = launch(&[
@@ -949,6 +959,7 @@ mod tests {
             "--translit-riprel-load-bridge",
             "--translit-fs-load-bridge",
             "--x86-exit-thunk=on",
+            "--x86-prologue-thunk=on",
             "--native-supervised",
             "--rootfs",
             "/image",
@@ -975,6 +986,7 @@ mod tests {
             Some(super::TranslitFeatureControl::On)
         );
         assert_eq!(selected.x86_exit_thunk, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_prologue_thunk, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.native_supervised, Some(super::NativeSupervisedControl::On));
         assert_eq!(selected.rootfs.as_deref(), Some(std::path::Path::new("/image")));
 
@@ -1480,6 +1492,7 @@ mod tests {
         assert_eq!(defaults.options.get("HL_TRANSLIT_DIRECT_JMP_IBTC_DISABLE"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_RIPREL_LOAD_BRIDGE"), None);
         assert_eq!(defaults.options.get("HL_X86_EXIT_THUNK"), None);
+        assert_eq!(defaults.options.get("HL_X86_PROLOGUE_THUNK"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_FS_LOAD_BRIDGE"), None);
         assert_eq!(defaults.options.get("HL_NATIVE_SUPERVISED"), None);
 

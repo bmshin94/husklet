@@ -334,6 +334,17 @@ static int hl_x86_a64_route_report(char *out, size_t size) {
         (unsigned long long)g_exit_thunk_sites, (unsigned long long)(g_exit_thunk_sites * 3u),
         (unsigned long long)g_ibranch_thunk_sites, (unsigned long long)g_ibranch_thunk_sites,
         (unsigned long long)g_exit_thunk_bodies, (unsigned long long)g_exit_thunk_body_words);
+    /* Region-prologue accounting: inline heads (HL_X86_PROLOGUE_WORDS each) vs 1-word `bl` heads,
+       plus the per-arena trampoline bodies (OUTSIDE the per-region word census, like the exit
+       thunk bodies above). */
+    hl_x86_a64_appendf(out, size, &written,
+                       "[prof] x86-a64-prologue: inline_sites=%llu inline_words=%llu thunk_sites=%llu"
+                       " thunk_words=%llu bodies=%llu body_words=%llu\n",
+                       (unsigned long long)g_prologue_inline_sites,
+                       (unsigned long long)(g_prologue_inline_sites * (uint64_t)HL_X86_PROLOGUE_WORDS),
+                       (unsigned long long)g_prologue_thunk_sites, (unsigned long long)g_prologue_thunk_sites,
+                       (unsigned long long)g_prologue_thunk_bodies,
+                       (unsigned long long)g_prologue_thunk_body_words);
     static const char *const other_name[HL_X86_A64_OTHER_COUNT] = {"stack", "move", "address", "system", "unknown"};
     for (unsigned other = 0; other < HL_X86_A64_OTHER_COUNT; ++other)
         hl_x86_a64_appendf(out, size, &written,
@@ -1645,6 +1656,9 @@ static void *translate_block(uint64_t gpc) {
     // Lay this arena's shared out-of-line exit thunk before the region proper, so `host` (and every
     // recorded body/provenance range) still starts at the prologue and nothing can fall into it.
     emit_exit_thunk_body();
+    // Same seam for the shared out-of-line region prologue: laid before `host`, so `host` still
+    // starts the region proper and every recorded body/provenance range is unchanged.
+    emit_prologue_thunk_body();
     void *host = g_cp;
     emit_prologue();
     void *body = g_cp;
@@ -1676,12 +1690,17 @@ static void *translate_block(uint64_t gpc) {
     // chains of hard-to-predict conditionals are cut. Ending a region early is always semantics-preserving:
     // intermediate block-starts are never registered in g_map, so the truncated successor self-heals as an
     // on-demand fresh translation via the ordinary chain-exit path (identical to NOSTITCH, re-anchored).
+// The budget is measured from `body` plus the CONSTANT inline-prologue length rather than from
+// `host`: with HL_X86_PROLOGUE_THUNK off body == host + HL_X86_PROLOGUE_WORDS*4, so this is the same
+// expression it always was, and with the option on the region composition (and therefore the count of
+// guest instructions translated) stays identical instead of silently widening by the 104 bytes the
+// out-of-line prologue frees.
 #ifndef STITCH_MAX_COND
 #define STITCH_MAX_COND 3
 #endif
 #define STITCH_OK                                                                                                      \
     (stitch && trace_blk < HL_X86_TRACE_MAX_BLOCKS - 1 && ncond < STITCH_MAX_COND &&                                   \
-     (size_t)((uint8_t *)g_cp - (uint8_t *)host) < HL_X86_TRACE_MAX_BYTES)
+     (size_t)((uint8_t *)g_cp - (uint8_t *)body) + HL_X86_PROLOGUE_WORDS * 4u < HL_X86_TRACE_MAX_BYTES)
     for (;;) {
         struct insn I;
         g_emit_gpc = gpc; // IRQSLIM: tag chain emission with the current branch's rip
