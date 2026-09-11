@@ -12,6 +12,12 @@ const CLEAN: i32 = if cfg!(target_arch = "aarch64") { 0 } else { 4 };
 /// every addressing mode, every operand width and every count including zero, with the real destination
 /// left stale. The immediate-count forms never touched `x17` and were always correct, so the fixture
 /// spans both count forms: the one that broke and the one that has to keep working.
+///
+/// The hook emits every fixture twice, once per `HL_X86_RMLOAD_FOLD` shape, because the folded
+/// `rm_load` addresses `[base,#imm]` directly and leaves no `x17` load to anchor a window scan on --
+/// the option changes which lowering ships, not whether the reserved-register contract applies. The
+/// flag is launch-scoped and read once, so the hook drives it in-process and fails if either shape is
+/// wrong; a single verdict covers both.
 #[test]
 fn memory_destination_double_shifts_preserve_the_effective_address() {
     assert_eq!(hl_native::x86_double_shift_memory_ea_test(), CLEAN);

@@ -103,6 +103,10 @@ int ea_imm_fold(struct insn *insn, int width, int *base, int *offset);
 void emit_bus_guard(int address_register, uint64_t size, uint64_t rip);
 void emit_rm_fold_discard(void);
 void emit_rm_fold_address(void);
+#if defined(HL_NATIVE_TEST_HOOKS)
+/* Force the cached HL_X86_RMLOAD_FOLD answer; -1 re-reads the launch option. */
+void hl_x86_rmload_fold_test_set(int enabled);
+#endif
 
 void emit_memory_guard(int address_register, uint64_t size, uint64_t rip, uint32_t required);
 int emit_soft_memory_active(void);

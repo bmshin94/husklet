@@ -1244,14 +1244,35 @@ HL_API int hl_x86_64_reserved_register_test(void) {
  * including zero, with the real destination left stale.  The immediate-count forms never touched x17,
  * which is why it survived review; the operand matrix below spans both.
  *
- * Emit the double-shift lowering for every memory-destination shape and read the emitted words back:
- * between the load through [x17] and the store through [x17], no instruction may name x17 as its
- * destination.  That states the contract directly, so it also catches the next lowering that borrows
- * the effective-address register for a temporary.
+ * The contract has TWO emitted shapes and the fixture drives both, because HL_X86_RMLOAD_FOLD
+ * (default off) changes which one a memory r/m operand takes:
  *
- * Returns 0 clean, 1 when a fixture clobbers the address between the load and the store, 2 when a
- * fixture emitted no load/store pair at all (a scan of nothing must never read as a pass), and 3 when
- * the scan met an instruction class it cannot decode a destination for.
+ *   unfolded -- `rm_load` emits the effective address into x17, loads through [x17], and `rm_store`
+ *     stores through the same x17.  The address is live across the whole lowering, so the invariant
+ *     is the window one: between the load through [x17] and the store through [x17], no instruction
+ *     may name x17 as its destination.
+ *
+ *   folded -- `rm_load` addresses [base,#imm] directly (`ldr x16,[base,#imm]`, no x17 at all) and
+ *     defers the address to `emit_rm_fold_address()`, which `rm_store` calls just before storing.
+ *     There is no x17 load to anchor on, so the window invariant is vacuous here and a window scan
+ *     reports "no load/store pair" -- verdict 2 -- on a perfectly correct lowering.  The invariant
+ *     that actually holds is the ownership one: nothing in the emitted fixture writes x17 except the
+ *     deferred materialization -- one contiguous run of address arithmetic seeded from the r/m base
+ *     register, with x17 unwritten from there through to the store.  The fold conditions
+ *     (base only, no index, no segment, not rip-relative, no addr32, no non-PIE bias, bus inactive)
+ *     leave `emit_ea` exactly that shape and leave the bus guard inert, so anything else writing x17
+ *     -- before the run, inside it, or between it and the store -- is a lowering borrowing the
+ *     reserved effective-address register, which is what this test exists to catch.
+ *
+ * Only the base-register shapes fold; index, rip-relative and absolute operands stay unfolded even
+ * with the option on, so the fixture matrix covers both invariants in one pass of the folded mode.
+ * Which shape each fixture must take is PREDICTED from `ea_imm_fold` rather than inferred from the
+ * emitted words: a fixture that silently changes shape is itself a regression, not a free pass.
+ *
+ * Returns 0 clean, 1 when a fixture lets anything but the effective-address contract own x17, 2 when
+ * a fixture emitted neither shape or emitted the shape it was not predicted to (a scan of nothing
+ * must never read as a pass), and 3 when the scan met an instruction class it cannot decode a
+ * destination for.
  */
 
 /* Destination register of one emitted word: -1 for "writes no GPR", -2 for "unrecognized class". */
@@ -1274,6 +1295,31 @@ static int x86_double_shift_gpr_dest(uint32_t word) {
 }
 
 #define HL_X86_DOUBLE_SHIFT_EA 17
+#define HL_X86_DOUBLE_SHIFT_VALUE 16
+
+/* First word of a deferred address materialization: x17 taken from the r/m BASE register, which is
+   the only seed `emit_ea` has for a fold-eligible operand -- `add`/`sub x17,base,#imm` for a
+   displacement that fits an immediate, plain `mov x17,base` when it does not. */
+static int x86_double_shift_ea_seed(uint32_t word, int base) {
+    if ((int)(word & 31u) != HL_X86_DOUBLE_SHIFT_EA) return 0;
+    if ((word & 0xFFE0FFE0u) == 0xAA0003E0u) return (int)((word >> 16) & 31u) == base; /* mov x17,base */
+    if ((word & 0xFF800000u) != 0x91000000u && (word & 0xFF800000u) != 0xD1000000u) return 0;
+    return (int)((word >> 5) & 31u) == base; /* add/sub x17,base,#imm */
+}
+
+/* Continuation of that materialization: the displacement terms `emit_ea` adds on top of the seed. */
+static int x86_double_shift_ea_step(uint32_t word) {
+    if ((int)(word & 31u) != HL_X86_DOUBLE_SHIFT_EA) return 0;
+    if ((word & 0xFF800000u) != 0x91000000u && (word & 0xFF800000u) != 0xD1000000u) return 0;
+    return (int)((word >> 5) & 31u) == HL_X86_DOUBLE_SHIFT_EA; /* add/sub x17,x17,#imm */
+}
+
+/* The folded load itself: the value arrives in x16 straight out of [base,#imm], never through x17. */
+static int x86_double_shift_folded_load(uint32_t word, int base) {
+    if (!(word & 0x00400000u)) return 0;
+    if ((word & 0x3B000000u) != 0x39000000u && (word & 0x3B200C00u) != 0x38000000u) return 0;
+    return (int)(word & 31u) == HL_X86_DOUBLE_SHIFT_VALUE && (int)((word >> 5) & 31u) == base;
+}
 
 HL_API int hl_x86_64_double_shift_memory_ea_test(void) {
 #if !defined(HL_HOST_CPU_AARCH64)
@@ -1286,107 +1332,175 @@ HL_API int hl_x86_64_double_shift_memory_ea_test(void) {
     uint8_t *saved_cp = g_cp;
     int saved_recorded = g_address_recorded;
     int saved_rwx = g_rwx_guest;
-    int pairs = 0, verdict = 0;
+    int unfolded_pairs = 0, folded_pairs = 0, verdict = 0;
     g_address_recorded = 0;
     g_rwx_guest = 0; /* scan the plain direct-store lowering, not the soft-mapping one */
 
-    for (int shape = 0; shape < 6 && verdict == 0; ++shape)
-        for (int which = 0; which < 4 && verdict == 0; ++which)
-            for (int size = 0; size < 3 && verdict == 0; ++size) {
-                struct insn insn;
-                memset(&insn, 0, sizeof insn);
-                insn.len = 5;
-                insn.two = 1;
-                insn.op = opcodes[which];
-                insn.opsize = widths[size];
-                insn.p66 = widths[size] == 2;
-                insn.rexW = widths[size] == 8;
-                insn.has_rex = insn.rexW;
-                insn.is_mem = 1;
-                insn.reg = 6; /* source operand: guest rsi */
-                insn.imm = 5; /* immediate-count forms */
-                switch (shape) {
-                case 0: /* [base] */
-                    insn.m_hasbase = 1;
-                    insn.m_base = 3;
-                    break;
-                case 1: /* [base + disp8] */
-                    insn.m_hasbase = 1;
-                    insn.m_base = 3;
-                    insn.disp = 8;
-                    break;
-                case 2: /* [base + index*8] */
-                    insn.m_hasbase = 1;
-                    insn.m_base = 3;
-                    insn.m_hasindex = 1;
-                    insn.m_index = 2;
-                    insn.m_scale = 3;
-                    break;
-                case 3: /* [base + index*8 + disp32] */
-                    insn.m_hasbase = 1;
-                    insn.m_base = 3;
-                    insn.m_hasindex = 1;
-                    insn.m_index = 2;
-                    insn.m_scale = 3;
-                    insn.disp = 0x120;
-                    break;
-                case 4: /* [rip + disp32] */
-                    insn.rip_rel = 1;
-                    insn.disp = 0x40;
-                    break;
-                default: /* [disp32] -- absolute, no base and no index */
-                    insn.disp = 0x1000;
-                    break;
-                }
-
-                uint32_t *base = code;
-                g_cp = (uint8_t *)code;
-                (void)lower_double_shift(&insn, UINT64_C(0x401000));
-                size_t count = (size_t)((uint32_t *)g_cp - base);
-                if (count == 0 || count > sizeof code / sizeof code[0]) {
-                    verdict = 2;
-                    break;
-                }
-
-                /* The load through the effective address opens the window; the store closes it. */
-                size_t load = count, store = count;
-                for (size_t index = 0; index < count; ++index) {
-                    uint32_t word = code[index];
-                    if ((word & 0x3B000000u) != 0x39000000u) continue;
-                    if ((int)((word >> 5) & 31u) != HL_X86_DOUBLE_SHIFT_EA) continue;
-                    if (word & 0x00400000u) {
-                        if (load == count) load = index;
-                    } else
-                        store = index;
-                }
-                if (load == count || store == count || store <= load) {
-                    verdict = 2;
-                    break;
-                }
-                pairs++;
-
-                for (size_t index = load + 1; index < store; ++index) {
-                    int dest = x86_double_shift_gpr_dest(code[index]);
-                    if (dest == -2) {
-                        verdict = 3;
+    /* HL_X86_RMLOAD_FOLD is launch-scoped and read once, so the fixture drives the cached answer
+       itself: one pass per emitted shape, in-process, with no dependence on how this process was
+       launched.  Both passes must hold -- the option decides which lowering ships, not whether the
+       reserved-register contract applies. */
+    for (int fold = 0; fold < 2 && verdict == 0; ++fold) {
+        hl_x86_rmload_fold_test_set(fold);
+        for (int shape = 0; shape < 6 && verdict == 0; ++shape)
+            for (int which = 0; which < 4 && verdict == 0; ++which)
+                for (int size = 0; size < 3 && verdict == 0; ++size) {
+                    struct insn insn;
+                    memset(&insn, 0, sizeof insn);
+                    insn.len = 5;
+                    insn.two = 1;
+                    insn.op = opcodes[which];
+                    insn.opsize = widths[size];
+                    insn.p66 = widths[size] == 2;
+                    insn.rexW = widths[size] == 8;
+                    insn.has_rex = insn.rexW;
+                    insn.is_mem = 1;
+                    insn.reg = 6; /* source operand: guest rsi */
+                    insn.imm = 5; /* immediate-count forms */
+                    switch (shape) {
+                    case 0: /* [base] */
+                        insn.m_hasbase = 1;
+                        insn.m_base = 3;
+                        break;
+                    case 1: /* [base + disp8] */
+                        insn.m_hasbase = 1;
+                        insn.m_base = 3;
+                        insn.disp = 8;
+                        break;
+                    case 2: /* [base + index*8] */
+                        insn.m_hasbase = 1;
+                        insn.m_base = 3;
+                        insn.m_hasindex = 1;
+                        insn.m_index = 2;
+                        insn.m_scale = 3;
+                        break;
+                    case 3: /* [base + index*8 + disp32] */
+                        insn.m_hasbase = 1;
+                        insn.m_base = 3;
+                        insn.m_hasindex = 1;
+                        insn.m_index = 2;
+                        insn.m_scale = 3;
+                        insn.disp = 0x120;
+                        break;
+                    case 4: /* [rip + disp32] */
+                        insn.rip_rel = 1;
+                        insn.disp = 0x40;
+                        break;
+                    default: /* [disp32] -- absolute, no base and no index */
+                        insn.disp = 0x1000;
                         break;
                     }
-                    if (dest == HL_X86_DOUBLE_SHIFT_EA) {
-                        verdict = 1;
+
+                    /* Predicted shape: `rm_load` folds exactly when the option is on and the operand
+                       is fold-eligible.  Index, rip-relative and absolute operands never are. */
+                    int fold_base = 0, fold_offset = 0;
+                    int expect_fold = fold && ea_imm_fold(&insn, widths[size], &fold_base, &fold_offset) != 0;
+
+                    uint32_t *base = code;
+                    g_cp = (uint8_t *)code;
+                    (void)lower_double_shift(&insn, UINT64_C(0x401000));
+                    size_t count = (size_t)((uint32_t *)g_cp - base);
+                    if (count == 0 || count > sizeof code / sizeof code[0]) {
+                        verdict = 2;
                         break;
                     }
-                }
-            }
 
+                    /* The store through [x17] closes both shapes; only the unfolded one opens with a
+                       load through [x17]. */
+                    size_t load = count, store = count;
+                    for (size_t index = 0; index < count; ++index) {
+                        uint32_t word = code[index];
+                        if ((word & 0x3B000000u) != 0x39000000u) continue;
+                        if ((int)((word >> 5) & 31u) != HL_X86_DOUBLE_SHIFT_EA) continue;
+                        if (word & 0x00400000u) {
+                            if (load == count) load = index;
+                        } else
+                            store = index;
+                    }
+                    if (store == count || (load != count) == (expect_fold != 0)) {
+                        verdict = 2; /* no store, or the shape the option did not ask for */
+                        break;
+                    }
+
+                    if (!expect_fold) {
+                        if (load == count || store <= load) {
+                            verdict = 2;
+                            break;
+                        }
+                        unfolded_pairs++;
+                        for (size_t index = load + 1; index < store; ++index) {
+                            int dest = x86_double_shift_gpr_dest(code[index]);
+                            if (dest == -2) {
+                                verdict = 3;
+                                break;
+                            }
+                            if (dest == HL_X86_DOUBLE_SHIFT_EA) {
+                                verdict = 1;
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+
+                    /* Folded: x17 belongs to the deferred materialization alone.  Collect every word
+                       ahead of the store that writes it and require them to be one contiguous run
+                       seeded from the r/m base register: the last write before the store is then the
+                       materialization by construction, and nothing else in the fixture ever owned the
+                       address.  What the guard emits between that run and the store only READS x17 --
+                       it records the effective address into the cpu image -- which is a use of the
+                       contract, not a violation of it. */
+                    size_t first = count, last = count, writes = 0;
+                    int folded_load = 0;
+                    for (size_t index = 0; index < store; ++index) {
+                        int dest = x86_double_shift_gpr_dest(code[index]);
+                        if (dest == -2) {
+                            verdict = 3;
+                            break;
+                        }
+                        if (x86_double_shift_folded_load(code[index], fold_base)) folded_load = 1;
+                        if (dest != HL_X86_DOUBLE_SHIFT_EA) continue;
+                        if (first == count) first = index;
+                        last = index;
+                        writes++;
+                    }
+                    if (verdict) break;
+                    if (!folded_load || first == count) {
+                        /* No folded load, or a store through an x17 nobody materialized: the write
+                           half has no address behind it at all. */
+                        verdict = first == count ? 1 : 2;
+                        break;
+                    }
+                    if (last - first + 1 != writes) {
+                        verdict = 1; /* a second, disjoint writer owns x17 as well */
+                        break;
+                    }
+                    if (!x86_double_shift_ea_seed(code[first], fold_base)) {
+                        verdict = 1; /* the run does not start from the r/m base register */
+                        break;
+                    }
+                    for (size_t index = first + 1; index <= last; ++index)
+                        if (!x86_double_shift_ea_step(code[index])) {
+                            verdict = 1;
+                            break;
+                        }
+                    if (verdict) break;
+                    folded_pairs++;
+                }
+    }
+
+    hl_x86_rmload_fold_test_set(-1); /* back to the launch-scoped answer */
     g_cp = saved_cp;
     g_address_recorded = saved_recorded;
     g_rwx_guest = saved_rwx;
     hl_x86_integer_reset_flags();
     if (verdict) return verdict;
-    return pairs == 6 * 4 * 3 ? 0 : 2;
+    /* Both passes ran every fixture, and the folded pass really did fold the two base-register
+       shapes: 72 unfolded fixtures with the option off, 48 unfolded plus 24 folded with it on. */
+    return unfolded_pairs == (6 * 4 * 3) + (4 * 4 * 3) && folded_pairs == 2 * 4 * 3 ? 0 : 2;
 #endif
 }
 
+#undef HL_X86_DOUBLE_SHIFT_VALUE
 #undef HL_X86_DOUBLE_SHIFT_EA
 #endif
 

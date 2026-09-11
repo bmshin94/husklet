@@ -39,11 +39,22 @@ void report_unimpl(uint64_t pc, struct insn *I);
 /* HL_X86_RMLOAD_FOLD: let a memory r/m operand take the same folded
    [base+#imm] load hl_x86_address_load already uses for `mov reg,[mem]`.
    Launch-scoped and read once; unset keeps the unconditional emit_ea form. */
+static int g_rmload_fold_cached = -1;
+
 static int rmload_fold_enabled(void) {
-    static int cached = -1;
-    if (cached < 0) cached = hl_option_flag_value("HL_X86_RMLOAD_FOLD", 0);
-    return cached;
+    if (g_rmload_fold_cached < 0) g_rmload_fold_cached = hl_option_flag_value("HL_X86_RMLOAD_FOLD", 0);
+    return g_rmload_fold_cached;
 }
+
+#if defined(HL_NATIVE_TEST_HOOKS)
+/* The launch flag is read once per process, so an in-process fixture that has to
+   emit BOTH the folded and the unfolded shape cannot reach it through the option
+   store: by the time the fixture runs, the first lowering has already cached it.
+   Drive the cache directly instead; -1 restores the launch-scoped answer. */
+void hl_x86_rmload_fold_test_set(int enabled) {
+    g_rmload_fold_cached = enabled;
+}
+#endif
 
 /* A folded rm_load addresses [base,#imm] directly and therefore does NOT leave
    the effective address in x17.  Most callers only consume the loaded value, but
