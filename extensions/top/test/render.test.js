@@ -3526,6 +3526,14 @@ test('installed extensions expose truthful enabled, disabled, fault and retry st
   await settled();
   assert.ok(labelled(stage, 'View permissions'));
   assert.equal(
+    ancestorProperty(stage, 'assistant', 'Card', 'Grow'),
+    undefined,
+    'card width authority is not cleared by a later false Grow property',
+  );
+  assert.deepEqual(ancestorProperty(stage, 'assistant', 'Card', 'Width'), {
+    Bounds: { minimum: { Chars: 36 }, maximum: 'Fill' },
+  });
+  assert.equal(
     ancestorTags(stage, 'Disable').includes('Expander'),
     false,
     'daily lifecycle control is visible without opening the permissions disclosure',
