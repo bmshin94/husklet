@@ -4,7 +4,6 @@ import {
   Badge,
   Button,
   Card,
-  CardActions,
   CardContent,
   CardHeader,
   Column,
@@ -81,7 +80,7 @@ function imageCapability(verb: ImageVerb): ExtensionCapability {
 
 const COPY_WIDTH = { maximum: { chars: 54 } } as const;
 const PAGE_WIDTH = { maximum: { chars: 110 } } as const;
-const CATALOGUE_PAGE_SIZE = 8;
+const CATALOGUE_PAGE_SIZE = 12;
 const INSTALLED_PAGE_SIZE = 12;
 const FILESYSTEM_VERBS = [
   { key: 'read', label: 'View contents', meaning: 'read' },
@@ -1158,7 +1157,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
             <Column gap={2} width="fill">
               {!acquisition && (
                 <Row gap={1} width="fill" align="center" justify="start" wrap>
-                  <Heading label="Discover" scale="caption" grow={false} align="start" />
+                  <Heading label="Find extensions" scale="caption" grow={false} align="start" />
                   {catalogueState === 'ready' && catalogueEntries.length > 0 ? (
                     <Badge
                       label={`${countLabel(catalogueEntries.length, 'extension')}${
@@ -1173,16 +1172,9 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                 </Row>
               )}
               {!acquisition && (
-                <Column gap={2}>
-                  <Text
-                    label="Browse available tools. Husklet inspects the image first; nothing is installed until you approve its exact access."
-                    color="text-dim"
-                    width={COPY_WIDTH}
-                    wrap
-                  />
+                <Column gap={1}>
                   {catalogueState === 'ready' && catalogueEntries.length > 0 ? (
-                    <Column gap={1} width="fill">
-                      <Text label="Find extensions" color="text-dim" />
+                    <Row gap={2} width="fill" wrap align="center" justify="start">
                       <Row gap={1} width="fill" wrap align="center" justify="start">
                         <Search
                           grow
@@ -1224,12 +1216,12 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                             }
                           }}
                         />
+                      </Row>
+                      <Row gap={1} align="center" justify="start">
                         <Text
                           label={`${visibleCatalogueEntries.length} of ${countLabel(catalogueEntries.length, 'extension')}`}
                           color="text-dim"
                         />
-                      </Row>
-                      <Row gap={1} width="fill" align="center" justify="start">
                         <Text label="Category" color="text-dim" />
                         <Select
                           value={catalogueCategory}
@@ -1248,7 +1240,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                           }}
                         />
                       </Row>
-                    </Column>
+                    </Row>
                   ) : null}
                   {catalogueState === 'loading' && (
                     <Row gap={1} align="center">
@@ -1297,23 +1289,29 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                         return (
                           <Card
                             key={entry.id}
-                            grow
+                            grow={false}
+                            height="content"
                             width={{ minimum: { chars: 38 }, maximum: 'fill' }}
                             variant="outline"
                           >
-                            <CardHeader
-                              label={entry.title}
-                              detail={`${entry.publisher} · Version ${entry.version}`}
-                              align="start"
-                              width="fill"
-                            />
-                            <CardContent gap={1}>
-                              <Text label={entry.description} color="text-dim" wrap />
+                            <CardContent gap={1} grow={false}>
+                              <Row gap={1} width="fill" align="center" justify="start">
+                                <Text label={entry.title} grow />
+                                <Text label={`v${entry.version}`} color="text-dim" />
+                              </Row>
+                              <Text
+                                label={entry.description}
+                                color="text-dim"
+                                tooltip={entry.description}
+                                wrap
+                              />
                               <Row gap={1} width="fill" wrap align="center" justify="start">
                                 <Badge
                                   label={
                                     installedExtension
-                                      ? `Installed · ${updateAvailable ? 'update available' : 'up to date'}`
+                                      ? updateAvailable
+                                        ? 'Update available'
+                                        : 'Installed · current'
                                       : 'Available'
                                   }
                                   tone={
@@ -1324,7 +1322,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                         : 'neutral'
                                   }
                                 />
-                                <Text label={trust.label} color="text-dim" />
+                                <Text label={`Publisher · ${entry.publisher}`} color="text-dim" />
                                 {compatibility.compatible !== true ? (
                                   <Badge
                                     label={
@@ -1345,75 +1343,76 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                   wrap
                                 />
                               ) : null}
-                              <Expander label="Trust & compatibility" expanded={false}>
-                                <Column gap={1}>
-                                  <Text
-                                    label={`Catalogue source · ${entry.source}`}
-                                    color="text-dim"
-                                    wrap
-                                  />
-                                  <Text
-                                    label={`Categories · ${(entry.categories ?? []).join(', ')}`}
-                                    color="text-dim"
-                                    wrap
-                                  />
-                                  <Text
-                                    label={`Image · ${compactImageReference(entry.reference)}`}
-                                    color="text-dim"
-                                    tooltip={entry.reference}
-                                    wrap
-                                  />
-                                  <Text
-                                    label={`Protocol ${entry.protocol ?? 'unavailable'} · ${entry.architectures?.join(', ') || 'architecture unavailable'}`}
-                                    color="text-dim"
-                                    wrap
-                                  />
-                                  {installedExtension ? (
+                              <Row gap={3} width="fill" wrap align="center" justify="start">
+                                <Expander label="Trust & compatibility" expanded={false}>
+                                  <Column gap={1}>
+                                    <Text label={trust.label} color="text-dim" wrap />
                                     <Text
-                                      label={`Installed image · ${capitalize(extensionState(installedExtension))} · ${compactDigest(installedExtension.image_digest)}`}
+                                      label={`Catalogue source · ${entry.source}`}
                                       color="text-dim"
-                                      tooltip={installedExtension.image_digest}
                                       wrap
                                     />
-                                  ) : null}
-                                </Column>
-                              </Expander>
-                            </CardContent>
-                            <CardActions gap={1} align="start" justify="start" width="fill">
-                              {updateAvailable ? (
-                                <Button
-                                  label="Review update"
-                                  tooltip={`Review the ${entry.version} update for ${entry.title}`}
-                                  size="small"
-                                  variant="filled"
-                                  tone="accent"
-                                  enabled={!busy && compatibility.compatible !== false}
-                                  onInvoke={() => inspect(entry.reference, entry)}
-                                />
-                              ) : !installedExtension ? (
-                                <Button
-                                  label="Review access"
-                                  tooltip={`Review access requested by ${entry.title}`}
-                                  size="small"
-                                  variant="outline"
-                                  tone="accent"
-                                  enabled={!busy && compatibility.compatible !== false}
-                                  onInvoke={() => inspect(entry.reference, entry)}
-                                />
-                              ) : (
-                                <>
-                                  {provider ? providerAction(installedExtension, provider) : null}
+                                    <Text
+                                      label={`Categories · ${(entry.categories ?? []).join(', ')}`}
+                                      color="text-dim"
+                                      wrap
+                                    />
+                                    <Text
+                                      label={`Image · ${compactImageReference(entry.reference)}`}
+                                      color="text-dim"
+                                      tooltip={entry.reference}
+                                      wrap
+                                    />
+                                    <Text
+                                      label={`Protocol ${entry.protocol ?? 'unavailable'} · ${entry.architectures?.join(', ') || 'architecture unavailable'}`}
+                                      color="text-dim"
+                                      wrap
+                                    />
+                                    {installedExtension ? (
+                                      <Text
+                                        label={`Installed image · ${capitalize(extensionState(installedExtension))} · ${compactDigest(installedExtension.image_digest)}`}
+                                        color="text-dim"
+                                        tooltip={installedExtension.image_digest}
+                                        wrap
+                                      />
+                                    ) : null}
+                                  </Column>
+                                </Expander>
+                                {updateAvailable ? (
                                   <Button
-                                    label="Check current image"
-                                    tooltip={`Inspect ${entry.reference} again and compare its immutable digest`}
+                                    label="Review update"
+                                    tooltip={`Review the ${entry.version} update for ${entry.title}`}
                                     size="small"
-                                    variant="outline"
+                                    variant="filled"
+                                    tone="accent"
                                     enabled={!busy && compatibility.compatible !== false}
                                     onInvoke={() => inspect(entry.reference, entry)}
                                   />
-                                </>
-                              )}
-                            </CardActions>
+                                ) : !installedExtension ? (
+                                  <Button
+                                    label="Review access"
+                                    tooltip={`Review access requested by ${entry.title}`}
+                                    size="small"
+                                    variant="outline"
+                                    tone="accent"
+                                    enabled={!busy && compatibility.compatible !== false}
+                                    onInvoke={() => inspect(entry.reference, entry)}
+                                  />
+                                ) : (
+                                  <>
+                                    {provider ? providerAction(installedExtension, provider) : null}
+                                    <Button
+                                      label="Check current image"
+                                      tooltip={`Inspect ${entry.reference} again and compare its immutable digest`}
+                                      size="small"
+                                      variant="outline"
+                                      enabled={!busy && compatibility.compatible !== false}
+                                      onInvoke={() => inspect(entry.reference, entry)}
+                                    />
+                                  </>
+                                )}
+                              </Row>
+                            </CardContent>
                           </Card>
                         );
                       })}

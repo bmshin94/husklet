@@ -108,7 +108,11 @@ impl LayoutManagerImpl for Weave {
             .filter(|line| {
                 line.children.iter().any(
                     |(child, _, _)| {
-                        if vertical { child.hexpands() } else { child.vexpands() }
+                        if vertical {
+                            child.hexpands()
+                        } else {
+                            child.vexpands() && !child.has_css_class("height-content")
+                        }
                     },
                 )
             })
@@ -121,7 +125,11 @@ impl LayoutManagerImpl for Weave {
         for line in lines {
             let cross_expands = line.children.iter().any(
                 |(child, _, _)| {
-                    if vertical { child.hexpands() } else { child.vexpands() }
+                    if vertical {
+                        child.hexpands()
+                    } else {
+                        child.vexpands() && !child.has_css_class("height-content")
+                    }
                 },
             );
             let bonus = if cross_expands {
@@ -172,6 +180,28 @@ impl Weave {
             line.main += advance;
             line.cross = line.cross.max(cross);
             line.children.push((child, main, cross));
+        }
+        if !vertical && room > 600 {
+            for line in &mut lines {
+                if !line.children.is_empty()
+                    && line
+                        .children
+                        .iter()
+                        .all(|(child, _, _)| child.has_css_class("hl-card") && child.hexpands())
+                {
+                    let available = room.saturating_sub(
+                        spacing
+                            .saturating_mul(i32::try_from(line.children.len().saturating_sub(1)).unwrap_or(i32::MAX)),
+                    );
+                    let width = available / i32::try_from(line.children.len()).unwrap_or(1).max(1);
+                    line.cross = line
+                        .children
+                        .iter()
+                        .map(|(child, _, _)| child.measure(gtk::Orientation::Vertical, width).1)
+                        .max()
+                        .unwrap_or(0);
+                }
+            }
         }
         lines
     }

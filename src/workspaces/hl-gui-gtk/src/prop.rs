@@ -403,6 +403,7 @@ fn ceiling_of(widget: &gtk::Widget, horizontal: bool, ceiling: Length) {
 }
 
 fn height(widget: &gtk::Widget, value: &PropValue) {
+    widget.remove_css_class("height-content");
     if let PropValue::Bounds(bounds) = value {
         widget.set_vexpand(false);
         widget.set_size_request(widget.width_request(), -1);
@@ -417,6 +418,11 @@ fn height(widget: &gtk::Widget, value: &PropValue) {
         Some(Length::Step(step)) => {
             widget.set_vexpand(false);
             widget.set_size_request(widget.width_request(), i32::from(u16::from(step) * Length::STEP_PIXELS));
+        }
+        Some(Length::Content) => {
+            widget.set_vexpand(false);
+            widget.set_size_request(widget.width_request(), -1);
+            widget.add_css_class("height-content");
         }
         _ => {
             widget.set_vexpand(false);

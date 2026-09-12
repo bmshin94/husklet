@@ -1631,6 +1631,21 @@ mod unix {
                 let description_bounds = description
                     .compute_bounds(&review_card)
                     .expect("Discover description belongs to its card");
+                assert!(
+                    description_bounds.height() <= 38.0,
+                    "{width_name} Discover description exceeded two compact lines: {description_bounds:?}"
+                );
+                if width == 1_200 {
+                    assert!(
+                        description_bounds.height() >= 30.0,
+                        "wide Discover fixture did not prove a complete two-line description: {description_bounds:?}"
+                    );
+                }
+                let trust = find_expander(&review_card, "Trust & compatibility");
+                assert!(trust.is_focusable(), "{width_name} trust details are keyboard reachable");
+                assert!(trust.grab_focus(), "{width_name} trust details accept keyboard focus");
+                assert!(has_label(&review_card, "Publisher · Community"));
+                assert!(has_label(&review_card, "Update available"));
                 let review_bounds_in_card = review
                     .compute_bounds(&review_card)
                     .expect("Discover action belongs to its card");
@@ -1650,11 +1665,6 @@ mod unix {
                         access_card_bounds.y(),
                         "wide Discover cards must share a grid row"
                     );
-                    assert_eq!(
-                        review_card_bounds.height(),
-                        access_card_bounds.height(),
-                        "wide Discover cards must have equal row height"
-                    );
                     let review_bounds = review
                         .compute_bounds(&discover_root)
                         .expect("Discover update action belongs to Top root");
@@ -1662,7 +1672,7 @@ mod unix {
                         .compute_bounds(&discover_root)
                         .expect("Discover access action belongs to Top root");
                     assert!(
-                        (review_bounds.y() - access_bounds.y()).abs() <= 16.0,
+                        (review_bounds.y() - access_bounds.y()).abs() <= 1.0,
                         "wide Discover summary actions diverged vertically: update={} access={}",
                         review_bounds.y(),
                         access_bounds.y()
@@ -1687,14 +1697,14 @@ mod unix {
                         review_card.width()
                     );
                     assert!(
-                        review_card.height() <= 240,
+                        review_card.height() <= 210,
                         "wide Discover catalogue row stretched to {}px",
                         review_card.height()
                     );
                 } else {
                     let heights = [review_card.height(), access_card.height()];
                     assert!(
-                        heights.iter().all(|height| *height <= 204),
+                        heights.iter().all(|height| *height <= 184),
                         "narrow Discover cards stretched sparse content into {heights:?}px panels"
                     );
                     assert_eq!(
@@ -1703,6 +1713,38 @@ mod unix {
                         "narrow Discover cards must use one consistent full-width column"
                     );
                 }
+                let trust_bounds = trust
+                    .compute_bounds(&review_card)
+                    .expect("trust disclosure belongs to its card");
+                let trust_action_gap = review_bounds_in_card.x()
+                    - trust_bounds.x()
+                    - trust_bounds.width();
+                assert!(
+                    (12.0..=16.0).contains(&trust_action_gap),
+                    "{width_name} trust/action gap must be 12–16px: {trust_action_gap}px"
+                );
+                let catalogue_cards = widgets_with_class(&discover_root, "hl-card")
+                    .into_iter()
+                    .filter(|card| card.is_visible())
+                    .collect::<Vec<_>>();
+                let card_bounds = catalogue_cards
+                    .iter()
+                    .filter_map(|card| card.compute_bounds(&discover_root))
+                    .collect::<Vec<_>>();
+                let complete_cards = card_bounds
+                    .iter()
+                    .filter(|bounds| bounds.y() >= 0.0 && bounds.y() + bounds.height() <= 800.0)
+                    .count();
+                let required = if width == 1_200 { 9 } else { 3 };
+                let height_limit = if width == 1_200 { 210.0 } else { 184.0 };
+                assert!(
+                    card_bounds.iter().all(|bounds| bounds.height() <= height_limit),
+                    "{width_name} catalogue includes a card above {height_limit}px: {card_bounds:?}"
+                );
+                assert!(
+                    complete_cards >= required,
+                    "{width_name} viewport shows only {complete_cards} complete catalogue cards; expected at least {required}: {card_bounds:?}"
+                );
                 let right_edge = widgets_with_class(&discover_root, "hl-card")
                     .into_iter()
                     .filter_map(|card| card.compute_bounds(&discover_root))
@@ -3171,7 +3213,7 @@ mod unix {
         );
         drain_extension_renders(wire, tree, surface);
         let success_root = surface.widget().clone().upcast::<gtk::Widget>();
-        assert!(!has_label(&success_root, "Installed · update available"));
+        assert!(!has_label(&success_root, "Update available"));
         assert!(
             find_tooltip_button(&success_root, "Review access requested by Developer Tool 02").is_sensitive(),
             "success restores catalogue actions"

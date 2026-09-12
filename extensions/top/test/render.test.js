@@ -916,7 +916,7 @@ test('Top owns workspace settings and extension management in the same tab', asy
   );
   assert.ok(labelled(stage, 'No extensions installed'));
   assert.equal(labelled(stage, 'Workspace control'), undefined);
-  assert.deepEqual(ancestorTags(stage, 'Discover').slice(0, 3), ['Row', 'Column', 'Column']);
+  assert.deepEqual(ancestorTags(stage, 'Find extensions').slice(0, 3), ['Row', 'Column', 'Column']);
   assert.deepEqual(ancestorTags(stage, 'Installed extensions').slice(0, 3), [
     'Row',
     'Row',
@@ -926,18 +926,15 @@ test('Top owns workspace settings and extension management in the same tab', asy
     ControlSize: 'Small',
   });
   assert.deepEqual(
-    ancestorProperty(stage, 'Discover', 'Column', 'Width'),
+    ancestorProperty(stage, 'Find extensions', 'Column', 'Width'),
     { Length: 'Fill' },
     'extension sections use the full page width without separating related content',
   );
-  assert.equal(
-    taggedProperty(stage, 'Component playground', 'CardHeader', 'Detail')?.Text,
-    'Husklet · Version 2.0.0',
-  );
-  assert.equal(labelled(stage, 'Version 2.0.0'), undefined, 'the header version is not repeated');
+  assert.ok(labelled(stage, 'v2.0.0'));
+  assert.ok(labelled(stage, 'Publisher · Husklet'));
   assert.ok(labelled(stage, 'Trust & compatibility'));
   assert.equal(
-    ancestorTags(stage, 'Husklet · Version 2.0.0').includes('Expander'),
+    ancestorTags(stage, 'Publisher · Husklet').includes('Expander'),
     false,
     'publisher provenance remains visible before acquisition starts',
   );
@@ -946,8 +943,8 @@ test('Top owns workspace settings and extension management in the same tab', asy
   assert.equal(labelled(stage, 'Review requested access before anything is installed.'), undefined);
   assert.deepEqual(
     ancestorTags(stage, 'Review access').slice(0, 4),
-    ['CardActions', 'Card', 'Row', 'Column'],
-    'catalogue actions follow identity and content in the card action region',
+    ['Row', 'CardContent', 'Card', 'Row'],
+    'catalogue trust and action share the compact final content row',
   );
   assert.equal(
     ancestorProperty(stage, 'Component playground', 'Card', 'Justify'),
@@ -1432,11 +1429,11 @@ test('extension discovery searches, filters, reports result counts, and clears a
   selectExtensionMode(stage, 'Discover');
   await settled();
   assert.ok(labelled(stage, '19 of 20 extensions'));
-  assert.ok(labelled(stage, 'Showing 8 of 19 matching extensions'));
-  assert.ok(labelled(stage, 'Show 8 more'));
-  invoke(stage, 'Show 8 more');
+  assert.ok(labelled(stage, 'Showing 12 of 19 matching extensions'));
+  assert.ok(labelled(stage, 'Show 7 more'));
+  invoke(stage, 'Show 7 more');
   await settled();
-  assert.ok(labelled(stage, 'Showing 16 of 19 matching extensions'));
+  assert.equal(labelled(stage, 'Showing 19 of 19 matching extensions'), undefined);
   assert.deepEqual(placeholderProperty(stage, 'Search extensions', 'Width'), {
     Bounds: { minimum: { Chars: 18 }, maximum: { Chars: 36 } },
   });
@@ -1464,7 +1461,7 @@ test('extension discovery searches, filters, reports result counts, and clears a
   await settled();
   assert.ok(labelled(stage, '2 of 20 extensions'));
   assert.ok(labelled(stage, 'Component playground'));
-  assert.ok(labelled(stage, 'Installed · up to date'));
+  assert.ok(labelled(stage, 'Installed · current'));
 
   changeByTooltip(stage, 'Filter extension catalogue by status', 'incompatible');
   await settled();
@@ -1703,7 +1700,7 @@ test('an installed catalogue extension exposes its update review without retypin
     undefined,
     'installed catalogue entries do not also appear as new installations',
   );
-  assert.ok(labelled(stage, 'Installed · update available'));
+  assert.ok(labelled(stage, 'Update available'));
   assert.equal(
     labelled(
       stage,
@@ -1794,7 +1791,7 @@ test('an up-to-date built-in is hidden by default and available through the inst
   selectExtensionMode(stage, 'Discover');
   await settled();
   assert.equal(
-    labelled(stage, 'Installed · up to date'),
+    labelled(stage, 'Installed · current'),
     undefined,
     'default discovery does not duplicate the installed management card',
   );
@@ -1806,7 +1803,7 @@ test('an up-to-date built-in is hidden by default and available through the inst
   changeByTooltip(stage, 'Filter extension catalogue by status', 'installed');
   await settled();
   assert.ok(labelled(stage, 'Component playground'));
-  assert.ok(labelled(stage, 'Installed · up to date'));
+  assert.ok(labelled(stage, 'Installed · current'));
   assert.ok(labelled(stage, '1 extension · all installed'));
   assert.ok(
     labelled(stage, `Installed image · Enabled · sha256:${'a'.repeat(12)}…${'a'.repeat(8)}`),
