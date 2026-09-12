@@ -2506,13 +2506,16 @@ function AcquisitionProgressAction({
         <Text label={stage} wrap grow />
         {value ? <Text label={value} color="text-dim" /> : null}
       </Row>
-      <Row gap={2} width={{ chars: 75 }} align="center" justify="start" wrap>
+      <Row gap={3} width={{ chars: 75 }} align="center" justify="center" wrap>
         {progress ? (
-          <Progress
-            fraction={fraction}
-            tooltip={acquisitionLabel(acquisition)}
-            width={{ chars: 51 }}
-          />
+          <Row grow width="fill" justify="center">
+            <Progress
+              fraction={fraction}
+              tooltip={acquisitionLabel(acquisition)}
+              width="fill"
+              justify="center"
+            />
+          </Row>
         ) : (
           <Spinner />
         )}
@@ -2521,6 +2524,7 @@ function AcquisitionProgressAction({
           variant="outline"
           size="medium"
           align="end"
+          justify="center"
           enabled={!cancelling}
           onInvoke={onCancel}
         />

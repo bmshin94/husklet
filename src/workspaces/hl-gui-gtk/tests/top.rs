@@ -3301,13 +3301,20 @@ mod unix {
                     progress_bounds.width() >= 240.0,
                     "{width_name} progress bar is too narrow: {progress_bounds:?}"
                 );
-                assert!(
-                    (cancel_bounds.x() - progress_bounds.x() - progress_bounds.width()).abs()
-                        <= 16.0
-                        || cancel_bounds.y() >= progress_bounds.y() + progress_bounds.height(),
-                    "{width_name} Cancel is detached from progress: progress={progress_bounds:?}, cancel={cancel_bounds:?}"
-                );
-                if cancel_bounds.y() >= progress_bounds.y() + progress_bounds.height() {
+                let same_row = cancel_bounds.x() >= progress_bounds.x() + progress_bounds.width();
+                if same_row {
+                    let horizontal_gap = cancel_bounds.x() - progress_bounds.x() - progress_bounds.width();
+                    let progress_center = progress_bounds.y() + progress_bounds.height() / 2.0;
+                    let cancel_center = cancel_bounds.y() + cancel_bounds.height() / 2.0;
+                    assert!(
+                        (12.0..=16.0).contains(&horizontal_gap),
+                        "{width_name} same-row Cancel needs a 12–16px visible gap: gap={horizontal_gap}px, progress={progress_bounds:?}, cancel={cancel_bounds:?}"
+                    );
+                    assert!(
+                        (progress_center - cancel_center).abs() <= 1.0,
+                        "{width_name} same-row progress and Cancel are not vertically centered: progress={progress_bounds:?}, cancel={cancel_bounds:?}"
+                    );
+                } else {
                     let vertical_gap = cancel_bounds.y() - progress_bounds.y() - progress_bounds.height();
                     let trailing_gap = group_bounds.x() + group_bounds.width()
                         - cancel_bounds.x()
