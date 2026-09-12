@@ -119,6 +119,33 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
       ['src/app.ts', 'README.md'],
     );
     assert.equal(scoped.next, 11, 'filtering preserves the global journal cursor');
+    assert.deepEqual(
+      files.reconcilePathRecords(
+        {
+          'src/current.md': 'old',
+          'src/deleted.md': 'stale',
+          'README.md': 'old exact',
+          'notes/retained.md': 'outside',
+        },
+        { 'src/current.md': 'new', 'README.md': 'new exact' },
+        [
+          { path: 'src', grant: 'subtree' },
+          { path: 'README.md', grant: 'exact' },
+        ],
+      ),
+      {
+        'notes/retained.md': 'outside',
+        'src/current.md': 'new',
+        'README.md': 'new exact',
+      },
+    );
+    assert.throws(
+      () =>
+        files.reconcilePathRecords({}, { 'src2/private.md': 'leak' }, [
+          { path: 'src', grant: 'subtree' },
+        ]),
+      /outside its reconciliation roots/,
+    );
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(requests.length, 0, 'grant planning never probes the host');
     assert.equal((await files.stat('README.md')).identity, 'readme-v1');

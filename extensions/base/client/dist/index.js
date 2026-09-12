@@ -2421,6 +2421,27 @@ export function workspace(session, { signal } = {}) {
                         : filesystemSelectorPermits({ subtree: path }, change.path))),
                 };
             },
+            reconcilePathRecords: (current, scanned, roots) => {
+                if (!Array.isArray(roots) || roots.length < 1 || roots.length > 256)
+                    throw new RangeError('filesystem record scope must contain between 1 and 256 roots');
+                const selected = roots.map(({ path, grant }) => {
+                    encodeRequest('filesystem_stat', { path });
+                    if (grant !== 'exact' && grant !== 'subtree')
+                        throw new TypeError('filesystem record root grant must be exact or subtree');
+                    return { path, grant };
+                });
+                const contains = (path) => selected.some((root) => root.grant === 'exact'
+                    ? path === root.path
+                    : filesystemSelectorPermits({ subtree: root.path }, path));
+                const next = Object.fromEntries(Object.entries(current).filter(([path]) => !contains(path)));
+                for (const [path, value] of Object.entries(scanned)) {
+                    encodeRequest('filesystem_stat', { path });
+                    if (!contains(path))
+                        throw new TypeError(`scanned filesystem record ${JSON.stringify(path)} is outside its reconciliation roots`);
+                    next[path] = value;
+                }
+                return next;
+            },
             catchUpChanges: async ({ cursor, pageSize = 256, maxChanges = 4_096, maxPages = 64, signal, }) => {
                 exactFilesystemJournal(cursor?.journal);
                 if (!Number.isSafeInteger(cursor?.revision) || cursor.revision < 0)
@@ -5068,6 +5089,7 @@ export const protocolCoverage = Object.freeze({
             'beginWalk',
             'changes',
             'scopeChanges',
+            'reconcilePathRecords',
             'catchUpChanges',
             'changePages',
             'watchChanges',

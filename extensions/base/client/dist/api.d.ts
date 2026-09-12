@@ -1896,6 +1896,11 @@ export interface WorkspaceApi {
             path: string;
             grant: 'exact' | 'subtree';
         }[]): FileChangePage;
+        /** Replace path-keyed records inside configured roots while preserving records outside them. */
+        reconcilePathRecords<T>(current: Readonly<Record<string, T>>, scanned: Readonly<Record<string, T>>, roots: readonly {
+            path: string;
+            grant: 'exact' | 'subtree';
+        }[]): Record<string, T>;
         /**
          * Drain a finite, bounded portion of filesystem history. An incomplete result carries the exact
          * continuation cursor; journal replacement throws FilesystemJournalGapError with its rescan cursor.

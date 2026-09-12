@@ -180,7 +180,7 @@ try {
       ...current,
       revision: caughtUp.cursor.revision,
       journal: caughtUp.cursor.journal,
-      documents: { ...current.documents, ...scanned },
+      documents: host.files.reconcilePathRecords(current.documents, scanned, roots),
     }))
   ).value;
 

@@ -287,7 +287,25 @@ test('embeddings indexer reconciles, recursively discovers, streams, and checkpo
     (socket, frame) => {
       const { call } = frame.payload;
       if (call === 'state_read')
-        respond(socket, frame, { reply: 'state', with: { identity: 'absent', contents: [] } });
+        respond(socket, frame, {
+          reply: 'state',
+          with: {
+            identity: `sha256:${'c'.repeat(64)}`,
+            contents: Array.from(
+              new TextEncoder().encode(
+                JSON.stringify({
+                  version: 1,
+                  journal: FILE_JOURNAL,
+                  revision: 6,
+                  documents: {
+                    'src/deleted.md': { identity: 'deleted-v1', digest: 'old', bytes: 3 },
+                    'notes/retained.md': { identity: 'outside-v1', digest: 'keep', bytes: 4 },
+                  },
+                }),
+              ),
+            ),
+          },
+        });
       else if (call === 'filesystem_inventory')
         respond(socket, frame, {
           reply: 'file_inventory',
@@ -346,11 +364,14 @@ test('embeddings indexer reconciles, recursively discovers, streams, and checkpo
           },
         });
       else if (call === 'state_write') {
-        assert.equal(frame.payload.with.observed, 'absent');
+        assert.equal(frame.payload.with.observed, `sha256:${'c'.repeat(64)}`);
+        const checkpoint = new TextDecoder().decode(Uint8Array.from(frame.payload.with.contents));
         assert.match(
-          new TextDecoder().decode(Uint8Array.from(frame.payload.with.contents)),
+          checkpoint,
           /"src\/a.md":\{"identity":"doc-v1","digest":"[0-9a-f]{64}","bytes":16\}/,
         );
+        assert.doesNotMatch(checkpoint, /src\/deleted.md/);
+        assert.match(checkpoint, /notes\/retained.md/);
         respond(socket, frame, { reply: 'identity', with: `sha256:${'d'.repeat(64)}` });
       }
     },

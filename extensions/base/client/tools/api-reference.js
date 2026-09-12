@@ -114,6 +114,7 @@ groups
   .get('Files')
   .push(
     '- `host.files.scopeChanges(page, roots)` — filters a change page to configured exact/subtree roots while preserving its global journal cursor, so an indexer checkpoints unrelated permitted changes without indexing them.',
+    '- `host.files.reconcilePathRecords(current, scanned, roots)` — atomically prepares a full-scan replacement for path-keyed state: stale records inside exact/subtree roots are removed, new records outside those roots are rejected, and unrelated records are preserved for the surrounding state CAS.',
     "- `host.files.changePages(...)` — exposes cursor-safe bounded filesystem change polling as a consumer-driven async generator. Slow consumers issue no next request; abort interrupts idle polling; truncation is yielded explicitly; host and transport failures reject the caller's pending `next()`.",
     '- `host.files.watchChanges(...)` — polls cursor-safe bounded pages and delivers change, truncation, and cursor-only advances so an indexer can durably resume even when consent filtering hides every path in a revision; its stop handle exposes `done` for immediate listener/transport failure supervision; requires `filesystem:read`.',
     '- `host.files.walk(...)` — traverses arbitrarily broad directory trees through identity-pinned bounded pages with consumer backpressure and memory proportional to active depth; rejects duplicate or backward host cursors; requires `filesystem:read`.',
