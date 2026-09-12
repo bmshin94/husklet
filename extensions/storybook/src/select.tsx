@@ -26,7 +26,6 @@ export function SelectWorkbench() {
       summary="Select chooses one value from a short, stable set. Use labels people recognize and store the separate machine value."
     >
       <DocumentationSection title="Overview">
-        <Code value={'<Select value={shell} choices={shells} onChange={setShell} />'} wrap />
         <FieldSpecimen
           label="Default shell"
           helper={event}
@@ -49,6 +48,7 @@ export function SelectWorkbench() {
             onFocus={() => setEvent('Selector focused')}
           />
         </FieldSpecimen>
+        <Code value={'<Select value={shell} choices={shells} onChange={setShell} />'} wrap />
       </DocumentationSection>
       <DocumentationSection title="Widths">
         <Column gap={2}>

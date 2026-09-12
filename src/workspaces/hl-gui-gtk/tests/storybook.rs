@@ -785,6 +785,81 @@ mod unix {
             );
             live.emit_clicked();
             settle_toolkit();
+            for (label, width) in [("narrow", 600), ("wide", 1_200), ("narrow-return", 600)] {
+                realized_window.set_size_request(width, 800);
+                realized_window.set_default_size(width, 800);
+                settle_window_width(&realized_window, width);
+                let document = descendants::<gtk::ScrolledWindow>(&root)
+                    .into_iter()
+                    .max_by(|left, right| left.vadjustment().upper().total_cmp(&right.vadjustment().upper()))
+                    .expect("Select document owns a scrolling viewport");
+                assert_eq!(
+                    document.hadjustment().value(),
+                    0.0,
+                    "Select document shifted horizontally after popup/resize at {label}"
+                );
+                if width == 1_200 {
+                    document.vadjustment().set_value(0.0);
+                    settle_toolkit();
+                    capture_story(&realized_window, "Select wide");
+                }
+                if width == 600 {
+                    let heading = find::<gtk::Label>(&root, |heading| heading.text() == "Select");
+                    let heading_bounds = heading
+                        .compute_bounds(&root)
+                        .expect("Select heading belongs to rendered root");
+                    assert!(
+                        (heading_bounds.x() - 16.0).abs() <= 1.0,
+                        "Select heading lost its 16px inset at {label}: {heading_bounds:?}"
+                    );
+                    let full = descendants::<gtk::ToggleButton>(&root)
+                        .into_iter()
+                        .filter(|choice| choice.has_css_class("choice"))
+                        .max_by_key(gtk::prelude::WidgetExt::width)
+                        .expect("Select page renders its full-width specimen");
+                    let full_bounds = full
+                        .compute_bounds(&root)
+                        .expect("full-width Select belongs to rendered root");
+                    assert!(
+                        (full_bounds.x() - 16.0).abs() <= 1.0
+                            && (full_bounds.width() - 568.0).abs() <= 1.0,
+                        "full-width Select escaped 16px narrow insets at {label}: {full_bounds:?}"
+                    );
+                    let specimen_bounds = descendants::<gtk::ToggleButton>(&root)
+                        .into_iter()
+                        .filter(|choice| {
+                            choice.has_css_class("choice")
+                                && choice.is_mapped()
+                                && choice.is_ancestor(&document)
+                        })
+                        .filter_map(|choice| choice.compute_bounds(&root))
+                        .collect::<Vec<_>>();
+                    assert!(
+                        specimen_bounds
+                            .iter()
+                            .all(|bounds| bounds.x() >= 16.0 && bounds.x() + bounds.width() <= 584.0),
+                        "a Select specimen escaped the 16px narrow content lane at {label}: {specimen_bounds:?}"
+                    );
+                }
+            }
+            let document = descendants::<gtk::ScrolledWindow>(&root)
+                .into_iter()
+                .max_by(|left, right| left.vadjustment().upper().total_cmp(&right.vadjustment().upper()))
+                .expect("Select document owns a scrolling viewport");
+            for (position, value) in [
+                ("top", 0.0),
+                ("middle", (document.vadjustment().upper() - document.vadjustment().page_size()) / 2.0),
+                ("bottom", document.vadjustment().upper() - document.vadjustment().page_size()),
+            ] {
+                document.vadjustment().set_value(value.max(0.0));
+                settle_toolkit();
+                assert_eq!(
+                    document.hadjustment().value(),
+                    0.0,
+                    "Select {position} capture inherited horizontal scroll"
+                );
+                capture_story(&realized_window, &format!("Select narrow {position}"));
+            }
         }
         if story == "Search" {
             let search = find::<gtk::SearchEntry>(&root, |entry| {

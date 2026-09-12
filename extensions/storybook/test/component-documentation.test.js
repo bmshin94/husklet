@@ -141,6 +141,17 @@ test('Select and Switch playgrounds retain their reported values', () => {
   }
 });
 
+test('Select leads with its live specimen before implementation code', () => {
+  const frame = host().render(h(SelectWorkbench));
+  const tags = frame.patches.flatMap((patch) => (patch.Create ? [patch.Create.tag] : []));
+  assert(tags.indexOf('Select') >= 0, 'Select page renders its canonical live specimen');
+  assert(tags.indexOf('Code') >= 0, 'Select page renders its implementation example');
+  assert(
+    tags.indexOf('Select') < tags.indexOf('Code'),
+    'the interactive specimen must precede implementation code',
+  );
+});
+
 test('Select teaches controlled selection and bounded states before its API', () => {
   const frame = host().render(h(SelectWorkbench));
   const labels = frame.patches
