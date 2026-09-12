@@ -2075,17 +2075,23 @@ mod unix {
         }
         if story == "Radio" {
             settle_toolkit();
-            let bash = find::<gtk::CheckButton>(&root, |button| button.label().as_deref() == Some("Bash"));
+            let bash = find::<gtk::CheckButton>(&root, |button| {
+                button.label().as_deref() == Some("Bash · Portable scripts")
+            });
             assert!(bash.is_active(), "controlled Radio did not retain native selection");
             assert!(bash.grab_focus(), "controlled Radio restores native focus");
             assert!(bash.has_focus(), "controlled Radio exposes focus-visible state");
             assert_eq!(bash.accessible_role(), gtk::AccessibleRole::Radio);
             assert_eq!(bash.height(), 18, "Radio keeps its compact 16px indicator row");
             assert!(
-                bash.width() >= 900,
-                "wide Radio fixture did not exercise an expanding row: {}px",
+                (240..=420).contains(&bash.width()),
+                "Radio live specimen escaped its compact reference width: {}px",
                 bash.width()
             );
+            let disclosure = find::<gtk::Expander>(&root, |expander| {
+                expander.label().as_deref() == Some("Show controlled example")
+            });
+            assert!(!disclosure.is_expanded(), "Radio implementation starts collapsed");
             capture_story(&realized_window, "Radio focused bash");
         }
         if story == "RadioGroup" {
@@ -2660,9 +2666,15 @@ mod unix {
                 checkbox.activate();
             }
             "Radio" => {
-                let zsh = find::<gtk::CheckButton>(root, |button| button.label().as_deref() == Some("Z shell"));
-                let bash = find::<gtk::CheckButton>(root, |button| button.label().as_deref() == Some("Bash"));
-                let fish = find::<gtk::CheckButton>(root, |button| button.label().as_deref() == Some("Fish"));
+                let zsh = find::<gtk::CheckButton>(root, |button| {
+                    button.label().as_deref() == Some("Z shell · Default · interactive")
+                });
+                let bash = find::<gtk::CheckButton>(root, |button| {
+                    button.label().as_deref() == Some("Bash · Portable scripts")
+                });
+                let fish = find::<gtk::CheckButton>(root, |button| {
+                    button.label().as_deref() == Some("Fish · Friendly defaults")
+                });
                 assert!(zsh.is_active());
                 assert!(zsh.grab_focus(), "Radio group accepts native keyboard focus");
                 assert!(zsh.has_focus(), "focused Radio exposes focus-visible state");

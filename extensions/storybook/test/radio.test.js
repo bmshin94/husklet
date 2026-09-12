@@ -28,7 +28,7 @@ test('Radio group retains exactly one controlled selection and result', () => {
     }),
   );
   const changed = stage.since(before);
-  assert(labels(changed).includes('Selected shell: bash'));
+  assert(labels(changed).includes('Current value · bash'));
   const states = new Map(
     [...first.patches, ...changed]
       .filter(
@@ -40,21 +40,24 @@ test('Radio group retains exactly one controlled selection and result', () => {
   assert.deepEqual([...states.values()], [false, true, false]);
 });
 
-test('Radio documents native grouping, disabled states, aliases, and invalid standalone use before API', () => {
+test('Radio presents specimens, states, sizing, behavior, and controlled implementation before API', () => {
   const frame = host().render(h(RadioWorkbench));
   const text = labels(frame.patches);
   for (const label of [
-    'Enabled group',
-    'Disabled group',
-    'Managed · selected',
-    'Custom · unselected',
+    'Live specimen',
+    'Unchecked',
+    'Checked',
+    'Disabled · unchecked',
+    'Disabled · checked',
+    'Size and spacing',
+    'Behavior and accessibility',
+    'Show controlled example',
   ]) {
     assert(text.includes(label), `missing ${label}`);
   }
   assert(text.some((label) => label?.includes('Arrow keys')));
-  assert(text.some((label) => label?.includes('legacy alias')));
-  assert(text.some((label) => label?.includes('standalone Radio is invalid')));
-  assert(text.some((label) => label?.includes('Checkbox')));
+  assert(text.some((label) => label?.includes('one compact native indicator size')));
+  assert(text.some((label) => label?.includes('one controlled checked value')));
   assert(text.indexOf('States') < text.indexOf('API'));
-  assert(text.indexOf('Keyboard and accessibility') < text.indexOf('API'));
+  assert(text.indexOf('Behavior and accessibility') < text.indexOf('API'));
 });

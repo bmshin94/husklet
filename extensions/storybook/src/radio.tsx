@@ -1,18 +1,24 @@
 import React from 'react';
-import { Code, InlineMessage, Radio, RadioGroup, Text } from '@husklet/react';
+import { Code, Expander, Radio, RadioGroup, Row, Text } from '@husklet/react';
 import {
   ApiReference,
   ComponentDocument,
   DocumentationSection,
   FieldSpecimen,
-  SpecimenGrid,
 } from './component-document.js';
 import { rows } from './editors.js';
 
 type Shell = 'zsh' | 'bash' | 'fish';
 
+const SHELLS: ReadonlyArray<{ value: Shell; label: string; detail: string }> = [
+  { value: 'zsh', label: 'Z shell', detail: 'Default · interactive' },
+  { value: 'bash', label: 'Bash', detail: 'Portable scripts' },
+  { value: 'fish', label: 'Fish', detail: 'Friendly defaults' },
+];
+
 export function RadioWorkbench() {
   const [selected, setSelected] = React.useState<Shell>('zsh');
+  const [showCode, setShowCode] = React.useState(false);
 
   function choose(option: Shell, value: unknown) {
     if (value === null || Boolean(value)) setSelected(option);
@@ -21,74 +27,84 @@ export function RadioWorkbench() {
   return (
     <ComponentDocument
       name="Radio"
-      summary="Radio chooses exactly one option from a visible group. Each labeled option is one native click target."
+      summary="Radio selects one option from a visible set. The label and indicator form one native target."
     >
-      <DocumentationSection title="Overview">
-        <RadioGroup gap={1} tooltip="Default shell" width={{ chars: 32 }}>
-          <Radio
-            label="Z shell"
-            checked={selected === 'zsh'}
-            onToggle={(report) => choose('zsh', report.value)}
-          />
-          <Radio
-            label="Bash"
-            checked={selected === 'bash'}
-            onToggle={(report) => choose('bash', report.value)}
-          />
-          <Radio
-            label="Fish"
-            checked={selected === 'fish'}
-            onToggle={(report) => choose('fish', report.value)}
-          />
-        </RadioGroup>
-        <InlineMessage label={`Selected shell: ${selected}`} tone="neutral" />
-        <Code
-          value={
-            '<RadioGroup>\n  <Radio label="Z shell" checked={shell === "zsh"} onToggle={() => setShell("zsh")} />\n  …\n</RadioGroup>'
-          }
-          wrap
-        />
+      <DocumentationSection title="Live specimen">
+        <FieldSpecimen
+          label="Default shell"
+          helper="Arrow keys move selection; the result updates immediately."
+          width={{ chars: 36 }}
+        >
+          <RadioGroup gap={1} tooltip="Default shell" width="fill">
+            {SHELLS.map((shell) => (
+              <Radio
+                key={shell.value}
+                label={`${shell.label} · ${shell.detail}`}
+                checked={selected === shell.value}
+                onToggle={(report) => choose(shell.value, report.value)}
+              />
+            ))}
+          </RadioGroup>
+        </FieldSpecimen>
+        <Text label={`Current value · ${selected}`} color="text-dim" />
       </DocumentationSection>
 
       <DocumentationSection title="States">
-        <SpecimenGrid>
-          <FieldSpecimen label="Enabled group" helper="Exactly one option is selected">
-            <RadioGroup gap={1} width={{ chars: 28 }}>
-              <Radio label="Automatic" checked />
-              <Radio label="Manual" checked={false} />
-            </RadioGroup>
+        <Row gap={3} width="fill" wrap>
+          <FieldSpecimen label="Unchecked" helper="Available, not selected" width={{ chars: 28 }}>
+            <Radio label="Automatic" checked={false} />
+          </FieldSpecimen>
+          <FieldSpecimen label="Checked" helper="The group’s current value" width={{ chars: 28 }}>
+            <Radio label="Automatic" checked />
           </FieldSpecimen>
           <FieldSpecimen
-            label="Disabled group"
-            helper="Unavailable choices retain their known state"
+            label="Disabled · unchecked"
+            helper="Unavailable by workspace policy"
+            width={{ chars: 28 }}
           >
-            <RadioGroup gap={1} width={{ chars: 28 }}>
-              <Radio label="Managed · selected" checked enabled={false} />
-              <Radio label="Custom · unselected" checked={false} enabled={false} />
-            </RadioGroup>
+            <Radio label="Automatic" checked={false} enabled={false} />
           </FieldSpecimen>
-        </SpecimenGrid>
+          <FieldSpecimen
+            label="Disabled · checked"
+            helper="A retained value that cannot be changed"
+            width={{ chars: 28 }}
+          >
+            <Radio label="Automatic" checked enabled={false} />
+          </FieldSpecimen>
+        </Row>
       </DocumentationSection>
 
-      <DocumentationSection title="Keyboard and accessibility">
+      <DocumentationSection title="Size and spacing">
         <Text
-          label="Tab enters the group once. Arrow keys move selection among enabled options; Space selects the focused option. Keep every option visibly labeled and preserve one selected value."
+          label="Radio has one compact native indicator size and a full label target. Keep 8px between options and at least 44px around the group when it sits among other controls; do not shrink the indicator for dense forms."
           wrap
         />
       </DocumentationSection>
 
-      <DocumentationSection title="Checked and selected">
+      <DocumentationSection title="Behavior and accessibility">
         <Text
-          label="Use checked for controlled state. selected is a legacy alias read by the host like checked; omit it in new code and never provide both properties."
+          label="Keep two or more options in one RadioGroup and one controlled checked value. Tab enters the group once; arrow keys move focus and selection among enabled options; Space selects the focused option. Every option needs a distinct visible label."
           wrap
         />
       </DocumentationSection>
 
-      <DocumentationSection title="Choose the right control">
-        <Text
-          label="Use Radio when exactly one visible option is required. Use Checkbox for independent choices. A standalone Radio is invalid because it gives no group context or alternative."
-          wrap
-        />
+      <DocumentationSection title="Implementation">
+        <Expander
+          label="Show controlled example"
+          expanded={showCode}
+          width="fill"
+          onExpand={(report) => setShowCode(Boolean(report.value))}
+        >
+          <Code
+            value={
+              '<RadioGroup>\n' +
+              '  <Radio label="Z shell" checked={shell === "zsh"} onToggle={() => setShell("zsh")} />\n' +
+              '  <Radio label="Bash" checked={shell === "bash"} onToggle={() => setShell("bash")} />\n' +
+              '</RadioGroup>'
+            }
+            wrap
+          />
+        </Expander>
       </DocumentationSection>
 
       <DocumentationSection title="API">
