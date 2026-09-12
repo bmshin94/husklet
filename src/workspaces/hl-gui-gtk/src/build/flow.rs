@@ -106,13 +106,11 @@ impl LayoutManagerImpl for Weave {
         let expanding = lines
             .iter()
             .filter(|line| {
-                line.children.iter().any(|(child, _, _)| {
-                    if vertical {
-                        child.hexpands()
-                    } else {
-                        child.vexpands()
-                    }
-                })
+                line.children.iter().any(
+                    |(child, _, _)| {
+                        if vertical { child.hexpands() } else { child.vexpands() }
+                    },
+                )
             })
             .count();
         let expanding = i32::try_from(expanding).unwrap_or(i32::MAX);
@@ -121,13 +119,11 @@ impl LayoutManagerImpl for Weave {
         let mut remainder = if expanding == 0 { 0 } else { spare % expanding };
         let mut cross = 0;
         for line in lines {
-            let cross_expands = line.children.iter().any(|(child, _, _)| {
-                if vertical {
-                    child.hexpands()
-                } else {
-                    child.vexpands()
-                }
-            });
+            let cross_expands = line.children.iter().any(
+                |(child, _, _)| {
+                    if vertical { child.hexpands() } else { child.vexpands() }
+                },
+            );
             let bonus = if cross_expands {
                 let bonus = share + i32::from(remainder > 0);
                 remainder = remainder.saturating_sub(1);
@@ -148,7 +144,10 @@ impl Weave {
     fn lines(&self, widget: &gtk::Widget, room: i32) -> Vec<Line> {
         let spacing = self.spacing.get();
         let vertical = self.direction.get() == gtk::Orientation::Vertical;
-        let children = children(widget);
+        let children = children(widget)
+            .into_iter()
+            .filter(|child| child.is_visible())
+            .collect::<Vec<_>>();
         let compact_cards = !vertical
             && (0..=600).contains(&room)
             && !children.is_empty()
@@ -235,12 +234,10 @@ impl Weave {
             // A child stretches across its line only when it asks to expand on
             // that axis. In particular, a card with Height::Content must keep
             // its natural height when a diagnostic makes a peer taller.
-            let cross_extent = if if vertical {
-                child.hexpands()
-            } else {
-                child.vexpands()
-            } {
+            let cross_extent = if if vertical { child.hexpands() } else { child.vexpands() } {
                 line_cross
+            } else if !vertical {
+                child.measure(gtk::Orientation::Vertical, extent).1
             } else {
                 *child_cross
             };
@@ -372,11 +369,15 @@ mod tests {
             card.set_size_request(260, 40);
             container.append(&card);
         }
+        let hidden_pager = gtk::Button::with_label("Show more");
+        hidden_pager.set_visible(false);
+        container.append(&hidden_pager);
         assert_eq!(flow.imp().lines(container.upcast_ref(), 600).len(), 3);
         assert_eq!(flow.imp().lines(container.upcast_ref(), 1_200).len(), 1);
         measured_allocate(container.upcast_ref(), 600, 140);
         let widths = children(container.upcast_ref())
             .into_iter()
+            .filter(|child| child.is_visible())
             .map(|child| child.width())
             .collect::<Vec<_>>();
         assert_eq!(widths, vec![600, 600, 600]);
@@ -422,9 +423,11 @@ mod tests {
         assert_eq!(flow.imp().lines(container.upcast_ref(), 884).len(), 1);
         measured_allocate(container.upcast_ref(), 884, 40);
         let cards = children(container.upcast_ref());
-        assert!(cards
-            .windows(2)
-            .all(|pair| pair[0].allocation().y() == pair[1].allocation().y()));
+        assert!(
+            cards
+                .windows(2)
+                .all(|pair| pair[0].allocation().y() == pair[1].allocation().y())
+        );
         assert_eq!(cards.iter().map(gtk::Widget::width).sum::<i32>() + 8, 884);
     }
 
@@ -546,9 +549,15 @@ mod tests {
 
     fn measured_allocate(widget: &gtk::Widget, width: i32, height: i32) {
         let (minimum_width, _, _, _) = widget.measure(gtk::Orientation::Horizontal, -1);
-        assert!(width >= minimum_width, "fixture width {width}px is below its {minimum_width}px minimum");
+        assert!(
+            width >= minimum_width,
+            "fixture width {width}px is below its {minimum_width}px minimum"
+        );
         let (minimum_height, _, _, _) = widget.measure(gtk::Orientation::Vertical, width);
-        assert!(height >= minimum_height, "fixture height {height}px is below its {minimum_height}px minimum");
+        assert!(
+            height >= minimum_height,
+            "fixture height {height}px is below its {minimum_height}px minimum"
+        );
         widget.allocate(width, height, -1, None);
     }
 }

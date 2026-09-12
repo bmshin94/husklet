@@ -1359,6 +1359,14 @@ mod unix {
                 let check = find_button(&filtered_root, "Check for changes");
                 let card = ancestor_with_class(check.upcast_ref(), "hl-card")
                     .expect("image check action belongs to the installed extension card");
+                if width == 600 {
+                    let row_width = card.parent().expect("card remains in its flow row").width();
+                    assert!(
+                        card.width() >= row_width - 32,
+                        "narrow installed card left most of its row empty: card={}px row={row_width}px window={width}px",
+                        card.width(),
+                    );
+                }
                 let open = find_tooltip_button(&card, "Open Component playground");
                 let state = find_mapped_labelled(&card, "Running");
                 let disable = find_button(&card, "Disable");
@@ -1445,22 +1453,16 @@ mod unix {
                 |request| panic!("unexpected removal confirmation request: {request:?}"),
             );
             let confirmation_root = surface.widget().clone().upcast::<gtk::Widget>();
-            window.set_child(None::<&gtk::Widget>);
-            let confirmation_window = gtk::Window::builder()
-                .child(&confirmation_root)
-                .default_width(1_200)
-                .default_height(800)
-                .build();
-            confirmation_window.present();
-            settle_toolkit();
             let confirm = find_button(&confirmation_root, "Remove storybook");
             let cancel = find_button(&confirmation_root, "Cancel");
             for (width_name, width) in [("wide", 1_200), ("narrow", 600)] {
-                confirmation_window.set_default_size(width, 800);
-                confirmation_window.set_size_request(width, 800);
-                confirmation_window.queue_resize();
+                window.set_default_size(width, 800);
+                window.set_size_request(width, 800);
                 settle_toolkit();
-                confirmation_window.queue_draw();
+                confirmation_root.measure(gtk::Orientation::Horizontal, -1);
+                confirmation_root.measure(gtk::Orientation::Vertical, width);
+                confirmation_root.allocate(width, 1_600, -1, None);
+                window.queue_draw();
                 settle_frame();
                 assert_contained(&confirmation_root, &format!("extension removal/{width_name}"));
                 assert!(has_label(
@@ -1494,7 +1496,7 @@ mod unix {
                     "{width_name} confirmation actions overlap"
                 );
                 capture(
-                    &confirmation_window,
+                    &window,
                     &format!("extension-removal-confirmation-{width_name}"),
                     width,
                     800,
@@ -1557,13 +1559,6 @@ mod unix {
                     other => panic!("unexpected removal menu-close request: {other:?}"),
                 }
             }
-            confirmation_window.set_child(None::<&gtk::Widget>);
-            confirmation_window.close();
-            window.set_child(Some(surface.widget()));
-            window.set_default_size(1_200, 800);
-            window.set_size_request(1_200, 800);
-            window.present();
-            settle_toolkit();
         }
         if fixture == "populated" && name == "extensions" && !catalogue_empty {
             find_toggle(&root, "Discover").set_active(true);

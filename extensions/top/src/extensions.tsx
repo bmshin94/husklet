@@ -2237,7 +2237,9 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                 <Card
                                   key={`${extension.name}:${extension.image_digest}`}
                                   grow={attention}
-                                  width={attention ? 'fill' : { chars: 36 }}
+                                  width={
+                                    attention ? 'fill' : { minimum: { chars: 36 }, maximum: 'fill' }
+                                  }
                                   height="content"
                                   variant="outline"
                                 >
