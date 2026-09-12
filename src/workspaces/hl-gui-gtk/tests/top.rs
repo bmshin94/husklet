@@ -1138,6 +1138,8 @@ mod unix {
                 );
                 let body_before = body.width();
                 paned.set_position(200);
+                root.measure(gtk::Orientation::Horizontal, -1);
+                root.measure(gtk::Orientation::Vertical, 1_200);
                 root.allocate(1_200, 1_600, -1, None);
                 settle_toolkit();
                 assert_eq!(navigation.width(), 200, "native divider resizes the Top rail");
@@ -1160,6 +1162,8 @@ mod unix {
                 window.set_default_size(600, 800);
                 window.set_size_request(600, 800);
                 window.present();
+                root.measure(gtk::Orientation::Horizontal, -1);
+                root.measure(gtk::Orientation::Vertical, 600);
                 root.allocate(600, 1_600, -1, None);
                 settle_frame();
                 assert!(
@@ -1173,6 +1177,8 @@ mod unix {
                 window.set_default_size(1_200, 800);
                 window.set_size_request(1_200, 800);
                 window.present();
+                root.measure(gtk::Orientation::Horizontal, -1);
+                root.measure(gtk::Orientation::Vertical, 1_200);
                 root.allocate(1_200, 1_600, -1, None);
                 settle_frame();
                 assert!(
@@ -1188,6 +1194,8 @@ mod unix {
                 }
                 capture_stable(&window, "populated-workspace-resized-round-trip-wide", 1_200, 800);
                 paned.set_position(160);
+                root.measure(gtk::Orientation::Horizontal, -1);
+                root.measure(gtk::Orientation::Vertical, 1_200);
                 root.allocate(1_200, 1_600, -1, None);
                 selected.grab_focus();
                 settle_toolkit();
@@ -1610,6 +1618,8 @@ mod unix {
                 window.set_default_size(width, 800);
                 window.set_size_request(width, 800);
                 settle_toolkit();
+                discover_root.measure(gtk::Orientation::Horizontal, -1);
+                discover_root.measure(gtk::Orientation::Vertical, width);
                 discover_root.allocate(width, 1_600, -1, None);
                 window.queue_draw();
                 settle_frame();
@@ -3248,16 +3258,18 @@ mod unix {
     }
 
     fn capture_update_surface(window: &gtk::Window, root: &gtk::Widget, state: &str) {
+        gtk::prelude::GtkWindowExt::set_focus(window, None::<&gtk::Widget>);
+        settle_toolkit();
         window.set_child(None::<&gtk::Widget>);
         for (width_name, width) in [("narrow", 600), ("wide", 1_200)] {
-            root.measure(gtk::Orientation::Horizontal, -1);
-            root.measure(gtk::Orientation::Vertical, width);
-            root.allocate(width, 800, -1, None);
             let capture_window = gtk::Window::new();
             capture_window.set_child(Some(root));
             capture_window.set_default_size(width, 800);
             capture_window.present();
             settle_toolkit();
+            root.measure(gtk::Orientation::Horizontal, -1);
+            root.measure(gtk::Orientation::Vertical, width);
+            root.allocate(width, 800, -1, None);
             assert_contained(root, &format!("extensions/{state}/{width_name}"));
             if state == "update-required" {
                 let required = find_button(root, "Select required access");
@@ -3373,6 +3385,8 @@ mod unix {
                 assert!(update.grab_focus(), "{width_name} sticky decision accepts focus");
             }
             capture(&capture_window, &format!("extensions-{state}-{width_name}"), width, 800);
+            gtk::prelude::GtkWindowExt::set_focus(&capture_window, None::<&gtk::Widget>);
+            settle_toolkit();
             capture_window.set_child(None::<&gtk::Widget>);
             capture_window.close();
         }
