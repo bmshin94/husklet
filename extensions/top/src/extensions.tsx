@@ -2506,9 +2506,13 @@ function AcquisitionProgressAction({
         <Text label={stage} wrap grow />
         {value ? <Text label={value} color="text-dim" /> : null}
       </Row>
-      <Row gap={2} width="fill" align="center" justify="start" wrap>
+      <Row gap={2} width={{ chars: 75 }} align="center" justify="start" wrap>
         {progress ? (
-          <Progress fraction={fraction} tooltip={acquisitionLabel(acquisition)} width="fill" />
+          <Progress
+            fraction={fraction}
+            tooltip={acquisitionLabel(acquisition)}
+            width={{ chars: 51 }}
+          />
         ) : (
           <Spinner />
         )}
@@ -2516,6 +2520,7 @@ function AcquisitionProgressAction({
           label={cancelling ? 'Cancelling…' : 'Cancel inspection'}
           variant="outline"
           size="medium"
+          align="end"
           enabled={!cancelling}
           onInvoke={onCancel}
         />

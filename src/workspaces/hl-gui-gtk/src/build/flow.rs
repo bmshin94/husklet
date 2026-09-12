@@ -206,7 +206,14 @@ impl Weave {
         );
         let card_share = card_room / i32::try_from(line.children.len()).unwrap_or(1).max(1);
         let mut card_remainder = card_room % i32::try_from(line.children.len()).unwrap_or(1).max(1);
-        let mut main = if reverse { room } else { 0 };
+        // A lone wrapped action may explicitly anchor itself to the trailing
+        // edge. Its alignment must not affect a populated line, where normal
+        // reading order and expansion still decide placement.
+        let trailing = !vertical
+            && line.children.len() == 1
+            && line.children[0].0.halign() == gtk::Align::End;
+        let backwards = reverse || trailing;
+        let mut main = if backwards { room } else { 0 };
         for (child, extent, child_cross) in &line.children {
             let expands = if vertical {
                 child.vexpands()
@@ -227,7 +234,7 @@ impl Weave {
             } else {
                 extent + bonus
             };
-            if reverse {
+            if backwards {
                 main -= extent;
             }
             let (x, y) = if vertical { (cross, main) } else { (main, cross) };
@@ -248,7 +255,7 @@ impl Weave {
             };
             let shift = gtk::gsk::Transform::new().translate(&gtk::graphene::Point::new(x as f32, y as f32));
             child.allocate(width, height, -1, Some(shift));
-            if reverse {
+            if backwards {
                 main -= spacing;
             } else {
                 main += extent + spacing;

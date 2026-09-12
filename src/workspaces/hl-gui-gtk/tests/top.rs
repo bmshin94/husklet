@@ -3282,12 +3282,14 @@ mod unix {
             if state == "update-progress" {
                 let progress = find_progress(root).expect("progress state renders its bar");
                 let cancel = find_button(root, "Cancel inspection");
+                let value = find_label(root, "1/2 bytes · 50%");
                 let action_row = progress.parent().expect("progress belongs to its action row");
                 let progress_group = action_row
                     .parent()
                     .expect("progress action row belongs to its compact group");
                 let progress_bounds = progress.compute_bounds(root).expect("progress bar is rooted");
                 let cancel_bounds = cancel.compute_bounds(root).expect("cancel action is rooted");
+                let value_bounds = value.compute_bounds(root).expect("progress value is rooted");
                 let group_bounds = progress_group
                     .compute_bounds(root)
                     .expect("progress group is rooted");
@@ -3305,6 +3307,26 @@ mod unix {
                         || cancel_bounds.y() >= progress_bounds.y() + progress_bounds.height(),
                     "{width_name} Cancel is detached from progress: progress={progress_bounds:?}, cancel={cancel_bounds:?}"
                 );
+                if cancel_bounds.y() >= progress_bounds.y() + progress_bounds.height() {
+                    let vertical_gap = cancel_bounds.y() - progress_bounds.y() - progress_bounds.height();
+                    let trailing_gap = group_bounds.x() + group_bounds.width()
+                        - cancel_bounds.x()
+                        - cancel_bounds.width();
+                    assert!(
+                        vertical_gap >= 12.0,
+                        "{width_name} wrapped Cancel needs a deliberate row gap: {vertical_gap}px"
+                    );
+                    assert!(
+                        trailing_gap.abs() <= 1.0,
+                        "{width_name} wrapped Cancel is not trailing-aligned: {trailing_gap}px"
+                    );
+                    let value_edge = value_bounds.x() + value_bounds.width();
+                    let cancel_edge = cancel_bounds.x() + cancel_bounds.width();
+                    assert!(
+                        (value_edge - cancel_edge).abs() <= 1.0,
+                        "{width_name} wrapped Cancel does not share the operation-group edge: value={value_bounds:?}, cancel={cancel_bounds:?}"
+                    );
+                }
             }
             if matches!(state, "update-required" | "update-review") {
                 let update = find_button(root, "Update with selected access");
