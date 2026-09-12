@@ -2837,6 +2837,18 @@ mod unix {
                     "Select representative interaction stages focus away from its canonical target"
                 );
                 assert!(choice.grab_focus(), "Select accepts keyboard focus");
+                choice.emit_clicked();
+                let popover = find::<gtk::Popover>(&choice.clone().upcast(), |_| true);
+                settle_until("Select popup maps before option activation", || {
+                    choice.is_active() && popover.is_visible() && popover.is_mapped()
+                });
+                let option =
+                    find::<gtk::Button>(popover.upcast_ref(), |button| button.label().as_deref() == Some("Bash"));
+                settle_until("Select option maps before activation", || {
+                    option.is_mapped() && option.is_sensitive()
+                });
+                option.emit_clicked();
+                assert!(!choice.is_active(), "selecting an option closes its popup");
             }
             "Heading" => {
                 let document = descendants::<gtk::ScrolledWindow>(root)
@@ -3366,6 +3378,16 @@ mod unix {
         while context.pending() {
             context.iteration(false);
         }
+    }
+
+    fn settle_until(description: &str, ready: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_millis(250);
+        let context = gtk::glib::MainContext::default();
+        while !ready() {
+            assert!(Instant::now() < deadline, "{description}");
+            context.iteration(false);
+        }
+        assert!(ready(), "{description}");
     }
 
     fn settle_window_width(window: &gtk::Window, expected: i32) {
