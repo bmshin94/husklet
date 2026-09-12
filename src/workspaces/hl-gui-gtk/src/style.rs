@@ -92,6 +92,7 @@ fn controls(css: &mut String, theme: &Theme) {
          checkbutton check, checkbutton radio {{ min-width: 16px; min-height: 16px; background: {ground}; border: 1px solid {line}; }}\n\
          checkbutton check {{ border-radius: 4px; }}\n\
          checkbutton radio {{ border-radius: 50%; }}\n\
+         checkbutton.hl-radio label {{ margin-left: 5px; }}\n\
          checkbutton check:checked, checkbutton radio:checked {{ background: {accent}; border-color: {accent}; }}\n\
          checkbutton:focus check, checkbutton:focus-visible check, checkbutton:focus radio, checkbutton:focus-visible radio {{ outline: 2px solid {accent}; outline-offset: 2px; }}\n\
          .hl-table {{ background: {ground}; border: 1px solid {line}; border-radius: {radius}px; }}\n\

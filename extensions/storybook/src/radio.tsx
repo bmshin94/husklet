@@ -52,24 +52,36 @@ export function RadioWorkbench() {
       <DocumentationSection title="States">
         <Row gap={3} width="fill" wrap>
           <FieldSpecimen label="Unchecked" helper="Available, not selected" width={{ chars: 28 }}>
-            <Radio label="Automatic" checked={false} />
+            <RadioGroup gap={1}>
+              <Radio label="Automatic" checked={false} />
+              <Radio label="Manual" checked />
+            </RadioGroup>
           </FieldSpecimen>
           <FieldSpecimen label="Checked" helper="The group’s current value" width={{ chars: 28 }}>
-            <Radio label="Automatic" checked />
+            <RadioGroup gap={1}>
+              <Radio label="Automatic" checked />
+              <Radio label="Manual" checked={false} />
+            </RadioGroup>
           </FieldSpecimen>
           <FieldSpecimen
             label="Disabled · unchecked"
             helper="Unavailable by workspace policy"
             width={{ chars: 28 }}
           >
-            <Radio label="Automatic" checked={false} enabled={false} />
+            <RadioGroup gap={1}>
+              <Radio label="Automatic" checked={false} enabled={false} />
+              <Radio label="Manual" checked enabled={false} />
+            </RadioGroup>
           </FieldSpecimen>
           <FieldSpecimen
             label="Disabled · checked"
             helper="A retained value that cannot be changed"
             width={{ chars: 28 }}
           >
-            <Radio label="Automatic" checked enabled={false} />
+            <RadioGroup gap={1}>
+              <Radio label="Automatic" checked enabled={false} />
+              <Radio label="Manual" checked={false} enabled={false} />
+            </RadioGroup>
           </FieldSpecimen>
         </Row>
       </DocumentationSection>

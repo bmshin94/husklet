@@ -12,11 +12,18 @@ pub(crate) fn widget(tag: Tag) -> gtk::Widget {
         Tag::FormHelperText => helper().upcast(),
         Tag::FormControlLabel => caption().upcast(),
         Tag::Switch => switch().upcast(),
-        Tag::Checkbox | Tag::Radio => gtk::CheckButton::new().upcast(),
+        Tag::Checkbox => gtk::CheckButton::new().upcast(),
+        Tag::Radio => radio().upcast(),
         Tag::RadioGroup => axis::column(4).upcast(),
         // Select is the last form tag routed here.
         _ => super::choice::widget().upcast(),
     }
+}
+
+fn radio() -> gtk::CheckButton {
+    let widget = gtk::CheckButton::new();
+    widget.add_css_class("hl-radio");
+    widget
 }
 
 fn helper() -> gtk::Label {

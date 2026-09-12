@@ -2082,6 +2082,29 @@ mod unix {
             assert!(bash.grab_focus(), "controlled Radio restores native focus");
             assert!(bash.has_focus(), "controlled Radio exposes focus-visible state");
             assert_eq!(bash.accessible_role(), gtk::AccessibleRole::Radio);
+            assert!(bash.has_css_class("hl-radio"));
+            let state_radios = descendants::<gtk::CheckButton>(&root)
+                .into_iter()
+                .filter(|button| button.label().as_deref() == Some("Automatic"))
+                .collect::<Vec<_>>();
+            assert_eq!(state_radios.len(), 4, "Radio state matrix keeps four specimens");
+            assert!(
+                state_radios.iter().all(|button| {
+                    button.accessible_role() == gtk::AccessibleRole::Radio && button.has_css_class("hl-radio")
+                }),
+                "every Radio state specimen must use native grouped radio semantics and chrome"
+            );
+            let bash_label = descendants::<gtk::Label>(bash.upcast_ref())
+                .into_iter()
+                .find(|label| label.text() == "Bash · Portable scripts")
+                .expect("focused Radio retains its visible label");
+            let label_bounds = bash_label
+                .compute_bounds(&bash)
+                .expect("Radio label belongs to its native control");
+            assert!(
+                label_bounds.x() >= 27.0,
+                "Radio focus ring and label need at least 6px visual separation: {label_bounds:?}"
+            );
             assert_eq!(bash.height(), 18, "Radio keeps its compact 16px indicator row");
             assert!(
                 (240..=420).contains(&bash.width()),

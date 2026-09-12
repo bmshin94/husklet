@@ -17,7 +17,7 @@ test('Radio group retains exactly one controlled selection and result', () => {
   const radios = first.patches
     .filter((patch) => patch.Create?.tag === 'Radio')
     .map((patch) => patch.Create.id);
-  assert.equal(radios.length, 7);
+  assert.equal(radios.length, 11);
   const before = stage.frames.length;
   assert(
     stage.surface.dispatch({
