@@ -932,7 +932,7 @@ test('Top owns workspace settings and extension management in the same tab', asy
   );
   assert.ok(labelled(stage, 'v2.0.0'));
   assert.ok(labelled(stage, 'Publisher · Husklet'));
-  assert.ok(labelled(stage, 'Trust & compatibility'));
+  assert.ok(labelled(stage, 'Trust details'));
   assert.equal(
     ancestorTags(stage, 'Publisher · Husklet').includes('Expander'),
     false,

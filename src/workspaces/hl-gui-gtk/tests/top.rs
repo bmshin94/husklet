@@ -1623,6 +1623,19 @@ mod unix {
                 discover_root.allocate(width, 1_600, -1, None);
                 window.queue_draw();
                 settle_frame();
+                let result_count = find_mapped_labelled(&discover_root, "19 of 20 extensions");
+                let category_label = find_mapped_labelled(&discover_root, "Category");
+                let count_bounds = result_count
+                    .compute_bounds(&discover_root)
+                    .expect("Discover result count belongs to Top root");
+                let category_bounds = category_label
+                    .compute_bounds(&discover_root)
+                    .expect("Discover category label belongs to Top root");
+                let filter_gap = category_bounds.x() - count_bounds.x() - count_bounds.width();
+                assert!(
+                    category_bounds.y() > count_bounds.y() || filter_gap >= 12.0,
+                    "{width_name} Discover count ran into Category: count={count_bounds:?} category={category_bounds:?}"
+                );
                 assert_contained(&discover_root, &format!("discover/extensions/{width_name}"));
                 for (label, action) in [("update", &review), ("access", &review_access)] {
                     assert_standard_action(action, width_name, &format!("Discover {label}"), 28);
@@ -1641,7 +1654,7 @@ mod unix {
                         "wide Discover fixture did not prove a complete two-line description: {description_bounds:?}"
                     );
                 }
-                let trust = find_expander(&review_card, "Trust & compatibility");
+                let trust = find_expander(&review_card, "Trust details");
                 assert!(trust.is_focusable(), "{width_name} trust details are keyboard reachable");
                 assert!(trust.grab_focus(), "{width_name} trust details accept keyboard focus");
                 assert!(has_label(&review_card, "Publisher · Community"));
@@ -1713,15 +1726,16 @@ mod unix {
                         "narrow Discover cards must use one consistent full-width column"
                     );
                 }
-                let trust_bounds = trust
+                let trust_label = trust.label_widget().expect("trust disclosure owns a label");
+                let trust_label_bounds = trust_label
                     .compute_bounds(&review_card)
-                    .expect("trust disclosure belongs to its card");
+                    .expect("trust label belongs to its card");
                 let trust_action_gap = review_bounds_in_card.x()
-                    - trust_bounds.x()
-                    - trust_bounds.width();
+                    - trust_label_bounds.x()
+                    - trust_label_bounds.width();
                 assert!(
                     (12.0..=16.0).contains(&trust_action_gap),
-                    "{width_name} trust/action gap must be 12–16px: {trust_action_gap}px"
+                    "{width_name} visible trust-label/action gap must be 12 to 16px: {trust_action_gap}px"
                 );
                 let catalogue_cards = widgets_with_class(&discover_root, "hl-card")
                     .into_iter()

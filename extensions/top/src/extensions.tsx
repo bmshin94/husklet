@@ -1217,28 +1217,30 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                           }}
                         />
                       </Row>
-                      <Row gap={1} align="center" justify="start">
+                      <Row gap={3} align="center" justify="start" wrap>
                         <Text
                           label={`${visibleCatalogueEntries.length} of ${countLabel(catalogueEntries.length, 'extension')}`}
                           color="text-dim"
                         />
-                        <Text label="Category" color="text-dim" />
-                        <Select
-                          value={catalogueCategory}
-                          tooltip="Filter extension catalogue by category"
-                          width={{ minimum: { chars: 18 }, maximum: { chars: 22 } }}
-                          choices={[
-                            { value: '', label: 'All categories' },
-                            ...catalogueCategories.map((category) => ({
-                              value: category,
-                              label: category,
-                            })),
-                          ]}
-                          onChange={(event: Change) => {
-                            setCatalogueCategory(String(event.value ?? ''));
-                            setCatalogueLimit(CATALOGUE_PAGE_SIZE);
-                          }}
-                        />
+                        <Row gap={1} align="center" justify="start">
+                          <Text label="Category" color="text-dim" />
+                          <Select
+                            value={catalogueCategory}
+                            tooltip="Filter extension catalogue by category"
+                            width={{ minimum: { chars: 18 }, maximum: { chars: 22 } }}
+                            choices={[
+                              { value: '', label: 'All categories' },
+                              ...catalogueCategories.map((category) => ({
+                                value: category,
+                                label: category,
+                              })),
+                            ]}
+                            onChange={(event: Change) => {
+                              setCatalogueCategory(String(event.value ?? ''));
+                              setCatalogueLimit(CATALOGUE_PAGE_SIZE);
+                            }}
+                          />
+                        </Row>
                       </Row>
                     </Row>
                   ) : null}
@@ -1344,7 +1346,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                 />
                               ) : null}
                               <Row gap={3} width="fill" wrap align="center" justify="start">
-                                <Expander label="Trust & compatibility" expanded={false}>
+                                <Expander label="Trust details" expanded={false}>
                                   <Column gap={1}>
                                     <Text label={trust.label} color="text-dim" wrap />
                                     <Text
