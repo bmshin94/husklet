@@ -1203,6 +1203,45 @@ export interface WorkspaceApi {
           complete: true;
         }
     >;
+    /** Resume newline-delimited JSON as atomically acknowledged, bounded result pages. */
+    resumeJsonLinePages<Value = unknown>(
+      id: string,
+      options: {
+        after: number;
+        partialLine?: readonly number[];
+        lines?: number;
+        maxLineBytes: number;
+        maxLines?: number;
+        decode?: (value: unknown, line: number) => Value;
+        pageLimit?: number;
+        maxPages?: number;
+        pollIntervalMs?: number;
+        signal?: AbortSignal;
+      },
+      onPage: (page: {
+        values: readonly Value[];
+        stderr: readonly number[];
+        next: number;
+      }) => void | Promise<void>,
+    ): Promise<
+      | {
+          executionId: string;
+          next: number;
+          pages: number;
+          complete: false;
+          lines: number;
+          partialLine: readonly number[];
+        }
+      | {
+          executionId: string;
+          execution: ExecutionSummary;
+          next: number;
+          pages: number;
+          complete: true;
+          lines: number;
+          partialLine: readonly number[];
+        }
+    >;
     waitExecution(id: string, options?: { timeoutMs?: number }): Promise<ExecutionSummary>;
     /** Execute, wait for completion, then fetch bounded output without auto-removing the execution record. */
     execAndWait(

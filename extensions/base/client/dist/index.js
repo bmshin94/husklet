@@ -1408,6 +1408,92 @@ export function workspace(session, { signal } = {}) {
                     throw new ExecutionOperationError(executionId, phase, cause, undefined, cursor);
                 }
             },
+            resumeJsonLinePages: async (id, configuration, onPage) => {
+                const { partialLine = [], lines: initialLines = 0, maxLineBytes, maxLines, decode = (value) => value, ...options } = configuration;
+                if (!Number.isSafeInteger(maxLineBytes) ||
+                    maxLineBytes < 1 ||
+                    maxLineBytes > 16 * 1024 * 1024)
+                    throw new RangeError('execution line maxLineBytes must be between 1 and 16777216');
+                if (!Array.isArray(partialLine) ||
+                    partialLine.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255))
+                    throw new TypeError('resumed partial line must contain only bytes');
+                if (partialLine.length > maxLineBytes)
+                    throw new RangeError(`execution line exceeded the ${maxLineBytes} byte limit`);
+                if (!Number.isSafeInteger(initialLines) || initialLines < 0)
+                    throw new RangeError('resumed line count must be a nonnegative safe integer');
+                exactExecutionLineLimit(maxLines);
+                if (maxLines !== undefined && initialLines > maxLines)
+                    throw new RangeError('resumed line count exceeds the aggregate line limit');
+                if (typeof decode !== 'function')
+                    throw new TypeError('JSON lines decode must be a function');
+                if (typeof onPage !== 'function')
+                    throw new TypeError('JSON line pages require a callback');
+                let pending = [...partialLine];
+                let lines = initialLines;
+                try {
+                    const result = await api.containers.resumeExecutionStreaming(id, options, async (page) => {
+                        const candidate = [...pending];
+                        const values = [];
+                        const stderr = [];
+                        let candidateLines = lines;
+                        const deliver = () => {
+                            let bytes = candidate.splice(0);
+                            if (bytes.at(-1) === 13)
+                                bytes = bytes.slice(0, -1);
+                            const line = candidateLines + 1;
+                            if (maxLines !== undefined && line > maxLines)
+                                throw new RangeError(`execution output exceeded the ${maxLines} line limit`);
+                            let value;
+                            try {
+                                value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(bytes)));
+                            }
+                            catch (cause) {
+                                throw new JsonLineParseError(line, cause);
+                            }
+                            try {
+                                values.push(decode(value, line));
+                            }
+                            catch (cause) {
+                                throw new JsonLineDecodeError(line, cause);
+                            }
+                            candidateLines = line;
+                        };
+                        for (const entry of page.entries) {
+                            if (entry.stream === 'stderr') {
+                                stderr.push(...entry.bytes);
+                                continue;
+                            }
+                            for (const byte of entry.bytes) {
+                                if (byte === 10)
+                                    deliver();
+                                else {
+                                    candidate.push(byte);
+                                    if (candidate.length > maxLineBytes)
+                                        throw new RangeError(`execution line exceeded the ${maxLineBytes} byte limit`);
+                                }
+                            }
+                        }
+                        if (page.eof && candidate.length > 0)
+                            deliver();
+                        await onPage(Object.freeze({
+                            values: Object.freeze(values),
+                            stderr: Object.freeze(stderr),
+                            next: page.next,
+                        }));
+                        pending = candidate;
+                        lines = candidateLines;
+                    });
+                    return { ...result, lines, partialLine: Object.freeze([...pending]) };
+                }
+                catch (cause) {
+                    if (cause instanceof ExecutionOperationError)
+                        throw new ExecutionOperationError(cause.executionId, cause.phase, cause.cause, cause.execution, cause.after, {
+                            partialLine: Object.freeze([...pending]),
+                            lines,
+                        });
+                    throw cause;
+                }
+            },
             waitExecution: async (id, { timeoutMs = 30_000 } = {}) => {
                 const executionId = immutableIdentity(id, [32], 'execution');
                 return exactExecution(expect(await session.call('execution_wait', {
@@ -5024,6 +5110,7 @@ export const protocolCoverage = Object.freeze({
             'executionOutput',
             'executionOutputPages',
             'resumeExecutionStreaming',
+            'resumeJsonLinePages',
             'waitExecution',
             'signalExecution',
             'cancelExecution',

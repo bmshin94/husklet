@@ -7,6 +7,104 @@ import test from 'node:test';
 import { connect, workspace } from '../dist/index.js';
 import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
 
+test('Postgres browser atomically resumes a split JSON row over fragmented Unix framing', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-postgres-resume-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const executionId = 'e'.repeat(32);
+  const connections = new Set();
+  let requests = 0;
+  const server = net.createServer((socket) => {
+    connections.add(socket);
+    socket.on('close', () => connections.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.kind !== KIND.request) continue;
+        requests += 1;
+        const payload =
+          frame.payload.call === 'execution_output'
+            ? {
+                reply: 'execution_output',
+                with: {
+                  entries: [
+                    {
+                      sequence: 8,
+                      timestamp_ms: 1,
+                      stream: 'stdout',
+                      bytes: [...Buffer.from('}\n{"id":2}\n')],
+                    },
+                  ],
+                  next: 8,
+                  more: false,
+                  eof: true,
+                  gap: false,
+                },
+              }
+            : {
+                reply: 'execution',
+                with: {
+                  id: executionId,
+                  container_id: 'c'.repeat(64),
+                  running: false,
+                  exit_code: 0,
+                  pid: 42,
+                  command: ['psql'],
+                  user: 'postgres',
+                  created_at_ms: 1,
+                  started_at_ms: 2,
+                  finished_at_ms: 3,
+                  result: { kind: 'code', value: 0 },
+                },
+              };
+        const bytes = encode({ channel: frame.channel, kind: KIND.response, payload });
+        socket.write(bytes.subarray(0, 7));
+        socket.write(bytes.subarray(7));
+      }
+    });
+    const greeting = encode({
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: { protocol: 1, peer: 'postgres-resume', granted: ['containers:read'] },
+    });
+    socket.write(greeting.subarray(0, 2));
+    socket.write(greeting.subarray(2));
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const session = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(session).containers.resumeJsonLinePages(
+        executionId,
+        { after: 7, partialLine: [1, 2], maxLineBytes: 1 },
+        () => {},
+      ),
+      /exceeded the 1 byte limit/,
+    );
+    assert.equal(requests, 0, 'invalid retained rows never reach the Unix socket');
+    const committed = [];
+    const result = await workspace(session).containers.resumeJsonLinePages(
+      executionId,
+      {
+        after: 7,
+        partialLine: [...Buffer.from('{"id":1')],
+        maxLineBytes: 1024,
+        maxLines: 1_000_000,
+        pageLimit: 1,
+      },
+      (page) => committed.push(page),
+    );
+    assert.deepEqual(committed, [{ values: [{ id: 1 }, { id: 2 }], stderr: [], next: 8 }]);
+    assert.equal(result.complete, true);
+    assert.equal(result.lines, 2);
+    assert.deepEqual(result.partialLine, []);
+    await session.close();
+  } finally {
+    for (const connection of connections) connection.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('Postgres browser streams credential-backed rows over real Unix framing', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-postgres-browser-'));
   const socketPath = path.join(directory, 'host.sock');
@@ -147,30 +245,32 @@ test('Postgres browser streams credential-backed rows over real Unix framing', a
     let liveExecution;
     let deadlockTimer;
     const result = await Promise.race([
-      workspace(session).networks.withTemporaryConnection(
-        networkId,
-        containerId,
-        () => workspace(session).containers.execJsonLines(
+      workspace(session)
+        .networks.withTemporaryConnection(
+          networkId,
           containerId,
-          7,
-          {
-            command: ['psql', '--command', 'select 1'],
-            environment: [['PGDATABASE', 'app']],
-            credentials: [['PGPASSWORD', 'postgres.password']],
-            input: ['select row_to_json(query) from (select 1 as id) query;\n'],
-            pageLimit: 1,
-            maxLineBytes: 1024,
-            onStarted: async (id) => {
-              liveExecution = await workspace(session).containers.execution(id);
-            },
-          },
-          async (value) => {
-            rows.push(value);
-            await Promise.resolve();
-          },
-        ),
-        { aliases: ['postgres-inspector'] },
-      )
+          () =>
+            workspace(session).containers.execJsonLines(
+              containerId,
+              7,
+              {
+                command: ['psql', '--command', 'select 1'],
+                environment: [['PGDATABASE', 'app']],
+                credentials: [['PGPASSWORD', 'postgres.password']],
+                input: ['select row_to_json(query) from (select 1 as id) query;\n'],
+                pageLimit: 1,
+                maxLineBytes: 1024,
+                onStarted: async (id) => {
+                  liveExecution = await workspace(session).containers.execution(id);
+                },
+              },
+              async (value) => {
+                rows.push(value);
+                await Promise.resolve();
+              },
+            ),
+          { aliases: ['postgres-inspector'] },
+        )
         .finally(() => clearTimeout(deadlockTimer)),
       new Promise(
         (_, reject) =>

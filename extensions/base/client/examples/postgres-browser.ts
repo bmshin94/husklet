@@ -51,33 +51,39 @@ try {
     const result = await workspace(session).networks.withTemporaryConnection(
       configuration.networkId,
       container.id,
-      () => containers.execJsonLines(container.id, container.generation, {
-        command: [
-          'psql',
-          '--no-psqlrc',
-          '--quiet',
-          '--tuples-only',
-          '--no-align',
-          '--dbname',
-          configuration.database,
-          '--file',
-          '-',
-        ],
-        credentials: [['PGPASSWORD', configuration.passwordCredential]],
-        input: [`SELECT row_to_json(husklet_row)::text FROM (${query}) AS husklet_row;\n`],
-        maxLineBytes: 1024 * 1024,
-        pageLimit: 16,
-        signal: abort.signal,
-        onStarted: (id) => {
-          executionId = id;
-        },
-        onStderr: (text) => {
-          if (notices.length < 25) notices.push(text.slice(0, 4_096));
-        },
-      }, (value) => {
-        rows += 1;
-        if (preview.length < 25) preview.push(value);
-      }),
+      () =>
+        containers.execJsonLines(
+          container.id,
+          container.generation,
+          {
+            command: [
+              'psql',
+              '--no-psqlrc',
+              '--quiet',
+              '--tuples-only',
+              '--no-align',
+              '--dbname',
+              configuration.database,
+              '--file',
+              '-',
+            ],
+            credentials: [['PGPASSWORD', configuration.passwordCredential]],
+            input: [`SELECT row_to_json(husklet_row)::text FROM (${query}) AS husklet_row;\n`],
+            maxLineBytes: 1024 * 1024,
+            pageLimit: 16,
+            signal: abort.signal,
+            onStarted: (id) => {
+              executionId = id;
+            },
+            onStderr: (text) => {
+              if (notices.length < 25) notices.push(text.slice(0, 4_096));
+            },
+          },
+          (value) => {
+            rows += 1;
+            if (preview.length < 25) preview.push(value);
+          },
+        ),
       { aliases: ['postgres-inspector'] },
     );
     const execution = result.execution;
@@ -92,8 +98,51 @@ try {
     }
     process.stdout.write(`${JSON.stringify({ rows, preview, notices })}\n`);
   } catch (error) {
-    if (error instanceof ExecutionOperationError) executionId = error.executionId;
-    throw error;
+    let recovered = false;
+    if (error instanceof ExecutionOperationError) {
+      executionId = error.executionId;
+      if (error.after !== undefined && error.partialLine !== undefined) {
+        // A transport failure leaves the execution record on the host. Reconnect and commit each
+        // decoded result page as one unit before advancing its authoritative output cursor.
+        const resumedSession = await connect({
+          path: configuration.path,
+          pendingLimit: 8,
+          timeout: 5_000,
+        });
+        try {
+          const resumed = await workspace(resumedSession).containers.resumeJsonLinePages(
+            error.executionId,
+            {
+              after: error.after,
+              partialLine: error.partialLine,
+              lines: error.lines,
+              maxLineBytes: 1024 * 1024,
+              maxLines: 1_000_000,
+              pageLimit: 16,
+              signal: abort.signal,
+            },
+            async (page) => {
+              for (const value of page.values) {
+                rows += 1;
+                if (preview.length < 25) preview.push(value);
+              }
+              if (page.stderr.length > 0 && notices.length < 25) {
+                notices.push(
+                  new TextDecoder().decode(Uint8Array.from(page.stderr)).slice(0, 4_096),
+                );
+              }
+            },
+          );
+          if (resumed.complete && resumed.execution.exit_code === 0) {
+            process.stdout.write(`${JSON.stringify({ rows, preview, notices })}\n`);
+            recovered = true;
+          }
+        } finally {
+          await resumedSession.close();
+        }
+      }
+    }
+    if (!recovered) throw error;
   } finally {
     clearTimeout(timer);
     if (executionId) await containers.removeExecution(executionId).catch(() => {});
