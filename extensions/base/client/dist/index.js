@@ -12,7 +12,9 @@ export class ExecutionOperationError extends Error {
     after;
     partialLine;
     lines;
-    constructor(executionId, phase, cause, execution = undefined, after = undefined, lineState = undefined) {
+    stdout;
+    stderr;
+    constructor(executionId, phase, cause, execution = undefined, after = undefined, recovery = undefined) {
         super(`execution ${executionId} ${phase} failed: ${cause instanceof Error ? cause.message : String(cause)}`);
         this.name = 'ExecutionOperationError';
         this.executionId = executionId;
@@ -20,8 +22,10 @@ export class ExecutionOperationError extends Error {
         this.cause = cause;
         this.execution = execution;
         this.after = after;
-        this.partialLine = lineState?.partialLine;
-        this.lines = lineState?.lines;
+        this.partialLine = recovery?.partialLine;
+        this.lines = recovery?.lines;
+        this.stdout = recovery?.stdout;
+        this.stderr = recovery?.stderr;
     }
 }
 /** A client-owned execution exceeded its post-start wall-clock deadline. */
@@ -1772,34 +1776,45 @@ export function workspace(session, { signal } = {}) {
                     throw new RangeError('execution text maxBytes must be between 1 and 16777216');
                 }
                 let bytes = 0;
-                let stdout = '';
-                let stderr = '';
-                // Query/result protocols are textual. Replacing malformed bytes with U+FFFD could silently
-                // change a database value or delimiter, so fail and cancel the owned execution instead.
-                const stdoutDecoder = new TextDecoder('utf-8', { fatal: true });
-                const stderrDecoder = new TextDecoder('utf-8', { fatal: true });
-                const result = await api.containers.execStreaming(id, generation, options, (page) => {
-                    for (const entry of page.entries) {
-                        bytes += entry.bytes.length;
-                        if (bytes > maxBytes) {
-                            throw new RangeError(`execution text exceeded the ${maxBytes} byte limit`);
-                        }
-                        const decoder = entry.stream === 'stdout' ? stdoutDecoder : stderrDecoder;
-                        const text = decoder.decode(Uint8Array.from(entry.bytes), { stream: true });
-                        if (entry.stream === 'stdout')
-                            stdout += text;
-                        else
-                            stderr += text;
-                    }
-                });
+                const chunks = { stdout: [], stderr: [] };
+                const flatten = (parts) => Object.freeze(parts.flatMap((part) => Array.from(part)));
+                const decoders = {
+                    stdout: new TextDecoder('utf-8', { fatal: true }),
+                    stderr: new TextDecoder('utf-8', { fatal: true }),
+                };
+                let result;
                 try {
-                    stdout += stdoutDecoder.decode();
-                    stderr += stderrDecoder.decode();
+                    result = await api.containers.execStreaming(id, generation, options, (page) => {
+                        const additions = {
+                            stdout: [],
+                            stderr: [],
+                        };
+                        let pageBytes = 0;
+                        for (const entry of page.entries) {
+                            pageBytes += entry.bytes.length;
+                            if (bytes + pageBytes > maxBytes)
+                                throw new RangeError(`execution text exceeded the ${maxBytes} byte limit`);
+                            const part = Uint8Array.from(entry.bytes);
+                            decoders[entry.stream].decode(part, { stream: true });
+                            additions[entry.stream].push(part);
+                        }
+                        chunks.stdout.push(...additions.stdout);
+                        chunks.stderr.push(...additions.stderr);
+                        bytes += pageBytes;
+                    });
                 }
                 catch (cause) {
-                    throw new ExecutionOperationError(result.executionId, 'output', cause, result.execution);
+                    if (cause instanceof ExecutionOperationError)
+                        throw new ExecutionOperationError(cause.executionId, cause.phase, cause.cause, cause.execution, cause.after, { stdout: flatten(chunks.stdout), stderr: flatten(chunks.stderr) });
+                    throw cause;
                 }
-                return { ...result, stdout, stderr };
+                const decode = (parts) => new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(flatten(parts)));
+                try {
+                    return { ...result, stdout: decode(chunks.stdout), stderr: decode(chunks.stderr) };
+                }
+                catch (cause) {
+                    throw new ExecutionOperationError(result.executionId, 'output', cause, result.execution, undefined, { stdout: flatten(chunks.stdout), stderr: flatten(chunks.stderr) });
+                }
             },
             execLines: async (id, generation, configuration, onLine) => {
                 const { maxLineBytes, maxLines, onStderr, ...options } = configuration;

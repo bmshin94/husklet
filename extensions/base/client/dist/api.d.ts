@@ -795,6 +795,10 @@ export declare class ExecutionOperationError extends Error {
     readonly partialLine?: readonly number[];
     /** Complete stdout records already delivered by a line-oriented helper. */
     readonly lines?: number;
+    /** Exact bounded stdout bytes acknowledged at `after` by text-oriented helpers. */
+    readonly stdout?: readonly number[];
+    /** Exact bounded stderr bytes acknowledged at `after` by text-oriented helpers. */
+    readonly stderr?: readonly number[];
 }
 /** A client-owned execution exceeded its post-start wall-clock deadline. */
 export declare class ExecutionDeadlineError extends Error {
