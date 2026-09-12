@@ -70,6 +70,7 @@ test('confirmation is separate and only its final action is destructive', () => 
   const confirmation = stage.since(before);
   const final = labelled(confirmation, 'Confirm removal');
   assert.deepEqual(prop(confirmation, final.id, 'Destructive'), { Flag: true });
+  assert.deepEqual(prop(confirmation, final.id, 'Variant'), { Variant: 'Filled' });
   assert.deepEqual(prop(confirmation, final.id, 'Size'), { ControlSize: 'Small' });
   assert.ok(labelled(confirmation, 'Remove cache generation 7?'));
   const created = confirmation.filter((patch) => patch.Create).map((patch) => patch.Create.tag);

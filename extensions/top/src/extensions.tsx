@@ -2236,9 +2236,9 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                               return (
                                 <Card
                                   key={`${extension.name}:${extension.image_digest}`}
-                                  grow
+                                  grow={attention}
                                   width={attention ? 'fill' : { chars: 36 }}
-                                  height={attention ? 'content' : 'fill'}
+                                  height="content"
                                   variant="outline"
                                 >
                                   <CardContent gap={1}>
@@ -2378,15 +2378,10 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                         />
                                         {removalMenu === extension.name ? (
                                           <Column gap={1} align="start">
-                                            <Text
-                                              label="Uninstalling permanently deletes this extension’s private workspace data."
-                                              color="text-dim"
-                                              wrap
-                                            />
                                             <ConfirmAction
                                               label="Remove extension"
                                               confirmLabel={`Remove ${extension.name}`}
-                                              question={`Remove ${extension.name} and permanently delete its private workspace data?`}
+                                              question={`Remove ${extension.name}? Its private workspace data will be permanently deleted.`}
                                               authorityKey={extension.image_digest}
                                               enabled={!busy}
                                               size="small"

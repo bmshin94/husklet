@@ -3362,12 +3362,11 @@ test('installed extension removal requires final consent and a failure remains r
   assert.ok(labelled(stage, 'More actions'));
   assert.equal(labelled(stage, 'Remove extension'), undefined);
   invoke(stage, 'More actions');
-  assert.ok(
-    labelled(stage, 'Uninstalling permanently deletes this extension’s private workspace data.'),
-  );
   invoke(stage, 'Remove extension');
   assert.deepEqual(calls, [], 'opening consent carries no removal authority');
-  assert.ok(labelled(stage, 'Remove assistant and permanently delete its private workspace data?'));
+  assert.ok(
+    labelled(stage, 'Remove assistant? Its private workspace data will be permanently deleted.'),
+  );
   invoke(stage, 'Remove assistant');
   invoke(stage, 'Remove assistant');
   assert.equal(calls.length, 1, 'a repeated confirmation cannot duplicate removal authority');

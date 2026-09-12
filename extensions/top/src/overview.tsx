@@ -87,7 +87,7 @@ export function Navigation({
   return (
     <Column grow={false} width="fill" height="fill" pad={1} gap={1}>
       <Scroll grow width="fill" height="fill">
-        <Column grow={false} height="content" gap={1}>
+        <Column grow={false} height="content" gap={0}>
           {groups
             .map((group) => ({
               ...group,

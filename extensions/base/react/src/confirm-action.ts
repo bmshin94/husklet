@@ -129,6 +129,7 @@ export function ConfirmAction({
         size,
         tone: 'danger',
         destructive: true,
+        variant: 'filled',
         onInvoke: confirm,
       }),
       React.createElement(Button, {

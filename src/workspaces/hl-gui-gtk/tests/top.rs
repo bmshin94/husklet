@@ -16,10 +16,10 @@ mod unix {
         NetworkEndpointInventory, NetworkInventory, NetworkKind, NetworkSummary,
     };
     use hl_extension::{
-        codec, Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
-        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PaneProvider, PreferenceValue,
+        Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
+        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PROTOCOL, PaneProvider, PreferenceValue,
         RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire, WorkspaceConfiguration,
-        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, PROTOCOL,
+        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, codec,
     };
     use hl_gui::{Renderer as _, SourceMutation, Theme, Tree};
     use hl_gui_gtk::Surface;
@@ -1441,7 +1441,7 @@ mod unix {
                 &mut wire,
                 &mut tree,
                 &mut surface,
-                "Remove storybook and permanently delete its private workspace data?",
+                "Remove storybook? Its private workspace data will be permanently deleted.",
                 |request| panic!("unexpected removal confirmation request: {request:?}"),
             );
             let confirmation_root = surface.widget().clone().upcast::<gtk::Widget>();
@@ -1465,15 +1465,18 @@ mod unix {
                 assert_contained(&confirmation_root, &format!("extension removal/{width_name}"));
                 assert!(has_label(
                     &confirmation_root,
-                    "Uninstalling permanently deletes this extension’s private workspace data."
-                ));
-                assert!(has_label(
-                    &confirmation_root,
-                    "Remove storybook and permanently delete its private workspace data?"
+                    "Remove storybook? Its private workspace data will be permanently deleted."
                 ));
                 assert_standard_action(&confirm, width_name, "destructive confirmation", 28);
                 assert_standard_action(&cancel, width_name, "removal cancellation", 28);
                 assert!(confirm.has_css_class("tone-danger"));
+                let confirmation_card = ancestor_with_class(confirm.upcast_ref(), "hl-card")
+                    .expect("confirmation remains inside its extension card");
+                assert!(
+                    confirmation_card.height() <= if width == 1_200 { 220 } else { 300 },
+                    "{width_name} filtered confirmation card stretched to {}px",
+                    confirmation_card.height()
+                );
                 assert_eq!(
                     ancestor_with_class(confirm.upcast_ref(), "hl-row"),
                     ancestor_with_class(cancel.upcast_ref(), "hl-row"),
@@ -1509,7 +1512,7 @@ mod unix {
             let deadline = Instant::now() + DEADLINE;
             while has_label(
                 surface.widget().upcast_ref(),
-                "Remove storybook and permanently delete its private workspace data?",
+                "Remove storybook? Its private workspace data will be permanently deleted.",
             ) {
                 let frame = receive_until(&mut wire, deadline).expect("cancellation rerenders");
                 if frame.kind == hl_extension::Kind::Credit {
@@ -1528,7 +1531,7 @@ mod unix {
             assert!(
                 !has_label(
                     surface.widget().upcast_ref(),
-                    "Remove storybook and permanently delete its private workspace data?"
+                    "Remove storybook? Its private workspace data will be permanently deleted."
                 ),
                 "cancellation closes destructive confirmation"
             );
@@ -1539,10 +1542,7 @@ mod unix {
                 matches!(event, hl_gui::Event::Invoke { .. })
             });
             let deadline = Instant::now() + DEADLINE;
-            while has_label(
-                surface.widget().upcast_ref(),
-                "Uninstalling permanently deletes this extension’s private workspace data.",
-            ) {
+            while has_label(surface.widget().upcast_ref(), "Remove extension") {
                 let frame = receive_until(&mut wire, deadline).expect("removal menu closes");
                 if frame.kind == hl_extension::Kind::Credit {
                     continue;
@@ -2394,8 +2394,8 @@ mod unix {
                 assert_standard_action(&open, width_name, "access recovery", 28);
                 if width == 1_200 {
                     for (last_item, next_group) in [("Extensions", "Resources"), ("Networks", "Interface")] {
-                        let item = find_labelled(&recovery_root, last_item);
-                        let heading = find_labelled(&recovery_root, next_group);
+                        let item = find_leftmost_labelled(&recovery_root, last_item);
+                        let heading = find_leftmost_labelled(&recovery_root, next_group);
                         let item_bottom = vertical_end(&recovery_root, &item);
                         let heading_top = heading
                             .compute_bounds(&recovery_root)
@@ -3632,6 +3632,29 @@ mod unix {
             }
         }
         panic!("label {wanted:?} was not found")
+    }
+
+    fn find_leftmost_labelled(root: &gtk::Widget, wanted: &str) -> gtk::Widget {
+        let mut matches = Vec::new();
+        collect_labelled(root, wanted, &mut matches);
+        matches
+            .into_iter()
+            .min_by_key(|widget| widget.compute_bounds(root).map_or(i32::MAX, |bounds| bounds.x() as i32))
+            .unwrap_or_else(|| panic!("label {wanted:?} was not found"))
+    }
+
+    fn collect_labelled(root: &gtk::Widget, wanted: &str, matches: &mut Vec<gtk::Widget>) {
+        if root
+            .downcast_ref::<gtk::Label>()
+            .is_some_and(|label| label.text() == wanted)
+        {
+            matches.push(root.clone());
+        }
+        let mut child = root.first_child();
+        while let Some(current) = child {
+            child = current.next_sibling();
+            collect_labelled(&current, wanted, matches);
+        }
     }
 
     fn vertical_end(root: &gtk::Widget, widget: &gtk::Widget) -> i32 {
