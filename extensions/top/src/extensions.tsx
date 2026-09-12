@@ -2143,10 +2143,27 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                         }
                       }}
                     />
-                    <Text
-                      label={`${visibleInstalled.length} of ${countLabel(installed.length, 'installed extension')}`}
-                      color="text-dim"
-                    />
+                    {visibleInstalled.length > renderedInstalled.length ? (
+                      <>
+                        <Text
+                          label={`${renderedInstalled.length} shown · ${visibleInstalled.length} matching`}
+                          color="text-dim"
+                        />
+                        <Button
+                          label={`Show ${Math.min(INSTALLED_PAGE_SIZE, visibleInstalled.length - renderedInstalled.length)} more`}
+                          size="small"
+                          variant="ghost"
+                          onInvoke={() =>
+                            setInstalledLimit((current) => current + INSTALLED_PAGE_SIZE)
+                          }
+                        />
+                      </>
+                    ) : (
+                      <Text
+                        label={`${visibleInstalled.length} of ${countLabel(installed.length, 'installed extension')}`}
+                        color="text-dim"
+                      />
+                    )}
                   </Row>
                 </Column>
               ) : null}
@@ -2394,19 +2411,6 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                     })}
                   </Column>
                 )}
-                {visibleInstalled.length > renderedInstalled.length ? (
-                  <Row gap={1} width="fill" wrap align="center" justify="start">
-                    <Text
-                      label={`Showing ${renderedInstalled.length} of ${visibleInstalled.length} matching installed extensions`}
-                      color="text-dim"
-                    />
-                    <Button
-                      label={`Show ${Math.min(INSTALLED_PAGE_SIZE, visibleInstalled.length - renderedInstalled.length)} more installed`}
-                      size="small"
-                      onInvoke={() => setInstalledLimit((current) => current + INSTALLED_PAGE_SIZE)}
-                    />
-                  </Row>
-                ) : null}
               </ResourceState>
             </Column>
           )}

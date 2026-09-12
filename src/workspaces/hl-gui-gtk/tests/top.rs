@@ -323,12 +323,12 @@ mod unix {
                 "installed management omitted its search control"
             );
             assert!(
-                has_label(&root, "50 of 50 installed extensions"),
-                "installed management omitted its bounded result count"
+                has_label(&root, "12 shown · 50 matching"),
+                "installed management omitted its visible pagination status"
             );
             assert!(
-                has_label(&root, "Showing 12 of 50 matching installed extensions"),
-                "installed management materialized an unbounded card wall"
+                has_label(&root, "Show 12 more"),
+                "installed management hid pagination below its bounded card wall"
             );
         }
         let window = gtk::Window::new();
@@ -621,6 +621,26 @@ mod unix {
                 assert_eq!(refresh.icon_name().as_deref(), Some("view-refresh-symbolic"));
                 assert!(refresh.has_css_class("size-small"));
                 assert_eq!(refresh.height(), 28, "{width_name} refresh uses the compact tier");
+                let pagination = find_button(&root, "Show 12 more");
+                assert_eq!(pagination.accessible_role(), gtk::AccessibleRole::Button);
+                assert!(pagination.is_focusable(), "{width_name} installed pagination is keyboard reachable");
+                assert!(pagination.has_css_class("variant-ghost"));
+                let pagination_bounds = pagination
+                    .compute_bounds(&root)
+                    .expect("installed pagination belongs to Top root");
+                assert!(
+                    pagination_bounds.y() + pagination_bounds.height() <= 340.0,
+                    "{width_name} installed pagination remained hidden below the card wall: {pagination_bounds:?}"
+                );
+                let shown = find_mapped_labelled(&root, "12 shown · 50 matching");
+                let shown_bounds = shown
+                    .compute_bounds(&root)
+                    .expect("installed pagination status belongs to Top root");
+                assert!(
+                    pagination_bounds.y() > shown_bounds.y()
+                        || pagination_bounds.x() - shown_bounds.x() - shown_bounds.width() <= 16.0,
+                    "{width_name} pagination action detached from its status: status={shown_bounds:?} action={pagination_bounds:?}"
+                );
                 let refresh_bounds = refresh
                     .compute_bounds(&root)
                     .expect("installed refresh belongs to Top root");

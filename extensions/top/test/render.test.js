@@ -1531,16 +1531,15 @@ test('installed extension management searches, filters, pages, and clears fifty 
   );
   await settled();
   await settled();
-  assert.ok(labelled(stage, '50 of 50 installed extensions'));
+  assert.ok(labelled(stage, '12 shown · 50 matching'));
   assert.ok(labelled(stage, 'Needs attention'));
   assert.ok(labelled(stage, '2 extensions'));
   assert.ok(labelled(stage, 'Healthy extensions'));
-  assert.ok(labelled(stage, 'Showing 12 of 50 matching installed extensions'));
-  assert.ok(labelled(stage, 'Show 12 more installed'));
+  assert.ok(labelled(stage, 'Show 12 more'));
   assert.deepEqual(taggedProperty(stage, 'Disabled', 'Badge', 'Tone'), { Tone: 'Neutral' });
-  invoke(stage, 'Show 12 more installed');
+  invoke(stage, 'Show 12 more');
   await settled();
-  assert.ok(labelled(stage, 'Showing 24 of 50 matching installed extensions'));
+  assert.ok(labelled(stage, '24 shown · 50 matching'));
 
   changeByTooltip(stage, 'Filter installed extensions by status', 'faulted');
   await settled();
@@ -1554,7 +1553,7 @@ test('installed extension management searches, filters, pages, and clears fifty 
   assert.ok(labelled(stage, 'No installed extensions match this search and status filter.'));
   invoke(stage, 'Clear installed filters');
   await settled();
-  assert.ok(labelled(stage, '50 of 50 installed extensions'));
+  assert.ok(labelled(stage, '12 shown · 50 matching'));
   assert.equal(fieldValue(stage, 'Search installed'), '');
 
   change(stage, 'Search installed', 'observability dashboard');
