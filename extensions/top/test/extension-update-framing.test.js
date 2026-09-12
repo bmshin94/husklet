@@ -146,10 +146,10 @@ test('digest-pinned same-version review rejects a substituted image over real Un
     assert.ok(
       labelled(
         stage,
-        `Source registry.example/storybook:2 · sha256:${'d'.repeat(12)}…${'d'.repeat(8)}`,
+        `Package · registry.example/storybook:2 · sha256:${'d'.repeat(12)}…${'d'.repeat(8)}`,
       ),
     );
-    assert.equal(labelled(stage, `Source ${substitutedReference}`), undefined);
+    assert.equal(labelled(stage, `Package · ${substitutedReference}`), undefined);
     assert.ok(
       tooltip(stage, substitutedReference),
       'the full immutable reference remains available on demand',

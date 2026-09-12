@@ -1498,9 +1498,9 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                     }
                     detail={
                       acquisition.candidate?.installed_image_digest
-                        ? 'Update extension'
+                        ? `Update extension · version ${acquisition.candidate.version}`
                         : acquisition.candidate
-                          ? 'Install extension'
+                          ? `Install extension · version ${acquisition.candidate.version}`
                           : 'Image inspection'
                     }
                     align="start"
@@ -1508,20 +1508,20 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                   />
                   {acquisition?.candidate && (
                     <CardContent gap={1}>
-                      <Text
-                        label={`${acquisition.candidate.name} · ${acquisition.candidate.version}`}
-                      />
-                      <Text
-                        label={`Source ${compactImageReference(acquisition.reference)}`}
-                        color="text-dim"
-                        tooltip={acquisition.reference}
-                        wrap
-                      />
-                      <Text
-                        label={`Reviewed image ${compactDigest(acquisition.candidate.image_digest)}`}
-                        tooltip={acquisition.candidate.image_digest}
-                        wrap
-                      />
+                      <Column gap={0} width="fill" align="start">
+                        <Text
+                          label={`Package · ${compactImageReference(acquisition.reference)}`}
+                          color="text-dim"
+                          tooltip={acquisition.reference}
+                          wrap
+                        />
+                        <Text
+                          label={`Verified digest · ${compactDigest(acquisition.candidate.image_digest)}`}
+                          color="text-dim"
+                          tooltip={acquisition.candidate.image_digest}
+                          wrap
+                        />
+                      </Column>
                       {catalogueExpectation ? (
                         <Column gap={1}>
                           <Badge {...catalogueTrust(catalogueExpectation)} />
@@ -1543,10 +1543,9 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                           onRetry={dismissReview}
                         />
                       ) : null}
-                      <Heading label="Review permissions" scale="caption" />
                       <RequestedPermissionSummary groups={requestedPermissionGroups} />
                       <Text
-                        label="All access is off. Expand exact grants and enable only what this extension needs."
+                        label="Access starts off. Review exact grants and enable only what this extension needs."
                         color="text-dim"
                         wrap
                       />

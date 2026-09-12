@@ -2838,20 +2838,33 @@ mod unix {
         ));
         assert!(has_label(
             &review_root,
-            "Source ghcr.io/example/developer-tool-01:1.0.0 · sha256:cccccccccccc…cccccccc"
+            "Package · ghcr.io/example/developer-tool-01:1.0.0 · sha256:cccccccccccc…cccccccc"
         ));
         assert_eq!(
             find_label(
                 &review_root,
-                "Source ghcr.io/example/developer-tool-01:1.0.0 · sha256:cccccccccccc…cccccccc"
+                "Package · ghcr.io/example/developer-tool-01:1.0.0 · sha256:cccccccccccc…cccccccc"
             )
             .tooltip_text()
             .as_deref(),
             Some(reference)
         );
         assert!(
-            !has_label(&review_root, &format!("Source {reference}")),
+            !has_label(&review_root, &format!("Package · {reference}")),
             "the primary review does not overflow with the raw immutable digest"
+        );
+        assert!(has_label(
+            &review_root,
+            "Verified digest · sha256:bbbbbbbbbbbb…bbbbbbbb"
+        ));
+        assert!(has_label(&review_root, "Update extension · version 1.0.0"));
+        assert!(has_label(
+            &review_root,
+            "Access starts off. Review exact grants and enable only what this extension needs."
+        ));
+        assert!(
+            !has_label(&review_root, "Review permissions"),
+            "permission review does not repeat adjacent section headings"
         );
         assert!(has_label(
             &review_root,

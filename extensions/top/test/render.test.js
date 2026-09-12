@@ -2475,14 +2475,12 @@ test('extension inspection keeps invalid and failed references recoverable with 
     'registry.example/reviewed:1',
   ]);
   assert.ok(labelled(stage, 'Review reviewed'));
-  assert.ok(labelled(stage, 'reviewed · 1.0.0'));
-  assert.ok(labelled(stage, 'Review permissions'));
-  assert.ok(labelled(stage, `Reviewed image sha256:${'c'.repeat(12)}…${'c'.repeat(8)}`));
-  assert.ok(labelled(stage, 'Source registry.example/reviewed:1'));
+  assert.ok(labelled(stage, `Verified digest · sha256:${'c'.repeat(12)}…${'c'.repeat(8)}`));
+  assert.ok(labelled(stage, 'Package · registry.example/reviewed:1'));
   assert.ok(
     labelled(
       stage,
-      'All access is off. Expand exact grants and enable only what this extension needs.',
+      'Access starts off. Review exact grants and enable only what this extension needs.',
     ),
   );
   assert.ok(labelled(stage, 'View containers and processes'));
@@ -2734,7 +2732,7 @@ test('a long extension acquisition stays attached to its host job until review i
 
     assert.equal(waits, 1, 'the existing host job remains authoritative after thirty seconds');
     assert.ok(labelled(stage, 'Review slow'));
-    assert.ok(labelled(stage, `Reviewed image sha256:${'d'.repeat(12)}…${'d'.repeat(8)}`));
+    assert.ok(labelled(stage, `Verified digest · sha256:${'d'.repeat(12)}…${'d'.repeat(8)}`));
     assert.equal(labelled(stage, 'Acquisition is still running.'), undefined);
   } finally {
     Date.now = originalNow;
@@ -2796,9 +2794,8 @@ for (const updating of [false, true]) {
     await settled();
 
     assert.ok(labelled(stage, 'Review scoped'));
-    assert.ok(labelled(stage, 'scoped · 2.0.0'));
-    assert.ok(labelled(stage, 'Source local/scoped:2'));
-    assert.ok(labelled(stage, `Reviewed image ${compactDigest(candidate.image_digest)}`));
+    assert.ok(labelled(stage, 'Package · local/scoped:2'));
+    assert.ok(labelled(stage, `Verified digest · ${compactDigest(candidate.image_digest)}`));
     assert.ok(
       labelled(
         stage,
