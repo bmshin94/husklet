@@ -623,7 +623,10 @@ mod unix {
                 assert_eq!(refresh.height(), 28, "{width_name} refresh uses the compact tier");
                 let pagination = find_button(&root, "Show 12 more");
                 assert_eq!(pagination.accessible_role(), gtk::AccessibleRole::Button);
-                assert!(pagination.is_focusable(), "{width_name} installed pagination is keyboard reachable");
+                assert!(
+                    pagination.is_focusable(),
+                    "{width_name} installed pagination is keyboard reachable"
+                );
                 assert!(pagination.has_css_class("variant-ghost"));
                 let pagination_bounds = pagination
                     .compute_bounds(&root)
@@ -874,6 +877,9 @@ mod unix {
                     Some("Remove this image from the workspace image store")
                 );
                 assert!(danger.grab_focus(), "image danger disclosure is keyboard reachable");
+                if width == 600 {
+                    assert_compact_chooser_pixels(&window, &root, width, width_name);
+                }
                 assert!(
                     card.height() <= 80,
                     "{width_name} collapsed image record split danger into a {}px second band",
@@ -1675,7 +1681,10 @@ mod unix {
                     );
                 }
                 let trust = find_expander(&review_card, "Trust details");
-                assert!(trust.is_focusable(), "{width_name} trust details are keyboard reachable");
+                assert!(
+                    trust.is_focusable(),
+                    "{width_name} trust details are keyboard reachable"
+                );
                 assert!(trust.grab_focus(), "{width_name} trust details accept keyboard focus");
                 assert!(has_label(&review_card, "Publisher · Community"));
                 assert!(has_label(&review_card, "Update available"));
@@ -1750,9 +1759,7 @@ mod unix {
                 let trust_label_bounds = trust_label
                     .compute_bounds(&review_card)
                     .expect("trust label belongs to its card");
-                let trust_action_gap = review_bounds_in_card.x()
-                    - trust_label_bounds.x()
-                    - trust_label_bounds.width();
+                let trust_action_gap = review_bounds_in_card.x() - trust_label_bounds.x() - trust_label_bounds.width();
                 assert!(
                     (12.0..=16.0).contains(&trust_action_gap),
                     "{width_name} visible trust-label/action gap must be 12 to 16px: {trust_action_gap}px"
@@ -3379,9 +3386,7 @@ mod unix {
                 let progress_bounds = progress.compute_bounds(root).expect("progress bar is rooted");
                 let cancel_bounds = cancel.compute_bounds(root).expect("cancel action is rooted");
                 let value_bounds = value.compute_bounds(root).expect("progress value is rooted");
-                let group_bounds = progress_group
-                    .compute_bounds(root)
-                    .expect("progress group is rooted");
+                let group_bounds = progress_group.compute_bounds(root).expect("progress group is rooted");
                 assert!(
                     group_bounds.width() <= 760.0,
                     "{width_name} progress group exceeded its desktop ceiling: {group_bounds:?}"
@@ -3405,9 +3410,8 @@ mod unix {
                     );
                 } else {
                     let vertical_gap = cancel_bounds.y() - progress_bounds.y() - progress_bounds.height();
-                    let trailing_gap = group_bounds.x() + group_bounds.width()
-                        - cancel_bounds.x()
-                        - cancel_bounds.width();
+                    let trailing_gap =
+                        group_bounds.x() + group_bounds.width() - cancel_bounds.x() - cancel_bounds.width();
                     assert!(
                         vertical_gap >= 12.0,
                         "{width_name} wrapped Cancel needs a deliberate row gap: {vertical_gap}px"
@@ -4660,6 +4664,27 @@ mod unix {
         None
     }
 
+    fn assert_compact_chooser_pixels(window: &gtk::Window, root: &gtk::Widget, width: i32, case: &str) {
+        let chooser = find_combobox(root);
+        let overlay = chooser
+            .first_child()
+            .and_then(|child| child.downcast::<gtk::Overlay>().ok())
+            .expect("compact chooser owns its overlay");
+        let closed = overlay
+            .child()
+            .and_then(|child| child.downcast::<gtk::Box>().ok())
+            .expect("compact chooser owns closed content");
+        let label = closed.first_child().expect("compact chooser owns selected text");
+        let chevron = closed.last_child().expect("compact chooser owns a chevron");
+        let texture = stable_texture(window, width, 800);
+        for (name, widget) in [("selected text", label), ("chevron", chevron)] {
+            let bounds = widget
+                .compute_bounds(root)
+                .expect("chooser content belongs to Top root");
+            assert_texture_has_ink(&texture, bounds, &format!("{case} chooser {name}"));
+        }
+    }
+
     fn capture(window: &gtk::Window, name: &str, width: i32, height: i32) {
         let Some(directory) = std::env::var_os("HUSKLET_TOP_SHOT") else {
             return;
@@ -4709,8 +4734,7 @@ mod unix {
         let renderer = window.renderer().expect("Top window has a renderer");
         let mut previous: Option<(u64, gtk::gdk::Texture)> = None;
         for _ in 0..20 {
-            window.queue_draw();
-            settle_frame();
+            await_painted_frame(window);
             let snapshot = gtk::Snapshot::new();
             paintable.snapshot(snapshot.upcast_ref::<gtk::gdk::Snapshot>(), width as f64, height as f64);
             let Some(node) = snapshot.to_node() else {
@@ -4725,6 +4749,49 @@ mod unix {
             previous = Some((signature, texture));
         }
         previous.expect("Top window produces a render node").1
+    }
+
+    fn await_painted_frame(window: &gtk::Window) {
+        let clock = window.frame_clock().expect("realized Top window owns a frame clock");
+        let before = clock.frame_counter();
+        window.queue_draw();
+        clock.request_phase(gtk::gdk::FrameClockPhase::PAINT);
+        let deadline = Instant::now() + Duration::from_millis(250);
+        let context = gtk::glib::MainContext::default();
+        while clock.frame_counter() <= before {
+            assert!(
+                Instant::now() < deadline,
+                "GTK did not paint the requested capture frame"
+            );
+            context.iteration(false);
+        }
+        settle_toolkit();
+        assert!(
+            clock.frame_counter() > before,
+            "capture sampled frame {} without observing a newer painted frame",
+            clock.frame_counter()
+        );
+    }
+
+    fn assert_texture_has_ink(texture: &gtk::gdk::Texture, bounds: gtk::graphene::Rect, case: &str) {
+        let width = texture.width() as usize;
+        let height = texture.height() as usize;
+        let stride = width * 4;
+        let mut pixels = vec![0_u8; stride * height];
+        texture.download(&mut pixels, stride);
+        let x0 = bounds.x().floor().max(0.0) as usize;
+        let y0 = bounds.y().floor().max(0.0) as usize;
+        let x1 = (bounds.x() + bounds.width()).ceil().min(width as f32) as usize;
+        let y1 = (bounds.y() + bounds.height()).ceil().min(height as f32) as usize;
+        let ink = (y0..y1)
+            .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+            .filter(|(x, y)| {
+                pixels[y * stride + x * 4..y * stride + x * 4 + 3]
+                    .iter()
+                    .all(|channel| *channel >= 128)
+            })
+            .count();
+        assert!(ink >= 4, "{case} is absent from its current render bounds {bounds:?}");
     }
 
     fn texture_signature(texture: &gtk::gdk::Texture) -> u64 {
