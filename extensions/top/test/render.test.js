@@ -1565,12 +1565,13 @@ test('installed extension management searches, filters, pages, and clears fifty 
   assert.ok(labelled(stage, '1 of 50 installed extensions'));
   assert.ok(labelled(stage, 'installed-07'));
   assert.ok(labelled(stage, 'Healthy extensions'));
-  const actionFooter = sharedAncestor(stage, ['Open', 'Disable', 'Remove'], 'Row');
+  const actionFooter = sharedAncestor(stage, ['Open', 'Disable', 'More actions'], 'Row');
   assert.notEqual(
     actionFooter,
     undefined,
-    'launch, lifecycle, and destructive actions share one predictable footer',
+    'launch, lifecycle, and the quiet overflow affordance share one predictable footer',
   );
+  assert.equal(labelled(stage, 'Remove extension'), undefined);
 });
 
 test('extension discovery keeps unknown compatibility reviewable and blocks known mismatches', async () => {
@@ -3358,7 +3359,13 @@ test('installed extension removal requires final consent and a failure remains r
     }),
   );
   await settled();
-  invoke(stage, 'Remove');
+  assert.ok(labelled(stage, 'More actions'));
+  assert.equal(labelled(stage, 'Remove extension'), undefined);
+  invoke(stage, 'More actions');
+  assert.ok(
+    labelled(stage, 'Uninstalling permanently deletes this extension’s private workspace data.'),
+  );
+  invoke(stage, 'Remove extension');
   assert.deepEqual(calls, [], 'opening consent carries no removal authority');
   assert.ok(labelled(stage, 'Remove assistant and permanently delete its private workspace data?'));
   invoke(stage, 'Remove assistant');
@@ -3372,8 +3379,8 @@ test('installed extension removal requires final consent and a failure remains r
   assert.ok(labelled(stage, 'Remove extension could not be completed.'));
   assert.ok(labelled(stage, 'Technical details'));
   assert.ok(labelled(stage, 'extension is still stopping'));
-  assert.ok(labelled(stage, 'Remove'), 'failure returns to a fresh two-step consent');
-  invoke(stage, 'Remove');
+  assert.ok(labelled(stage, 'Remove extension'), 'failure returns to a fresh two-step consent');
+  invoke(stage, 'Remove extension');
   invoke(stage, 'Remove assistant');
   await settled();
   await settled();
@@ -3473,6 +3480,7 @@ test('Top is visibly required and offers no self-disable or self-removal trap', 
   });
   assert.equal(labelled(stage, 'Disable'), undefined);
   assert.equal(labelled(stage, 'Remove'), undefined);
+  assert.equal(labelled(stage, 'More actions'), undefined);
 });
 
 test('installed extensions expose truthful enabled, disabled, fault and retry states', async () => {
@@ -3523,15 +3531,16 @@ test('installed extensions expose truthful enabled, disabled, fault and retry st
     false,
     'daily lifecycle control is visible without opening the permissions disclosure',
   );
-  assert.equal(
-    ancestorTags(stage, 'Remove').includes('Expander'),
-    false,
-    'destructive management is discoverable without mistaking it for a permission',
+  assert.ok(labelled(stage, 'More actions'), 'destructive management remains discoverable');
+  invoke(stage, 'More actions');
+  assert.ok(
+    labelled(stage, 'Remove extension'),
+    'quiet overflow reveals the destructive action on request',
   );
-  assert.deepEqual(taggedProperty(stage, 'Disable', 'Button', 'Size'), {
-    ControlSize: 'Small',
+  assert.deepEqual(taggedProperty(stage, 'More actions', 'Button', 'Variant'), {
+    Variant: 'Ghost',
   });
-  assert.deepEqual(taggedProperty(stage, 'Remove', 'Button', 'Size'), {
+  assert.deepEqual(taggedProperty(stage, 'Disable', 'Button', 'Size'), {
     ControlSize: 'Small',
   });
   invoke(stage, 'Disable');

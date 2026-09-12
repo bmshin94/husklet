@@ -565,6 +565,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
   const [installedQuery, setInstalledQuery] = React.useState('');
   const [installedFilter, setInstalledFilter] = React.useState<InstalledFilter>('all');
   const [installedLimit, setInstalledLimit] = React.useState(INSTALLED_PAGE_SIZE);
+  const [removalMenu, setRemovalMenu] = React.useState('');
   const [permissionDetailsExpanded, setPermissionDetailsExpanded] = React.useState(false);
   const cancelling = React.useRef(false);
   const cancelledJob = React.useRef('');
@@ -2363,15 +2364,36 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                             onInvoke={() => lifecycle(extension, 'disable')}
                                           />
                                         ) : null}
-                                        <ConfirmAction
-                                          label="Remove"
-                                          confirmLabel={`Remove ${extension.name}`}
-                                          question={`Remove ${extension.name} and permanently delete its private workspace data?`}
-                                          authorityKey={extension.image_digest}
-                                          enabled={!busy}
+                                        <Button
+                                          label="More actions"
+                                          variant="ghost"
                                           size="small"
-                                          onConfirm={() => lifecycle(extension, 'remove')}
+                                          tooltip={`Remove ${extension.name} and its private workspace data`}
+                                          enabled={!busy}
+                                          onInvoke={() =>
+                                            setRemovalMenu((current) =>
+                                              current === extension.name ? '' : extension.name,
+                                            )
+                                          }
                                         />
+                                        {removalMenu === extension.name ? (
+                                          <Column gap={1} align="start">
+                                            <Text
+                                              label="Uninstalling permanently deletes this extension’s private workspace data."
+                                              color="text-dim"
+                                              wrap
+                                            />
+                                            <ConfirmAction
+                                              label="Remove extension"
+                                              confirmLabel={`Remove ${extension.name}`}
+                                              question={`Remove ${extension.name} and permanently delete its private workspace data?`}
+                                              authorityKey={extension.image_digest}
+                                              enabled={!busy}
+                                              size="small"
+                                              onConfirm={() => lifecycle(extension, 'remove')}
+                                            />
+                                          </Column>
+                                        ) : null}
                                       </Row>
                                     ) : null}
                                   </CardContent>

@@ -16,10 +16,10 @@ mod unix {
         NetworkEndpointInventory, NetworkInventory, NetworkKind, NetworkSummary,
     };
     use hl_extension::{
-        Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
-        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PROTOCOL, PaneProvider, PreferenceValue,
+        codec, Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
+        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PaneProvider, PreferenceValue,
         RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire, WorkspaceConfiguration,
-        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, codec,
+        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, PROTOCOL,
     };
     use hl_gui::{Renderer as _, SourceMutation, Theme, Tree};
     use hl_gui_gtk::Surface;
@@ -1362,7 +1362,7 @@ mod unix {
                 let open = find_tooltip_button(&card, "Open Component playground");
                 let state = find_mapped_labelled(&card, "Running");
                 let disable = find_button(&card, "Disable");
-                let remove = find_button(&card, "Remove");
+                let more = find_button(&card, "More actions");
                 let permissions = find_expander(&card, "View permissions");
                 let check_bounds = check
                     .compute_bounds(&card)
@@ -1370,7 +1370,6 @@ mod unix {
                 let disable_bounds = disable
                     .compute_bounds(&card)
                     .expect("disable action belongs to its card");
-                let remove_bounds = remove.compute_bounds(&card).expect("remove action belongs to its card");
                 let state_bounds = state
                     .compute_bounds(&card)
                     .expect("installed state belongs to its card");
@@ -1397,36 +1396,17 @@ mod unix {
                     "{width_name} image check and lifecycle control share one action footer"
                 );
                 assert_eq!(
-                    ancestor_with_class(check.upcast_ref(), "hl-row"),
-                    ancestor_with_class(remove.upcast_ref(), "hl-row"),
-                    "{width_name} image check and destructive control share one action footer"
-                );
-                assert_eq!(
                     check_bounds.y(),
                     disable_bounds.y(),
                     "{width_name} image check and lifecycle control align"
                 );
-                assert_eq!(
-                    check_bounds.y(),
-                    remove_bounds.y(),
-                    "{width_name} image check and destructive control align"
+                assert!(disable.is_mapped(), "{width_name} Disable is visible");
+                assert_standard_action(&disable, width_name, "Disable", 28);
+                assert!(more.is_focusable(), "{width_name} More actions is keyboard reachable");
+                assert!(
+                    !has_label(&card, "Remove extension"),
+                    "{width_name} card repeats no dominant removal button"
                 );
-                for (label, action) in [("Disable", disable), ("Remove", remove)] {
-                    assert!(
-                        action.is_mapped(),
-                        "{width_name} {label} is visible without opening permissions"
-                    );
-                    assert!(
-                        action.has_css_class("size-small"),
-                        "{width_name} {label} uses the compact tier"
-                    );
-                    assert_standard_action(&action, width_name, label, 28);
-                    assert!(action.is_focusable(), "{width_name} {label} is keyboard reachable");
-                    assert!(
-                        action.ancestor(gtk::Expander::static_type()).is_none(),
-                        "{width_name} {label} remained hidden inside permissions"
-                    );
-                }
                 assert!(
                     check_bounds.y() >= state_bounds.y() + state_bounds.height(),
                     "{width_name} image check was crowded into the identity/state row: state={state_bounds:?}, action={check_bounds:?}"
@@ -1438,6 +1418,152 @@ mod unix {
                 );
                 capture(&window, &format!("installed-image-check-{width_name}"), width, 800);
             }
+            let installed_root = surface.widget().clone().upcast::<gtk::Widget>();
+            let more = find_button(&installed_root, "More actions");
+            assert!(more.grab_focus(), "removal disclosure accepts keyboard focus");
+            more.emit_clicked();
+            settle_toolkit();
+            send_report(&surface, &mut wire, 98, |event| {
+                matches!(event, hl_gui::Event::Invoke { .. })
+            });
+            apply_until(&mut wire, &mut tree, &mut surface, "Remove extension", |request| {
+                panic!("unexpected removal disclosure request: {request:?}")
+            });
+            let installed_root = surface.widget().clone().upcast::<gtk::Widget>();
+            let remove = find_button(&installed_root, "Remove extension");
+            assert!(remove.grab_focus(), "removal trigger accepts keyboard focus");
+            remove.emit_clicked();
+            settle_toolkit();
+            send_report(&surface, &mut wire, 99, |event| {
+                matches!(event, hl_gui::Event::Invoke { .. })
+            });
+            apply_until(
+                &mut wire,
+                &mut tree,
+                &mut surface,
+                "Remove storybook and permanently delete its private workspace data?",
+                |request| panic!("unexpected removal confirmation request: {request:?}"),
+            );
+            let confirmation_root = surface.widget().clone().upcast::<gtk::Widget>();
+            window.set_child(None::<&gtk::Widget>);
+            let confirmation_window = gtk::Window::builder()
+                .child(&confirmation_root)
+                .default_width(1_200)
+                .default_height(800)
+                .build();
+            confirmation_window.present();
+            settle_toolkit();
+            let confirm = find_button(&confirmation_root, "Remove storybook");
+            let cancel = find_button(&confirmation_root, "Cancel");
+            for (width_name, width) in [("wide", 1_200), ("narrow", 600)] {
+                confirmation_window.set_default_size(width, 800);
+                confirmation_window.set_size_request(width, 800);
+                confirmation_window.queue_resize();
+                settle_toolkit();
+                confirmation_window.queue_draw();
+                settle_frame();
+                assert_contained(&confirmation_root, &format!("extension removal/{width_name}"));
+                assert!(has_label(
+                    &confirmation_root,
+                    "Uninstalling permanently deletes this extension’s private workspace data."
+                ));
+                assert!(has_label(
+                    &confirmation_root,
+                    "Remove storybook and permanently delete its private workspace data?"
+                ));
+                assert_standard_action(&confirm, width_name, "destructive confirmation", 28);
+                assert_standard_action(&cancel, width_name, "removal cancellation", 28);
+                assert!(confirm.has_css_class("tone-danger"));
+                assert_eq!(
+                    ancestor_with_class(confirm.upcast_ref(), "hl-row"),
+                    ancestor_with_class(cancel.upcast_ref(), "hl-row"),
+                    "{width_name} confirmation actions remain grouped"
+                );
+                let confirm_bounds = confirm
+                    .compute_bounds(&confirmation_root)
+                    .expect("confirmation belongs to removal surface");
+                let cancel_bounds = cancel
+                    .compute_bounds(&confirmation_root)
+                    .expect("cancel belongs to removal surface");
+                assert!(
+                    confirm_bounds.x() + confirm_bounds.width() <= cancel_bounds.x()
+                        || confirm_bounds.y() + confirm_bounds.height() <= cancel_bounds.y(),
+                    "{width_name} confirmation actions overlap"
+                );
+                capture(
+                    &confirmation_window,
+                    &format!("extension-removal-confirmation-{width_name}"),
+                    width,
+                    800,
+                );
+            }
+            assert!(
+                cancel.grab_focus(),
+                "removal cancellation follows confirmation in focus order"
+            );
+            cancel.emit_clicked();
+            settle_toolkit();
+            send_report(&surface, &mut wire, 101, |event| {
+                matches!(event, hl_gui::Event::Invoke { .. })
+            });
+            let deadline = Instant::now() + DEADLINE;
+            while has_label(
+                surface.widget().upcast_ref(),
+                "Remove storybook and permanently delete its private workspace data?",
+            ) {
+                let frame = receive_until(&mut wire, deadline).expect("cancellation rerenders");
+                if frame.kind == hl_extension::Kind::Credit {
+                    continue;
+                }
+                let request = codec::read_request(&frame).expect("cancellation request decodes");
+                match request {
+                    Request::InterfaceRender { frame } | Request::InterfaceRenderAt { frame, .. } => {
+                        tree.apply(&frame, &mut surface).expect("cancellation frame applies");
+                        wire.send(&codec::reply(&Reply::Done).expect("reply encodes"))
+                            .expect("reply sends");
+                    }
+                    other => panic!("unexpected removal cancellation request: {other:?}"),
+                }
+            }
+            assert!(
+                !has_label(
+                    surface.widget().upcast_ref(),
+                    "Remove storybook and permanently delete its private workspace data?"
+                ),
+                "cancellation closes destructive confirmation"
+            );
+            let current_root = surface.widget().clone().upcast::<gtk::Widget>();
+            find_button(&current_root, "More actions").emit_clicked();
+            settle_toolkit();
+            send_report(&surface, &mut wire, 102, |event| {
+                matches!(event, hl_gui::Event::Invoke { .. })
+            });
+            let deadline = Instant::now() + DEADLINE;
+            while has_label(
+                surface.widget().upcast_ref(),
+                "Uninstalling permanently deletes this extension’s private workspace data.",
+            ) {
+                let frame = receive_until(&mut wire, deadline).expect("removal menu closes");
+                if frame.kind == hl_extension::Kind::Credit {
+                    continue;
+                }
+                let request = codec::read_request(&frame).expect("menu-close request decodes");
+                match request {
+                    Request::InterfaceRender { frame } | Request::InterfaceRenderAt { frame, .. } => {
+                        tree.apply(&frame, &mut surface).expect("menu-close frame applies");
+                        wire.send(&codec::reply(&Reply::Done).expect("reply encodes"))
+                            .expect("reply sends");
+                    }
+                    other => panic!("unexpected removal menu-close request: {other:?}"),
+                }
+            }
+            confirmation_window.set_child(None::<&gtk::Widget>);
+            confirmation_window.close();
+            window.set_child(Some(surface.widget()));
+            window.set_default_size(1_200, 800);
+            window.set_size_request(1_200, 800);
+            window.present();
+            settle_toolkit();
         }
         if fixture == "populated" && name == "extensions" && !catalogue_empty {
             find_toggle(&root, "Discover").set_active(true);
@@ -2463,7 +2589,10 @@ mod unix {
                 "{width_name} Retry must precede secondary details"
             );
             for (label, action) in [("retry", &retry), ("back", &back)] {
-                assert!(action.has_css_class("size-small"), "{width_name} {label} action is compact");
+                assert!(
+                    action.has_css_class("size-small"),
+                    "{width_name} {label} action is compact"
+                );
                 assert_standard_action(action, width_name, label, 28);
             }
             capture(
@@ -3192,8 +3321,7 @@ mod unix {
             }
             if state == "update-success" {
                 assert!(
-                    !has_label(root, "Cancel review")
-                        && !has_label(root, "Update with selected access"),
+                    !has_label(root, "Cancel review") && !has_label(root, "Update with selected access"),
                     "completed update retained stale review decisions"
                 );
             }
