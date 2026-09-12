@@ -116,6 +116,82 @@ test('test runner refuses output EOF from a live execution, cancels it, and reus
   }
 });
 
+test('line runner retains only acknowledged partial stdout across fragmented socket loss', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-test-runner-partial-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const executionId = 'e'.repeat(32);
+  const server = net.createServer((socket) => {
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.kind !== KIND.request) continue;
+        if (frame.payload.call === 'execution_output' && frame.payload.with.after === 1) {
+          socket.destroy();
+          continue;
+        }
+        const payload =
+          frame.payload.call === 'container_exec'
+            ? { reply: 'identity', with: executionId }
+            : frame.payload.call === 'execution_output'
+              ? {
+                  reply: 'execution_output',
+                  with: {
+                    entries: [
+                      {
+                        sequence: 1,
+                        timestamp_ms: 1,
+                        stream: 'stdout',
+                        bytes: [...Buffer.from('{"case":1')],
+                      },
+                    ],
+                    next: 1,
+                    more: true,
+                    eof: false,
+                    gap: false,
+                  },
+                }
+              : { reply: 'done' };
+        const bytes = encode({ channel: frame.channel, kind: KIND.response, payload });
+        socket.write(bytes.subarray(0, 5));
+        socket.write(bytes.subarray(5));
+      }
+    });
+    socket.write(
+      encode({
+        channel: CONTROL,
+        kind: KIND.open,
+        payload: {
+          protocol: 1,
+          peer: 'partial-runner',
+          granted: ['containers:execute', 'containers:read'],
+        },
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const session = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(session).containers.execLines(
+        'c'.repeat(64),
+        2,
+        { command: ['tests', '--jsonl'], maxLineBytes: 1024, pageLimit: 1, pollIntervalMs: 10 },
+        () => assert.fail('unterminated record must not be delivered'),
+      ),
+      (error) => {
+        assert(error instanceof ExecutionOperationError);
+        assert.equal(error.after, 1);
+        assert.deepEqual(error.partialLine, [...Buffer.from('{"case":1')]);
+        assert.equal(error.lines, 0);
+        return true;
+      },
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('test runner failure preserves only its acknowledged output cursor over fragmented Unix framing', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-test-runner-cursor-'));
   const socketPath = path.join(directory, 'host.sock');

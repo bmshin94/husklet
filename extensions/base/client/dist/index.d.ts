@@ -9,7 +9,9 @@ export declare class ExecutionOperationError extends Error {
     readonly phase: any;
     readonly execution: any;
     readonly after: any;
-    constructor(executionId: any, phase: any, cause: any, execution?: any, after?: any);
+    readonly partialLine: any;
+    readonly lines: any;
+    constructor(executionId: any, phase: any, cause: any, execution?: any, after?: any, lineState?: any);
 }
 /** A client-owned execution exceeded its post-start wall-clock deadline. */
 export declare class ExecutionDeadlineError extends Error {

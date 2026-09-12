@@ -10,7 +10,9 @@ export class ExecutionOperationError extends Error {
     phase;
     execution;
     after;
-    constructor(executionId, phase, cause, execution = undefined, after = undefined) {
+    partialLine;
+    lines;
+    constructor(executionId, phase, cause, execution = undefined, after = undefined, lineState = undefined) {
         super(`execution ${executionId} ${phase} failed: ${cause instanceof Error ? cause.message : String(cause)}`);
         this.name = 'ExecutionOperationError';
         this.executionId = executionId;
@@ -18,6 +20,8 @@ export class ExecutionOperationError extends Error {
         this.cause = cause;
         this.execution = execution;
         this.after = after;
+        this.partialLine = lineState?.partialLine;
+        this.lines = lineState?.lines;
     }
 }
 /** A client-owned execution exceeded its post-start wall-clock deadline. */
@@ -1738,25 +1742,43 @@ export function workspace(session, { signal } = {}) {
                     await onLine(text, line);
                     lines = line;
                 };
-                const result = await api.containers.execStreaming(id, generation, options, async (page) => {
-                    for (const entry of page.entries) {
-                        if (entry.stream === 'stderr') {
-                            const text = stderrDecoder.decode(Uint8Array.from(entry.bytes), { stream: true });
-                            if (text && onStderr)
-                                await onStderr(text);
-                            continue;
-                        }
-                        for (const byte of entry.bytes) {
-                            if (byte === 10)
-                                await deliver();
-                            else {
-                                pending.push(byte);
-                                if (pending.length > maxLineBytes)
-                                    throw new RangeError(`execution line exceeded the ${maxLineBytes} byte limit`);
+                let result;
+                try {
+                    result = await api.containers.execStreaming(id, generation, options, async (page) => {
+                        const beforePending = [...pending];
+                        const beforeLines = lines;
+                        try {
+                            for (const entry of page.entries) {
+                                if (entry.stream === 'stderr') {
+                                    const text = stderrDecoder.decode(Uint8Array.from(entry.bytes), { stream: true });
+                                    if (text && onStderr)
+                                        await onStderr(text);
+                                    continue;
+                                }
+                                for (const byte of entry.bytes) {
+                                    if (byte === 10)
+                                        await deliver();
+                                    else {
+                                        pending.push(byte);
+                                        if (pending.length > maxLineBytes)
+                                            throw new RangeError(`execution line exceeded the ${maxLineBytes} byte limit`);
+                                    }
+                                }
                             }
                         }
+                        catch (error) {
+                            pending = beforePending;
+                            lines = beforeLines;
+                            throw error;
+                        }
+                    });
+                }
+                catch (cause) {
+                    if (cause instanceof ExecutionOperationError) {
+                        throw new ExecutionOperationError(cause.executionId, cause.phase, cause.cause, cause.execution, cause.after, { partialLine: Object.freeze([...pending]), lines });
                     }
-                });
+                    throw cause;
+                }
                 try {
                     if (pending.length > 0)
                         await outputStep(deliver, options.signal);

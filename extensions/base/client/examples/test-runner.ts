@@ -1,10 +1,16 @@
-import type { WorkspaceApi } from '@husklet/client';
+import { ExecutionOperationError, type WorkspaceApi } from '@husklet/client';
 
 export type TestRunEvent =
   | { kind: 'started'; executionId: string }
   | { kind: 'stdout' | 'stderr'; text: string }
   | { kind: 'finished'; executionId: string; exitCode: number | null }
-  | { kind: 'failed'; executionId: string | null; message: string };
+  | {
+      kind: 'failed';
+      executionId: string | null;
+      message: string;
+      after?: number;
+      partialLine?: readonly number[];
+    };
 
 /**
  * Watch a source tree and keep exactly one test execution current. Slow output consumers apply
@@ -50,6 +56,9 @@ export async function watchTests(
           kind: 'failed',
           executionId,
           message: cause instanceof Error ? cause.message : String(cause),
+          ...(cause instanceof ExecutionOperationError
+            ? { after: cause.after, partialLine: cause.partialLine }
+            : {}),
         });
       }
     }

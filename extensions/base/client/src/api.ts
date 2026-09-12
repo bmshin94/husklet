@@ -765,6 +765,10 @@ export declare class ExecutionOperationError extends Error {
   readonly execution?: ExecutionSummary;
   /** Last output sequence fully acknowledged by a stream consumer. */
   readonly after?: number;
+  /** Bounded unterminated stdout bytes retained by line-oriented helpers for exact resume. */
+  readonly partialLine?: readonly number[];
+  /** Complete stdout records already delivered by a line-oriented helper. */
+  readonly lines?: number;
 }
 
 /** A client-owned execution exceeded its post-start wall-clock deadline. */
