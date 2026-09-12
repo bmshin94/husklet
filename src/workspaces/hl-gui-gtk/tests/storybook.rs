@@ -10,9 +10,9 @@ mod unix {
 
     use gtk::prelude::*;
     use hl_extension::{
-        codec, Capability, ChannelId, ExtensionName, Frame, Grant, Hello, Kind, Reply, Request, Welcome, Wire, PROTOCOL,
+        Capability, ChannelId, ExtensionName, Frame, Grant, Hello, Kind, PROTOCOL, Reply, Request, Welcome, Wire, codec,
     };
-    use hl_gui::{Renderer as _, SourceMutation, Theme, Tree, LOG_VIEW_CHARACTER_LIMIT};
+    use hl_gui::{LOG_VIEW_CHARACTER_LIMIT, Renderer as _, SourceMutation, Theme, Tree};
     use hl_gui_gtk::Surface;
 
     const STORIES: &[&str] = &[
@@ -468,9 +468,11 @@ mod unix {
                     let chrome = action.child().expect("focused Button owns chrome");
                     assert!(chrome.has_css_class("hl-button-chrome"));
                     action.set_state_flags(gtk::StateFlags::FOCUSED | gtk::StateFlags::FOCUS_VISIBLE, false);
-                    assert!(action
-                        .state_flags()
-                        .contains(gtk::StateFlags::FOCUSED | gtk::StateFlags::FOCUS_VISIBLE));
+                    assert!(
+                        action
+                            .state_flags()
+                            .contains(gtk::StateFlags::FOCUSED | gtk::StateFlags::FOCUS_VISIBLE)
+                    );
                     // Xvfb cannot originate keyboard modality. Mirror the production
                     // `:focus-visible` chrome selector after asserting GTK's focus state.
                     chrome.add_css_class("hl-focus-visible-proof");
@@ -527,6 +529,18 @@ mod unix {
             let _ = surface.reports().drain();
         }
         if story == "ConfirmAction" {
+            find::<gtk::Label>(&root, |label| label.text() == "Live specimens");
+            find::<gtk::Label>(&root, |label| label.text() == "API");
+            let disabled = find::<gtk::Button>(&root, |button| {
+                button_caption(button).as_deref() == Some("Removal unavailable")
+            });
+            assert!(!disabled.is_sensitive(), "disabled ConfirmAction remains unavailable");
+            let trigger = find::<gtk::Button>(&root, |button| {
+                button_caption(button).as_deref() == Some("Preview confirmation")
+            });
+            assert!(trigger.grab_focus(), "ConfirmAction trigger accepts keyboard focus");
+            assert!(trigger.has_focus(), "ConfirmAction trigger owns native focus");
+            capture_story(&realized_window, "ConfirmAction focused trigger");
             for (label, class, expected) in [
                 ("Small", "size-small", 28),
                 ("Medium", "size-medium", 36),
@@ -821,15 +835,12 @@ mod unix {
                         .compute_bounds(&root)
                         .expect("full-width Select belongs to rendered root");
                     assert!(
-                        (full_bounds.x() - 16.0).abs() <= 1.0
-                            && (full_bounds.width() - 568.0).abs() <= 1.0,
+                        (full_bounds.x() - 16.0).abs() <= 1.0 && (full_bounds.width() - 568.0).abs() <= 1.0,
                         "full-width Select escaped 16px narrow insets at {label}: {full_bounds:?}"
                     );
                     let specimen_bounds = descendants::<gtk::ToggleButton>(&root)
                         .into_iter()
-                        .filter(|choice| {
-                            choice.has_css_class("choice") && choice.is_mapped()
-                        })
+                        .filter(|choice| choice.has_css_class("choice") && choice.is_mapped())
                         .filter_map(|choice| choice.compute_bounds(&root))
                         .filter(|bounds| bounds.y() >= 100.0)
                         .collect::<Vec<_>>();
@@ -851,8 +862,14 @@ mod unix {
                 .expect("Select document owns a scrolling viewport");
             for (position, value) in [
                 ("top", 0.0),
-                ("middle", (document.vadjustment().upper() - document.vadjustment().page_size()) / 2.0),
-                ("bottom", document.vadjustment().upper() - document.vadjustment().page_size()),
+                (
+                    "middle",
+                    (document.vadjustment().upper() - document.vadjustment().page_size()) / 2.0,
+                ),
+                (
+                    "bottom",
+                    document.vadjustment().upper() - document.vadjustment().page_size(),
+                ),
             ] {
                 document.vadjustment().set_value(value.max(0.0));
                 settle_toolkit();
@@ -894,7 +911,10 @@ mod unix {
             );
             let evacuation = surface.reports().drain();
             assert!(
-                matches!(evacuation.as_slice(), [] | [hl_gui::Event::Focus { focused: false, .. }]),
+                matches!(
+                    evacuation.as_slice(),
+                    [] | [hl_gui::Event::Focus { focused: false, .. }]
+                ),
                 "Select focus evacuation may report only the displaced handler's single blur: {evacuation:?}"
             );
         }
@@ -1345,9 +1365,11 @@ mod unix {
                     assert!(action.grab_focus());
                     assert!(action.has_focus());
                     action.set_state_flags(gtk::StateFlags::FOCUSED | gtk::StateFlags::FOCUS_VISIBLE, false);
-                    assert!(action
-                        .state_flags()
-                        .contains(gtk::StateFlags::FOCUSED | gtk::StateFlags::FOCUS_VISIBLE));
+                    assert!(
+                        action
+                            .state_flags()
+                            .contains(gtk::StateFlags::FOCUSED | gtk::StateFlags::FOCUS_VISIBLE)
+                    );
                     let chrome = action.child().expect("focused InlineButton owns chrome");
                     assert!(chrome.has_css_class("hl-inline-button-chrome"));
                     // See the Button proof above: this class is test-only and is never
@@ -1768,9 +1790,11 @@ mod unix {
                 7,
                 "Card workbench must render seven bounded live specimens"
             );
-            assert!(cards
-                .iter()
-                .all(|card| card.accessible_role() != gtk::AccessibleRole::Generic));
+            assert!(
+                cards
+                    .iter()
+                    .all(|card| card.accessible_role() != gtk::AccessibleRole::Generic)
+            );
             for card in &cards {
                 let header = card
                     .label_widget()
@@ -1895,9 +1919,11 @@ mod unix {
                 .collect::<Vec<_>>();
             assert!(buttons.len() >= 10, "CardActions omitted its compact controls");
             assert!(buttons.iter().all(|button| button.height() >= 44));
-            assert!(buttons
-                .iter()
-                .all(|button| button.child().is_some_and(|chrome| chrome.height() == 28)));
+            assert!(
+                buttons
+                    .iter()
+                    .all(|button| button.child().is_some_and(|chrome| chrome.height() == 28))
+            );
             for button in &buttons {
                 assert!(button.is_focusable(), "CardActions contains an unreachable command");
             }
@@ -1907,9 +1933,11 @@ mod unix {
             realized_window.set_default_size(600, 800);
             settle_window_width(&realized_window, 600);
             assert_contained(&root, "CardActions narrow");
-            assert!(buttons
-                .iter()
-                .all(|button| button.child().is_some_and(|chrome| chrome.height() == 28)));
+            assert!(
+                buttons
+                    .iter()
+                    .all(|button| button.child().is_some_and(|chrome| chrome.height() == 28))
+            );
             capture_story(&realized_window, "CardActions narrow");
             let (status, stderr) = child.stop();
             assert!(stderr.is_empty(), "{story} wrote warnings/errors: {stderr}");
@@ -2029,6 +2057,78 @@ mod unix {
         );
         tree.apply(&rerender, &mut surface)
             .unwrap_or_else(|error| panic!("{story} rerender failed in GTK: {error:?}"));
+        settle_toolkit();
+        if story == "ConfirmAction" {
+            let question = find::<gtk::Label>(&root, |label| {
+                label.text() == "Delete preview volume? Its cached build data will be permanently deleted."
+            });
+            assert!(question.wraps(), "confirmation consequence wraps at narrow widths");
+            let confirm = find::<gtk::Button>(&root, |button| {
+                button_caption(button).as_deref() == Some("Delete preview")
+            });
+            let cancel = find::<gtk::Button>(&root, |button| button_caption(button).as_deref() == Some("Cancel"));
+            assert!(confirm.has_css_class("variant-filled"));
+            assert!(confirm.has_css_class("tone-danger"));
+            for (width, name) in [(600, "narrow"), (1_200, "wide")] {
+                realized_window.set_default_size(width, 1_000);
+                realized_window.set_size_request(width, 1_000);
+                settle_window_width(&realized_window, width);
+                settle_widget_height(&confirm, 44, "confirmation action");
+                settle_widget_height(&cancel, 44, "confirmation cancel");
+                let confirm_bounds = confirm.compute_bounds(&root).expect("confirm belongs to document");
+                let cancel_bounds = cancel.compute_bounds(&root).expect("cancel belongs to document");
+                assert!(
+                    confirm.height() >= 44 && cancel.height() >= 44,
+                    "{name} armed targets must remain at least 44px: confirm={} cancel={}",
+                    confirm.height(),
+                    cancel.height()
+                );
+                assert!(confirm_bounds.x() + confirm_bounds.width() <= cancel_bounds.x());
+                assert!(
+                    cancel_bounds.x() + cancel_bounds.width() <= if width == 600 { 584.0 } else { 840.0 },
+                    "{name} actions end at {}, outside the capped specimen flow",
+                    cancel_bounds.x() + cancel_bounds.width()
+                );
+                assert!(cancel_bounds.x() + cancel_bounds.width() - confirm_bounds.x() <= 560.0);
+                capture_story(&realized_window, &format!("ConfirmAction armed {name}"));
+                assert!(confirm.grab_focus());
+                capture_story(&realized_window, &format!("ConfirmAction focused confirm {name}"));
+                assert!(cancel.grab_focus());
+                capture_story(&realized_window, &format!("ConfirmAction focused cancel {name}"));
+            }
+            assert!(confirm.grab_focus());
+            confirm.emit_clicked();
+            settle_toolkit();
+            let pending = surface
+                .reports()
+                .drain()
+                .into_iter()
+                .find(|event| matches!(event, hl_gui::Event::Invoke { .. }))
+                .expect("destructive confirmation emits Invoke");
+            let payload = codec::interaction(&pending, Some(PRIMARY_SLOT)).expect("confirmation encodes");
+            wire.send(&Frame::new(ChannelId::new(4), Kind::Event, payload))
+                .expect("confirmation returns to Node");
+            let pending_frame = receive_rerender(&mut wire, story);
+            tree.apply(&pending_frame, &mut surface)
+                .expect("pending confirmation renders in GTK");
+            let pending_action = find::<gtk::Button>(&root, |button| {
+                button_caption(button).as_deref() == Some("Deleting preview…")
+            });
+            assert!(!pending_action.is_sensitive(), "pending confirmation cannot run twice");
+            let pending_cancel =
+                find::<gtk::Button>(&root, |button| button_caption(button).as_deref() == Some("Cancel"));
+            assert!(
+                !pending_cancel.is_sensitive(),
+                "pending confirmation cannot be cancelled mid-flight"
+            );
+            for (width, name) in [(600, "narrow"), (1_200, "wide")] {
+                realized_window.set_default_size(width, 1_000);
+                realized_window.set_size_request(width, 1_000);
+                settle_window_width(&realized_window, width);
+                settle_widget_height(&pending_action, 44, "pending confirmation action");
+                capture_story(&realized_window, &format!("ConfirmAction busy {name}"));
+            }
+        }
         if story == "Expander" {
             let disclosure = find::<gtk::Expander>(&root, |expander| {
                 expander.label().as_deref() == Some("Runtime diagnostics")
@@ -2895,7 +2995,10 @@ mod unix {
                 cancel.emit_clicked();
             }
             "ConfirmAction" => {
-                find::<gtk::Button>(root, |button| button_caption(button).as_deref() == Some("Small")).emit_clicked();
+                find::<gtk::Button>(root, |button| {
+                    button_caption(button).as_deref() == Some("Preview confirmation")
+                })
+                .emit_clicked();
             }
             "Validated settings form" => {
                 find::<gtk::ToggleButton>(root, |button| button.label().as_deref() == Some("backend")).emit_clicked();
@@ -3275,6 +3378,20 @@ mod unix {
             std::thread::sleep(Duration::from_millis(2));
         }
         panic!("window remained {}px wide, expected {expected}px", window.width());
+    }
+
+    fn settle_widget_height(widget: &impl IsA<gtk::Widget>, minimum: i32, description: &str) {
+        for _ in 0..50 {
+            settle_toolkit();
+            if widget.height() >= minimum {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        panic!(
+            "{description} remained {}px tall, expected at least {minimum}px",
+            widget.height()
+        );
     }
 
     fn assert_contained(parent: &gtk::Widget, story: &str) {
