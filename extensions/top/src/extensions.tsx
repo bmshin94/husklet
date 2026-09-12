@@ -2063,29 +2063,11 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                       ) : ['installed', 'updated'].includes(acquisition.state) ? (
                         <Text label={acquisitionLabel(acquisition)} wrap />
                       ) : (
-                        <Row gap={1} width="fill" align="center" justify="stretch">
-                          <Column gap={1} grow>
-                            <Row gap={1} align="center" wrap>
-                              {acquisition.progress ? null : <Spinner />}
-                              <Text label={acquisitionLabel(acquisition)} wrap />
-                            </Row>
-                            {acquisition.progress ? (
-                              <Progress
-                                fraction={acquisitionProgressFraction(acquisition)}
-                                tooltip={acquisitionLabel(acquisition)}
-                                width="fill"
-                              />
-                            ) : null}
-                          </Column>
-                          <Spacer />
-                          <Button
-                            label={busy === 'cancel' ? 'Cancelling…' : 'Cancel inspection'}
-                            variant="outline"
-                            size="small"
-                            enabled={busy !== 'cancel'}
-                            onInvoke={cancel}
-                          />
-                        </Row>
+                        <AcquisitionProgressAction
+                          acquisition={acquisition}
+                          cancelling={busy === 'cancel'}
+                          onCancel={cancel}
+                        />
                       )}
                     </CardContent>
                   )}
@@ -2494,6 +2476,50 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
           </Row>
         </Column>
       ) : null}
+    </Column>
+  );
+}
+
+function AcquisitionProgressAction({
+  acquisition,
+  cancelling,
+  onCancel,
+}: {
+  acquisition: ExtensionAcquisitionStatus;
+  cancelling: boolean;
+  onCancel: () => void;
+}) {
+  const progress = acquisition.progress;
+  const fraction = acquisitionProgressFraction(acquisition);
+  const stage = progress
+    ? `${progress.status}${progress.id ? ` · ${progress.id}` : ''}`
+    : acquisitionLabel(acquisition);
+  const value =
+    progress?.current == null
+      ? ''
+      : progress.total == null
+        ? `${progress.current} bytes`
+        : `${progress.current}/${progress.total} bytes · ${Math.round((fraction ?? 0) * 100)}%`;
+  return (
+    <Column gap={1} width={{ chars: 75 }} align="start">
+      <Row gap={1} width="fill" align="center" justify="stretch">
+        <Text label={stage} wrap grow />
+        {value ? <Text label={value} color="text-dim" /> : null}
+      </Row>
+      <Row gap={2} width="fill" align="center" justify="start" wrap>
+        {progress ? (
+          <Progress fraction={fraction} tooltip={acquisitionLabel(acquisition)} width="fill" />
+        ) : (
+          <Spinner />
+        )}
+        <Button
+          label={cancelling ? 'Cancelling…' : 'Cancel inspection'}
+          variant="outline"
+          size="medium"
+          enabled={!cancelling}
+          onInvoke={onCancel}
+        />
+      </Row>
     </Column>
   );
 }

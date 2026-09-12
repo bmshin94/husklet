@@ -2618,7 +2618,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Downloading image · manifest · 1/2 bytes (50%)",
+            "Downloading image · manifest",
             |request| match request {
                 Request::ExtensionAcquisitionStart { reference: actual } => {
                     assert_eq!(
@@ -2651,6 +2651,10 @@ mod unix {
                     acquisition_subscribed.set(true);
                     Reply::Done
                 }
+                Request::EventUnsubscribe { topic } => {
+                    assert_eq!(topic, hl_extension::Topic::ExtensionAcquisitions);
+                    Reply::Done
+                }
                 other => panic!("unexpected extension review call: {other:?}"),
             },
             || None,
@@ -2660,8 +2664,8 @@ mod unix {
         let progress = find_progress(&progress_root).expect("numeric acquisition progress reaches a GTK progress bar");
         assert_eq!(progress.fraction(), 0.5, "the GTK bar preserves host progress");
         let cancel = find_button(&progress_root, "Cancel inspection");
-        assert!(cancel.has_css_class("size-small"));
-        assert_standard_action(&cancel, "inspection", "cancellation", 28);
+        assert!(cancel.has_css_class("size-medium"));
+        assert_standard_action(&cancel, "inspection", "cancellation", 36);
         let cancel_bounds = cancel
             .compute_bounds(&progress_root)
             .expect("cancel action belongs to the progress surface");
@@ -3274,6 +3278,33 @@ mod unix {
             if state == "update-required" {
                 let required = find_button(root, "Select required access");
                 assert_standard_action(&required, width_name, "required-access shortcut", 28);
+            }
+            if state == "update-progress" {
+                let progress = find_progress(root).expect("progress state renders its bar");
+                let cancel = find_button(root, "Cancel inspection");
+                let action_row = progress.parent().expect("progress belongs to its action row");
+                let progress_group = action_row
+                    .parent()
+                    .expect("progress action row belongs to its compact group");
+                let progress_bounds = progress.compute_bounds(root).expect("progress bar is rooted");
+                let cancel_bounds = cancel.compute_bounds(root).expect("cancel action is rooted");
+                let group_bounds = progress_group
+                    .compute_bounds(root)
+                    .expect("progress group is rooted");
+                assert!(
+                    group_bounds.width() <= 760.0,
+                    "{width_name} progress group exceeded its desktop ceiling: {group_bounds:?}"
+                );
+                assert!(
+                    progress_bounds.width() >= 240.0,
+                    "{width_name} progress bar is too narrow: {progress_bounds:?}"
+                );
+                assert!(
+                    (cancel_bounds.x() - progress_bounds.x() - progress_bounds.width()).abs()
+                        <= 16.0
+                        || cancel_bounds.y() >= progress_bounds.y() + progress_bounds.height(),
+                    "{width_name} Cancel is detached from progress: progress={progress_bounds:?}, cancel={cancel_bounds:?}"
+                );
             }
             if matches!(state, "update-required" | "update-review") {
                 let update = find_button(root, "Update with selected access");

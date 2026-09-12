@@ -42,6 +42,7 @@ fn validation() -> gtk::Box {
 
 fn progress() -> gtk::ProgressBar {
     let widget = gtk::ProgressBar::new();
+    widget.set_size_request(240, -1);
     widget.set_hexpand(true);
     widget
 }
