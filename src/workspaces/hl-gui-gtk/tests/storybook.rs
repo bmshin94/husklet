@@ -828,12 +828,15 @@ mod unix {
                     let specimen_bounds = descendants::<gtk::ToggleButton>(&root)
                         .into_iter()
                         .filter(|choice| {
-                            choice.has_css_class("choice")
-                                && choice.is_mapped()
-                                && choice.is_ancestor(&document)
+                            choice.has_css_class("choice") && choice.is_mapped()
                         })
                         .filter_map(|choice| choice.compute_bounds(&root))
+                        .filter(|bounds| bounds.y() >= 100.0)
                         .collect::<Vec<_>>();
+                    assert!(
+                        specimen_bounds.len() >= 10,
+                        "Select narrow specimen geometry sampled only {specimen_bounds:?}"
+                    );
                     assert!(
                         specimen_bounds
                             .iter()
@@ -860,6 +863,40 @@ mod unix {
                 );
                 capture_story(&realized_window, &format!("Select narrow {position}"));
             }
+            let focus_lifecycle = surface.reports().drain();
+            let focus_states = focus_lifecycle
+                .iter()
+                .map(|event| match event {
+                    hl_gui::Event::Focus { focused, .. } => *focused,
+                    other => panic!("Select popup/resize emitted a non-focus event: {other:?}"),
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                matches!(focus_states.as_slice(), [true] | [true, false] | [true, false, true]),
+                "Select popup/resize focus lifecycle was not a bounded focus acquisition, optionally interrupted by its transient popup: {focus_lifecycle:?}"
+            );
+            let identities = focus_lifecycle
+                .iter()
+                .filter_map(|event| match event {
+                    hl_gui::Event::Focus { node, id, .. } => Some((node, id)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                identities.windows(2).all(|pair| pair[0] == pair[1]),
+                "Select popup/resize focus lifecycle crossed control identity: {focus_lifecycle:?}"
+            );
+            gtk::prelude::RootExt::set_focus(&realized_window, None::<&gtk::Widget>);
+            settle_toolkit();
+            assert!(
+                gtk::prelude::RootExt::focus(&realized_window).is_none(),
+                "Select test leaves no inherited focus before the generic interaction"
+            );
+            let evacuation = surface.reports().drain();
+            assert!(
+                matches!(evacuation.as_slice(), [] | [hl_gui::Event::Focus { focused: false, .. }]),
+                "Select focus evacuation may report only the displaced handler's single blur: {evacuation:?}"
+            );
         }
         if story == "Search" {
             let search = find::<gtk::SearchEntry>(&root, |entry| {
@@ -2691,6 +2728,14 @@ mod unix {
             "Select" => {
                 let choice =
                     find::<gtk::ToggleButton>(root, |button| button.tooltip_text().as_deref() == Some("Default shell"));
+                let neutral_target = descendants::<gtk::ToggleButton>(root)
+                    .into_iter()
+                    .find(|button| button.has_css_class("choice") && button.has_css_class("tone-danger"))
+                    .expect("Select representative interaction owns a distinct focus staging target");
+                assert!(
+                    neutral_target.grab_focus(),
+                    "Select representative interaction stages focus away from its canonical target"
+                );
                 assert!(choice.grab_focus(), "Select accepts keyboard focus");
             }
             "Heading" => {
