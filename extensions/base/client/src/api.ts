@@ -781,6 +781,15 @@ export declare class ExecutionDeadlineError extends Error {
   readonly deadlineMs: number;
 }
 
+/** Cleanup failed after this helper attached a container to a network. */
+export declare class TemporaryNetworkConnectionError extends Error {
+  readonly networkId: string;
+  readonly containerId: string;
+  /** Original operation failure, if cleanup failed while unwinding it. */
+  readonly operation: unknown;
+  readonly cleanup: unknown;
+}
+
 /** The host retained output, but not the complete sequence after the requested cursor. */
 export declare class ExecutionOutputGapError extends Error {
   readonly executionId: string;

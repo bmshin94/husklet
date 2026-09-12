@@ -21,6 +21,14 @@ export declare class ExecutionDeadlineError extends Error {
     readonly deadlineMs: any;
     constructor(executionId: any, deadlineMs: any);
 }
+/** A temporary network lease could not be released; its exact cleanup authority is recoverable. */
+export declare class TemporaryNetworkConnectionError extends Error {
+    readonly networkId: any;
+    readonly containerId: any;
+    readonly operation: any;
+    readonly cleanup: any;
+    constructor(networkId: any, containerId: any, operation: any, cleanup: any);
+}
 /** Output retention advanced past the cursor, so a transcript/result would be incomplete. */
 export declare class ExecutionOutputGapError extends Error {
     readonly executionId: any;

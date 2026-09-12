@@ -115,6 +115,25 @@ export class ExecutionDeadlineError extends Error {
   }
 }
 
+/** A temporary network lease could not be released; its exact cleanup authority is recoverable. */
+export class TemporaryNetworkConnectionError extends Error {
+  readonly networkId;
+  readonly containerId;
+  readonly operation;
+  readonly cleanup;
+
+  constructor(networkId, containerId, operation, cleanup) {
+    super(`temporary network ${networkId} attachment for ${containerId} could not be released`, {
+      cause: cleanup,
+    });
+    this.name = 'TemporaryNetworkConnectionError';
+    this.networkId = networkId;
+    this.containerId = containerId;
+    this.operation = operation;
+    this.cleanup = cleanup;
+  }
+}
+
 /** Output retention advanced past the cursor, so a transcript/result would be incomplete. */
 export class ExecutionOutputGapError extends Error {
   readonly executionId;
@@ -2619,11 +2638,29 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         }
         const alreadyConnected = network.endpoints.containers.includes(containerId);
         if (!alreadyConnected) await api.networks.connect(networkId, containerId, options);
+        let result;
+        let operationFailed = false;
+        let operationFailure;
         try {
-          return await operation();
-        } finally {
-          if (!alreadyConnected) await api.networks.disconnect(networkId, containerId);
+          result = await operation();
+        } catch (cause) {
+          operationFailed = true;
+          operationFailure = cause;
         }
+        if (!alreadyConnected) {
+          try {
+            await api.networks.disconnect(networkId, containerId);
+          } catch (cleanup) {
+            throw new TemporaryNetworkConnectionError(
+              networkId,
+              containerId,
+              operationFailure,
+              cleanup,
+            );
+          }
+        }
+        if (operationFailed) throw operationFailure;
+        return result;
       },
     },
     terminal: {

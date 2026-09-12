@@ -39,6 +39,23 @@ export class ExecutionDeadlineError extends Error {
         this.deadlineMs = deadlineMs;
     }
 }
+/** A temporary network lease could not be released; its exact cleanup authority is recoverable. */
+export class TemporaryNetworkConnectionError extends Error {
+    networkId;
+    containerId;
+    operation;
+    cleanup;
+    constructor(networkId, containerId, operation, cleanup) {
+        super(`temporary network ${networkId} attachment for ${containerId} could not be released`, {
+            cause: cleanup,
+        });
+        this.name = 'TemporaryNetworkConnectionError';
+        this.networkId = networkId;
+        this.containerId = containerId;
+        this.operation = operation;
+        this.cleanup = cleanup;
+    }
+}
 /** Output retention advanced past the cursor, so a transcript/result would be incomplete. */
 export class ExecutionOutputGapError extends Error {
     executionId;
@@ -2040,13 +2057,27 @@ export function workspace(session, { signal } = {}) {
                 const alreadyConnected = network.endpoints.containers.includes(containerId);
                 if (!alreadyConnected)
                     await api.networks.connect(networkId, containerId, options);
+                let result;
+                let operationFailed = false;
+                let operationFailure;
                 try {
-                    return await operation();
+                    result = await operation();
                 }
-                finally {
-                    if (!alreadyConnected)
+                catch (cause) {
+                    operationFailed = true;
+                    operationFailure = cause;
+                }
+                if (!alreadyConnected) {
+                    try {
                         await api.networks.disconnect(networkId, containerId);
+                    }
+                    catch (cleanup) {
+                        throw new TemporaryNetworkConnectionError(networkId, containerId, operationFailure, cleanup);
+                    }
                 }
+                if (operationFailed)
+                    throw operationFailure;
+                return result;
             },
         },
         terminal: {

@@ -171,6 +171,11 @@ groups
     '- `host.containers.pipeExecutionStdin(id, source, options)` — consumes bounded chunks serially and optionally closes on successful exhaustion; abort stops production without implicitly closing stdin.',
     '- `host.containers.signalExecutionAndWait(id, signal, after, options)` — arms execution observation, verifies the immutable execution cursor, signals, then awaits an explicit changed or exited state; requires `containers:read` and `containers:execute`.',
   );
+groups
+  .get('Networks')
+  .push(
+    '- `host.networks.withTemporaryConnection(network, container, operation, options)` — inspects complete endpoint membership, attaches only when absent, and detaches only an endpoint the helper itself created. If disconnect fails, `TemporaryNetworkConnectionError` preserves the exact network/container cleanup authority and original operation failure for safe reconnect instead of masking it.',
+  );
 
 const topicCapability = Object.fromEntries(
   PROTOCOL_TOPICS.map(({ wire, capability }) => [wire, capability]),

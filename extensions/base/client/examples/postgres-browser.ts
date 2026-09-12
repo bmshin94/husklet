@@ -1,4 +1,9 @@
-import { ExecutionOperationError, connect, workspace } from '@husklet/client';
+import {
+  ExecutionOperationError,
+  TemporaryNetworkConnectionError,
+  connect,
+  workspace,
+} from '@husklet/client';
 
 declare const process: { argv: string[]; stdout: { write(value: string): void } };
 
@@ -99,9 +104,11 @@ try {
     process.stdout.write(`${JSON.stringify({ rows, preview, notices })}\n`);
   } catch (error) {
     let recovered = false;
-    if (error instanceof ExecutionOperationError) {
-      executionId = error.executionId;
-      if (error.after !== undefined && error.partialLine !== undefined) {
+    const leaseFailure = error instanceof TemporaryNetworkConnectionError ? error : undefined;
+    const operationFailure = leaseFailure?.operation ?? error;
+    if (operationFailure instanceof ExecutionOperationError) {
+      executionId = operationFailure.executionId;
+      if (operationFailure.after !== undefined && operationFailure.partialLine !== undefined) {
         // A transport failure leaves the execution record on the host. Reconnect and commit each
         // decoded result page as one unit before advancing its authoritative output cursor.
         const resumedSession = await connect({
@@ -111,11 +118,11 @@ try {
         });
         try {
           const resumed = await workspace(resumedSession).containers.resumeJsonLinePages(
-            error.executionId,
+            operationFailure.executionId,
             {
-              after: error.after,
-              partialLine: error.partialLine,
-              lines: error.lines,
+              after: operationFailure.after,
+              partialLine: operationFailure.partialLine,
+              lines: operationFailure.lines,
               maxLineBytes: 1024 * 1024,
               maxLines: 1_000_000,
               pageLimit: 16,
@@ -138,6 +145,12 @@ try {
             recovered = true;
           }
         } finally {
+          if (leaseFailure) {
+            await workspace(resumedSession).networks.disconnect(
+              leaseFailure.networkId,
+              leaseFailure.containerId,
+            );
+          }
           await resumedSession.close();
         }
       }
