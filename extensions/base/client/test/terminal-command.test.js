@@ -536,6 +536,10 @@ test('large Git review output exposes an exact reconnect cursor after fragmented
     assert.equal(failure.after, 1);
     assert.equal(failure.command.id, id);
     assert.deepEqual(failure.command.command, gitCommand);
+    assert.deepEqual(failure.stdout, [...new TextEncoder().encode('diff --git a/a b/a\n')]);
+    assert.deepEqual(failure.stderr, []);
+    assert(Object.isFrozen(failure.stdout));
+    assert(Object.isFrozen(failure.stderr));
     assert(Object.isFrozen(failure.command));
     assert(Object.isFrozen(failure.command.command));
 

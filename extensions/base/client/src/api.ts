@@ -825,6 +825,10 @@ export declare class TerminalCommandOperationError extends Error {
   readonly command: Readonly<TerminalCommand>;
   readonly phase: 'input' | 'output' | 'wait' | 'decode';
   readonly after: number;
+  /** Exact bounded stdout bytes acknowledged at `after`, safe to prepend after reconnect. */
+  readonly stdout?: readonly number[];
+  /** Exact bounded stderr bytes acknowledged at `after`, safe to prepend after reconnect. */
+  readonly stderr?: readonly number[];
   readonly cause: unknown;
 }
 /** A terminal text request cannot be represented by the host's bounded pane tail. */

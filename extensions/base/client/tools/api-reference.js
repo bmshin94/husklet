@@ -133,7 +133,7 @@ groups
   .push(
     '- A supervised terminal command remains inspectable, readable, writable, waitable, and cancellable by its immutable returned identity after its originating pane is replaced or the extension reconnects. The pane snapshot fences creation only.',
     '- Every supervised command carries its authenticated, immutable installation incarnation. All follow-up calls echo that owner and the Rust host rejects copied or lifecycle-stale command authority before execution lookup. Reconnecting the same installed record remains valid; disable, update, regrant, uninstall, and reinstall rotate or discard the incarnation.',
-    '- `host.terminal.commandText(...)` interrupts idle polling immediately on abort, cancels the exact owned command, and throws `TerminalCommandOperationError` after any post-start failure with the immutable command, failed phase, and last completely consumed output cursor.',
+    '- `host.terminal.commandText(...)` interrupts idle polling immediately on abort, cancels the exact owned command, and throws `TerminalCommandOperationError` after any post-start failure with the immutable command, failed phase, last completely consumed output cursor, and exact bounded stdout/stderr bytes acknowledged at that cursor.',
   );
 groups
   .get('Semantics')

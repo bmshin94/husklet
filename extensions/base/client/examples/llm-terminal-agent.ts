@@ -1,4 +1,4 @@
-import { connect, workspace } from '@husklet/client';
+import { TerminalCommandOperationError, connect, workspace } from '@husklet/client';
 declare const process: { argv: string[]; stdout: { write(value: string): void } };
 
 type Configuration = { path: string; slot: string; prompt: string; deadlineMs?: number };
@@ -34,13 +34,55 @@ try {
     const cancellation = new AbortController();
     const deadline = setTimeout(() => cancellation.abort('agent interaction deadline'), deadlineMs);
     try {
-      const result = await terminal.commandText(observed.snapshot, {
-        command: ['sh', '-lc', configuration.prompt],
-        maxBytes: 1024 * 1024,
-        signal: cancellation.signal,
-        cancelSignal: 'SIGINT',
-        cancelTimeoutMs: 1_000,
-      });
+      let result;
+      try {
+        result = await terminal.commandText(observed.snapshot, {
+          command: ['sh', '-lc', configuration.prompt],
+          maxBytes: 1024 * 1024,
+          signal: cancellation.signal,
+          cancelSignal: 'SIGINT',
+          cancelTimeoutMs: 1_000,
+        });
+      } catch (cause) {
+        if (!(cause instanceof TerminalCommandOperationError)) throw cause;
+        const resumedSession = await connect({
+          path: configuration.path,
+          pendingLimit: 8,
+          timeout: 5_000,
+        });
+        try {
+          const resumedTerminal = workspace(resumedSession).terminal;
+          const stdout = [...(cause.stdout ?? [])];
+          const stderr = [...(cause.stderr ?? [])];
+          let after = cause.after;
+          let complete = false;
+          for (let pageNumber = 0; pageNumber < 4_096; pageNumber += 1) {
+            const page = await resumedTerminal.commandOutput(cause.command, {
+              after,
+              limit: 16,
+            });
+            for (const entry of page.output.entries) {
+              const destination = entry.stream === 'stdout' ? stdout : stderr;
+              destination.push(...entry.bytes);
+              if (stdout.length + stderr.length > 1024 * 1024) {
+                throw new RangeError('resumed terminal command output exceeded 1048576 bytes');
+              }
+            }
+            after = page.output.next;
+            if (page.output.eof) {
+              complete = true;
+              break;
+            }
+          }
+          if (!complete) throw new Error('resumed terminal command exceeded 4096 output pages');
+          const command = await resumedTerminal.commandWait(cause.command);
+          const decode = (bytes: number[]) =>
+            new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(bytes));
+          result = { command, stdout: decode(stdout), stderr: decode(stderr) };
+        } finally {
+          await resumedSession.close();
+        }
+      }
       process.stdout.write(
         `${JSON.stringify({ context: panes, incomplete: contextIncomplete, selected: { kind: 'terminal', before: observed.text, command: result.command.id, stdout: result.stdout, stderr: result.stderr, exitCode: result.command.exit_code, completed: !result.command.running, pane: { slot: result.command.slot, generation: result.command.generation, revision: result.command.revision } } })}\n`,
       );

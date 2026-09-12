@@ -368,8 +368,10 @@ export class TerminalCommandOperationError extends Error {
   readonly command;
   readonly phase;
   readonly after;
+  readonly stdout;
+  readonly stderr;
 
-  constructor(command, phase, after, cause) {
+  constructor(command, phase, after, cause, output = undefined) {
     super(
       `terminal command ${command.id} ${phase} failed after sequence ${after}: ${cause instanceof Error ? cause.message : String(cause)}`,
     );
@@ -377,6 +379,8 @@ export class TerminalCommandOperationError extends Error {
     this.command = Object.freeze({ ...command, command: Object.freeze([...command.command]) });
     this.phase = phase;
     this.after = after;
+    this.stdout = output?.stdout;
+    this.stderr = output?.stderr;
     this.cause = cause;
   }
 }
@@ -2909,12 +2913,20 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
             if (page.output.gap) {
               throw new ExecutionOutputGapError(owned.id, after, page.output.next);
             }
+            const additions: { stdout: Uint8Array[]; stderr: Uint8Array[] } = {
+              stdout: [],
+              stderr: [],
+            };
+            let pageBytes = 0;
             for (const entry of page.output.entries) {
-              total += entry.bytes.length;
-              if (total > maxBytes)
+              pageBytes += entry.bytes.length;
+              if (total + pageBytes > maxBytes)
                 throw new RangeError('terminal command output exceeded maxBytes');
-              chunks[entry.stream].push(Uint8Array.from(entry.bytes));
+              additions[entry.stream].push(Uint8Array.from(entry.bytes));
             }
+            chunks.stdout.push(...additions.stdout);
+            chunks.stderr.push(...additions.stderr);
+            total += pageBytes;
             after = page.output.next;
             if (page.output.eof) break;
             if (!page.output.more && pollIntervalMs > 0) {
@@ -2940,7 +2952,13 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           } catch {
             // Preserve the operation failure; the immutable command ID remains on `owned`.
           }
-          if (owned) throw new TerminalCommandOperationError(owned, phase, after, cause);
+          if (owned) {
+            const flatten = (parts) => Object.freeze(parts.flatMap((part) => Array.from(part)));
+            throw new TerminalCommandOperationError(owned, phase, after, cause, {
+              stdout: flatten(chunks.stdout),
+              stderr: flatten(chunks.stderr),
+            });
+          }
           throw cause;
         }
       },
