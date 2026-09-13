@@ -149,3 +149,71 @@ test('lost install reply recovers exact reviewed authority without replay over f
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('malformed acquisition authority never reaches a fragmented Unix socket', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-extension-authority-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const calls = [];
+  const sockets = new Set();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.kind !== KIND.request) continue;
+        calls.push(frame.payload.call);
+        const bytes = encode({
+          channel: frame.channel,
+          kind: KIND.response,
+          payload: {
+            reply: 'extension_acquisition',
+            with: {
+              job: 'job-valid',
+              reference: 'registry/tool:1',
+              revision: -1,
+              state: 'inspecting',
+              progress: null,
+              candidate: null,
+              error: null,
+            },
+          },
+        });
+        socket.write(bytes.subarray(0, 2));
+        socket.write(bytes.subarray(2, 7));
+        socket.write(bytes.subarray(7));
+      }
+    });
+    const greeting = encode({
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: {
+        protocol: 1,
+        peer: 'acquisition-authority',
+        granted: ['extensions:install'],
+      },
+    });
+    socket.write(greeting.subarray(0, 3));
+    socket.write(greeting.subarray(3));
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const session = await connect({ path: socketPath });
+    const extensions = workspace(session).extensions;
+    const digest = `sha256:${'a'.repeat(64)}`;
+    await assert.rejects(extensions.install('', 1, digest, []), /job identity/);
+    await assert.rejects(
+      extensions.update('job-valid', Number.MAX_SAFE_INTEGER + 1, digest, []),
+      /revision/,
+    );
+    assert.throws(() => extensions.cancelAcquisition('job-valid', -1), /revision/);
+    assert.deepEqual(calls, [], 'invalid mutating authority is rejected before framing');
+    await assert.rejects(extensions.acquisition('job-valid'), /revision/);
+    assert.deepEqual(calls, ['extension_acquisition_status']);
+    await session.close();
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});

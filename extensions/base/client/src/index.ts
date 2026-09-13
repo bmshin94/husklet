@@ -901,6 +901,12 @@ function exactAcquisitionJob(job: unknown): string {
   return job;
 }
 
+function exactAcquisitionRevision(revision: unknown): number {
+  if (!Number.isSafeInteger(revision) || (revision as number) < 0)
+    throw new TypeError('extension acquisition revision must be a nonnegative safe integer');
+  return revision as number;
+}
+
 function exactAcquisitionStatus(
   job: string,
   status: WireExtensionAcquisitionStatus,
@@ -929,6 +935,7 @@ function exactAcquisitionStatus(
     (progress.current === null || progress.total === null || progress.current <= progress.total);
   if (
     status.job !== job ||
+    exactAcquisitionRevision(status.revision) !== status.revision ||
     !states.has(status.state) ||
     status.reference.length === 0 ||
     status.reference.includes('\0') ||
@@ -1902,7 +1909,10 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         );
       },
       cancelAcquisition: (job, revision) =>
-        done('extension_acquisition_cancel', { job: exactAcquisitionJob(job), revision }),
+        done('extension_acquisition_cancel', {
+          job: exactAcquisitionJob(job),
+          revision: exactAcquisitionRevision(revision),
+        }),
       install: async (
         job,
         revision,
@@ -1918,8 +1928,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       ) =>
         expect(
           await session.call('extension_install', {
-            job,
-            revision,
+            job: exactAcquisitionJob(job),
+            revision: exactAcquisitionRevision(revision),
             image_digest: immutableDigest(imageDigest, 'extension candidate image'),
             granted,
             containers,
@@ -1947,8 +1957,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       ) =>
         expect(
           await session.call('extension_update', {
-            job,
-            revision,
+            job: exactAcquisitionJob(job),
+            revision: exactAcquisitionRevision(revision),
             image_digest: immutableDigest(imageDigest, 'extension candidate image'),
             granted,
             containers,
@@ -4204,11 +4214,9 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
               await listener(page);
             }
           } catch (error) {
-            if (!(
-              stopped.signal.aborted &&
-              error instanceof Error &&
-              error.name === 'AbortError'
-            )) {
+            if (
+              !(stopped.signal.aborted && error instanceof Error && error.name === 'AbortError')
+            ) {
               throw error;
             }
           } finally {
@@ -4313,11 +4321,9 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
               pending.set(task, generation);
             }
           } catch (error) {
-            if (!(
-              stopped.signal.aborted &&
-              error instanceof Error &&
-              error.name === 'AbortError'
-            )) {
+            if (
+              !(stopped.signal.aborted && error instanceof Error && error.name === 'AbortError')
+            ) {
               failure ??= error;
             }
           } finally {
@@ -6152,7 +6158,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     let primaryFailure: unknown;
     let cleanupFailure: unknown;
     let outcome:
-      { changed: true; tab: TabSummary } | { changed: false; tab: string; pinned: boolean };
+      | { changed: true; tab: TabSummary }
+      | { changed: false; tab: string; pinned: boolean };
     try {
       authorityIssued = true;
       try {

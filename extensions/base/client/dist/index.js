@@ -673,6 +673,11 @@ function exactAcquisitionJob(job) {
         throw new TypeError('extension acquisition requires a 1..128 byte NUL-free job identity');
     return job;
 }
+function exactAcquisitionRevision(revision) {
+    if (!Number.isSafeInteger(revision) || revision < 0)
+        throw new TypeError('extension acquisition revision must be a nonnegative safe integer');
+    return revision;
+}
 function exactAcquisitionStatus(job, status) {
     const states = new Set([
         'inspecting',
@@ -696,6 +701,7 @@ function exactAcquisitionStatus(job, status) {
             (!progress.id.includes('\0') && new TextEncoder().encode(progress.id).byteLength <= 512)) &&
         (progress.current === null || progress.total === null || progress.current <= progress.total);
     if (status.job !== job ||
+        exactAcquisitionRevision(status.revision) !== status.revision ||
         !states.has(status.state) ||
         status.reference.length === 0 ||
         status.reference.includes('\0') ||
@@ -1490,10 +1496,10 @@ export function workspace(session, { signal } = {}) {
                 const exactJob = exactAcquisitionJob(job);
                 return exactAcquisitionStatus(exactJob, expect(await session.call('extension_acquisition_status', { job: exactJob }), 'extension_acquisition'));
             },
-            cancelAcquisition: (job, revision) => done('extension_acquisition_cancel', { job: exactAcquisitionJob(job), revision }),
+            cancelAcquisition: (job, revision) => done('extension_acquisition_cancel', { job: exactAcquisitionJob(job), revision: exactAcquisitionRevision(revision) }),
             install: async (job, revision, imageDigest, granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }, credentials = { read: [], write: [], expose_to_execution: [] }) => expect(await session.call('extension_install', {
-                job,
-                revision,
+                job: exactAcquisitionJob(job),
+                revision: exactAcquisitionRevision(revision),
                 image_digest: immutableDigest(imageDigest, 'extension candidate image'),
                 granted,
                 containers,
@@ -1505,8 +1511,8 @@ export function workspace(session, { signal } = {}) {
                 credentials,
             }), 'extension'),
             update: async (job, revision, imageDigest, granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }, credentials = { read: [], write: [], expose_to_execution: [] }) => expect(await session.call('extension_update', {
-                job,
-                revision,
+                job: exactAcquisitionJob(job),
+                revision: exactAcquisitionRevision(revision),
                 image_digest: immutableDigest(imageDigest, 'extension candidate image'),
                 granted,
                 containers,
