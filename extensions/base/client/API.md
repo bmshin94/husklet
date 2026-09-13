@@ -241,6 +241,7 @@ order; the JavaScript client's checks are never treated as a security boundary.
 - `host.credentials.read(...)` — `credential_read`, requires `credentials:read`.
 - `host.credentials.set(...)` — `credential_set`, requires `credentials:write`.
 - `host.credentials.remove(...)` — `credential_remove`, requires `credentials:write`.
+- `host.credentials.withValue(key, consumer, { signal, maxLifetimeMs })` — reads one exact-key credential into a short-lived `Uint8Array`, scrubs both decoded copies when use ends, and returns only its revision. Caller cancellation, `session.signal` on disconnect/installation replacement, and a 60-second default lease (configurable from 1 ms through 5 minutes) revoke even a consumer that ignores its signal. There is no credential-change event: rotation is observed on the next lease, so choose a shorter lifetime when prompt revocation matters. JavaScript cannot prevent a consumer from deliberately copying bytes; prefer `execWithCredentials` when a host-launched process can consume the secret.
 
 ## Images
 

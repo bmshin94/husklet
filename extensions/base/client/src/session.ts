@@ -380,6 +380,7 @@ export class Session {
   #closeReason;
   #closedPromise;
   #resolveClosed;
+  #lifecycle = new AbortController();
   #granted: readonly string[] = [];
   #filesystem: ReadonlyFilesystemGrant = Object.freeze({
     read: Object.freeze([]),
@@ -524,6 +525,11 @@ export class Session {
   /** Resolves once with the reason this session ended. */
   get closed() {
     return this.#closedPromise;
+  }
+
+  /** Aborts once with the reason this authenticated session ended. */
+  get signal() {
+    return this.#lifecycle.signal;
   }
 
   /** Opens the socket the host provided. */
@@ -997,6 +1003,7 @@ export class Session {
     if (this.#closed) return;
     this.#closed = true;
     this.#closeReason = error;
+    this.#lifecycle.abort(error);
     clearTimeout(this.#greetingTimer);
     this.#rejectReady(error);
     for (const pending of this.#pending.splice(0)) {

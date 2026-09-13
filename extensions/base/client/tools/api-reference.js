@@ -131,6 +131,11 @@ groups
     '- Preferences are workspace-local and host-namespaced to the authenticated extension. Keys are 1–64 restricted ASCII bytes, strings are at most 1024 UTF-8 bytes, numbers are JavaScript-safe integers, and each extension may hold at most 64 entries. Arrays, objects, null, and unbounded JSON are not accepted.',
   );
 groups
+  .get('Extension credentials')
+  .push(
+    '- `host.credentials.withValue(key, consumer, { signal, maxLifetimeMs })` — reads one exact-key credential into a short-lived `Uint8Array`, scrubs both decoded copies when use ends, and returns only its revision. Caller cancellation, `session.signal` on disconnect/installation replacement, and a 60-second default lease (configurable from 1 ms through 5 minutes) revoke even a consumer that ignores its signal. There is no credential-change event: rotation is observed on the next lease, so choose a shorter lifetime when prompt revocation matters. JavaScript cannot prevent a consumer from deliberately copying bytes; prefer `execWithCredentials` when a host-launched process can consume the secret.',
+  );
+groups
   .get('Terminal and panes')
   .push(
     '- A supervised terminal command remains inspectable, readable, writable, waitable, and cancellable by its immutable returned identity after its originating pane is replaced or the extension reconnects. The pane snapshot fences creation only.',

@@ -90,9 +90,7 @@ test('real Unix filesystem catch-up is bounded, resumable, and journal-gap safe'
           payload = {
             reply: 'file_changes',
             with: {
-              changes: [
-                { revision: 9, kind: 'remove', path: 'src/old.ts', entry: null },
-              ],
+              changes: [{ revision: 9, kind: 'remove', path: 'src/old.ts', entry: null }],
               journal: REPLACEMENT_FILE_JOURNAL,
               next: 9,
               current: 9,
@@ -174,9 +172,10 @@ test('real Unix filesystem catch-up is bounded, resumable, and journal-gap safe'
       journal: REPLACEMENT_FILE_JOURNAL,
       revision: 9,
     });
-    assert.deepEqual(resumed.changes.map(({ kind, path }) => [kind, path]), [
-      ['remove', 'src/old.ts'],
-    ]);
+    assert.deepEqual(
+      resumed.changes.map(({ kind, path }) => [kind, path]),
+      [['remove', 'src/old.ts']],
+    );
     assert.equal((await workspace(session).info()).name, 'index');
     await session.close();
   } finally {
@@ -576,14 +575,14 @@ test('real Unix range batch preserves ordered paths and one bounded frame', asyn
       }
     });
     const greeting = encode({
-        channel: CONTROL,
-        kind: KIND.open,
-        payload: {
-          protocol: 1,
-          peer: 'range-batch',
-          granted: ['filesystem:read'],
-        },
-      });
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: {
+        protocol: 1,
+        peer: 'range-batch',
+        granted: ['filesystem:read'],
+      },
+    });
     socket.write(greeting.subarray(0, 3));
     setImmediate(() => socket.write(greeting.subarray(3)));
   });
@@ -1596,6 +1595,110 @@ test('real Unix credential calls reveal only the named value and preserve CAS fr
   }
 });
 
+test('scoped credential use scrubs bytes and revokes long work on Unix replacement', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-credential-scope-'));
+  const socketPath = path.join(directory, 'host.sock');
+  let peer;
+  let reads = 0;
+  const server = net.createServer((socket) => {
+    peer = socket;
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.payload.call !== 'credential_read') continue;
+        reads += 1;
+        const response = encode({
+          channel: frame.channel,
+          kind: KIND.response,
+          payload: {
+            reply: 'credential',
+            with: {
+              key: 'embeddings.api-key',
+              revision: reads,
+              value: [115, 101, 99, 114, 101, 116],
+            },
+          },
+        });
+        for (const byte of response) socket.write(Uint8Array.of(byte));
+      }
+    });
+    socket.write(
+      encode({
+        channel: CONTROL,
+        kind: KIND.open,
+        payload: { protocol: 1, peer: 'credential-scope', granted: ['credentials:read'] },
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  let session;
+  try {
+    session = await connect({ path: socketPath, timeout: 1_000 });
+    const credentials = workspace(session).credentials;
+    const cancelled = new AbortController();
+    cancelled.abort('index rebuild cancelled');
+    await assert.rejects(
+      credentials.withValue('embeddings.api-key', () => {}, { signal: cancelled.signal }),
+      /index rebuild cancelled|abort/i,
+    );
+    assert.equal(reads, 0, 'pre-cancelled credential use emits no secret read');
+    let successfulBytes;
+    assert.equal(
+      await credentials.withValue('embeddings.api-key', async (value, { revision, signal }) => {
+        successfulBytes = value;
+        assert.equal(revision, 1);
+        assert.equal(signal.aborted, false);
+        assert.equal(new TextDecoder().decode(value), 'secret');
+      }),
+      1,
+    );
+    assert.deepEqual([...successfulBytes], [0, 0, 0, 0, 0, 0]);
+
+    let failedBytes;
+    await assert.rejects(
+      credentials.withValue('embeddings.api-key', (value) => {
+        failedBytes = value;
+        throw new Error('embedding request failed');
+      }),
+      /embedding request failed/,
+    );
+    assert.deepEqual([...failedBytes], [0, 0, 0, 0, 0, 0]);
+
+    let expiredBytes;
+    await assert.rejects(
+      credentials.withValue(
+        'embeddings.api-key',
+        (value) => {
+          expiredBytes = value;
+          return new Promise(() => {});
+        },
+        { maxLifetimeMs: 10 },
+      ),
+      /revoked/,
+    );
+    assert.deepEqual([...expiredBytes], [0, 0, 0, 0, 0, 0]);
+
+    let replacementSignal;
+    let replacementBytes;
+    const running = credentials.withValue('embeddings.api-key', async (value, { signal }) => {
+      replacementBytes = value;
+      replacementSignal = signal;
+      await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+    });
+    while (!replacementSignal) await new Promise((resolve) => setImmediate(resolve));
+    peer.destroy();
+    await assert.rejects(running, /closed|abort/i);
+    assert.equal(replacementSignal.aborted, true);
+    assert.deepEqual([...replacementBytes], [0, 0, 0, 0, 0, 0]);
+    assert.equal(reads, 4);
+  } finally {
+    await session?.close();
+    peer?.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('real Unix preference read rejects duplicate keys without mutation and preserves session health', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-preference-identities-'));
   const socketPath = path.join(directory, 'host.sock');
@@ -1739,9 +1842,7 @@ test('real Unix PostgreSQL discovery preserves exact list and inspection host bi
                 reply: 'container',
                 with: {
                   ...container,
-                  ports: [
-                    { container: 5432, host: 15432, host_ip: '127.0.0.1', protocol: 'tcp' },
-                  ],
+                  ports: [{ container: 5432, host: 15432, host_ip: '127.0.0.1', protocol: 'tcp' }],
                 },
               };
         socket.write(
@@ -2026,10 +2127,9 @@ test('real Unix beginWalk captures the reconciliation cursor before recursive en
     assert.deepEqual(calls, [{ call: 'filesystem_inventory' }]);
     assert.deepEqual(scan.cursor, { journal: FILE_JOURNAL, revision: 41 });
     assert.equal(scan.inventory.complete, true);
-    assert.deepEqual(
-      await Array.fromAsync(scan.entries),
-      [{ path: 'src/document.md', directory: false, size: 12, identity: 'doc-v1' }],
-    );
+    assert.deepEqual(await Array.fromAsync(scan.entries), [
+      { path: 'src/document.md', directory: false, size: 12, identity: 'doc-v1' },
+    ]);
     await workspace(session).files.changes(scan.cursor, 32);
     assert.deepEqual(calls, [
       { call: 'filesystem_inventory' },
@@ -2136,7 +2236,10 @@ test('real Unix change iterator reports a typed journal rotation and remains reu
       },
     ]);
     assert.equal((await workspace(session).info()).name, 'index');
-    assert.deepEqual(calls.map(({ call }) => call), ['filesystem_changes', 'workspace_info']);
+    assert.deepEqual(
+      calls.map(({ call }) => call),
+      ['filesystem_changes', 'workspace_info'],
+    );
     await session.close();
   } finally {
     for (const connection of connections) connection.destroy();
@@ -2158,22 +2261,23 @@ test('real Unix change iterator rejects a non-advancing continuation and keeps t
       for (const frame of reader.take(chunk)) {
         if (frame.kind !== KIND.request) continue;
         calls.push(frame.payload.call);
-        const payload = frame.payload.call === 'filesystem_changes'
-          ? {
-              reply: 'file_changes',
-              with: {
-                journal: FILE_JOURNAL,
-                changes: [],
-                next: 12,
-                current: 13,
-                more: true,
-                truncated: false,
-              },
-            }
-          : {
-              reply: 'workspace',
-              with: { name: 'index', image: 'toolbox', architecture: 'amd64' },
-            };
+        const payload =
+          frame.payload.call === 'filesystem_changes'
+            ? {
+                reply: 'file_changes',
+                with: {
+                  journal: FILE_JOURNAL,
+                  changes: [],
+                  next: 12,
+                  current: 13,
+                  more: true,
+                  truncated: false,
+                },
+              }
+            : {
+                reply: 'workspace',
+                with: { name: 'index', image: 'toolbox', architecture: 'amd64' },
+              };
         const response = encode({ channel: frame.channel, kind: KIND.response, payload });
         socket.write(response.subarray(0, 2));
         socket.write(response.subarray(2, 9));
@@ -2200,7 +2304,11 @@ test('real Unix change iterator rejects a non-advancing continuation and keeps t
       workspace(session).files.changes({ journal: FILE_JOURNAL, revision: 12 }),
       /inconsistent filesystem change page/,
     );
-    assert.deepEqual(calls, ['filesystem_changes'], 'a stalled continuation must not be requested again');
+    assert.deepEqual(
+      calls,
+      ['filesystem_changes'],
+      'a stalled continuation must not be requested again',
+    );
     assert.equal((await workspace(session).info()).name, 'index');
     assert.deepEqual(calls, ['filesystem_changes', 'workspace_info']);
     await session.close();
@@ -4303,19 +4411,19 @@ test('real Unix output calls reject oversized pages, sequence gaps, and unknown 
                 ? [entry(2)]
                 : [{ ...entry(1), stream: 'database' }];
           const reply = encode({
-              channel: 2,
-              kind: KIND.response,
-              payload: {
-                reply: 'execution_output',
-                with: {
-                  entries,
-                  next: entries.at(-1).sequence,
-                  more: false,
-                  eof: false,
-                  gap: false,
-                },
+            channel: 2,
+            kind: KIND.response,
+            payload: {
+              reply: 'execution_output',
+              with: {
+                entries,
+                next: entries.at(-1).sequence,
+                more: false,
+                eof: false,
+                gap: false,
               },
-            });
+            },
+          });
           for (const byte of reply) socket.write(Uint8Array.of(byte));
         } else if (frame.payload.call === 'workspace_info') {
           socket.write(
@@ -6192,14 +6300,20 @@ test('row channel retirement aborts stale database work before a replacement gen
     assert.equal(observations.length, 1);
     assert.equal(observations[0].signal.aborted, false);
     await sendOneByte({ channel: 41, kind: KIND.close, payload: Buffer.alloc(0) });
-    assert.equal(observations[0].signal.aborted, true, 'cancelled query receives its abort before authority is forgotten');
+    assert.equal(
+      observations[0].signal.aborted,
+      true,
+      'cancelled query receives its abort before authority is forgotten',
+    );
     await sendOneByte({
       channel: 41,
       kind: KIND.event,
       payload: { id: 2, source: 9, version: 2, range: { start: 999_936, count: 64 } },
     });
     await new Promise((resolve) => setImmediate(resolve));
-    const answers = returned.filter((frame) => frame.channel === 41 && frame.kind === KIND.response);
+    const answers = returned.filter(
+      (frame) => frame.channel === 41 && frame.kind === KIND.response,
+    );
     assert.equal(answers.length, 1, 'the cancelled generation emits no late row answer');
     assert.equal(answers[0].payload.version, 2);
     assert.equal(answers[0].payload.request, 2);
@@ -6212,7 +6326,11 @@ test('row channel retirement aborts stale database work before a replacement gen
     const reconnectWork = observations.at(-1);
     assert.equal(reconnectWork.signal.aborted, false);
     await session.close();
-    assert.equal(reconnectWork.signal.aborted, true, 'socket teardown cancels work before reconnect');
+    assert.equal(
+      reconnectWork.signal.aborted,
+      true,
+      'socket teardown cancels work before reconnect',
+    );
   } finally {
     await session?.close();
     peer?.destroy();
@@ -7617,12 +7735,20 @@ test('real Unix update wait preserves enabled and disabled lifecycle through fra
     const socketPath = path.join(directory, 'host.sock');
     const digest = `sha256:${(enabled ? 'c' : 'd').repeat(64)}`;
     const summary = {
-      name: 'sample', image_digest: digest, version: '2',
-      status: enabled ? 'duty' : 'standby', enabled, pane_providers: [],
+      name: 'sample',
+      image_digest: digest,
+      version: '2',
+      status: enabled ? 'duty' : 'standby',
+      enabled,
+      pane_providers: [],
     };
     const candidate = {
-      name: 'sample', version: '2', image_digest: digest,
-      requested: [], required: [], installed_image_digest: `sha256:${'a'.repeat(64)}`,
+      name: 'sample',
+      version: '2',
+      image_digest: digest,
+      requested: [],
+      required: [],
+      installed_image_digest: `sha256:${'a'.repeat(64)}`,
     };
     const connections = new Set();
     const server = net.createServer((socket) => {
@@ -7633,32 +7759,72 @@ test('real Unix update wait preserves enabled and disabled lifecycle through fra
         for (const frame of reader.take(chunk)) {
           if (frame.channel !== 2) continue;
           if (frame.payload.call === 'extension_acquisition_status') {
-            socket.write(encode({ channel: 2, kind: KIND.response, payload: {
-              reply: 'extension_acquisition', with: {
-                job: 'job-update', reference: 'sample:2', revision: 3,
-                state: 'ready', progress: null, candidate, error: null,
-              },
-            } }));
+            socket.write(
+              encode({
+                channel: 2,
+                kind: KIND.response,
+                payload: {
+                  reply: 'extension_acquisition',
+                  with: {
+                    job: 'job-update',
+                    reference: 'sample:2',
+                    revision: 3,
+                    state: 'ready',
+                    progress: null,
+                    candidate,
+                    error: null,
+                  },
+                },
+              }),
+            );
           } else if (frame.payload.call === 'extension_update') {
-            socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'extension', with: summary } }));
-            socket.write(encode({ channel: 31, kind: KIND.event, payload: {
-              snapshot: 'extensions', of: [{ ...summary, enabled: !enabled, status: enabled ? 'fault' : 'duty' }],
-            } }));
+            socket.write(
+              encode({
+                channel: 2,
+                kind: KIND.response,
+                payload: { reply: 'extension', with: summary },
+              }),
+            );
+            socket.write(
+              encode({
+                channel: 31,
+                kind: KIND.event,
+                payload: {
+                  snapshot: 'extensions',
+                  of: [{ ...summary, enabled: !enabled, status: enabled ? 'fault' : 'duty' }],
+                },
+              }),
+            );
             setImmediate(() => {
-              const final = encode({ channel: 31, kind: KIND.event, payload: { snapshot: 'extensions', of: [summary] } });
+              const final = encode({
+                channel: 31,
+                kind: KIND.event,
+                payload: { snapshot: 'extensions', of: [summary] },
+              });
               for (const byte of final) socket.write(Uint8Array.of(byte));
             });
-          } else socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
+          } else
+            socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
         }
       });
-      socket.write(encode({ channel: CONTROL, kind: KIND.open, payload: {
-        protocol: 1, peer: 'update-lifecycle', granted: ['extensions:read', 'extensions:install'],
-      } }));
+      socket.write(
+        encode({
+          channel: CONTROL,
+          kind: KIND.open,
+          payload: {
+            protocol: 1,
+            peer: 'update-lifecycle',
+            granted: ['extensions:read', 'extensions:install'],
+          },
+        }),
+      );
     });
     await new Promise((resolve) => server.listen(socketPath, resolve));
     try {
       const session = await connect({ path: socketPath });
-      const result = await workspace(session).extensions.updateAndWait('job-update', 3, { capabilities: [] });
+      const result = await workspace(session).extensions.updateAndWait('job-update', 3, {
+        capabilities: [],
+      });
       assert.equal(result.extension.enabled, enabled);
       assert.equal(result.extension.status, enabled ? 'duty' : 'standby');
       await session.close();
@@ -10266,17 +10432,15 @@ test('real Unix semantic action waits cancel, release observation, and preserve 
       );
       assert.deepEqual(
         calls.map(({ call }) => call),
-        [
-          'event_subscribe',
-          'pane_semantic_read',
-          'pane_semantic_action',
-          'event_unsubscribe',
-        ],
+        ['event_subscribe', 'pane_semantic_read', 'pane_semantic_action', 'event_unsubscribe'],
       );
 
       calls.length = 0;
       assert.equal((await terminal.semantics('pane-a')).revision, 4);
-      assert.deepEqual(calls.map(({ call }) => call), ['pane_semantic_read']);
+      assert.deepEqual(
+        calls.map(({ call }) => call),
+        ['pane_semantic_read'],
+      );
     },
   );
 });
@@ -10787,12 +10951,25 @@ test('real Unix stable pane inventory retries a layout race and keeps the sessio
   const calls = [];
   let lists = 0;
   const pane = (revision) => ({
-    slot: 'shell', generation: 7, revision, kind: 'terminal', provider: null,
-    tab: 'tab-1', title: 'Shell', focused: true,
+    slot: 'shell',
+    generation: 7,
+    revision,
+    kind: 'terminal',
+    provider: null,
+    tab: 'tab-1',
+    title: 'Shell',
+    focused: true,
   });
   const screen = (revision) => ({
-    slot: 'shell', generation: 7, revision, columns: 80, rows: 24,
-    lines: [`revision ${revision}`], cursor_column: 0, cursor_row: 1, truncated: false,
+    slot: 'shell',
+    generation: 7,
+    revision,
+    columns: 80,
+    rows: 24,
+    lines: [`revision ${revision}`],
+    cursor_column: 0,
+    cursor_row: 1,
+    truncated: false,
   });
   const fragmented = (socket, frame) => {
     socket.write(frame.subarray(0, 5));
@@ -10809,22 +10986,38 @@ test('real Unix stable pane inventory retries a layout race and keeps the sessio
         if (frame.payload.call === 'pane_list') {
           lists += 1;
           const revisions = [10, 11, 12, 13, 13, 13];
-          fragmented(socket, encode({
-            channel: 2, kind: KIND.response,
-            payload: { reply: 'panes', with: { panes: [pane(revisions[lists - 1])], truncated: false } },
-          }));
+          fragmented(
+            socket,
+            encode({
+              channel: 2,
+              kind: KIND.response,
+              payload: {
+                reply: 'panes',
+                with: { panes: [pane(revisions[lists - 1])], truncated: false },
+              },
+            }),
+          );
         } else if (frame.payload.call === 'terminal_read_pane') {
           assert.deepEqual(frame.payload.with, { slot: 'shell', lines: 40 });
-          fragmented(socket, encode({
-            channel: 2, kind: KIND.response,
-            payload: { reply: 'text', with: screen(lists === 3 ? 12 : lists >= 5 ? 13 : 10) },
-          }));
+          fragmented(
+            socket,
+            encode({
+              channel: 2,
+              kind: KIND.response,
+              payload: { reply: 'text', with: screen(lists === 3 ? 12 : lists >= 5 ? 13 : 10) },
+            }),
+          );
         }
       }
     });
     const greeting = encode({
-      channel: CONTROL, kind: KIND.open,
-      payload: { protocol: 1, peer: 'stable-pane-inventory', granted: ['panes:observe', 'terminals:output'] },
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: {
+        protocol: 1,
+        peer: 'stable-pane-inventory',
+        granted: ['panes:observe', 'terminals:output'],
+      },
     });
     socket.write(greeting.subarray(0, 3));
     setImmediate(() => socket.write(greeting.subarray(3)));
@@ -10853,11 +11046,20 @@ test('real Unix stable pane inventory retries a layout race and keeps the sessio
     assert.equal(snapshot.complete, true);
     assert.equal(snapshot.panes[0].pane.revision, 13);
     assert.equal(snapshot.panes[0].readable.text, 'revision 13');
-    assert.deepEqual(calls.map(({ call }) => call), [
-      'pane_list', 'terminal_read_pane', 'pane_list',
-      'pane_list', 'terminal_read_pane', 'pane_list',
-      'pane_list', 'terminal_read_pane', 'pane_list',
-    ]);
+    assert.deepEqual(
+      calls.map(({ call }) => call),
+      [
+        'pane_list',
+        'terminal_read_pane',
+        'pane_list',
+        'pane_list',
+        'terminal_read_pane',
+        'pane_list',
+        'pane_list',
+        'terminal_read_pane',
+        'pane_list',
+      ],
+    );
     assert.equal((await terminal.read('shell', 40)).revision, 13);
     assert.equal(calls.at(-1).call, 'terminal_read_pane', 'the ordered session remains reusable');
     await session.close();
@@ -10997,12 +11199,14 @@ test('real Unix final JSON record remains cancellable after execution EOF', asyn
               ? {
                   reply: 'execution_output',
                   with: {
-                    entries: [{
-                      sequence: 1,
-                      timestamp_ms: 1,
-                      stream: 'stdout',
-                      bytes: [...Buffer.from('{"case":1}')],
-                    }],
+                    entries: [
+                      {
+                        sequence: 1,
+                        timestamp_ms: 1,
+                        stream: 'stdout',
+                        bytes: [...Buffer.from('{"case":1}')],
+                      },
+                    ],
                     next: 1,
                     more: false,
                     eof: true,
@@ -11073,8 +11277,13 @@ test('real Unix text EOF decoding preserves completed execution identity and ses
   const calls = [];
   const connections = new Set();
   const execution = {
-    id: executionId, container_id: containerId, running: false, exit_code: 0,
-    pid: 42, command: ['psql'], user: 'postgres',
+    id: executionId,
+    container_id: containerId,
+    running: false,
+    exit_code: 0,
+    pid: 42,
+    command: ['psql'],
+    user: 'postgres',
   };
   const fragmented = (socket, payload) => {
     const frame = encode({ channel: 2, kind: KIND.response, payload });
@@ -11089,25 +11298,42 @@ test('real Unix text EOF decoding preserves completed execution identity and ses
       for (const frame of reader.take(chunk)) {
         if (frame.kind !== KIND.request) continue;
         calls.push(frame.payload.call);
-        const payload = frame.payload.call === 'container_exec'
-          ? { reply: 'identity', with: executionId }
-          : frame.payload.call === 'execution_output'
-            ? { reply: 'execution_output', with: {
-                entries: [{ sequence: 1, timestamp_ms: 1, stream: 'stdout', bytes: [0xc3] }],
-                next: 1, more: false, eof: true, gap: false,
-              } }
-            : frame.payload.call === 'execution_inspect'
-              ? { reply: 'execution', with: execution }
-              : { reply: 'workspace', with: {
-                  name: 'database', image: 'postgres:17', architecture: 'amd64',
-                } };
+        const payload =
+          frame.payload.call === 'container_exec'
+            ? { reply: 'identity', with: executionId }
+            : frame.payload.call === 'execution_output'
+              ? {
+                  reply: 'execution_output',
+                  with: {
+                    entries: [{ sequence: 1, timestamp_ms: 1, stream: 'stdout', bytes: [0xc3] }],
+                    next: 1,
+                    more: false,
+                    eof: true,
+                    gap: false,
+                  },
+                }
+              : frame.payload.call === 'execution_inspect'
+                ? { reply: 'execution', with: execution }
+                : {
+                    reply: 'workspace',
+                    with: {
+                      name: 'database',
+                      image: 'postgres:17',
+                      architecture: 'amd64',
+                    },
+                  };
         fragmented(socket, payload);
       }
     });
-    const greeting = encode({ channel: CONTROL, kind: KIND.open, payload: {
-      protocol: 1, peer: 'text-eof-recovery',
-      granted: ['containers:read', 'containers:execute', 'workspaces:read'],
-    } });
+    const greeting = encode({
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: {
+        protocol: 1,
+        peer: 'text-eof-recovery',
+        granted: ['containers:read', 'containers:execute', 'workspaces:read'],
+      },
+    });
     socket.write(greeting.subarray(0, 3));
     setImmediate(() => socket.write(greeting.subarray(3)));
   });
@@ -11116,7 +11342,8 @@ test('real Unix text EOF decoding preserves completed execution identity and ses
     const session = await connect({ path: socketPath });
     await assert.rejects(
       workspace(session).containers.execText(containerId, 3, {
-        command: ['psql'], maxBytes: 4096,
+        command: ['psql'],
+        maxBytes: 4096,
       }),
       (error) => {
         assert(error instanceof ExecutionOperationError);

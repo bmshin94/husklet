@@ -1003,6 +1003,8 @@ export declare class Session {
     readonly ready: Promise<void>;
     /** Resolves once with the reason this session ended. */
     readonly closed: Promise<Error>;
+    /** Aborts once with the reason this authenticated session ended. */
+    readonly signal: AbortSignal;
     readonly granted: readonly string[];
     readonly grantedCapabilities: readonly ExtensionCapability[];
     /** Immutable exact filesystem selectors granted to this connected extension. */
@@ -2175,6 +2177,18 @@ export interface WorkspaceApi {
         /** Checks this connection's immutable exact-key grant before making a call. */
         keyGrant(operation: CredentialGrantOperation, key: string): boolean;
         read(key: string): Promise<ExtensionCredential>;
+        /**
+         * Use one credential inside a bounded lifetime. The supplied bytes are scrubbed after the
+         * consumer settles or the lease expires. Its signal is revoked when the session, caller, or
+         * lease ends, so rotation takes effect no later than the next lease.
+         */
+        withValue(key: string, consumer: (value: Uint8Array, context: {
+            revision: number;
+            signal: AbortSignal;
+        }) => void | Promise<void>, options?: {
+            signal?: AbortSignal;
+            maxLifetimeMs?: number;
+        }): Promise<number>;
         set(observed: number, key: string, value: Iterable<number>): Promise<number>;
         remove(observed: number, key: string): Promise<number>;
     };

@@ -52,6 +52,8 @@ export declare class Session {
     get ready(): any;
     /** Resolves once with the reason this session ended. */
     get closed(): any;
+    /** Aborts once with the reason this authenticated session ended. */
+    get signal(): AbortSignal;
     /** Opens the socket the host provided. */
     static connect(path?: any, handlers?: ConnectOptions): Promise<unknown>;
     /** Sends one call and resolves with the tagged host reply. */

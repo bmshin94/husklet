@@ -161,6 +161,11 @@ function outputAbort(signal) {
     error.name = 'AbortError';
     return error;
 }
+function credentialAbort(signal) {
+    const error = new Error('credential use was revoked', { cause: signal.reason });
+    error.name = 'AbortError';
+    return error;
+}
 function acquisitionAbort(signal) {
     const error = new Error('extension acquisition wait aborted', { cause: signal?.reason });
     error.name = 'AbortError';
@@ -3340,6 +3345,61 @@ export function workspace(session, { signal } = {}) {
                     throw new TypeError(`host returned credential ${credential.key}, expected ${exactKey}; no credential value was assumed`);
                 }
                 return credential;
+            },
+            withValue: async (key, consumer, options = {}) => {
+                const { signal, maxLifetimeMs = 60_000 } = options;
+                if (typeof consumer !== 'function')
+                    throw new TypeError('credential consumer must be a function');
+                if (!Number.isFinite(maxLifetimeMs) || maxLifetimeMs <= 0 || maxLifetimeMs > 300_000) {
+                    throw new RangeError('credential maxLifetimeMs must be between 1 and 300000');
+                }
+                const exactKey = exactCredentialKey(key);
+                const controller = new AbortController();
+                const revoke = () => controller.abort(signal?.reason);
+                const revokeSession = () => controller.abort(hostSession.signal.reason);
+                if (signal?.aborted)
+                    revoke();
+                else
+                    signal?.addEventListener('abort', revoke, { once: true });
+                if (hostSession.signal.aborted)
+                    revokeSession();
+                else
+                    hostSession.signal.addEventListener('abort', revokeSession, { once: true });
+                const timer = setTimeout(() => controller.abort(new Error(`credential lease expired after ${maxLifetimeMs}ms`)), maxLifetimeMs);
+                timer.unref?.();
+                let exposed;
+                let source;
+                try {
+                    if (controller.signal.aborted)
+                        throw credentialAbort(controller.signal);
+                    const credential = await api.credentials.read(exactKey);
+                    source = credential.value;
+                    if (!source)
+                        throw new ExtensionError({
+                            error: 'absent',
+                            detail: `credential ${exactKey} is absent`,
+                        });
+                    if (controller.signal.aborted)
+                        throw credentialAbort(controller.signal);
+                    exposed = Uint8Array.from(source);
+                    const revoked = new Promise((_resolve, reject) => {
+                        const fail = () => reject(credentialAbort(controller.signal));
+                        if (controller.signal.aborted)
+                            fail();
+                        else
+                            controller.signal.addEventListener('abort', fail, { once: true });
+                    });
+                    const consuming = Promise.resolve().then(() => consumer(exposed, { revision: credential.revision, signal: controller.signal }));
+                    await Promise.race([consuming, revoked]);
+                    return credential.revision;
+                }
+                finally {
+                    clearTimeout(timer);
+                    signal?.removeEventListener('abort', revoke);
+                    hostSession.signal.removeEventListener('abort', revokeSession);
+                    exposed?.fill(0);
+                    source?.fill(0);
+                }
             },
             set: async (observed, key, value) => expect(await session.call('credential_set', {
                 observed,
