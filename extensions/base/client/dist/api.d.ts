@@ -1483,7 +1483,10 @@ export interface WorkspaceApi {
         create(configuration: ContainerCreateSpec): Promise<string>;
         /** Backwards-compatible shorthand for an image and optional container name. */
         create(image: string, name?: string): Promise<string>;
-        /** Create exactly once per authenticated extension incarnation; reuse the token after reconnect. */
+        /**
+         * Create exactly once per authenticated extension incarnation and current workspace-host lifetime;
+         * reuse the token after socket reconnect. A host restart clears this bounded 4096-record ledger.
+         */
         createOnce(token: string, configuration: ContainerCreateSpec): Promise<string>;
         start(id: string, generation: number): Promise<void>;
         /**
