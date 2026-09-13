@@ -35,6 +35,7 @@ mod unix {
         "RadioGroup",
         "FormControl",
         "Slider",
+        "Splitter",
         "Heading",
         "Expander",
         "InlineMessage",
@@ -249,6 +250,8 @@ mod unix {
                 | "ConfirmAction"
                 | "Switch"
                 | "DataTable"
+                | "Splitter"
+                | "Workspace layout control"
         );
         realized_window.set_default_size(if narrow_story { 600 } else { 1_200 }, 800);
         realized_window.set_child(Some(&root));
@@ -276,6 +279,14 @@ mod unix {
             }
             if story == "RecoveryState" {
                 assert_recovery_state(&realized_window, &root, "Retry attempts · 1", 16.0, "narrow");
+            }
+            if matches!(story, "Splitter" | "Workspace layout control") {
+                assert_public_splitter(
+                    &realized_window,
+                    &root,
+                    if story == "Splitter" { 160 } else { 140 },
+                    &format!("{story} narrow"),
+                );
             }
             capture_story(&realized_window, &format!("{story} narrow"));
             if story == "Button" {
@@ -1113,6 +1124,14 @@ mod unix {
         }
         if story == "RecoveryState" {
             assert_recovery_state(&realized_window, &root, "Retry attempts · 1", 264.0, "wide");
+        }
+        if matches!(story, "Splitter" | "Workspace layout control") {
+            assert_public_splitter(
+                &realized_window,
+                &root,
+                if story == "Splitter" { 160 } else { 140 },
+                &format!("{story} wide"),
+            );
         }
         if story == "Navigation and transient UI" {
             let mut menu_items = descendants::<gtk::Button>(&root)
@@ -2063,6 +2082,15 @@ mod unix {
         tree.apply(&rerender, &mut surface)
             .unwrap_or_else(|error| panic!("{story} rerender failed in GTK: {error:?}"));
         settle_toolkit();
+        if story == "Splitter" {
+            for (width, name) in [(600, "narrow"), (1_200, "wide")] {
+                realized_window.set_default_size(width, 800);
+                realized_window.set_size_request(width, 800);
+                settle_window_width(&realized_window, width);
+                assert_public_splitter(&realized_window, &root, 192, &format!("Splitter changed {name}"));
+                capture_story(&realized_window, &format!("Splitter changed {name}"));
+            }
+        }
         if story == "ConfirmAction" {
             let question = find::<gtk::Label>(&root, |label| {
                 label.text() == "Delete preview volume? Its cached build data will be permanently deleted."
@@ -2997,6 +3025,13 @@ mod unix {
                 });
                 slider.set_value(45.0);
             }
+            "Splitter" => {
+                let splitter = descendants::<gtk::Paned>(root)
+                    .into_iter()
+                    .find(|paned| paned.has_css_class("hl-splitter-native"))
+                    .expect("Splitter story owns its public divider");
+                splitter.set_position(192);
+            }
             "Select" => {
                 let choice =
                     find::<gtk::ToggleButton>(root, |button| button.tooltip_text().as_deref() == Some("Default shell"));
@@ -3575,6 +3610,156 @@ mod unix {
         assert!(
             painted >= 40,
             "{case} retry receipt has no visible dim text: {painted} pixels"
+        );
+    }
+
+    fn assert_public_splitter(window: &gtk::Window, root: &gtk::Widget, expected_position: i32, case: &str) {
+        let paned = descendants::<gtk::Paned>(root)
+            .into_iter()
+            .find(|paned| paned.has_css_class("hl-splitter-native"))
+            .expect("component document owns a public Splitter");
+        assert_eq!(paned.accessible_role(), gtk::AccessibleRole::Separator);
+        assert_eq!(paned.position(), expected_position, "{case} lost its authored position");
+        let start = paned.start_child().expect("Splitter owns a leading pane");
+        let end = paned.end_child().expect("Splitter owns a trailing pane");
+        let start_bounds = start.compute_bounds(&paned).expect("leading pane belongs to Splitter");
+        let end_bounds = end.compute_bounds(&paned).expect("trailing pane belongs to Splitter");
+        let gap = end_bounds.x() - start_bounds.x() - start_bounds.width();
+        let child_insets = if case.starts_with("Workspace layout control") {
+            10.0
+        } else {
+            0.0
+        };
+        assert_eq!(
+            gap - child_insets,
+            8.0,
+            "{case} Splitter gutter is not exactly 8px after authored child insets: {gap}"
+        );
+        assert!(
+            start_bounds.x() >= 0.0 && end_bounds.x() + end_bounds.width() <= paned.width() as f32,
+            "{case} Splitter children escape their allocation"
+        );
+        gtk::prelude::RootExt::set_focus(window, None::<&gtk::Widget>);
+        settle_toolkit();
+        assert_splitter_pixels(window, root, &paned, false, case);
+        let motion = paned
+            .observe_controllers()
+            .into_iter()
+            .flatten()
+            .find_map(|controller| controller.downcast::<gtk::EventControllerMotion>().ok())
+            .expect("Splitter owns gutter hover tracking");
+        motion.emit_by_name::<()>("motion", &[&f64::from(paned.position() + 4), &4.0_f64]);
+        await_painted_frame(window);
+        assert_splitter_pixels(window, root, &paned, true, case);
+        motion.emit_by_name::<()>("motion", &[&f64::from(paned.position() + 20), &4.0_f64]);
+        await_painted_frame(window);
+        assert_splitter_pixels(window, root, &paned, false, case);
+        assert!(paned.is_focusable(), "{case} Splitter is not keyboard focusable");
+        assert!(paned.grab_focus(), "{case} Splitter cannot receive keyboard focus");
+        await_painted_frame(window);
+        assert!(
+            paned.has_focus(),
+            "{case} Splitter does not own keyboard focus after grab"
+        );
+        assert!(
+            paned.has_css_class("keyboard-focus"),
+            "{case} Splitter focus styling state was not applied"
+        );
+        assert!(
+            descendants::<gtk::Box>(root)
+                .iter()
+                .any(|box_| box_.has_css_class("hl-splitter-handle") && box_.has_css_class("keyboard-highlight")),
+            "{case} Splitter owned handle did not enter its focus state"
+        );
+        assert_splitter_pixels(window, root, &paned, true, case);
+        gtk::prelude::RootExt::set_focus(window, None::<&gtk::Widget>);
+        settle_toolkit();
+    }
+
+    fn await_painted_frame(window: &gtk::Window) {
+        let clock = window
+            .frame_clock()
+            .expect("realized Storybook window owns a frame clock");
+        let before = clock.frame_counter();
+        window.queue_draw();
+        clock.request_phase(gtk::gdk::FrameClockPhase::PAINT);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+        let context = gtk::glib::MainContext::default();
+        while clock.frame_counter() <= before {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "GTK did not paint the requested Splitter frame"
+            );
+            context.iteration(false);
+        }
+        settle_toolkit();
+    }
+
+    fn assert_splitter_pixels(window: &gtk::Window, root: &gtk::Widget, paned: &gtk::Paned, focused: bool, case: &str) {
+        let paintable = gtk::WidgetPaintable::new(Some(root));
+        let node = (0..20)
+            .find_map(|_| {
+                window.queue_draw();
+                settle_toolkit();
+                let snapshot = gtk::Snapshot::new();
+                paintable.snapshot(
+                    snapshot.upcast_ref::<gtk::gdk::Snapshot>(),
+                    f64::from(root.width()),
+                    f64::from(root.height()),
+                );
+                let node = snapshot.to_node();
+                if node.is_none() {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                node
+            })
+            .expect("Splitter document renders");
+        let texture = window
+            .renderer()
+            .expect("Storybook window owns renderer")
+            .render_texture(&node, None);
+        let stride = texture.width() as usize * 4;
+        let mut pixels = vec![0_u8; stride * texture.height() as usize];
+        texture.download(&mut pixels, stride);
+        let bounds = paned.compute_bounds(root).expect("Splitter belongs to document");
+        let gutter_start = (bounds.x() + paned.position() as f32).round() as usize;
+        let gutter_end = gutter_start + 8;
+        let y0 = bounds.y().round().max(0.0) as usize;
+        let y1 = (bounds.y() + bounds.height()).round().min(texture.height() as f32) as usize;
+        let expected = if focused {
+            [0xf7, 0x9d, 0x55]
+        } else {
+            [0xcf, 0xc5, 0xbe]
+        };
+        let count = (y0..y1)
+            .flat_map(|y| (gutter_start..gutter_end).map(move |x| (x, y)))
+            .filter(|(x, y)| {
+                let actual = &pixels[*y * stride + *x * 4..*y * stride + *x * 4 + 3];
+                [expected, [expected[2], expected[1], expected[0]]]
+                    .into_iter()
+                    .any(|candidate| {
+                        actual
+                            .iter()
+                            .zip(candidate)
+                            .all(|(actual, expected)| actual.abs_diff(expected) <= 16)
+                    })
+            })
+            .count();
+        let mut colours = std::collections::BTreeMap::<[u8; 3], usize>::new();
+        for y in y0..y1 {
+            for x in gutter_start..gutter_end {
+                let actual = &pixels[y * stride + x * 4..y * stride + x * 4 + 3];
+                *colours.entry([actual[0], actual[1], actual[2]]).or_default() += 1;
+            }
+        }
+        let mut colours = colours.into_iter().collect::<Vec<_>>();
+        colours.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+        assert!(
+            count >= y1 - y0,
+            "{case} Splitter {} line is not visibly continuous: {count}/{} gutter pixels, bounds={bounds:?}, colours={:?}",
+            if focused { "focus" } else { "rest" },
+            (y1 - y0) * 8,
+            &colours[..colours.len().min(12)],
         );
     }
 

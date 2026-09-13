@@ -372,7 +372,8 @@ fn change(widget: &gtk::Widget, node: NodeId, slot: &Slot, reports: &Reports) {
 
 fn splitter(widget: &gtk::Widget, node: NodeId, slot: &Slot, reports: &Reports) -> bool {
     let responsive = crate::build::responsive::paned(widget);
-    let paned = responsive.as_ref().or_else(|| widget.downcast_ref::<gtk::Paned>());
+    let owned = crate::build::layout::splitter_paned(widget);
+    let paned = responsive.as_ref().or(owned.as_ref());
     let Some(paned) = paned else {
         return false;
     };

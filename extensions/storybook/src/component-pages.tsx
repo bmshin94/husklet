@@ -30,6 +30,7 @@ import { ResourceStateStory } from './resource-state.js';
 import { ResourceIdentityStory } from './resource-identity.js';
 import { SelectWorkbench } from './select.js';
 import { SliderWorkbench } from './slider.js';
+import { SplitterWorkbench } from './splitter.js';
 import { SwitchWorkbench } from './switch.js';
 import { TextAreaWorkbench } from './text-area.js';
 import { TerminalTranscriptStory } from './terminal-transcript.js';
@@ -57,6 +58,7 @@ type NativeWorkbenchName =
   | 'Search'
   | 'Select'
   | 'Slider'
+  | 'Splitter'
   | 'Switch'
   | 'TextArea'
   | 'ToggleButton';
@@ -117,6 +119,7 @@ const nativeWorkbenchPages = {
   Search: SearchWorkbench,
   Select: SelectWorkbench,
   Slider: SliderWorkbench,
+  Splitter: SplitterWorkbench,
   Switch: SwitchWorkbench,
   TextArea: TextAreaWorkbench,
   ToggleButton: ToggleButtonWorkbench,

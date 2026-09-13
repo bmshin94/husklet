@@ -556,7 +556,7 @@ fn orientation(widget: &gtk::Widget, value: &PropValue) {
         paned.set_orientation(axis);
         return;
     }
-    if let Some(paned) = widget.downcast_ref::<gtk::Paned>() {
+    if let Some(paned) = build::layout::splitter_paned(widget) {
         paned.set_orientation(axis);
         return;
     }
@@ -570,7 +570,7 @@ fn position(widget: &gtk::Widget, value: &PropValue) {
     if build::responsive::set_position(widget, position) {
         return;
     }
-    if let Some(paned) = widget.downcast_ref::<gtk::Paned>() {
+    if let Some(paned) = build::layout::splitter_paned(widget) {
         paned.set_position(position);
     }
 }

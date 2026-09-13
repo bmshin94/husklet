@@ -13,7 +13,7 @@ pub(super) fn widget(tag: Tag) -> gtk::Widget {
         Tag::Row => gtk::Box::new(gtk::Orientation::Horizontal, 0).upcast(),
         Tag::Grid => gtk::Grid::new().upcast(),
         Tag::Scroll => scroll().upcast(),
-        Tag::Splitter => gtk::Paned::new(gtk::Orientation::Horizontal).upcast(),
+        Tag::Splitter => splitter().upcast(),
         Tag::Stack => stack().upcast(),
         Tag::Responsive => super::responsive::widget().upcast(),
         Tag::Overlay => gtk::Overlay::new().upcast(),
@@ -24,6 +24,109 @@ pub(super) fn widget(tag: Tag) -> gtk::Widget {
         // cannot name the other fifty variants.
         _ => gtk::Separator::new(gtk::Orientation::Horizontal).upcast(),
     }
+}
+
+fn splitter() -> gtk::Overlay {
+    let wrapper = gtk::Overlay::new();
+    wrapper.add_css_class("hl-splitter");
+    let widget = gtk::Paned::new(gtk::Orientation::Horizontal);
+    widget.add_css_class("hl-splitter-native");
+    widget.set_resize_start_child(false);
+    widget.set_resize_end_child(true);
+    widget.set_accessible_role(gtk::AccessibleRole::Separator);
+    widget.update_property(&[
+        gtk::accessible::Property::Label("Resize panes"),
+        gtk::accessible::Property::Description("Drag or use the keyboard to resize adjacent panes"),
+        gtk::accessible::Property::Orientation(gtk::Orientation::Vertical),
+        gtk::accessible::Property::ValueMin(0.0),
+    ]);
+    let handle = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    handle.add_css_class("hl-splitter-handle");
+    handle.set_can_target(false);
+    handle.set_halign(gtk::Align::Start);
+    handle.set_valign(gtk::Align::Fill);
+    handle.set_width_request(2);
+    wrapper.set_child(Some(&widget));
+    wrapper.add_overlay(&handle);
+    let positioned_handle = handle.clone();
+    widget.connect_position_notify(move |paned| {
+        let value = paned.position();
+        positioned_handle.set_margin_start(value + 3);
+        let text = format!("{value} pixels");
+        paned.update_property(&[
+            gtk::accessible::Property::ValueNow(f64::from(value)),
+            gtk::accessible::Property::ValueText(&text),
+        ]);
+    });
+    let oriented_handle = handle.clone();
+    widget.connect_orientation_notify(move |paned| {
+        configure_splitter_handle(&oriented_handle, paned);
+        let orientation = match paned.orientation() {
+            gtk::Orientation::Horizontal => gtk::Orientation::Vertical,
+            gtk::Orientation::Vertical => gtk::Orientation::Horizontal,
+            _ => unreachable!("GTK orientations are closed"),
+        };
+        paned.update_property(&[gtk::accessible::Property::Orientation(orientation)]);
+    });
+    let notified_handle = handle.clone();
+    widget.connect_has_focus_notify(move |paned| {
+        if paned.has_focus() {
+            paned.add_css_class("keyboard-focus");
+            notified_handle.add_css_class("keyboard-highlight");
+        } else {
+            paned.remove_css_class("keyboard-focus");
+            notified_handle.remove_css_class("keyboard-highlight");
+        }
+    });
+    let motion = gtk::EventControllerMotion::new();
+    let hover_handle = handle.clone();
+    motion.connect_motion(move |motion, x, y| {
+        let Some(paned) = motion.widget().and_downcast::<gtk::Paned>() else {
+            return;
+        };
+        let coordinate = if paned.orientation() == gtk::Orientation::Horizontal {
+            x
+        } else {
+            y
+        };
+        if coordinate >= f64::from(paned.position()) && coordinate < f64::from(paned.position() + 8) {
+            hover_handle.add_css_class("pointer-highlight");
+        } else {
+            hover_handle.remove_css_class("pointer-highlight");
+        }
+    });
+    let rest_handle = handle.clone();
+    motion.connect_leave(move |_| rest_handle.remove_css_class("pointer-highlight"));
+    widget.add_controller(motion);
+    configure_splitter_handle(&handle, &widget);
+    wrapper
+}
+
+fn configure_splitter_handle(handle: &gtk::Box, paned: &gtk::Paned) {
+    if paned.orientation() == gtk::Orientation::Horizontal {
+        handle.set_halign(gtk::Align::Start);
+        handle.set_valign(gtk::Align::Fill);
+        handle.set_width_request(2);
+        handle.set_height_request(-1);
+        handle.set_margin_start(paned.position() + 3);
+        handle.set_margin_top(0);
+    } else {
+        handle.set_halign(gtk::Align::Fill);
+        handle.set_valign(gtk::Align::Start);
+        handle.set_width_request(-1);
+        handle.set_height_request(2);
+        handle.set_margin_start(0);
+        handle.set_margin_top(paned.position() + 3);
+    }
+}
+
+pub(crate) fn splitter_paned(widget: &gtk::Widget) -> Option<gtk::Paned> {
+    widget
+        .downcast_ref::<gtk::Overlay>()
+        .filter(|overlay| overlay.has_css_class("hl-splitter"))
+        .and_then(gtk::Overlay::child)
+        .and_then(|child| child.downcast::<gtk::Paned>().ok())
+        .or_else(|| widget.downcast_ref::<gtk::Paned>().cloned())
 }
 
 /// One page visible at a time. The stack expands so a page is laid out at the
@@ -53,7 +156,7 @@ fn spacer() -> gtk::Box {
 
 /// Attaches to the layout containers whose protocol is not `gtk::Box`.
 pub(super) fn attach(parent: &gtk::Widget, child: &gtk::Widget, index: usize) -> bool {
-    if let Some(paned) = parent.downcast_ref::<gtk::Paned>() {
+    if let Some(paned) = splitter_paned(parent) {
         if index == 0 {
             paned.set_start_child(Some(child));
         } else {
@@ -86,6 +189,9 @@ pub(super) fn attach(parent: &gtk::Widget, child: &gtk::Widget, index: usize) ->
 /// child behind their back leaves a named page pointing at nothing — which is
 /// exactly what makes a later move place the child twice.
 pub(super) fn detach(parent: &gtk::Widget, child: &gtk::Widget) -> bool {
+    if let Some(paned) = splitter_paned(parent) {
+        return unpane(&paned, child);
+    }
     if let Some(stack) = parent.downcast_ref::<gtk::Stack>() {
         stack.remove(child);
         return true;
@@ -99,9 +205,6 @@ pub(super) fn detach(parent: &gtk::Widget, child: &gtk::Widget) -> bool {
         // moves up one cell — the same rule that placed them in the first place.
         arrange(grid, &offspring(grid));
         return true;
-    }
-    if let Some(paned) = parent.downcast_ref::<gtk::Paned>() {
-        return unpane(paned, child);
     }
     false
 }
