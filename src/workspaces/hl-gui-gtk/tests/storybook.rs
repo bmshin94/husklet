@@ -2966,13 +2966,22 @@ mod unix {
         let paintable = gtk::WidgetPaintable::new(Some(widget));
         window.queue_draw();
         settle_toolkit();
-        let snapshot = gtk::Snapshot::new();
-        paintable.snapshot(
-            snapshot.upcast_ref::<gtk::gdk::Snapshot>(),
-            f64::from(widget.width()),
-            f64::from(widget.height()),
-        );
-        let node = snapshot.to_node().expect("stateful Button produces a render node");
+        let node = (0..8)
+            .find_map(|_| {
+                settle_toolkit();
+                let snapshot = gtk::Snapshot::new();
+                paintable.snapshot(
+                    snapshot.upcast_ref::<gtk::gdk::Snapshot>(),
+                    f64::from(widget.width()),
+                    f64::from(widget.height()),
+                );
+                let node = snapshot.to_node();
+                if node.is_none() {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                node
+            })
+            .expect("stateful Button produces a render node");
         let texture = window
             .renderer()
             .expect("Storybook window has a renderer")
