@@ -2439,9 +2439,9 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         if (signal?.aborted) stopStreaming();
         else signal?.addEventListener('abort', stopStreaming, { once: true });
         try {
+          if (requiresExecutionAuthority) phase = 'verify';
           requireOutputActive(streaming.signal);
           if (requiresExecutionAuthority) {
-            phase = 'verify';
             const started = await api.containers.execution(executionId);
             if (started.container_id !== containerId) {
               throw new ExecutionContainerMismatchError(
@@ -2511,6 +2511,18 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           if (execution.running) throw new ExecutionOutputEndedEarlyError(executionId);
           return { executionId, execution };
         } catch (cause) {
+          if (
+            !executionAuthorityVerified &&
+            streaming.signal.aborted &&
+            !(cause instanceof ExecutionContainerMismatchError)
+          ) {
+            try {
+              const observed = await api.containers.execution(executionId);
+              executionAuthorityVerified = observed.container_id === containerId;
+            } catch {
+              // Preserve the abort and never signal an identity whose ownership remains unknown.
+            }
+          }
           if (executionAuthorityVerified) {
             await api.containers
               .cancelExecution(executionId, { signal: cancelSignal, timeoutMs: cancelTimeoutMs })

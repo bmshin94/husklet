@@ -123,3 +123,90 @@ test('credential-backed SQL never reaches an execution owned by another containe
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('cancel after create verifies exact container before stopping the stranded Postgres query', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-execution-abort-authority-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const containerId = 'c'.repeat(64);
+  const executionId = 'e'.repeat(32);
+  const controller = new AbortController();
+  const requests = [];
+  const sockets = new Set();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.kind !== KIND.request) continue;
+        requests.push(frame.payload.call);
+        let payload;
+        if (frame.payload.call === 'container_exec_credential') {
+          payload = { reply: 'identity', with: executionId };
+          controller.abort('query view closed during creation');
+        } else if (frame.payload.call === 'execution_inspect') {
+          payload = {
+            reply: 'execution',
+            with: {
+              id: executionId,
+              container_id: containerId,
+              running: true,
+              exit_code: 0,
+              pid: 91,
+              command: ['psql'],
+              user: 'postgres',
+              created_at_ms: 1,
+              started_at_ms: 2,
+              finished_at_ms: null,
+              result: null,
+            },
+          };
+        } else {
+          payload = { reply: 'done' };
+        }
+        void fragmented(socket, { channel: frame.channel, kind: KIND.response, payload });
+      }
+    });
+    void fragmented(socket, {
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: {
+        protocol: 1,
+        peer: 'postgres-abort-authority-fixture',
+        granted: ['containers:read', 'containers:execute', 'containers:input', 'credentials:inject'],
+      },
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const session = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(session).containers.execJsonLines(
+        containerId,
+        11,
+        {
+          command: ['psql', '--file', '-'],
+          credentials: [['PGPASSWORD', 'postgres.password']],
+          input: ['select * from million_rows;\n'],
+          maxLineBytes: 1024,
+          signal: controller.signal,
+        },
+        () => assert.fail('cancelled query must not deliver rows'),
+      ),
+      (error) =>
+        error instanceof ExecutionOperationError &&
+        error.phase === 'verify' &&
+        error.cause?.name === 'AbortError',
+    );
+    assert.deepEqual(requests, [
+      'container_exec_credential',
+      'execution_inspect',
+      'execution_cancel',
+    ]);
+    await session.close();
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
