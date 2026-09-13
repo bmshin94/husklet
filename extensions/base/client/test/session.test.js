@@ -4896,7 +4896,12 @@ test('real Unix helper EOF releases an idle dynamic input iterator without cance
       ),
     ]);
     assert.equal(result.execution.exit_code, 0);
-    assert.deepEqual(calls, ['container_exec', 'execution_output', 'execution_inspect']);
+    assert.deepEqual(calls, [
+      'container_exec',
+      'execution_inspect',
+      'execution_output',
+      'execution_inspect',
+    ]);
     assert.equal(calls.includes('execution_close_input'), false);
     assert.equal(calls.includes('execution_cancel'), false);
     assert.equal((await host.info()).name, 'language');

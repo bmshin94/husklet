@@ -29,6 +29,23 @@ test('Git review retains only acknowledged bounded text across fragmented socket
         const payload =
           frame.payload.call === 'container_exec'
             ? { reply: 'identity', with: executionId }
+            : frame.payload.call === 'execution_inspect'
+              ? {
+                  reply: 'execution',
+                  with: {
+                    id: executionId,
+                    container_id: 'c'.repeat(64),
+                    running: true,
+                    exit_code: -1,
+                    pid: 7,
+                    command: ['git', 'diff'],
+                    user: 'reviewer',
+                    created_at_ms: 1,
+                    started_at_ms: 2,
+                    finished_at_ms: null,
+                    result: null,
+                  },
+                }
             : frame.payload.call === 'execution_output'
               ? {
                   reply: 'execution_output',

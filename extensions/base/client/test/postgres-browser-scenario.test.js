@@ -309,6 +309,7 @@ test('Postgres browser streams credential-backed rows over real Unix framing', a
     assert.deepEqual(
       requests.slice(4).map((request) => request.call),
       [
+        'execution_inspect',
         'execution_output',
         'execution_write',
         'execution_output',

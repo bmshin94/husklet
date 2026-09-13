@@ -146,6 +146,7 @@ try {
             operationFailure.executionId,
             {
               after: operationFailure.after,
+              expectedContainerId: container.id,
               partialLine: operationFailure.partialLine,
               lines: operationFailure.lines,
               maxLineBytes: 1024 * 1024,

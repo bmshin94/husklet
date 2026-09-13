@@ -28,6 +28,19 @@ export class ExecutionOperationError extends Error {
         this.stderr = recovery?.stderr;
     }
 }
+/** The host associated an execution identity with a container other than the selected target. */
+export class ExecutionContainerMismatchError extends Error {
+    executionId;
+    expectedContainerId;
+    actualContainerId;
+    constructor(executionId, expectedContainerId, actualContainerId) {
+        super(`execution ${executionId} belongs to container ${actualContainerId}, expected ${expectedContainerId}; no execution authority was assumed`);
+        this.name = 'ExecutionContainerMismatchError';
+        this.executionId = executionId;
+        this.expectedContainerId = expectedContainerId;
+        this.actualContainerId = actualContainerId;
+    }
+}
 /** A client-owned execution exceeded its post-start wall-clock deadline. */
 export class ExecutionDeadlineError extends Error {
     executionId;
@@ -1475,7 +1488,7 @@ export function workspace(session, { signal } = {}) {
                         await outputPoll(pollIntervalMs, signal);
                 }
             },
-            resumeExecutionStreaming: async (id, { after = 0, pageLimit = 16, maxPages = 4_096, pollIntervalMs = 25, signal, } = {}, onPage) => {
+            resumeExecutionStreaming: async (id, { after = 0, expectedContainerId, pageLimit = 16, maxPages = 4_096, pollIntervalMs = 25, signal, } = {}, onPage) => {
                 if (typeof onPage !== 'function')
                     throw new TypeError('resumed streaming execution requires an output callback');
                 if (!Number.isSafeInteger(after) || after < 0)
@@ -1486,10 +1499,19 @@ export function workspace(session, { signal } = {}) {
                 exactExecutionPollInterval(pollIntervalMs);
                 requireOutputActive(signal);
                 const executionId = immutableIdentity(id, [32], 'execution');
+                const containerId = expectedContainerId === undefined
+                    ? undefined
+                    : immutableIdentity(expectedContainerId, [32, 64], 'container');
                 let cursor = after;
                 let pages = 0;
                 let phase = 'output';
                 try {
+                    if (containerId !== undefined) {
+                        const observed = await api.containers.execution(executionId);
+                        if (observed.container_id !== containerId) {
+                            throw new ExecutionContainerMismatchError(executionId, containerId, observed.container_id);
+                        }
+                    }
                     for await (const page of api.containers.executionOutputPages(executionId, {
                         after: cursor,
                         limit: pageLimit,
@@ -1783,8 +1805,10 @@ export function workspace(session, { signal } = {}) {
                 exactExecutionSignal(cancelSignal);
                 exactExecutionCancellation(cancelTimeoutMs);
                 requireOutputActive(signal);
+                const containerId = immutableIdentity(id, [32, 64], 'container');
+                const requiresExecutionAuthority = input !== undefined || Boolean(credentials?.length);
                 const executionId = credentials?.length
-                    ? await api.containers.execWithCredentials(id, generation, {
+                    ? await api.containers.execWithCredentials(containerId, generation, {
                         command,
                         environment,
                         credentials,
@@ -1792,7 +1816,7 @@ export function workspace(session, { signal } = {}) {
                         workingDirectory,
                         stdin: input !== undefined,
                     })
-                    : await api.containers.exec(id, generation, {
+                    : await api.containers.exec(containerId, generation, {
                         command,
                         environment,
                         user,
@@ -1801,6 +1825,7 @@ export function workspace(session, { signal } = {}) {
                     });
                 let phase = 'output';
                 let acknowledged = 0;
+                let executionAuthorityVerified = !requiresExecutionAuthority;
                 const streaming = new AbortController();
                 const inputStreaming = new AbortController();
                 const deadline = deadlineMs === undefined
@@ -1821,6 +1846,15 @@ export function workspace(session, { signal } = {}) {
                     signal?.addEventListener('abort', stopStreaming, { once: true });
                 try {
                     requireOutputActive(streaming.signal);
+                    if (requiresExecutionAuthority) {
+                        phase = 'verify';
+                        const started = await api.containers.execution(executionId);
+                        if (started.container_id !== containerId) {
+                            throw new ExecutionContainerMismatchError(executionId, containerId, started.container_id);
+                        }
+                        executionAuthorityVerified = true;
+                    }
+                    phase = 'output';
                     if (onStarted)
                         await outputStep(() => onStarted(executionId), streaming.signal);
                     const consumeOutput = async () => {
@@ -1884,9 +1918,11 @@ export function workspace(session, { signal } = {}) {
                     return { executionId, execution };
                 }
                 catch (cause) {
-                    await api.containers
-                        .cancelExecution(executionId, { signal: cancelSignal, timeoutMs: cancelTimeoutMs })
-                        .catch(() => { });
+                    if (executionAuthorityVerified) {
+                        await api.containers
+                            .cancelExecution(executionId, { signal: cancelSignal, timeoutMs: cancelTimeoutMs })
+                            .catch(() => { });
+                    }
                     throw new ExecutionOperationError(executionId, phase, cause, undefined, acknowledged);
                 }
                 finally {

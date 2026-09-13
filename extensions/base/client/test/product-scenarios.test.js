@@ -984,7 +984,7 @@ test('Postgres GUI stays live and serves a scrolled database window before host 
   assert.equal(mutations[1].Length.rows, 1000000);
   const execs = run.calls.filter(({ call }) => call === 'container_exec_credential');
   assert.equal(execs.length, 3);
-  assert.equal(run.calls.filter(({ call }) => call === 'execution_inspect').length, 3);
+  assert.equal(run.calls.filter(({ call }) => call === 'execution_inspect').length, 6);
   assert.equal(run.calls.filter(({ call }) => call === 'execution_remove').length, 3);
   assert.deepEqual(execs[1].with.command.slice(0, 4), [
     'psql',

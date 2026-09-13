@@ -2073,7 +2073,13 @@ test('streaming execution applies callback backpressure and cancels callback fai
   api.containers.executionOutputPages = async function* () {
     yield* pages;
   };
-  api.containers.execution = async (id) => ({ id, running: false, exit_code: 0, pid: null });
+  api.containers.execution = async (id) => ({
+    id,
+    container_id: 'c'.repeat(64),
+    running: false,
+    exit_code: 0,
+    pid: null,
+  });
   api.containers.cancelExecution = async (...arguments_) => {
     calls.push(['cancel', ...arguments_]);
   };
@@ -2248,6 +2254,7 @@ test('streaming execution owns stdin failure while concurrently draining output'
     calls.push(['exec', options.stdin]);
     return 'e'.repeat(32);
   };
+  api.containers.execution = async (id) => ({ id, container_id: 'c'.repeat(64), running: true });
   api.containers.pipeExecutionStdin = async (_id, source, options) => {
     calls.push(['input', [...source], options.close]);
     throw new Error('stdin producer failed');

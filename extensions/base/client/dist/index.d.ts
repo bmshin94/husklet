@@ -15,6 +15,13 @@ export declare class ExecutionOperationError extends Error {
     readonly stderr: any;
     constructor(executionId: any, phase: any, cause: any, execution?: any, after?: any, recovery?: any);
 }
+/** The host associated an execution identity with a container other than the selected target. */
+export declare class ExecutionContainerMismatchError extends Error {
+    readonly executionId: any;
+    readonly expectedContainerId: any;
+    readonly actualContainerId: any;
+    constructor(executionId: any, expectedContainerId: any, actualContainerId: any);
+}
 /** A client-owned execution exceeded its post-start wall-clock deadline. */
 export declare class ExecutionDeadlineError extends Error {
     readonly executionId: any;

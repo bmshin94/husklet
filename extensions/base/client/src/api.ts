@@ -1278,6 +1278,8 @@ export interface WorkspaceApi {
       id: string,
       options: {
         after?: number;
+        /** Fail before reading output unless this execution belongs to the selected container. */
+        expectedContainerId?: string;
         pageLimit?: number;
         /** Stop after this many acknowledged pages and return a continuation cursor. */
         maxPages?: number;
@@ -1300,6 +1302,8 @@ export interface WorkspaceApi {
       id: string,
       options: {
         after: number;
+        /** Fail before reading output unless this execution belongs to the selected container. */
+        expectedContainerId?: string;
         partialLine?: readonly number[];
         lines?: number;
         maxLineBytes: number;
