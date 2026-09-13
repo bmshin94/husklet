@@ -1829,6 +1829,8 @@ export interface WorkspaceApi {
             before: SemanticTextObservation;
         }>;
         writeInput(slot: string, generation: number, revision: number, input: string | Iterable<number>): Promise<void>;
+        /** Write exact bytes using one terminal snapshot as indivisible stale-pane authority. */
+        writeObserved(before: PaneText, input: string | Iterable<number>): Promise<void>;
         /** Arm and read before CAS input, then return a later bounded terminal screen revision. */
         writeAndWait(slot: string, generation: number, revision: number, input: string | Iterable<number>, options?: {
             lines?: number;

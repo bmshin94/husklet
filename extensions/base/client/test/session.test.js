@@ -8668,6 +8668,71 @@ test('real Unix writeAndWait subscribes and reads before bytes, then returns adv
   }
 });
 
+test('observed terminal input keeps snapshot authority intact over one-byte Unix frames', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-observed-input-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const received = [];
+  const connections = new Set();
+  const server = net.createServer((socket) => {
+    connections.add(socket);
+    socket.on('close', () => connections.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.channel !== 2) continue;
+        received.push(frame.payload);
+        const response = encode({
+          channel: 2,
+          kind: KIND.response,
+          flags: frame.payload.with.revision === 10 ? 1 : 3,
+          payload:
+            frame.payload.with.revision === 10
+              ? { reply: 'done' }
+              : { error: 'conflict', detail: 'pane snapshot is stale' },
+        });
+        for (const byte of response) socket.write(Uint8Array.of(byte));
+      }
+    });
+    socket.write(
+      encode({
+        channel: CONTROL,
+        kind: KIND.open,
+        payload: { protocol: 1, peer: 'snapshot-input', granted: ['terminals:input'] },
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const session = await connect({ path: socketPath, timeout: 1_000 });
+    const terminal = workspace(session).terminal;
+    assert.throws(
+      () => terminal.writeObserved({ slot: 'pane-a', lines: [], truncated: false }, 'unsafe'),
+      /exact cursor/,
+    );
+    assert.deepEqual(received, [], 'missing snapshot authority must fail before framing');
+    await terminal.writeObserved(
+      { slot: 'pane-a', generation: 7, revision: 10, lines: ['$ '], truncated: false },
+      Uint8Array.of(0, 3, 255),
+    );
+    assert.deepEqual(received[0], {
+      call: 'terminal_write_pane',
+      with: { slot: 'pane-a', generation: 7, revision: 10, contents: [0, 3, 255] },
+    });
+    await assert.rejects(
+      terminal.writeObserved(
+        { slot: 'pane-a', generation: 7, revision: 9, lines: ['$ old'], truncated: false },
+        'echo stale',
+      ),
+      /pane snapshot is stale/,
+    );
+    await session.close();
+  } finally {
+    for (const connection of connections) connection.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('real Unix quiet terminal wait does not mistake local echo for an agent response', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-terminal-quiet-'));
   const socketPath = path.join(directory, 'host.sock');

@@ -2597,6 +2597,24 @@ export function workspace(session, { signal } = {}) {
                 const contents = exactPaneInput(input);
                 return done('terminal_write_pane', { slot, generation, revision, contents: [...contents] });
             },
+            writeObserved: (before, input) => {
+                if (!before ||
+                    typeof before.slot !== 'string' ||
+                    before.slot.length === 0 ||
+                    !Number.isSafeInteger(before.generation) ||
+                    before.generation < 0 ||
+                    !Number.isSafeInteger(before.revision) ||
+                    before.revision < 0) {
+                    throw new TypeError('observed terminal input requires a snapshot with an exact cursor');
+                }
+                const contents = exactPaneInput(input);
+                return done('terminal_write_pane', {
+                    slot: before.slot,
+                    generation: before.generation,
+                    revision: before.revision,
+                    contents: [...contents],
+                });
+            },
             resizeGrid: (slot, columns, rows) => {
                 if (!Number.isInteger(columns) ||
                     !Number.isInteger(rows) ||
