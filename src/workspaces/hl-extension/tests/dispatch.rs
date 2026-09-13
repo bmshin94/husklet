@@ -1382,6 +1382,7 @@ fn services(host: &Host) -> Services<'_> {
         files: host,
         state: host,
         notifications: host,
+        postgres: None,
     }
 }
 
@@ -2350,6 +2351,21 @@ fn all_calls() -> Vec<(Request, Capability)> {
             },
             Capability::CredentialWrite,
         ),
+        (
+            Request::PostgresOpenOnce {
+                operation: hl_extension::QueryOperationToken::new("open-1").unwrap(),
+                connection: hl_extension::PostgresConnection {
+                    container_id: "a".repeat(64), container_generation: 1, network: "db".into(), port: 5432,
+                    database: "app".into(), user: "reader".into(), credential_keys: vec!["postgres.password".into()],
+                },
+            }, Capability::CredentialUse,
+        ),
+        (Request::PostgresQueryStartOnce { lease: hl_extension::PostgresLeaseId::new("lease").unwrap(), query: hl_extension::PostgresQuery::new(hl_extension::QueryOperationToken::new("query-op").unwrap(), "select 1", 10, 1024).unwrap() }, Capability::CredentialUse),
+        (Request::PostgresQueryStatus { lease: hl_extension::PostgresLeaseId::new("lease").unwrap(), query: hl_extension::PostgresQueryId::new("query").unwrap() }, Capability::CredentialUse),
+        (Request::PostgresQueryPage { lease: hl_extension::PostgresLeaseId::new("lease").unwrap(), query: hl_extension::PostgresQueryId::new("query").unwrap(), cursor: None }, Capability::CredentialUse),
+        (Request::PostgresQueryCancel { lease: hl_extension::PostgresLeaseId::new("lease").unwrap(), query: hl_extension::PostgresQueryId::new("query").unwrap() }, Capability::CredentialUse),
+        (Request::PostgresQueryClose { lease: hl_extension::PostgresLeaseId::new("lease").unwrap(), query: hl_extension::PostgresQueryId::new("query").unwrap() }, Capability::CredentialUse),
+        (Request::PostgresLeaseClose { lease: hl_extension::PostgresLeaseId::new("lease").unwrap() }, Capability::CredentialUse),
         (
             Request::ContainerExecCredential {
                 id: "a".repeat(64),

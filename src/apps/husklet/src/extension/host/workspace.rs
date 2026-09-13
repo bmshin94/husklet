@@ -456,6 +456,7 @@ impl Supply for Workspace {
             files: extensions.files(),
             state: &state,
             notifications: &notifications,
+            postgres: None,
         };
         conversation.serve(&services).map_err(|fault| fault.to_string())
     }

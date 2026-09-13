@@ -156,6 +156,7 @@ fn services(host: &Host) -> Services<'_> {
         files: host,
         state: host,
         notifications: host,
+        postgres: None,
     }
 }
 

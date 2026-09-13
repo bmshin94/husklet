@@ -404,6 +404,7 @@ export class Session {
     read: [],
     write: [],
     expose_to_execution: [],
+    use: [],
   }) as ReadonlyCredentialGrant;
   #greeted;
   #ready;
@@ -1098,7 +1099,12 @@ export class Session {
       volumes: welcome.volumes ?? { selectors: [], create: false },
     };
     const environment = welcome.workspace_environment ?? { read: [], write: [] };
-    const credentials = welcome.credentials ?? { read: [], write: [], expose_to_execution: [] };
+    const credentials = welcome.credentials ?? {
+      read: [],
+      write: [],
+      expose_to_execution: [],
+      use: [],
+    };
     encodeRequest('extension_install', {
       job: 'grant-validation',
       revision: 0,

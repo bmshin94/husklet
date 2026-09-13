@@ -16,51 +16,37 @@ fn bounded(value: &str, limit: usize) -> bool {
     !value.is_empty() && value.len() <= limit && !value.contains('\0')
 }
 
-macro_rules! opaque {
+macro_rules! opaque_impl {
     ($name:ident) => {
-        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize)]
-        #[serde(try_from = "String", into = "String")]
-        pub struct $name(String);
-
         impl $name {
             pub const LIMIT: usize = 128;
-
             pub fn new(value: impl Into<String>) -> Result<Self, HostError> {
                 let value = value.into();
-                if bounded(&value, Self::LIMIT) {
-                    Ok(Self(value))
-                } else {
-                    Err(HostError::Conflict(
-                        concat!(stringify!($name), " is invalid").into(),
-                    ))
-                }
+                bounded(&value, Self::LIMIT).then_some(Self(value)).ok_or_else(|| HostError::Conflict(concat!(stringify!($name), " is invalid").into()))
             }
-
-            #[must_use]
-            pub fn as_str(&self) -> &str {
-                &self.0
-            }
+            #[must_use] pub fn as_str(&self) -> &str { &self.0 }
         }
-
-        impl TryFrom<String> for $name {
-            type Error = HostError;
-            fn try_from(value: String) -> Result<Self, Self::Error> {
-                Self::new(value)
-            }
-        }
-
-        impl From<$name> for String {
-            fn from(value: $name) -> Self {
-                value.0
-            }
-        }
+        impl TryFrom<String> for $name { type Error = HostError; fn try_from(value: String) -> Result<Self, Self::Error> { Self::new(value) } }
+        impl From<$name> for String { fn from(value: $name) -> Self { value.0 } }
     };
 }
 
-opaque!(PostgresLeaseId);
-opaque!(PostgresQueryId);
-opaque!(PostgresCursor);
-opaque!(QueryOperationToken);
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct PostgresLeaseId(String);
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct PostgresQueryId(String);
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct PostgresCursor(String);
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct QueryOperationToken(String);
+opaque_impl!(PostgresLeaseId);
+opaque_impl!(PostgresQueryId);
+opaque_impl!(PostgresCursor);
+opaque_impl!(QueryOperationToken);
 
 /// Secret-free intent for one exact database endpoint.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -244,12 +230,20 @@ pub enum PostgresStartOutcome {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "disposition", rename_all = "snake_case")]
+pub enum PostgresOpenOutcome {
+    Opened { lease: PostgresLeaseId },
+    Reconciled { lease: PostgresLeaseId },
+}
+
 /// One bounded page. Cursor is opaque; an absent cursor means completion.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostgresPage {
     pub columns: Vec<String>,
-    pub rows: Vec<Vec<serde_json::Value>>,
+    /// Text-format PostgreSQL cells; `None` is SQL NULL.
+    pub rows: Vec<Vec<Option<String>>>,
     pub next_cursor: Option<PostgresCursor>,
     pub bytes: u32,
 }
@@ -270,17 +264,19 @@ impl PostgresPage {
 /// Host boundary. Implementations resolve credential values internally,
 /// authenticate, and persist operation-token reconciliation records.
 pub trait PostgresBroker: Send + Sync {
-    fn open(&self, connection: &PostgresConnection) -> Result<PostgresLeaseId, HostError>;
-    fn start_once(&self, lease: &PostgresLeaseId, query: &PostgresQuery) -> Result<PostgresStartOutcome, HostError>;
+    fn open_once(&self, installation: &hl_rpc::InstallationIdentity, operation: &QueryOperationToken, connection: &PostgresConnection) -> Result<PostgresOpenOutcome, HostError>;
+    fn start_once(&self, installation: &hl_rpc::InstallationIdentity, lease: &PostgresLeaseId, query: &PostgresQuery) -> Result<PostgresStartOutcome, HostError>;
+    fn status(&self, installation: &hl_rpc::InstallationIdentity, lease: &PostgresLeaseId, query: &PostgresQueryId) -> Result<PostgresQueryState, HostError>;
     fn page(
         &self,
+        installation: &hl_rpc::InstallationIdentity,
         lease: &PostgresLeaseId,
         query: &PostgresQueryId,
-        cursor: Option<&str>,
+        cursor: Option<&PostgresCursor>,
     ) -> Result<PostgresPage, HostError>;
-    fn cancel(&self, lease: &PostgresLeaseId, query: &PostgresQueryId) -> Result<PostgresQueryState, HostError>;
-    fn close_query(&self, lease: &PostgresLeaseId, query: &PostgresQueryId) -> Result<(), HostError>;
-    fn close_lease(&self, lease: &PostgresLeaseId) -> Result<(), HostError>;
+    fn cancel(&self, installation: &hl_rpc::InstallationIdentity, lease: &PostgresLeaseId, query: &PostgresQueryId) -> Result<PostgresQueryState, HostError>;
+    fn close_query(&self, installation: &hl_rpc::InstallationIdentity, lease: &PostgresLeaseId, query: &PostgresQueryId) -> Result<(), HostError>;
+    fn close_lease(&self, installation: &hl_rpc::InstallationIdentity, lease: &PostgresLeaseId) -> Result<(), HostError>;
 }
 
 #[cfg(test)]
@@ -384,13 +380,13 @@ mod tests {
         assert!(PostgresQuery::new(QueryOperationToken::new("op-3").unwrap(), "select 1", 1_001, 128).is_err());
         let page = PostgresPage {
             columns: vec!["n".into()],
-            rows: vec![vec![1.into()], vec![2.into()]],
+            rows: vec![vec![Some("1".into())], vec![Some("2".into())]],
             next_cursor: Some(PostgresCursor::new("next").unwrap()),
             bytes: 64,
         };
         page.validate(&query).unwrap();
         let too_many = PostgresPage {
-            rows: vec![vec![1.into()], vec![2.into()], vec![3.into()]],
+            rows: vec![vec![Some("1".into())], vec![Some("2".into())], vec![Some("3".into())]],
             ..page
         };
         assert!(too_many.validate(&query).is_err());

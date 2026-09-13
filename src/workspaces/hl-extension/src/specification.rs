@@ -11,6 +11,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("src/lib.rs", include_str!("lib.rs")),
     ("src/specification.rs", include_str!("specification.rs")),
     ("src/request.rs", include_str!("request.rs")),
+    ("src/database.rs", include_str!("database.rs")),
     ("src/port.rs", include_str!("port.rs")),
     ("src/manifest.rs", include_str!("manifest.rs")),
     ("src/subscription.rs", include_str!("subscription.rs")),
@@ -172,6 +173,13 @@ const REQUEST_TO_REPLY: &[(&str, &str)] = &[
     ("credential_read", "credential"),
     ("credential_set", "revision"),
     ("credential_remove", "revision"),
+    ("postgres_open_once", "postgres_open"),
+    ("postgres_query_start_once", "postgres_start"),
+    ("postgres_query_status", "postgres_state"),
+    ("postgres_query_page", "postgres_page"),
+    ("postgres_query_cancel", "postgres_state"),
+    ("postgres_query_close", "done"),
+    ("postgres_lease_close", "done"),
     ("interface_open_tab", "identity"),
     ("interface_split", "identity"),
     ("interface_withdraw", "done"),
@@ -280,6 +288,13 @@ fn request_capability(request: &str) -> Capability {
         "preference_set" | "preference_remove" => Capability::PreferenceWrite,
         "credential_read" => Capability::CredentialRead,
         "credential_set" | "credential_remove" => Capability::CredentialWrite,
+        "postgres_open_once"
+        | "postgres_query_start_once"
+        | "postgres_query_status"
+        | "postgres_query_page"
+        | "postgres_query_cancel"
+        | "postgres_query_close"
+        | "postgres_lease_close" => Capability::CredentialUse,
         "interface_open_tab"
         | "interface_split"
         | "interface_withdraw"

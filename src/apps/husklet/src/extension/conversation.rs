@@ -1842,6 +1842,7 @@ mod tests {
             files: host,
             state: host,
             notifications: host,
+            postgres: None,
         }
     }
 

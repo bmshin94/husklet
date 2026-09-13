@@ -613,6 +613,13 @@ pub enum Request {
         observed: u64,
         key: String,
     },
+    PostgresOpenOnce { operation: crate::QueryOperationToken, connection: crate::PostgresConnection },
+    PostgresQueryStartOnce { lease: crate::PostgresLeaseId, query: crate::PostgresQuery },
+    PostgresQueryStatus { lease: crate::PostgresLeaseId, query: crate::PostgresQueryId },
+    PostgresQueryPage { lease: crate::PostgresLeaseId, query: crate::PostgresQueryId, cursor: Option<crate::PostgresCursor> },
+    PostgresQueryCancel { lease: crate::PostgresLeaseId, query: crate::PostgresQueryId },
+    PostgresQueryClose { lease: crate::PostgresLeaseId, query: crate::PostgresQueryId },
+    PostgresLeaseClose { lease: crate::PostgresLeaseId },
     InterfaceOpenTab {
         title: String,
     },
@@ -768,6 +775,13 @@ impl Request {
             Self::PreferenceSet { .. } | Self::PreferenceRemove { .. } => Capability::PreferenceWrite,
             Self::CredentialRead { .. } => Capability::CredentialRead,
             Self::CredentialSet { .. } | Self::CredentialRemove { .. } => Capability::CredentialWrite,
+            Self::PostgresOpenOnce { .. }
+            | Self::PostgresQueryStartOnce { .. }
+            | Self::PostgresQueryStatus { .. }
+            | Self::PostgresQueryPage { .. }
+            | Self::PostgresQueryCancel { .. }
+            | Self::PostgresQueryClose { .. }
+            | Self::PostgresLeaseClose { .. } => Capability::CredentialUse,
             Self::InterfaceOpenTab { .. }
             | Self::InterfaceSplit { .. }
             | Self::InterfaceWithdraw { .. }
@@ -930,6 +944,10 @@ pub enum Reply {
     State(crate::port::ExtensionState),
     Preferences(crate::port::ExtensionPreferences),
     Credential(crate::port::ExtensionCredential),
+    PostgresOpen(crate::PostgresOpenOutcome),
+    PostgresStart(crate::PostgresStartOutcome),
+    PostgresState(crate::PostgresQueryState),
+    PostgresPage(crate::PostgresPage),
     Revision(u64),
     Identity(String),
     TerminalOpenTabOnce(crate::port::TerminalOpenTabOnce),

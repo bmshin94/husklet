@@ -1359,6 +1359,7 @@ tab_title = "Sample"
                 files: &ports,
                 state: &ports,
                 notifications: &ports,
+                postgres: None,
             };
             conversation.serve(&services).map_err(|fault| fault.to_string())
         }
@@ -1503,6 +1504,7 @@ tab_title = "Sample"
                 files: &ports,
                 state: &ports,
                 notifications: &ports,
+                postgres: None,
             };
             conversation.serve(&services).map_err(|fault| fault.to_string())
         }

@@ -3916,6 +3916,19 @@ export function workspace(session, { signal } = {}) {
             },
             remove: async (observed, key) => expect(await session.call('credential_remove', { observed, key: exactCredentialKey(key) }), 'revision'),
         },
+        postgres: {
+            openOnce: async (operation, connection) => expect(await session.call('postgres_open_once', { operation, connection }), 'postgres_open'),
+            startOnce: async (lease, query) => expect(await session.call('postgres_query_start_once', { lease, query }), 'postgres_start'),
+            status: async (lease, query) => expect(await session.call('postgres_query_status', { lease, query }), 'postgres_state'),
+            page: async (lease, query, cursor) => expect(await session.call('postgres_query_page', { lease, query, cursor: cursor ?? null }), 'postgres_page'),
+            cancel: async (lease, query) => expect(await session.call('postgres_query_cancel', { lease, query }), 'postgres_state'),
+            closeQuery: async (lease, query) => {
+                expect(await session.call('postgres_query_close', { lease, query }), 'done');
+            },
+            closeLease: async (lease) => {
+                expect(await session.call('postgres_lease_close', { lease }), 'done');
+            },
+        },
         subscribe,
         unsubscribe,
     };
@@ -6275,6 +6288,13 @@ const facadeOverrides = Object.freeze({
     terminal_focus_pane_observed: 'terminal.focusObserved',
     terminal_retitle_pane: 'terminal.retitle',
     terminal_retitle_pane_observed: 'terminal.retitleObserved',
+    postgres_open_once: 'postgres.openOnce',
+    postgres_query_start_once: 'postgres.startOnce',
+    postgres_query_status: 'postgres.status',
+    postgres_query_page: 'postgres.page',
+    postgres_query_cancel: 'postgres.cancel',
+    postgres_query_close: 'postgres.closeQuery',
+    postgres_lease_close: 'postgres.closeLease',
 });
 const internalRequests = Object.freeze({
     interface_open_tab: 'owned by the React/native renderer root lifecycle',
@@ -6300,6 +6320,7 @@ function facadePath(call) {
         ['state_', 'state.'],
         ['preference_', 'preferences.'],
         ['credential_', 'credentials.'],
+        ['postgres_', 'postgres.'],
         ['notification_', 'notifications.'],
     ])
         if (call.startsWith(prefix))

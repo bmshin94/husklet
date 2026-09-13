@@ -1,5 +1,5 @@
-import type { Capability as GeneratedCapability, FilesystemSelector, ExtensionPreferences, PreferenceValue, Row as WireRow, WireCall, WireReplyFor, WireRequestFor, WireUiEvent, TerminalCommand, TerminalCommandInput, TerminalCommandOutput } from './generated-protocol.js';
-export type { ExtensionPreferences, FilesystemSelector, PreferenceValue, TerminalCommand, TerminalCommandInput, TerminalCommandOutput, } from './generated-protocol.js';
+import type { Capability as GeneratedCapability, FilesystemSelector, ExtensionPreferences, PreferenceValue, Row as WireRow, WireCall, WireReplyFor, WireRequestFor, WireUiEvent, TerminalCommand, TerminalCommandInput, TerminalCommandOutput, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken } from './generated-protocol.js';
+export type { ExtensionPreferences, FilesystemSelector, PreferenceValue, TerminalCommand, TerminalCommandInput, TerminalCommandOutput, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken, } from './generated-protocol.js';
 /** One row delivered to a virtualized interface data source. */
 export type DataRow = WireRow;
 /** Environment variable naming the extension's authenticated Unix socket. */
@@ -155,10 +155,12 @@ export interface CredentialGrant {
     read: string[];
     write: string[];
     expose_to_execution: string[];
+    /** Exact keys usable only by host-owned opaque brokers. */
+    use?: string[];
 }
 export type CredentialGrantOperation = keyof CredentialGrant;
 export type ReadonlyCredentialGrant = {
-    readonly [Operation in CredentialGrantOperation]: readonly string[];
+    readonly [Operation in CredentialGrantOperation]: readonly string[] | undefined;
 };
 /** The complete authority approved for one reviewed extension image. */
 export interface ExtensionReviewedGrants {
@@ -2432,6 +2434,16 @@ export interface WorkspaceApi {
         /** Reconcile by exact revision and bytes without replaying the secret mutation. */
         recoverSet(failure: CredentialSetOperationError, options?: CallOptions): Promise<number>;
         remove(observed: number, key: string): Promise<number>;
+    };
+    /** Host-owned PostgreSQL leases. Start calls reconcile by the same operation token and are never auto-replayed. */
+    postgres: {
+        openOnce(operation: QueryOperationToken, connection: PostgresConnection): Promise<PostgresOpenOutcome>;
+        startOnce(lease: PostgresLeaseId, query: PostgresQuery): Promise<PostgresStartOutcome>;
+        status(lease: PostgresLeaseId, query: PostgresQueryId): Promise<PostgresQueryState>;
+        page(lease: PostgresLeaseId, query: PostgresQueryId, cursor?: PostgresCursor): Promise<PostgresPage>;
+        cancel(lease: PostgresLeaseId, query: PostgresQueryId): Promise<PostgresQueryState>;
+        closeQuery(lease: PostgresLeaseId, query: PostgresQueryId): Promise<void>;
+        closeLease(lease: PostgresLeaseId): Promise<void>;
     };
     subscribe(topic: Topic): Promise<void>;
     unsubscribe(topic: Topic): Promise<void>;

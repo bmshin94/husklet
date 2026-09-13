@@ -4,6 +4,7 @@ pub const SOURCE_PATHS: &[&str] = &[
     "src/lib.rs",
     "src/specification.rs",
     "src/request.rs",
+    "src/database.rs",
     "src/port.rs",
     "src/manifest.rs",
     "src/subscription.rs",

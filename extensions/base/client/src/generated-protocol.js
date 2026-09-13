@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:711d756bdc459eca
+// Protocol artifact fnv1a64:bf352ab1a2b4399a
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -469,6 +469,13 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "credential_read": "credential",
   "credential_set": "revision",
   "credential_remove": "revision",
+  "postgres_open_once": "postgres_open",
+  "postgres_query_start_once": "postgres_start",
+  "postgres_query_status": "postgres_state",
+  "postgres_query_page": "postgres_page",
+  "postgres_query_cancel": "postgres_state",
+  "postgres_query_close": "done",
+  "postgres_lease_close": "done",
   "interface_open_tab": "identity",
   "interface_split": "identity",
   "interface_withdraw": "done",
@@ -608,6 +615,13 @@ export const PROTOCOL_REQUEST_CAPABILITIES = Object.freeze({
   "credential_read": "credentials:read",
   "credential_set": "credentials:write",
   "credential_remove": "credentials:write",
+  "postgres_open_once": "credentials:use",
+  "postgres_query_start_once": "credentials:use",
+  "postgres_query_status": "credentials:use",
+  "postgres_query_page": "credentials:use",
+  "postgres_query_cancel": "credentials:use",
+  "postgres_query_close": "credentials:use",
+  "postgres_lease_close": "credentials:use",
   "interface_open_tab": "interface:render",
   "interface_split": "interface:render",
   "interface_withdraw": "interface:render",
@@ -5166,6 +5180,318 @@ const definitions = {
       }
     ]
   },
+  "PostgresConnection": {
+    "fields": [
+      {
+        "name": "container_id",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "container_generation",
+        "optional": false,
+        "schema": {
+          "bits": 64,
+          "kind": "integer",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "signed": false
+        }
+      },
+      {
+        "name": "network",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "port",
+        "optional": false,
+        "schema": {
+          "bits": 16,
+          "kind": "integer",
+          "maximum": 65535,
+          "minimum": 0,
+          "signed": false
+        }
+      },
+      {
+        "name": "database",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "user",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "credential_keys",
+        "optional": false,
+        "schema": {
+          "kind": "array",
+          "of": {
+            "kind": "string"
+          }
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {
+      "deny_unknown_fields": true
+    }
+  },
+  "PostgresCursor": {
+    "kind": "newtype",
+    "of": {
+      "kind": "string"
+    },
+    "serde": {}
+  },
+  "PostgresLeaseId": {
+    "kind": "newtype",
+    "of": {
+      "kind": "string"
+    },
+    "serde": {}
+  },
+  "PostgresOpenOutcome": {
+    "kind": "enum",
+    "serde": {
+      "rename_all": "snake_case",
+      "tag": "disposition"
+    },
+    "variants": [
+      {
+        "name": "opened",
+        "payload": {
+          "fields": [
+            {
+              "name": "lease",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresLeaseId"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "reconciled",
+        "payload": {
+          "fields": [
+            {
+              "name": "lease",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresLeaseId"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      }
+    ]
+  },
+  "PostgresPage": {
+    "fields": [
+      {
+        "name": "columns",
+        "optional": false,
+        "schema": {
+          "kind": "array",
+          "of": {
+            "kind": "string"
+          }
+        }
+      },
+      {
+        "name": "rows",
+        "optional": false,
+        "schema": {
+          "kind": "array",
+          "of": {
+            "kind": "array",
+            "of": {
+              "kind": "optional",
+              "of": {
+                "kind": "string"
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "next_cursor",
+        "optional": true,
+        "schema": {
+          "kind": "optional",
+          "of": {
+            "kind": "ref",
+            "name": "PostgresCursor"
+          }
+        }
+      },
+      {
+        "name": "bytes",
+        "optional": false,
+        "schema": {
+          "bits": 32,
+          "kind": "integer",
+          "maximum": 4294967295,
+          "minimum": 0,
+          "signed": false
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {
+      "deny_unknown_fields": true
+    }
+  },
+  "PostgresQuery": {
+    "fields": [
+      {
+        "name": "operation",
+        "optional": false,
+        "schema": {
+          "kind": "ref",
+          "name": "QueryOperationToken"
+        }
+      },
+      {
+        "name": "statement",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "page_rows",
+        "optional": false,
+        "schema": {
+          "bits": 32,
+          "kind": "integer",
+          "maximum": 4294967295,
+          "minimum": 0,
+          "signed": false
+        }
+      },
+      {
+        "name": "page_bytes",
+        "optional": false,
+        "schema": {
+          "bits": 32,
+          "kind": "integer",
+          "maximum": 4294967295,
+          "minimum": 0,
+          "signed": false
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {
+      "deny_unknown_fields": true
+    }
+  },
+  "PostgresQueryId": {
+    "kind": "newtype",
+    "of": {
+      "kind": "string"
+    },
+    "serde": {}
+  },
+  "PostgresQueryState": {
+    "kind": "enum",
+    "serde": {
+      "rename_all": "snake_case"
+    },
+    "variants": [
+      {
+        "name": "running",
+        "payload": {
+          "kind": "unit"
+        }
+      },
+      {
+        "name": "completed",
+        "payload": {
+          "kind": "unit"
+        }
+      },
+      {
+        "name": "cancelled",
+        "payload": {
+          "kind": "unit"
+        }
+      },
+      {
+        "name": "failed",
+        "payload": {
+          "kind": "unit"
+        }
+      }
+    ]
+  },
+  "PostgresStartOutcome": {
+    "kind": "enum",
+    "serde": {
+      "rename_all": "snake_case",
+      "tag": "disposition"
+    },
+    "variants": [
+      {
+        "name": "started",
+        "payload": {
+          "fields": [
+            {
+              "name": "query",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresQueryId"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "reconciled",
+        "payload": {
+          "fields": [
+            {
+              "name": "query",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresQueryId"
+              }
+            },
+            {
+              "name": "state",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresQueryState"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      }
+    ]
+  },
   "PreferenceValue": {
     "kind": "enum",
     "serde": {
@@ -5816,6 +6142,13 @@ const definitions = {
         }
       }
     ]
+  },
+  "QueryOperationToken": {
+    "kind": "newtype",
+    "of": {
+      "kind": "string"
+    },
+    "serde": {}
   },
   "RelativePath": {
     "kind": "string"
@@ -9525,6 +9858,46 @@ const roots = {
         }
       },
       {
+        "name": "postgres_open",
+        "payload": {
+          "kind": "newtype",
+          "of": {
+            "kind": "ref",
+            "name": "PostgresOpenOutcome"
+          }
+        }
+      },
+      {
+        "name": "postgres_start",
+        "payload": {
+          "kind": "newtype",
+          "of": {
+            "kind": "ref",
+            "name": "PostgresStartOutcome"
+          }
+        }
+      },
+      {
+        "name": "postgres_state",
+        "payload": {
+          "kind": "newtype",
+          "of": {
+            "kind": "ref",
+            "name": "PostgresQueryState"
+          }
+        }
+      },
+      {
+        "name": "postgres_page",
+        "payload": {
+          "kind": "newtype",
+          "of": {
+            "kind": "ref",
+            "name": "PostgresPage"
+          }
+        }
+      },
+      {
         "name": "revision",
         "payload": {
           "kind": "newtype",
@@ -13025,6 +13398,177 @@ const roots = {
               "optional": false,
               "schema": {
                 "kind": "string"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "postgres_open_once",
+        "payload": {
+          "fields": [
+            {
+              "name": "operation",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "QueryOperationToken"
+              }
+            },
+            {
+              "name": "connection",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresConnection"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "postgres_query_start_once",
+        "payload": {
+          "fields": [
+            {
+              "name": "lease",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresLeaseId"
+              }
+            },
+            {
+              "name": "query",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresQuery"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "postgres_query_status",
+        "payload": {
+          "fields": [
+            {
+              "name": "lease",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresLeaseId"
+              }
+            },
+            {
+              "name": "query",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresQueryId"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "postgres_query_page",
+        "payload": {
+          "fields": [
+            {
+              "name": "lease",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresLeaseId"
+              }
+            },
+            {
+              "name": "query",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresQueryId"
+              }
+            },
+            {
+              "name": "cursor",
+              "optional": true,
+              "schema": {
+                "kind": "optional",
+                "of": {
+                  "kind": "ref",
+                  "name": "PostgresCursor"
+                }
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "postgres_query_cancel",
+        "payload": {
+          "fields": [
+            {
+              "name": "lease",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresLeaseId"
+              }
+            },
+            {
+              "name": "query",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresQueryId"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "postgres_query_close",
+        "payload": {
+          "fields": [
+            {
+              "name": "lease",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresLeaseId"
+              }
+            },
+            {
+              "name": "query",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresQueryId"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "postgres_lease_close",
+        "payload": {
+          "fields": [
+            {
+              "name": "lease",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresLeaseId"
               }
             }
           ],
