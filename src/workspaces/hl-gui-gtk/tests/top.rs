@@ -2221,6 +2221,25 @@ mod unix {
                     vertical_end(&discover_root, review.upcast_ref()) <= 800,
                     "{width_name} Discover update action fell below the first viewport"
                 );
+                let category = find_label(&discover_root, "Category");
+                let category_control = category.parent().expect("Category belongs to its form control");
+                assert!(
+                    has_label(&category_control, "All categories"),
+                    "{width_name} category label detached from its Select"
+                );
+                let category_bounds = category_control
+                    .compute_bounds(&discover_root)
+                    .expect("category control belongs to Discover");
+                assert!(
+                    category_bounds.width() >= if width == 600 { 400.0 } else { 128.0 },
+                    "{width_name} category control is not a deliberate usable field: {category_bounds:?}"
+                );
+                if width == 600 {
+                    assert!(
+                        category_bounds.x() + category_bounds.width() >= width as f32 - 17.0,
+                        "narrow category control is detached from the content edge: {category_bounds:?}"
+                    );
+                }
                 capture(&window, &format!("discover-extensions-{width_name}"), width, 800);
                 assert_extension_filter(
                     &discover_root,

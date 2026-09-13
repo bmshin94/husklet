@@ -1577,6 +1577,11 @@ test('extension modes isolate collections and reset controls in deterministic ke
   assert.equal(fieldValue(stage, 'Search extensions'), '');
   assert.equal(placeholderTag(stage, 'Search extensions'), 'Search');
   assert.equal(fieldValueByTooltip(stage, 'Filter extension catalogue by status'), 'discover');
+  assert.equal(
+    ancestorTags(stage, 'Category').filter((tag) => tag === 'FormControl').length,
+    1,
+    'the category label and Select wrap as one semantic field',
+  );
 
   change(stage, 'Search extensions', 'future');
   changeByTooltip(stage, 'Filter extension catalogue by status', 'incompatible');

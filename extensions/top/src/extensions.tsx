@@ -11,6 +11,7 @@ import {
   ConfirmAction,
   Entry,
   Expander,
+  FormControl,
   FormControlLabel,
   Heading,
   IconButton,
@@ -1321,24 +1322,26 @@ export function Extensions({
                         label={`${visibleCatalogueEntries.length} of ${countLabel(catalogueEntries.length, 'extension')}`}
                         color="text-dim"
                       />
-                      <Text label="Category" color="text-dim" />
-                      <Select
-                        grow
-                        value={catalogueCategory}
-                        tooltip="Filter extension catalogue by category"
-                        width={{ minimum: { chars: 18 } }}
-                        choices={[
-                          { value: '', label: 'All categories' },
-                          ...catalogueCategories.map((category) => ({
-                            value: category,
-                            label: category,
-                          })),
-                        ]}
-                        onChange={(event: Change) => {
-                          setCatalogueCategory(String(event.value ?? ''));
-                          setCatalogueLimit(CATALOGUE_PAGE_SIZE);
-                        }}
-                      />
+                      <FormControl gap={0} grow width={{ minimum: { chars: 18 } }}>
+                        <Text label="Category" color="text-dim" />
+                        <Select
+                          grow
+                          value={catalogueCategory}
+                          tooltip="Filter extension catalogue by category"
+                          width="fill"
+                          choices={[
+                            { value: '', label: 'All categories' },
+                            ...catalogueCategories.map((category) => ({
+                              value: category,
+                              label: category,
+                            })),
+                          ]}
+                          onChange={(event: Change) => {
+                            setCatalogueCategory(String(event.value ?? ''));
+                            setCatalogueLimit(CATALOGUE_PAGE_SIZE);
+                          }}
+                        />
+                      </FormControl>
                     </Row>
                   ) : null}
                   {catalogueState === 'loading' && (
