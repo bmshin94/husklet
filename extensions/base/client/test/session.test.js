@@ -10624,6 +10624,46 @@ test('real Unix terminal history pages preserve exact pane authority over fragme
   );
 });
 
+test('history iterator applies backpressure and rejects same-slot replacement over fragmented Unix', async () => {
+  let requests = 0;
+  await withPaneIdentityHost(
+    ['terminals:output'],
+    (_request, socket) => {
+      requests += 1;
+      const payload = {
+        reply: 'terminal_history',
+        with: {
+          slot: 'agent-pane',
+          generation: requests === 2 ? 8 : 7,
+          revision: 11,
+          lines: [`page-${requests}`],
+          next: requests < 3 ? `cursor-${requests}` : null,
+        },
+      };
+      const frame = encode({ channel: 2, kind: KIND.response, payload });
+      for (let index = 0; index < frame.length; index += 1)
+        socket.write(frame.subarray(index, index + 1));
+    },
+    async (session) => {
+      const terminal = workspace(session).terminal;
+      const observed = { slot: 'agent-pane', generation: 7, revision: 11 };
+      const pages = terminal
+        .historyPages(observed, { lines: 20, maxPages: 3 })
+        [Symbol.asyncIterator]();
+      assert.deepEqual((await pages.next()).value.lines, ['page-1']);
+      assert.equal(requests, 1, 'no continuation is requested before the consumer asks');
+      await assert.rejects(pages.next(), /changed from generation 7 revision 11/);
+      assert.equal(requests, 2);
+      assert.deepEqual((await terminal.readHistory(observed)).lines, ['page-3']);
+      assert.equal(requests, 3, 'identity rejection preserves the ordered session');
+      await assert.rejects(async () => {
+        for await (const _page of terminal.historyPages(observed, { maxPages: 0 })) void _page;
+      }, /maxPages/);
+      assert.equal(requests, 3, 'invalid bounds fail before framing');
+    },
+  );
+});
+
 test('real Unix inspectAndAct rejects wrong pre-action pane identity before mutation', async () => {
   await withPaneIdentityHost(
     ['panes:observe', 'panes:semantic-read', 'panes:semantic-control', 'terminals:read'],

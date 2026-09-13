@@ -153,6 +153,12 @@ export declare class SemanticActionOperationError extends Error {
     readonly observed: any;
     constructor(before: any, action: any, observed: any, cause: any);
 }
+/** History reply no longer belongs to the exact pane snapshot selected by the caller. */
+export declare class TerminalHistoryChangedError extends Error {
+    readonly observed: any;
+    readonly received: any;
+    constructor(observed: any, received: any);
+}
 /** A supervised terminal command failed after creation, retaining exact recovery state. */
 export declare class TerminalCommandOperationError extends Error {
     readonly command: any;

@@ -603,6 +603,21 @@ export class SemanticActionOperationError extends Error {
   }
 }
 
+/** History reply no longer belongs to the exact pane snapshot selected by the caller. */
+export class TerminalHistoryChangedError extends Error {
+  readonly observed;
+  readonly received;
+
+  constructor(observed, received) {
+    super(
+      `terminal history for ${observed.slot} changed from generation ${observed.generation} revision ${observed.revision} to generation ${received.generation} revision ${received.revision}`,
+    );
+    this.name = 'TerminalHistoryChangedError';
+    this.observed = Object.freeze({ ...observed });
+    this.received = Object.freeze({ ...received });
+  }
+}
+
 /** A supervised terminal command failed after creation, retaining exact recovery state. */
 export class TerminalCommandOperationError extends Error {
   readonly command;
@@ -1517,6 +1532,33 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     if (reply?.reply !== kind)
       throw new Error(`host replied ${reply?.reply ?? 'without a tag'}, expected ${kind}`);
     return ('with' in reply ? reply.with : undefined) as ReplyPayload<K>;
+  };
+  const readTerminalHistory = async (
+    observed: { slot: string; generation: number; revision: number },
+    options: { cursor?: string; lines?: number } = {},
+    callOptions: CallOptions = {},
+  ) => {
+    const page = exactPane(
+      expect(
+        await session.call(
+          'terminal_read_history',
+          {
+            slot: observed.slot,
+            generation: observed.generation,
+            revision: observed.revision,
+            cursor: options.cursor,
+            lines: exactTerminalReadLines(options.lines),
+          },
+          callOptions,
+        ),
+        'terminal_history',
+      ),
+      observed.slot,
+      'terminal history',
+    );
+    if (page.generation !== observed.generation || page.revision !== observed.revision)
+      throw new TerminalHistoryChangedError(observed, page);
+    return page;
   };
   const exactPane = <Snapshot extends { slot: string }>(
     snapshot: Snapshot,
@@ -3722,21 +3764,47 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           slot,
           'terminal text',
         ),
-      readHistory: async (observed, options: { cursor?: string; lines?: number } = {}) =>
-        exactPane(
-          expect(
-            await session.call('terminal_read_history', {
-              slot: observed.slot,
-              generation: observed.generation,
-              revision: observed.revision,
-              cursor: options.cursor,
-              lines: exactTerminalReadLines(options.lines),
-            }),
-            'terminal_history',
-          ),
-          observed.slot,
-          'terminal history',
-        ),
+      readHistory: readTerminalHistory,
+      historyPages: async function* (
+        observed,
+        options: {
+          lines?: number;
+          maxPages?: number;
+          maxBytes?: number;
+          signal?: AbortSignal;
+        } = {},
+      ) {
+        const {
+          lines: requestedLines,
+          maxPages = 256,
+          maxBytes = 8 * 1024 * 1024,
+          signal,
+        } = options;
+        const lines = exactTerminalReadLines(requestedLines);
+        if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 4096)
+          throw new RangeError('terminal history maxPages must be between 1 and 4096');
+        if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 64 * 1024 * 1024)
+          throw new RangeError('terminal history maxBytes must be between 1 and 67108864');
+        let cursor: string | undefined;
+        let bytes = 0;
+        const seen = new Set<string>();
+        for (let pageNumber = 0; pageNumber < maxPages; pageNumber += 1) {
+          const page = await readTerminalHistory(observed, { cursor, lines }, { signal });
+          const pageBytes = page.lines.reduce(
+            (total, line) => total + new TextEncoder().encode(line).byteLength + 1,
+            0,
+          );
+          if (bytes + pageBytes > maxBytes)
+            throw new RangeError('terminal history exceeded maxBytes');
+          bytes += pageBytes;
+          yield page;
+          if (page.next == null) return;
+          if (seen.has(page.next)) throw new Error('terminal history cursor repeated');
+          seen.add(page.next);
+          cursor = page.next;
+        }
+        throw new RangeError('terminal history exceeded maxPages');
+      },
       semantics: async (slot) =>
         exactPane(
           expect(await session.call('pane_semantic_read', { slot }), 'semantics'),

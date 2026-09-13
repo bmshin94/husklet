@@ -574,6 +574,10 @@ export declare class TerminalLayoutChangedError extends Error {
     readonly before: Readonly<TerminalTopology>;
     readonly after: Readonly<TerminalTopology>;
 }
+export declare class TerminalHistoryChangedError extends Error {
+    readonly observed: Readonly<Pick<PaneText, 'slot' | 'generation' | 'revision'>>;
+    readonly received: Readonly<Pick<TerminalHistoryPage, 'slot' | 'generation' | 'revision'>>;
+}
 /** Bounded pane discovery omitted identities, so whole-layout stability cannot be proven. */
 export declare class IncompletePaneInventoryError extends Error {
     readonly panes: ReadonlyArray<Readonly<Pick<InspectablePane, 'slot' | 'generation' | 'revision'>>>;
@@ -1938,6 +1942,13 @@ export interface WorkspaceApi {
             cursor?: TerminalHistoryCursor;
             lines?: number;
         }): Promise<TerminalHistoryPage>;
+        /** Page older output sequentially with bounded memory/work and exact snapshot authority. */
+        historyPages(observed: Pick<PaneText, 'slot' | 'generation' | 'revision'>, options?: {
+            lines?: number;
+            maxPages?: number;
+            maxBytes?: number;
+            signal?: AbortSignal;
+        }): AsyncIterable<TerminalHistoryPage>;
         semantics(slot: string): Promise<PaneSemanticTree>;
         /** Discover the pane kind and return terminal screen text or bounded semantic XML. */
         toText(slot: string, options?: {
