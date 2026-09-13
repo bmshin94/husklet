@@ -4414,6 +4414,11 @@ mod unix {
             settle_toolkit();
             capture_window.set_child(None::<&gtk::Widget>);
             capture_window.close();
+            settle_toolkit();
+            assert!(
+                root.root().is_none() && capture_window.child().is_none() && !capture_window.is_mapped(),
+                "{width_name} review fixture remained attached while the next width was prepared"
+            );
         }
     }
 
