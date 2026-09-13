@@ -14186,6 +14186,17 @@
                     "kind": "string"
                   }
                 }
+              },
+              {
+                "name": "collection",
+                "optional": true,
+                "schema": {
+                  "kind": "optional",
+                  "of": {
+                    "kind": "ref",
+                    "name": "UiCollectionSelection"
+                  }
+                }
               }
             ],
             "kind": "struct"
@@ -15020,7 +15031,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:18b2f3a5ee34d587",
+  "source_fingerprint": "fnv1a64:6728fb7abf114192",
   "specification_version": 1,
   "topics": [
     {

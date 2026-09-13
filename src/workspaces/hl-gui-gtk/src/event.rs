@@ -349,7 +349,11 @@ fn activate(widget: &gtk::Widget, node: NodeId, slot: &Slot, reports: &Reports) 
     };
     let reports = reports.clone();
     let slot = slot.clone();
-    button.connect_clicked(move |_| identified(&reports, &slot, |id| Event::Activate { node, id }));
+        button.connect_clicked(move |_| identified(&reports, &slot, |id| Event::Activate {
+            node,
+            id,
+            collection: None,
+        }));
 }
 
 /// Connects whichever way this widget holds a value.

@@ -51,6 +51,7 @@ pub enum Event {
     Activate {
         node: NodeId,
         id: EventId,
+        collection: Option<CollectionSelection>,
     },
     Change {
         node: NodeId,

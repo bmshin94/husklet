@@ -9,6 +9,8 @@ pub enum UiEvent {
         node: u64,
         id: String,
         slot: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        collection: Option<UiCollectionSelection>,
     },
     #[serde(rename = "submit")]
     Submit {
@@ -159,6 +161,23 @@ pub struct UiSelectedRow {
     pub id: String,
 }
 
+impl From<&hl_gui::CollectionSelection> for UiCollectionSelection {
+    fn from(selected: &hl_gui::CollectionSelection) -> Self {
+        Self {
+            source: selected.source.raw(),
+            version: selected.version.raw(),
+            rows: selected
+                .rows
+                .iter()
+                .map(|row| UiSelectedRow {
+                    index: row.index,
+                    id: row.id.to_string(),
+                })
+                .collect(),
+        }
+    }
+}
+
 impl UiEvent {
     /// Converts one interactive toolkit report into its authoritative wire DTO.
     /// Row-window requests are host-internal and therefore have no UI event.
@@ -172,12 +191,14 @@ impl UiEvent {
                 node: node.raw(),
                 id: id.as_str().into(),
                 slot,
+                collection: None,
             },
-            Event::Activate { node, id } => Self::Invoke {
+            Event::Activate { node, id, collection } => Self::Invoke {
                 trigger: "Activate".into(),
                 node: node.raw(),
                 id: id.as_str().into(),
                 slot,
+                collection: collection.as_ref().map(UiCollectionSelection::from),
             },
             Event::Submit { node, id } => Self::Submit {
                 trigger: "Submit".into(),

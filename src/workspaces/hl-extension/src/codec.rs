@@ -280,6 +280,7 @@ mod tests {
                 Event::Activate {
                     node,
                     id: EventId::new("opaque/not-a-trigger"),
+                    collection: None,
                 },
                 "invoke",
                 "Activate",

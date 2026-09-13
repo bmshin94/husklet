@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:dce5b5b83742b56c
+// Protocol artifact fnv1a64:9705c2a2e2bf0b08
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -13377,6 +13377,17 @@ const roots = {
                 "kind": "optional",
                 "of": {
                   "kind": "string"
+                }
+              }
+            },
+            {
+              "name": "collection",
+              "optional": true,
+              "schema": {
+                "kind": "optional",
+                "of": {
+                  "kind": "ref",
+                  "name": "UiCollectionSelection"
                 }
               }
             }
