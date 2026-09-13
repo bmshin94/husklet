@@ -69,6 +69,8 @@ pub enum Prop {
     Position,
     /// Pixel width at which a responsive container selects its wide child.
     Breakpoint,
+    /// Selects the two-child compact/wide contract instead of a navigation splitter.
+    Alternate,
     // Range
     Minimum,
     Maximum,

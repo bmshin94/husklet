@@ -331,6 +331,9 @@ fn a_responsive_container_presents_only_its_allocated_branch() {
     alternatives
         .producer
         .set(responsive, Prop::Breakpoint, PropValue::Integer(400));
+    alternatives
+        .producer
+        .set(responsive, Prop::Alternate, PropValue::Flag(true));
     let compact = alternatives.producer.create(Tag::Button);
     alternatives
         .producer

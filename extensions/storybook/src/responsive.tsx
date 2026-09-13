@@ -21,7 +21,7 @@ export function ResponsiveWorkbench() {
       summary="Author compact and wide layouts explicitly; the host exposes only the branch selected by its allocated width."
     >
       <DocumentationSection title="Alternate layouts">
-        <Responsive breakpoint={720} width="fill">
+        <Responsive alternate breakpoint={720} width="fill">
           <Column gap={2} width="fill">
             <Badge label="Compact · below 720px" tone="accent" />
             <Search placeholder="Search components" width="fill" />

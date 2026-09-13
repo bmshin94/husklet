@@ -174,7 +174,7 @@ catalogue! {
     Scroll: children, props[WholeRows], triggers[Scroll],
     Splitter: children, props[Orientation, Position], triggers[Change],
     Stack: children, props[], triggers[],
-    Responsive: children, props[Orientation, Position, Breakpoint], triggers[Change],
+    Responsive: children, props[Orientation, Position, Breakpoint, Alternate], triggers[Change],
     Overlay: children, props[], triggers[],
     Container: children, props[Gap], triggers[Drag, Drop],
     Spacer: leaf, props[], triggers[],

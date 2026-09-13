@@ -13,6 +13,14 @@ test('Responsive documents explicit compact and wide alternate subtrees', () => 
     frame.patches.some(
       (patch) =>
         patch.SetProp?.id === responsive &&
+        patch.SetProp.prop === 'Alternate' &&
+        patch.SetProp.value?.Flag === true,
+    ),
+  );
+  assert(
+    frame.patches.some(
+      (patch) =>
+        patch.SetProp?.id === responsive &&
         patch.SetProp.prop === 'Breakpoint' &&
         patch.SetProp.value?.Number === 720,
     ),

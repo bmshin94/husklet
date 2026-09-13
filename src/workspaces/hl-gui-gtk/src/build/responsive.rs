@@ -14,6 +14,7 @@ pub(super) struct Pane {
     allocating: Cell<bool>,
     setting_position: Cell<bool>,
     has_body: Cell<bool>,
+    alternate_mode: Cell<bool>,
     expanded: Cell<Option<bool>>,
     layout: OnceCell<gtk::Box>,
     paned: OnceCell<gtk::Paned>,
@@ -30,6 +31,7 @@ impl Default for Pane {
             allocating: Cell::new(false),
             setting_position: Cell::new(false),
             has_body: Cell::new(false),
+            alternate_mode: Cell::new(false),
             expanded: Cell::new(None),
             layout: OnceCell::new(),
             paned: OnceCell::new(),
@@ -72,10 +74,11 @@ impl ObjectImpl for Pane {
     fn constructed(&self) {
         self.parent_constructed();
         let layout = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        layout.set_visible(false);
+        layout.set_visible(true);
         let alternate = gtk::Stack::new();
         alternate.set_hhomogeneous(false);
         alternate.set_vhomogeneous(false);
+        alternate.set_visible(false);
         alternate.set_parent(&*self.obj());
         let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
         paned.add_css_class("hl-responsive-divider");
@@ -137,15 +140,15 @@ impl ObjectImpl for Pane {
 
 impl WidgetImpl for Pane {
     fn request_mode(&self) -> gtk::SizeRequestMode {
-        if self.has_body.get() {
-            self.layout().request_mode()
-        } else {
+        if self.alternate_mode.get() {
             gtk::SizeRequestMode::HeightForWidth
+        } else {
+            self.layout().request_mode()
         }
     }
 
     fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
-        if !self.has_body.get() {
+        if self.alternate_mode.get() {
             if orientation == gtk::Orientation::Horizontal {
                 return self
                     .compact
@@ -174,7 +177,7 @@ impl WidgetImpl for Pane {
         // Two children are explicit compact and wide alternatives. GtkStack
         // supplies page visibility without divider semantics; its inactive
         // page is also absent from focus and accessibility traversal.
-        if !self.has_body.get() {
+        if self.alternate_mode.get() {
             let alternate = self.alternate();
             if let Some(active) = self.active(width) {
                 alternate.set_visible_child(&active);
@@ -264,6 +267,27 @@ pub(crate) fn attach(widget: &gtk::Widget, child: &gtk::Widget, index: usize) ->
         return false;
     };
     let imp = pane.imp();
+    if imp.alternate_mode.get() {
+        match index {
+            0 => {
+                child.set_hexpand(true);
+                child.set_halign(gtk::Align::Fill);
+                imp.compact.set(child.clone()).ok();
+                imp.alternate().add_named(child, Some("compact"));
+            }
+            1 => {
+                child.set_hexpand(true);
+                child.set_halign(gtk::Align::Fill);
+                imp.wide.set(child.clone()).ok();
+                imp.alternate().add_named(child, Some("wide"));
+                if let Some(compact) = imp.compact.get() {
+                    imp.alternate().set_visible_child(compact);
+                }
+            }
+            _ => return false,
+        }
+        return true;
+    }
     match index {
         0 => {
             // Compact navigation is the header for the shared body. Give it
@@ -272,37 +296,15 @@ pub(crate) fn attach(widget: &gtk::Widget, child: &gtk::Widget, index: usize) ->
             // their controls explicitly request `width=fill`.
             child.set_hexpand(true);
             child.set_halign(gtk::Align::Fill);
-            imp.compact.set(child.clone()).ok();
-            imp.alternate().add_named(child, Some("compact"));
+            imp.layout().prepend(child);
         }
         1 => {
             child.set_hexpand(true);
             child.set_halign(gtk::Align::Fill);
-            imp.wide.set(child.clone()).ok();
-            imp.alternate().add_named(child, Some("wide"));
-            if let Some(compact) = imp.compact.get() {
-                imp.alternate().set_visible_child(compact);
-            }
+            imp.paned().set_start_child(Some(child));
         }
         2 => {
-            if imp.has_body.replace(true) {
-                imp.paned().set_end_child(Some(child));
-                return true;
-            }
-            if let Some(compact) = imp.compact.get() {
-                if compact.parent().as_ref() == Some(imp.alternate().upcast_ref()) {
-                    imp.alternate().remove(compact);
-                }
-                imp.layout().prepend(compact);
-            }
-            if let Some(wide) = imp.wide.get() {
-                if wide.parent().as_ref() == Some(imp.alternate().upcast_ref()) {
-                    imp.alternate().remove(wide);
-                }
-                imp.paned().set_start_child(Some(wide));
-            }
-            imp.alternate().unparent();
-            imp.layout().set_visible(true);
+            imp.has_body.set(true);
             imp.paned().set_end_child(Some(child));
         }
         _ => return false,
@@ -318,6 +320,20 @@ pub(crate) fn set(widget: &gtk::Widget, value: &PropValue) {
         }
         pane.queue_resize();
     }
+}
+
+pub(crate) fn set_alternate(widget: &gtk::Widget, value: &PropValue) {
+    let Some(pane) = widget.downcast_ref::<ResponsivePane>() else {
+        return;
+    };
+    // The layout contract is authored before children are inserted. Keeping
+    // this explicit avoids treating the transient two-child state of a
+    // three-child splitter frame as an alternate layout.
+    let alternate = value.as_flag().unwrap_or(false);
+    pane.imp().alternate_mode.set(alternate);
+    pane.imp().alternate().set_visible(alternate);
+    pane.imp().layout().set_visible(!alternate);
+    pane.queue_resize();
 }
 
 pub(crate) fn set_position(widget: &gtk::Widget, position: i32) -> bool {

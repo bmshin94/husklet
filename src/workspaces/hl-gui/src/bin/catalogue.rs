@@ -894,6 +894,13 @@ const PROPS: &[Entry] = &[
         note: "allocated width selecting the second of two alternate layouts; three children retain the navigation splitter contract",
     },
     Entry {
+        prop: Prop::Alternate,
+        group: "layout",
+        editor: "switch",
+        values: &["Flag"],
+        note: "two explicit compact and wide child layouts instead of navigation splitter semantics",
+    },
+    Entry {
         prop: Prop::Minimum,
         group: "range",
         editor: "number",
@@ -1023,6 +1030,7 @@ impl Entry {
             | Prop::Orientation
             | Prop::Position
             | Prop::Breakpoint
+            | Prop::Alternate
             | Prop::Minimum
             | Prop::Maximum
             | Prop::Step

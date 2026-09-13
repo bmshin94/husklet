@@ -646,6 +646,7 @@ export function Extensions({
       setInventoryState('error');
     }
   }, [api]);
+  const watchExtensions = api.watchExtensions;
   React.useEffect(() => {
     void reload();
   }, [reload]);
@@ -679,14 +680,13 @@ export function Extensions({
   }, [api]);
   React.useEffect(() => {
     let dispose: (() => Promise<void>) | undefined;
-    void api
-      .watchExtensions((listing) => {
-        ++inventoryEpoch.current;
-        installedSnapshot.current = listing;
-        setInstalled(listing);
-        setInventoryState(listing.length === 0 ? 'empty' : 'ready');
-        setInventoryError('');
-      })
+    void watchExtensions((listing) => {
+      ++inventoryEpoch.current;
+      installedSnapshot.current = listing;
+      setInstalled(listing);
+      setInventoryState(listing.length === 0 ? 'empty' : 'ready');
+      setInventoryError('');
+    })
       .then((stop) => {
         dispose = stop;
         setWatchError('');
@@ -699,7 +699,7 @@ export function Extensions({
     return () => {
       void dispose?.();
     };
-  }, [api]);
+  }, [watchExtensions]);
 
   const inspect = async (suggested?: string, expected: ExtensionCatalogueEntry | null = null) => {
     const wanted = (suggested ?? reference).trim();
@@ -1278,7 +1278,7 @@ export function Extensions({
               {!acquisition && (
                 <Column gap={1}>
                   {catalogueState === 'ready' && catalogueEntries.length > 0 ? (
-                    <Responsive breakpoint={760} width="fill">
+                    <Responsive alternate breakpoint={760} width="fill">
                       <Column gap={2} width="fill">
                         <Search
                           value={catalogueQuery}

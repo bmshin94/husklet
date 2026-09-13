@@ -5538,6 +5538,12 @@
           }
         },
         {
+          "name": "Alternate",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
           "name": "Minimum",
           "payload": {
             "kind": "unit"
@@ -15638,7 +15644,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:ce2802437419d9db",
+  "source_fingerprint": "fnv1a64:761ab21fc71a33ed",
   "specification_version": 1,
   "topics": [
     {

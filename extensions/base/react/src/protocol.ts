@@ -64,6 +64,7 @@ const KIND = {
   Orientation: 'orientation',
   Position: 'number',
   Breakpoint: 'number',
+  Alternate: 'flag',
   // Range
   Minimum: 'number',
   Maximum: 'number',
