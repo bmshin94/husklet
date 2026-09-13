@@ -1248,7 +1248,7 @@ mod focus_ownership_tests {
             let overview = gtk::Label::new(Some("overview"));
             Tabs::new(&tw).add("overview", None, &overview, false);
             let page = gtk::Label::new(Some("pinned"));
-            let tab = Tabs::new(&tw).add_persisted("notes", None, &page, true, true);
+            let tab = Tabs::new(&tw).add_with_persistence("notes", None, &page, true, true, true);
             let entries = tw.entries.borrow();
             let entry = entries.iter().find(|entry| entry.name == tab).unwrap();
             assert!(entry.pinned);
@@ -1341,7 +1341,7 @@ mod focus_ownership_tests {
             let workspace = WorkspaceConfig::new("focus-tab-test", "alpine:3.20", hl_ws::Arch::Amd64);
             let tw = Window::bench(&workspace);
             let overview = gtk::Label::new(Some("overview"));
-            let overview_tab = Tabs::new(&tw).add_persisted("Workspace", None, &overview, false, true);
+            let overview_tab = Tabs::new(&tw).add_with_persistence("Workspace", None, &overview, false, true, true);
             let shell = gtk::Label::new(Some("shell"));
             let shell_tab = Tabs::new(&tw).add("shell", None, &shell, true);
             assert_eq!(tw.stack.visible_child_name().as_deref(), Some(shell_tab.as_str()));

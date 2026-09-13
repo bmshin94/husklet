@@ -1807,6 +1807,7 @@ export interface WorkspaceApi {
         openTab(title: string): Promise<string>;
         /** Open at most one tab for this installation and durable retry token. */
         openTabOnce(token: string, title: string): Promise<TerminalOpenTabOnceResult>;
+        /** Pin only a tab created by this exact extension installation; user and replacement tabs are refused. */
         pinTab(tab: string, pinned?: boolean): Promise<void>;
         /** Select a tab, including a surface-only tab that has no terminal pane to focus. */
         focusTab(tab: string): Promise<void>;

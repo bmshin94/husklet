@@ -1496,7 +1496,10 @@ export function workspace(session, { signal } = {}) {
                 const exactJob = exactAcquisitionJob(job);
                 return exactAcquisitionStatus(exactJob, expect(await session.call('extension_acquisition_status', { job: exactJob }), 'extension_acquisition'));
             },
-            cancelAcquisition: (job, revision) => done('extension_acquisition_cancel', { job: exactAcquisitionJob(job), revision: exactAcquisitionRevision(revision) }),
+            cancelAcquisition: (job, revision) => done('extension_acquisition_cancel', {
+                job: exactAcquisitionJob(job),
+                revision: exactAcquisitionRevision(revision),
+            }),
             install: async (job, revision, imageDigest, granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }, credentials = { read: [], write: [], expose_to_execution: [] }) => expect(await session.call('extension_install', {
                 job: exactAcquisitionJob(job),
                 revision: exactAcquisitionRevision(revision),
@@ -3282,9 +3285,7 @@ export function workspace(session, { signal } = {}) {
                         }
                     }
                     catch (error) {
-                        if (!(stopped.signal.aborted &&
-                            error instanceof Error &&
-                            error.name === 'AbortError')) {
+                        if (!(stopped.signal.aborted && error instanceof Error && error.name === 'AbortError')) {
                             throw error;
                         }
                     }
@@ -3367,9 +3368,7 @@ export function workspace(session, { signal } = {}) {
                         }
                     }
                     catch (error) {
-                        if (!(stopped.signal.aborted &&
-                            error instanceof Error &&
-                            error.name === 'AbortError')) {
+                        if (!(stopped.signal.aborted && error instanceof Error && error.name === 'AbortError')) {
                             failure ??= error;
                         }
                     }
