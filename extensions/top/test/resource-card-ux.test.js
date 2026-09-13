@@ -189,7 +189,8 @@ test('resource inspection actions become explicit compact close actions', async 
   invoke(imageStage, 'Inspect');
   await settled();
   assert.ok(labelled(imageStage, 'Image summary'));
-  assert.deepEqual(property(imageStage, 'Hide details', 'Variant'), { Variant: 'Filled' });
+  assert.deepEqual(property(imageStage, 'Hide details', 'Variant'), { Variant: 'Outline' });
+  assert.deepEqual(property(imageStage, 'Hide details', 'Tone'), { Tone: 'Neutral' });
   assert.equal(tag(imageStage, 'Hide details'), 'InlineButton');
   invoke(imageStage, 'Hide details');
   await settled();
@@ -211,7 +212,8 @@ test('resource inspection actions become explicit compact close actions', async 
   invoke(volumeStage, 'Inspect');
   await settled();
   assert.ok(labelled(volumeStage, 'Volume details'));
-  assert.deepEqual(property(volumeStage, 'Hide details', 'Variant'), { Variant: 'Filled' });
+  assert.deepEqual(property(volumeStage, 'Hide details', 'Variant'), { Variant: 'Outline' });
+  assert.deepEqual(property(volumeStage, 'Hide details', 'Tone'), { Tone: 'Neutral' });
   invoke(volumeStage, 'Hide details');
   await settled();
   assert.equal(currentLabels(volumeStage).includes('Volume details'), false);
@@ -249,7 +251,8 @@ test('resource inspection actions become explicit compact close actions', async 
   invoke(networkStage, 'Manage connections');
   await settled();
   assert.ok(labelled(networkStage, 'Network details'));
-  assert.deepEqual(property(networkStage, 'Hide connections', 'Variant'), { Variant: 'Filled' });
+  assert.deepEqual(property(networkStage, 'Hide connections', 'Variant'), { Variant: 'Outline' });
+  assert.deepEqual(property(networkStage, 'Hide connections', 'Tone'), { Tone: 'Neutral' });
   assert.equal(tag(networkStage, 'Hide connections'), 'InlineButton');
   invoke(networkStage, 'Hide connections');
   await settled();

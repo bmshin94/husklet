@@ -335,8 +335,8 @@ export function Images({
                           ? 'Retry inspect'
                           : 'Hide details'
                   }
-                  variant={inspection.id === item.id ? 'filled' : 'outline'}
-                  tone={inspection.id === item.id ? 'accent' : 'neutral'}
+                  variant="outline"
+                  tone="neutral"
                   enabled={!busy && inspection.state !== 'loading'}
                   onInvoke={() => void toggleInspection(item)}
                 />

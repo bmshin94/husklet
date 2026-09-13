@@ -289,8 +289,8 @@ export function Executions({
                 <>
                   <InlineButton
                     label={selected === item.id ? 'Hide details' : 'Details'}
-                    variant="filled"
-                    tone="accent"
+                    variant="outline"
+                    tone="neutral"
                     enabled={!busy}
                     onInvoke={() =>
                       selected === item.id ? setSelected('') : void inspect(item.id)

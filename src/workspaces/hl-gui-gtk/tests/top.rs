@@ -16,10 +16,10 @@ mod unix {
         NetworkEndpointInventory, NetworkInventory, NetworkKind, NetworkSummary,
     };
     use hl_extension::{
-        codec, Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
-        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PaneProvider, PreferenceValue,
+        Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
+        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PROTOCOL, PaneProvider, PreferenceValue,
         RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire, WorkspaceConfiguration,
-        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, PROTOCOL,
+        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, codec,
     };
     use hl_gui::{Renderer as _, SourceMutation, Theme, Tree};
     use hl_gui_gtk::Surface;
@@ -408,6 +408,12 @@ mod unix {
                     let action = find_button(&card, label);
                     assert_inline_action(&action, width_name, &format!("container {label}"));
                 }
+                assert_secondary_resource_toggle(
+                    &window,
+                    &root,
+                    &find_button(&card, "Details"),
+                    &format!("{width_name} container inspection"),
+                );
                 let secondary = find_expander(&card, "More actions");
                 assert!(secondary.has_css_class("variant-outline"));
                 assert_eq!(
@@ -695,6 +701,7 @@ mod unix {
                 assert_eq!(refresh.icon_name().as_deref(), Some("view-refresh-symbolic"));
                 assert_eq!(refresh.accessible_role(), gtk::AccessibleRole::Button);
                 assert_inline_action(&manage, width_name, "network management");
+                assert_secondary_resource_toggle(&window, &root, &manage, &format!("{width_name} network inspection"));
                 let network_card = widgets_with_class(&root, "hl-card")
                     .into_iter()
                     .next()
@@ -811,6 +818,7 @@ mod unix {
                 let inspect = find_button(&card, "Inspect");
                 assert!(inspect.has_css_class("variant-outline"));
                 assert_inline_action(&inspect, width_name, "volume inspection");
+                assert_secondary_resource_toggle(&window, &root, &inspect, &format!("{width_name} volume inspection"));
                 let danger = find_expander(&card, "Danger zone");
                 assert!(danger.has_css_class("variant-outline"));
                 assert_eq!(danger.height(), 28, "{width_name} volume danger disclosure height");
@@ -875,6 +883,7 @@ mod unix {
                 let inspect = find_button(&card, "Inspect");
                 assert!(inspect.has_css_class("variant-outline"));
                 assert_inline_action(&inspect, width_name, "image inspection");
+                assert_secondary_resource_toggle(&window, &root, &inspect, &format!("{width_name} image inspection"));
                 let danger = find_expander(&card, "Danger zone");
                 assert!(danger.has_css_class("variant-outline"));
                 assert_eq!(
@@ -996,6 +1005,12 @@ mod unix {
                     let action = find_button(&card, label);
                     assert_inline_action(&action, width_name, &format!("execution {label}"));
                 }
+                assert_secondary_resource_toggle(
+                    &window,
+                    &root,
+                    &find_button(&card, "Details"),
+                    &format!("{width_name} execution inspection"),
+                );
                 assert!(
                     find_button(&card, "Details").grab_focus(),
                     "execution Details action is keyboard reachable"
@@ -2053,12 +2068,19 @@ mod unix {
                     width_name,
                     "hide network connections",
                 );
+                assert_secondary_resource_toggle(
+                    &window,
+                    &expanded_root,
+                    &find_button(&expanded_root, "Hide connections"),
+                    &format!("{width_name} expanded network inspection"),
+                );
                 capture(&window, &format!("expanded-networks-{width_name}"), width, 800);
             }
             assert!(has_label(&expanded_root, "Connected containers · 0"));
             assert!(has_label(&expanded_root, "Hide connections"));
             let hide_connections = find_button(&expanded_root, "Hide connections");
-            assert!(hide_connections.has_css_class("variant-filled"));
+            assert!(hide_connections.has_css_class("variant-outline"));
+            assert!(hide_connections.has_css_class("tone-neutral"));
             assert!(!find_expander(&expanded_root, "Danger zone").is_expanded());
             assert_label_order(
                 &expanded_root,
@@ -2434,6 +2456,12 @@ mod unix {
                 window.present();
                 settle_toolkit();
                 assert_contained(&image_root, &format!("image-detail/{width_name}"));
+                assert_secondary_resource_toggle(
+                    &window,
+                    &image_root,
+                    &find_button(&image_root, "Hide details"),
+                    &format!("{width_name} expanded image inspection"),
+                );
                 capture(&window, &format!("image-detail-{width_name}"), width, 800);
             }
             technical.set_expanded(true);
@@ -2443,7 +2471,6 @@ mod unix {
                 &format!("Immutable image ID · sha256:{}", "b".repeat(64))
             ));
             technical.set_expanded(false);
-            assert!(find_button(&image_root, "Hide details").has_css_class("variant-filled"));
             invoke_and_apply_until_button(
                 &mut wire,
                 &mut tree,
@@ -2527,9 +2554,14 @@ mod unix {
                 detail_root.allocate(width, 1_600, -1, None);
                 settle_frame();
                 assert_contained(&detail_root, &format!("volume-detail/{width_name}"));
+                assert_secondary_resource_toggle(
+                    &window,
+                    &detail_root,
+                    &find_button(&detail_root, "Hide details"),
+                    &format!("{width_name} expanded volume inspection"),
+                );
                 capture(&window, &format!("volume-detail-{width_name}"), width, 800);
             }
-            assert!(find_button(&detail_root, "Hide details").has_css_class("variant-filled"));
             invoke_and_apply_until_button(
                 &mut wire,
                 &mut tree,
@@ -4352,6 +4384,80 @@ mod unix {
         );
     }
 
+    fn assert_secondary_resource_toggle(window: &gtk::Window, root: &gtk::Widget, action: &gtk::Button, case: &str) {
+        assert!(action.has_css_class("variant-outline"), "{case} is not outlined");
+        assert!(action.has_css_class("tone-neutral"), "{case} retained semantic accent");
+        gtk::prelude::RootExt::set_focus(window, None::<&gtk::Widget>);
+        action.unset_state_flags(gtk::StateFlags::FOCUSED | gtk::StateFlags::FOCUS_VISIBLE);
+        settle_toolkit();
+        let chrome = widgets_with_class(action.upcast_ref(), "hl-inline-button-chrome")
+            .into_iter()
+            .next()
+            .expect("resource toggle owns visible chrome");
+        let chrome_bounds = chrome
+            .compute_bounds(root)
+            .expect("resource toggle chrome belongs to Top root");
+        assert_eq!(chrome_bounds.height(), 28.0, "{case} visible chrome is not compact");
+        assert!(action.height() >= 44, "{case} lost its accessible interaction target");
+        assert_inline_outline_pixels(window, action, false, &format!("{case} at rest"));
+        assert!(action.is_focusable(), "{case} is not keyboard reachable");
+        if !action.grab_focus() {
+            return;
+        }
+        chrome.add_css_class("hl-focus-visible-proof");
+        settle_toolkit();
+        assert_inline_outline_pixels(window, action, true, &format!("{case} focused"));
+        chrome.remove_css_class("hl-focus-visible-proof");
+        action.unset_state_flags(gtk::StateFlags::FOCUSED | gtk::StateFlags::FOCUS_VISIBLE);
+        gtk::prelude::RootExt::set_focus(window, None::<&gtk::Widget>);
+        settle_toolkit();
+    }
+
+    fn assert_inline_outline_pixels(window: &gtk::Window, action: &gtk::Button, focused: bool, case: &str) {
+        let texture = stable_texture(window, window.width(), window.height());
+        let stride = texture.width() as usize * 4;
+        let mut pixels = vec![0_u8; stride * texture.height() as usize];
+        texture.download(&mut pixels, stride);
+        let chrome = widgets_with_class(action.upcast_ref(), "hl-inline-button-chrome")
+            .into_iter()
+            .next()
+            .expect("inline outline owns visible chrome");
+        let bounds = chrome
+            .compute_bounds(window.upcast_ref::<gtk::Widget>())
+            .expect("inline outline belongs to Top window");
+        let x0 = bounds.x().round() as usize;
+        let y0 = bounds.y().round() as usize;
+        let x1 = (bounds.x() + bounds.width()).round() as usize;
+        let y1 = (bounds.y() + bounds.height()).round() as usize;
+        let close = |x: usize, y: usize, expected: [u8; 3]| {
+            let actual = &pixels[y * stride + x * 4..y * stride + x * 4 + 3];
+            [expected, [expected[2], expected[1], expected[0]]]
+                .into_iter()
+                .any(|candidate| {
+                    actual
+                        .iter()
+                        .zip(candidate)
+                        .all(|(actual, expected)| actual.abs_diff(expected) <= 12)
+                })
+        };
+        let boundary = (y0.saturating_sub(2)..=y1 + 1)
+            .flat_map(|y| (x0.saturating_sub(2)..=x1 + 1).map(move |x| (x, y)))
+            .collect::<Vec<_>>();
+        let accent = boundary
+            .iter()
+            .filter(|(x, y)| close(*x, *y, [0xf7, 0x9d, 0x55]))
+            .count();
+        let minimum = ((bounds.width() + bounds.height()) / 3.0) as usize;
+        if focused {
+            assert!(
+                accent >= minimum,
+                "{case} lacks its singular accent focus perimeter: {accent}"
+            );
+        } else {
+            assert_eq!(accent, 0, "{case} retains accent pixels at rest");
+        }
+    }
+
     fn assert_standard_action(button: &gtk::Button, width: &str, purpose: &str, expected_chrome: i32) {
         assert!(
             button.has_css_class("hl-button"),
@@ -5261,7 +5367,11 @@ mod unix {
         let stride = width * 4;
         let mut pixels = vec![0_u8; stride * texture.height() as usize];
         texture.download(&mut pixels, stride);
-        let chrome = action.child().expect("outline action owns visible chrome");
+        let chrome = widgets_with_class(action.upcast_ref(), "hl-inline-button-chrome")
+            .into_iter()
+            .next()
+            .or_else(|| action.child())
+            .expect("outline action owns visible chrome");
         let bounds = chrome
             .compute_bounds(window.upcast_ref::<gtk::Widget>())
             .expect("outline action chrome belongs to the Top window");

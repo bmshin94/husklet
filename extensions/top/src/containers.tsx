@@ -233,8 +233,8 @@ export function Containers({
                                 : 'Hide details'
                             : 'Details'
                         }
-                        variant="filled"
-                        tone="accent"
+                        variant="outline"
+                        tone="neutral"
                         enabled={busy === ''}
                         onInvoke={() => toggleDetails(item)}
                       />

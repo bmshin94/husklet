@@ -6924,7 +6924,8 @@ test('container controls follow the real daemon lifecycle states', () => {
   assert.equal(taggedProperty(stage, 'More actions', 'Expander', 'Variant')?.Variant, 'Outline');
   assert.equal(taggedProperty(stage, 'More actions', 'Expander', 'Width')?.Length, 'Content');
   assert.equal(taggedProperty(stage, 'More actions', 'Expander', 'Justify')?.Align, 'Center');
-  assert.equal(taggedProperty(stage, 'Details', 'InlineButton', 'Variant')?.Variant, 'Filled');
+  assert.equal(taggedProperty(stage, 'Details', 'InlineButton', 'Variant')?.Variant, 'Outline');
+  assert.equal(taggedProperty(stage, 'Details', 'InlineButton', 'Tone')?.Tone, 'Neutral');
   assert.equal(
     ancestorTags(stage, 'Details').includes('CardActions'),
     false,

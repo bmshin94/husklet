@@ -421,8 +421,8 @@ export function Networks({
                                     ? 'Retry managing connections'
                                     : 'Hide connections'
                             }
-                            variant={inspection.id === id ? 'filled' : 'outline'}
-                            tone={inspection.id === id ? 'accent' : 'neutral'}
+                            variant="outline"
+                            tone="neutral"
                             enabled={inspection.state !== 'loading'}
                             onInvoke={() => toggleInspection(network)}
                           />

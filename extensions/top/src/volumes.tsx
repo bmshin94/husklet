@@ -229,8 +229,8 @@ export function Volumes({
                               ? 'Retry inspect'
                               : 'Hide details'
                       }
-                      variant={inspection.name === volume.name ? 'filled' : 'outline'}
-                      tone={inspection.name === volume.name ? 'accent' : 'neutral'}
+                      variant="outline"
+                      tone="neutral"
                       enabled={inspection.state !== 'loading'}
                       onInvoke={() => void toggleInspection(volume)}
                     />
