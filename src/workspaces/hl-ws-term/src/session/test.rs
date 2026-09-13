@@ -4,6 +4,7 @@ fn sample_session() -> Session {
     Session {
         tabs: vec![
             SessionTab {
+                id: hl_rpc::PeerName::new("p1").unwrap(),
                 title: "shell 1".to_string(),
                 pinned: true,
                 origin: TabOrigin::User,
@@ -14,6 +15,7 @@ fn sample_session() -> Session {
                 }),
             },
             SessionTab {
+                id: hl_rpc::PeerName::new("p2").unwrap(),
                 title: "build".to_string(),
                 pinned: false,
                 origin: TabOrigin::User,
@@ -82,7 +84,7 @@ fn extension_origin_roundtrips_as_bounded_private_authority() {
         installation: hl_rpc::InstallationIdentity::new("0123456789abcdef0123456789abcdef").unwrap(),
     };
     let text = session.serialize();
-    assert!(text.contains("tab extension database.viewer 0123456789abcdef0123456789abcdef pinned"));
+    assert!(text.contains("tab p1 extension database.viewer 0123456789abcdef0123456789abcdef pinned"));
     assert_eq!(Session::parse(&text).unwrap(), session);
 
     let malformed = text.replace("0123456789abcdef0123456789abcdef", "0123456789abcdef0123456789abcdeg");
@@ -92,9 +94,23 @@ fn extension_origin_roundtrips_as_bounded_private_authority() {
 }
 
 #[test]
+fn stable_tab_id_is_required_unique_and_bounded() {
+    let session = sample_session();
+    let duplicate = session.serialize().replace("tab p2 ", "tab p1 ");
+    assert!(Session::parse(&duplicate).is_err());
+    let missing = session.serialize().replace("tab p1 user", "tab user");
+    assert!(Session::parse(&missing).is_err());
+    let overlong = session
+        .serialize()
+        .replace("tab p1 ", &format!("tab {} ", "a".repeat(hl_rpc::PeerName::LIMIT + 1)));
+    assert!(Session::parse(&overlong).is_err());
+}
+
+#[test]
 fn escaping_survives_spaces_and_specials() {
     let s = Session {
         tabs: vec![SessionTab {
+            id: hl_rpc::PeerName::new("p1").unwrap(),
             title: "a b%c".to_string(),
             pinned: false,
             origin: TabOrigin::User,
@@ -173,6 +189,7 @@ fn successful_layout_commit_prunes_only_unreferenced_histories() {
     std::fs::write(directory.join("unrelated"), "keep").unwrap();
     let session = Session {
         tabs: vec![SessionTab {
+            id: hl_rpc::PeerName::new("p1").unwrap(),
             title: "shell".into(),
             pinned: false,
             origin: TabOrigin::User,
@@ -273,6 +290,7 @@ fn cwd_uri_decoding() {
 fn a_surface_pane_survives_the_layout_round_trip_beside_a_shell() {
     let session = Session {
         tabs: vec![SessionTab {
+            id: hl_rpc::PeerName::new("p1").unwrap(),
             title: "shell 1".to_string(),
             pinned: true,
             origin: TabOrigin::User,

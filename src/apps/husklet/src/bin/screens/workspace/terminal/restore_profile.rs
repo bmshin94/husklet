@@ -28,6 +28,7 @@ fn selected_tab_and_focused_pane_survive_a_real_widget_round_trip() {
             let session = Session {
                 tabs: vec![
                     SessionTab {
+                        id: hl_rpc::PeerName::new("p1").unwrap(),
                         title: "source".into(),
                         pinned: false,
                         origin: hl_ws_term::TabOrigin::User,
@@ -37,6 +38,7 @@ fn selected_tab_and_focused_pane_survive_a_real_widget_round_trip() {
                         }),
                     },
                     SessionTab {
+                        id: hl_rpc::PeerName::new("p2").unwrap(),
                         title: "build".into(),
                         pinned: false,
                         origin: hl_ws_term::TabOrigin::User,
@@ -54,6 +56,7 @@ fn selected_tab_and_focused_pane_survive_a_real_widget_round_trip() {
                         },
                     },
                     SessionTab {
+                        id: hl_rpc::PeerName::new("p3").unwrap(),
                         title: "tests".into(),
                         pinned: false,
                         origin: hl_ws_term::TabOrigin::User,
@@ -232,6 +235,7 @@ fn characterize(panes: usize) {
     }
     let session = Session {
         tabs: vec![SessionTab {
+            id: hl_rpc::PeerName::new("p1").unwrap(),
             title: format!("{panes} panes"),
             pinned: false,
             origin: hl_ws_term::TabOrigin::User,

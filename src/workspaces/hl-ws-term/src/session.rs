@@ -139,6 +139,8 @@ impl PaneNode {
 /// One tab: a title + its pane tree.
 #[derive(Clone, PartialEq, Debug)]
 pub struct SessionTab {
+    /// Stable public identity retained across workspace-host restarts.
+    pub id: hl_rpc::PeerName,
     pub title: String,
     /// Whether the tab is protected from closing until explicitly unpinned.
     pub pinned: bool,
@@ -189,7 +191,7 @@ impl Session {
     /// Serialize to the prefix-notation text format.
     #[must_use]
     pub fn serialize(&self) -> String {
-        let mut out = String::from("# hl session layout\nversion 5\nview ");
+        let mut out = String::from("# hl session layout\nversion 6\nview ");
         let selected = self
             .selected_tab
             .map_or_else(|| "-".to_owned(), |index| index.to_string());
@@ -205,6 +207,8 @@ impl Session {
         out.push('\n');
         for tab in &self.tabs {
             out.push_str("tab ");
+            out.push_str(tab.id.as_str());
+            out.push(' ');
             match &tab.origin {
                 TabOrigin::User => out.push_str("user "),
                 TabOrigin::Extension { name, installation } => {
@@ -249,7 +253,7 @@ impl Session {
         let (selected_tab, focused_pane, window_size) = match version {
             "1" => (None, None, None),
             "2" if pinned_v2 => (None, None, None),
-            "2" | "3" | "4" | "5" => {
+            "2" | "3" | "4" | "5" | "6" => {
                 if layout.next() != Some("view") {
                     return Err(Layout::invalid("layout is missing its view state"));
                 }
@@ -270,7 +274,7 @@ impl Session {
                         .next()
                         .ok_or_else(|| Layout::invalid("view state is missing its focused pane"))?,
                 );
-                let window_size = if matches!(version, "3" | "4" | "5") {
+                let window_size = if matches!(version, "3" | "4" | "5" | "6") {
                     if layout.next() != Some("window") {
                         return Err(Layout::invalid("version 3 layout is missing its window size"));
                     }
@@ -310,7 +314,17 @@ impl Session {
             if layout.next() != Some("tab") {
                 return Err(Layout::invalid("expected `tab`"));
             }
-            let origin = if version == "5" {
+            let id = if version == "6" {
+                hl_rpc::PeerName::new(
+                    layout
+                        .next()
+                        .ok_or_else(|| Layout::invalid("tab is missing its stable identity"))?,
+                )
+                .map_err(|_| Layout::invalid("tab has an invalid stable identity"))?
+            } else {
+                hl_rpc::PeerName::new(format!("p{}", tabs.len() + 1)).expect("generated legacy tab identity")
+            };
+            let origin = if matches!(version, "5" | "6") {
                 match layout.next() {
                     Some("user") => TabOrigin::User,
                     Some("extension") => {
@@ -333,7 +347,7 @@ impl Session {
             } else {
                 TabOrigin::User
             };
-            let pinned = if matches!(version, "4" | "5") || pinned_v2 {
+            let pinned = if matches!(version, "4" | "5" | "6") || pinned_v2 {
                 match layout.next() {
                     Some("pinned") => true,
                     Some("loose") => false,
@@ -348,11 +362,16 @@ impl Session {
                 .ok_or_else(|| Layout::invalid("tab is missing its title"))?;
             let root = layout.node()?;
             tabs.push(SessionTab {
+                id,
                 title,
                 pinned,
                 origin,
                 root,
             });
+        }
+        let mut identities = std::collections::HashSet::new();
+        if tabs.iter().any(|tab| !identities.insert(tab.id.clone())) {
+            return Err(Layout::invalid("two tabs share one stable identity"));
         }
         if selected_tab.is_some_and(|index| index >= tabs.len()) {
             return Err(Layout::invalid("selected tab is outside the persisted tab list"));

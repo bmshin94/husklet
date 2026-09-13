@@ -606,15 +606,22 @@ impl<'a> Tabs<'a> {
         self.add_with_persistence(title, icon, content, closable, true, false)
     }
 
-    pub(crate) fn add_persisted(
+    pub(crate) fn add_persisted_as(
         &self,
+        identity: &hl_rpc::PeerName,
         title: &str,
         icon: Option<&str>,
         content: &impl IsA<gtk::Widget>,
         closable: bool,
         pinned: bool,
-    ) -> String {
-        self.add_with_persistence(title, icon, content, closable, true, pinned)
+    ) -> Result<String, hl_extension::HostError> {
+        if self.window.stack.child_by_name(identity.as_str()).is_some() {
+            return Err(hl_extension::HostError::Conflict(format!(
+                "tab identity {} is already live",
+                identity.as_str()
+            )));
+        }
+        Ok(self.add_with_identity(identity.as_str(), title, icon, content, closable, true, pinned))
     }
 
     fn add_with_persistence(
@@ -627,9 +634,29 @@ impl<'a> Tabs<'a> {
         pinned: bool,
     ) -> String {
         let tw = self.window;
-        let id = tw.counter.get();
-        tw.counter.set(id + 1);
-        let name = format!("p{id}");
+        let name = loop {
+            let id = tw.counter.get();
+            tw.counter.set(id + 1);
+            let candidate = format!("p{id}");
+            if tw.stack.child_by_name(&candidate).is_none() {
+                break candidate;
+            }
+        };
+        self.add_with_identity(&name, title, icon, content, closable, persisted, pinned)
+    }
+
+    fn add_with_identity(
+        &self,
+        name: &str,
+        title: &str,
+        icon: Option<&str>,
+        content: &impl IsA<gtk::Widget>,
+        closable: bool,
+        persisted: bool,
+        pinned: bool,
+    ) -> String {
+        let tw = self.window;
+        let name = name.to_owned();
         tw.stack.add_named(content, Some(&name));
 
         let bx = gtk::Box::new(gtk::Orientation::Horizontal, 0);

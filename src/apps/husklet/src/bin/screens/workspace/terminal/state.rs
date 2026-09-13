@@ -291,6 +291,8 @@ impl<'a> WindowSession<'a> {
                     .find(|entry| entry.name == page_name)
                     .is_some_and(|entry| entry.pinned);
                 tabs.push(SessionTab {
+                    id: hl_rpc::PeerName::new(page_name.clone())
+                        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
                     title,
                     pinned,
                     origin,
@@ -526,7 +528,9 @@ impl WindowSession<'_> {
             } else {
                 tab.title.clone()
             };
-            let name = Tabs::new(tw).add_persisted(&title, None, &paneroot, true, tab.pinned);
+            let name = Tabs::new(tw)
+                .add_persisted_as(&tab.id, &title, None, &paneroot, true, tab.pinned)
+                .expect("persisted session identities were validated before restore");
             let _ = Tabs::new(tw).attribute(&name, tab.origin.clone());
             tw.pids.borrow_mut().entry(name.clone()).or_default().extend(pids);
             restored.push((name, first));

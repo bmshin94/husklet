@@ -9,6 +9,7 @@ use hl_ws_term::{Attrs, Vt};
 fn nonascii_title_and_cwd_roundtrip() {
     let s = Session {
         tabs: vec![SessionTab {
+            id: hl_rpc::PeerName::new("p1").unwrap(),
             title: "café ☕".to_string(),
             pinned: false,
             origin: hl_ws_term::TabOrigin::User,
