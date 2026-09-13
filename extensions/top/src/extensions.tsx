@@ -626,7 +626,6 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
       setCatalogueState('ready');
     } catch (cause) {
       if (catalogueEpoch.current !== epoch) return;
-      setCatalogue(null);
       setCatalogueError(message(cause));
       setCatalogueState('error');
     }
@@ -1023,6 +1022,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
     ...emptyFilesystemGrant(),
   };
   const catalogueEntries = React.useMemo(() => catalogue?.entries ?? [], [catalogue]);
+  const catalogueAuthoritative = catalogueState === 'ready';
   const catalogueCategories = React.useMemo(
     () => [...new Set(catalogueEntries.flatMap((entry) => entry.categories ?? []))].sort(),
     [catalogueEntries],
@@ -1321,7 +1321,9 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                     <Row gap={1} width="fill" wrap>
                       {renderedCatalogueEntries.map((entry) => {
                         const compatibility = catalogueCompatibility(entry, workspaceArchitecture);
-                        const trust = catalogueTrust(entry);
+                        const trust = catalogueTrust(
+                          catalogueAuthoritative ? entry : { ...entry, publisher_verified: false },
+                        );
                         const installedExtension = installed.find(
                           (extension) => extension.name === entry.id,
                         );
@@ -1367,6 +1369,9 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                   }
                                 />
                                 <Text label={`Publisher · ${entry.publisher}`} color="text-dim" />
+                                {!catalogueAuthoritative ? (
+                                  <Badge label="Cached · refresh required" tone="warning" />
+                                ) : null}
                                 <Text
                                   label={`Category · ${entry.categories?.[0] ?? 'Other'}`}
                                   color="text-dim"
@@ -1433,7 +1438,11 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                     size="small"
                                     variant="filled"
                                     tone="accent"
-                                    enabled={!busy && compatibility.compatible !== false}
+                                    enabled={
+                                      catalogueAuthoritative &&
+                                      !busy &&
+                                      compatibility.compatible !== false
+                                    }
                                     onInvoke={() => inspect(entry.reference, entry)}
                                   />
                                 ) : !installedExtension ? (
@@ -1443,7 +1452,11 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                     size="small"
                                     variant="outline"
                                     tone="neutral"
-                                    enabled={!busy && compatibility.compatible !== false}
+                                    enabled={
+                                      catalogueAuthoritative &&
+                                      !busy &&
+                                      compatibility.compatible !== false
+                                    }
                                     onInvoke={() => inspect(entry.reference, entry)}
                                   />
                                 ) : (
@@ -1454,7 +1467,11 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                       tooltip={`Inspect ${entry.reference} again and compare its immutable digest`}
                                       size="small"
                                       variant="outline"
-                                      enabled={!busy && compatibility.compatible !== false}
+                                      enabled={
+                                        catalogueAuthoritative &&
+                                        !busy &&
+                                        compatibility.compatible !== false
+                                      }
                                       onInvoke={() => inspect(entry.reference, entry)}
                                     />
                                   </>

@@ -2331,6 +2331,39 @@ test('extension discovery can retry a failed catalogue without leaving the page'
   assert.ok(labelled(stage, 'Review access'));
 });
 
+test('failed catalogue refresh keeps stale rows browseable but strips install and trust authority', async () => {
+  let fail = false;
+  const extensions = {
+    list: async () => [],
+    catalogue: async () => {
+      if (fail) throw new Error('catalogue refresh is offline');
+      return firstPartyCatalogue();
+    },
+  };
+  const props = {
+    api: {
+      extensions,
+      watchExtensions: async () => () => {},
+    },
+  };
+  const stage = host();
+  stage.render(h(Extensions, props));
+  await settled();
+  selectExtensionMode(stage, 'Discover');
+  await settled();
+  assert.equal(enabledStates(stage, 'Review access').at(-1), true);
+
+  fail = true;
+  stage.render(h(Extensions, { ...props, api: { ...props.api, extensions: { ...extensions } } }));
+  await settled();
+  await settled();
+
+  assert.ok(labelled(stage, 'Cached · refresh required'));
+  assert.ok(labelled(stage, 'catalogue refresh is offline'));
+  assert.equal(enabledStates(stage, 'Review access').at(-1), false);
+  assert.ok(labelled(stage, 'Publisher · Husklet'));
+});
+
 test('extension discovery keeps the newest result when catalogue retries finish out of order', async () => {
   let attempts = 0;
   let rejectSlowRetry;
