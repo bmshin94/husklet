@@ -308,20 +308,39 @@ fn first_party_catalogue(reference: Option<&str>, architecture: &str) -> Vec<Ext
         "ghcr.io/husklet/husklet/extension-storybook:",
         env!("CARGO_PKG_VERSION")
     ));
+    let publisher_verified = official_storybook_reference(reference);
     std::iter::once(ExtensionCatalogueEntry {
         id: "storybook".into(),
         title: "Component playground".into(),
         description: "Explore extension components, large tables, terminals, diffs, and metrics.".into(),
         version: env!("CARGO_PKG_VERSION").into(),
         reference: reference.into(),
-        publisher: "Husklet".into(),
-        source: "husklet:first-party/storybook".into(),
+        publisher: if publisher_verified {
+            "Husklet"
+        } else {
+            "Custom registry"
+        }
+        .into(),
+        source: if publisher_verified {
+            "husklet:first-party/storybook"
+        } else {
+            "husklet:configured/storybook"
+        }
+        .into(),
         categories: vec!["Developer tools".into(), "Design".into()],
-        publisher_verified: true,
+        publisher_verified,
         protocol: hl_extension::PROTOCOL,
         architectures: vec![architecture.into()],
     })
     .collect()
+}
+
+fn official_storybook_reference(reference: &str) -> bool {
+    reference
+        .parse::<hl_image_reference::ImageReference>()
+        .is_ok_and(|reference| {
+            reference.registry() == "ghcr.io" && reference.repository() == "husklet/husklet/extension-storybook"
+        })
 }
 
 fn acquisition_status(job: String, snapshot: AcquisitionSnapshot) -> ExtensionAcquisitionStatus {
@@ -545,6 +564,9 @@ mod tests {
         assert_eq!(entries[0].protocol, hl_extension::PROTOCOL);
         assert_eq!(entries[0].architectures, ["arm64"]);
         assert_eq!(entries[0].reference, "registry.example/husklet/storybook:4");
+        assert!(!entries[0].publisher_verified);
+        assert_eq!(entries[0].publisher, "Custom registry");
+        assert_eq!(entries[0].source, "husklet:configured/storybook");
         assert_eq!(
             first_party_catalogue(None, "amd64")[0].reference,
             format!(
@@ -552,6 +574,25 @@ mod tests {
                 env!("CARGO_PKG_VERSION")
             )
         );
+        for reference in [
+            "ghcr.io/husklet/husklet/extension-storybook:0.4.0".to_owned(),
+            format!("ghcr.io/husklet/husklet/extension-storybook@sha256:{}", "a".repeat(64)),
+        ] {
+            let catalogue = first_party_catalogue(Some(&reference), "amd64");
+            let entry = &catalogue[0];
+            assert!(entry.publisher_verified, "official reference {reference}");
+            assert_eq!(entry.publisher, "Husklet");
+        }
+        for reference in [
+            "ghcr.io/husklet/husklet/extension-storybook.evil:0.4.0",
+            "ghcr.io/attacker/extension-storybook:0.4.0",
+            "ghcr.io/husklet/husklet/extension-storybook:0.4.0/forged",
+        ] {
+            assert!(
+                !first_party_catalogue(Some(reference), "amd64")[0].publisher_verified,
+                "lookalike reference {reference}"
+            );
+        }
     }
 
     #[test]
