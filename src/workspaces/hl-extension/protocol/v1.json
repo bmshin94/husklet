@@ -10493,6 +10493,13 @@
                 "schema": {
                   "kind": "string"
                 }
+              },
+              {
+                "name": "refresh",
+                "optional": false,
+                "schema": {
+                  "kind": "boolean"
+                }
               }
             ],
             "kind": "struct"
@@ -14783,7 +14790,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:3fd5259d294bda95",
+  "source_fingerprint": "fnv1a64:53d848d1b3b679b5",
   "specification_version": 1,
   "topics": [
     {

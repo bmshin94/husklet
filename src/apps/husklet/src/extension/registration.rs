@@ -106,7 +106,17 @@ impl Candidate {
         progress: &Sender<Acquisition>,
         cancellation: &Cancellation,
     ) {
-        let result = Self::acquire_inner(workspace, reference, progress, cancellation, false);
+        Self::acquire_cancellable_with_refresh(workspace, reference, progress, cancellation, false);
+    }
+
+    pub(crate) fn acquire_cancellable_with_refresh(
+        workspace: &WorkspaceConfig,
+        reference: &str,
+        progress: &Sender<Acquisition>,
+        cancellation: &Cancellation,
+        refresh: bool,
+    ) {
+        let result = Self::acquire_inner(workspace, reference, progress, cancellation, refresh);
         let event = match result {
             Ok(candidate) => Acquisition::Ready(candidate),
             Err(_) if cancellation.is_cancelled() => Acquisition::Cancelled,

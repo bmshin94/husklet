@@ -16,10 +16,10 @@ mod unix {
         NetworkEndpointInventory, NetworkInventory, NetworkKind, NetworkSummary,
     };
     use hl_extension::{
-        Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
-        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PROTOCOL, PaneProvider, PreferenceValue,
+        codec, Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
+        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PaneProvider, PreferenceValue,
         RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire, WorkspaceConfiguration,
-        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, codec,
+        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, PROTOCOL,
     };
     use hl_gui::{Renderer as _, SourceMutation, Theme, Tree};
     use hl_gui_gtk::Surface;
@@ -2640,8 +2640,12 @@ mod unix {
             surface,
             "Couldn’t inspect extension",
             |request| match request {
-                Request::ExtensionAcquisitionStart { reference: actual } => {
+                Request::ExtensionAcquisitionStart {
+                    reference: actual,
+                    refresh,
+                } => {
                     assert_eq!(actual, reference);
+                    assert!(!refresh, "manual image inspection remains cache-friendly");
                     Reply::ExtensionAcquisitionJob(ExtensionAcquisitionJob {
                         job: "gtk-update".into(),
                     })
@@ -2774,11 +2778,15 @@ mod unix {
             surface,
             "Downloading image · manifest",
             |request| match request {
-                Request::ExtensionAcquisitionStart { reference: actual } => {
+                Request::ExtensionAcquisitionStart {
+                    reference: actual,
+                    refresh,
+                } => {
                     assert_eq!(
                         actual, reference,
                         "Discover update retains its exact catalogue reference"
                     );
+                    assert!(refresh, "catalogue updates must resolve a mutable tag again");
                     Reply::ExtensionAcquisitionJob(ExtensionAcquisitionJob {
                         job: "gtk-update".into(),
                     })

@@ -670,7 +670,9 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
     setAcquisition(null);
     candidateKey.current = '';
     try {
-      const started = await api.extensions.startAcquisition(wanted);
+      const started = await api.extensions.startAcquisition(wanted, {
+        refresh: expected !== null,
+      });
       cancelledJob.current = '';
       let status = await api.extensions.acquisition(started.job);
       while (true) {

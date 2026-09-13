@@ -1224,7 +1224,7 @@ test('workspace patch conflict reloads authority and keeps the partial-save warn
 });
 
 test('extension discovery reviews the first-party Storybook without requiring a registry path', async () => {
-  const references = [];
+  const acquisitions = [];
   const stage = host();
   stage.render(
     h(Extensions, {
@@ -1232,8 +1232,8 @@ test('extension discovery reviews the first-party Storybook without requiring a 
         extensions: {
           list: async () => [],
           catalogue: firstPartyCatalogue,
-          startAcquisition: async (reference) => {
-            references.push(reference);
+          startAcquisition: async (reference, options) => {
+            acquisitions.push({ reference, options });
             return { job: 'storybook-review' };
           },
           acquisition: async () => ({
@@ -1271,7 +1271,9 @@ test('extension discovery reviews the first-party Storybook without requiring a 
   invoke(stage, 'Review access');
   await settled();
   await settled();
-  assert.deepEqual(references, [FIRST_PARTY_REFERENCE]);
+  assert.deepEqual(acquisitions, [
+    { reference: FIRST_PARTY_REFERENCE, options: { refresh: true } },
+  ]);
   assert.equal(fieldValue(stage, 'registry.example/extension:version'), FIRST_PARTY_REFERENCE);
 });
 
@@ -1635,7 +1637,7 @@ test('extension discovery keeps unknown compatibility reviewable and blocks know
 });
 
 test('an installed catalogue extension exposes its update review without retyping a reference', async () => {
-  const references = [];
+  const acquisitions = [];
   let releaseStart;
   const startPending = new Promise((resolve) => {
     releaseStart = resolve;
@@ -1656,8 +1658,8 @@ test('an installed catalogue extension exposes its update review without retypin
             },
           ],
           catalogue: firstPartyCatalogue,
-          startAcquisition: async (reference) => {
-            references.push(reference);
+          startAcquisition: async (reference, options) => {
+            acquisitions.push({ reference, options });
             await startPending;
             return { job: 'storybook-update' };
           },
@@ -1716,11 +1718,15 @@ test('an installed catalogue extension exposes its update review without retypin
 
   invokeInCard(stage, 'Component playground', 'Review update');
   invokeInCard(stage, 'Component playground', 'Review update');
-  assert.deepEqual(references, [FIRST_PARTY_REFERENCE]);
+  assert.deepEqual(acquisitions, [
+    { reference: FIRST_PARTY_REFERENCE, options: { refresh: true } },
+  ]);
   releaseStart();
   await settled();
   await settled();
-  assert.deepEqual(references, [FIRST_PARTY_REFERENCE]);
+  assert.deepEqual(acquisitions, [
+    { reference: FIRST_PARTY_REFERENCE, options: { refresh: true } },
+  ]);
   assert.ok(labelled(stage, `Image changes from ${compactDigest(digest)}; access has been reset.`));
   assert.ok(labelled(stage, 'Update with selected access'));
 });
@@ -2036,7 +2042,7 @@ test('installed management can detect a republished image at the same release ve
   const installedDigest = `sha256:${'a'.repeat(64)}`;
   const candidateDigest = `sha256:${'b'.repeat(64)}`;
   const reference = FIRST_PARTY_REFERENCE;
-  const references = [];
+  const acquisitions = [];
   const stage = host();
   stage.render(
     h(Extensions, {
@@ -2052,8 +2058,8 @@ test('installed management can detect a republished image at the same release ve
             },
           ],
           catalogue: firstPartyCatalogue,
-          startAcquisition: async (reference) => {
-            references.push(reference);
+          startAcquisition: async (reference, options) => {
+            acquisitions.push({ reference, options });
             return { job: 'same-version-image-change' };
           },
           acquisition: async () => ({
@@ -2089,7 +2095,7 @@ test('installed management can detect a republished image at the same release ve
   await settled();
   await settled();
 
-  assert.deepEqual(references, [reference]);
+  assert.deepEqual(acquisitions, [{ reference, options: { refresh: true } }]);
   assert.ok(labelled(stage, 'Review storybook'));
   assert.ok(
     labelled(stage, `Image changes from ${compactDigest(installedDigest)}; access has been reset.`),
@@ -8692,7 +8698,7 @@ function ancestorTags(stage, label) {
   );
   const found = labelled(stage, label)?.SetProp.id;
   const ancestors = [];
-  for (let node = found; parents.has(node);) {
+  for (let node = found; parents.has(node); ) {
     node = parents.get(node);
     ancestors.push(tags.get(node));
   }

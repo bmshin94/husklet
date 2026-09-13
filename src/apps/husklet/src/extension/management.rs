@@ -181,9 +181,9 @@ impl ExtensionStore for ExtensionManagement {
         self.remove_with(name, image_digest, removal)
     }
 
-    fn acquisition_start(&self, reference: &str) -> Result<ExtensionAcquisitionJob, HostError> {
+    fn acquisition_start(&self, reference: &str, refresh: bool) -> Result<ExtensionAcquisitionJob, HostError> {
         Ok(ExtensionAcquisitionJob {
-            job: self.acquisitions.start(reference)?.wire(),
+            job: self.acquisitions.start(reference, refresh)?.wire(),
         })
     }
 

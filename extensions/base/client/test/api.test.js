@@ -2536,7 +2536,10 @@ test('extension acquisition preserves job revision and explicit grant identity',
   const calls = [];
   for (let index = 0; index < operations.length; index += 1) calls.push((await next()).payload);
   assert.deepEqual(calls, [
-    { call: 'extension_acquisition_start', with: { reference: 'registry/example:1' } },
+    {
+      call: 'extension_acquisition_start',
+      with: { reference: 'registry/example:1', refresh: false },
+    },
     { call: 'extension_acquisition_status', with: { job: 'job-1' } },
     { call: 'extension_acquisition_cancel', with: { job: 'job-1', revision: 7 } },
     {

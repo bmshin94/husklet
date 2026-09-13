@@ -131,7 +131,7 @@ test('digest-pinned same-version review rejects a substituted image over real Un
     assert.deepEqual(
       calls.filter(({ call }) => call.startsWith('extension_acquisition')),
       [
-        { call: 'extension_acquisition_start', with: { reference } },
+        { call: 'extension_acquisition_start', with: { reference, refresh: true } },
         { call: 'extension_acquisition_status', with: { job: 'update-job' } },
       ],
     );

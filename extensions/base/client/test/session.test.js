@@ -5334,6 +5334,12 @@ test('real Unix acquisition rejects impossible progress without poisoning the se
   const socketPath = path.join(directory, 'host.sock');
   const calls = [];
   const connections = new Set();
+  const fragmented = (socket, value) => {
+    const frame = encode(value);
+    socket.write(frame.subarray(0, 3));
+    socket.write(frame.subarray(3, 11));
+    socket.write(frame.subarray(11));
+  };
   const server = net.createServer((socket) => {
     connections.add(socket);
     socket.on('close', () => connections.delete(socket));
@@ -5357,27 +5363,32 @@ test('real Unix acquisition rejects impossible progress without poisoning the se
                 },
               }
             : { reply: 'extension_acquisition_job', with: { job: 'job-10' } };
-        socket.write(encode({ channel: frame.channel, kind: KIND.response, payload }));
+        fragmented(socket, { channel: frame.channel, kind: KIND.response, payload });
       }
     });
-    socket.write(
-      encode({
-        channel: CONTROL,
-        kind: KIND.open,
-        payload: { protocol: 1, peer: 'catalogue', granted: ['extensions:install'] },
-      }),
-    );
+    fragmented(socket, {
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: { protocol: 1, peer: 'catalogue', granted: ['extensions:install'] },
+    });
   });
   await new Promise((resolve) => server.listen(socketPath, resolve));
   try {
     const session = await connect({ path: socketPath });
     const extensions = workspace(session).extensions;
     await assert.rejects(extensions.acquisition('job-9'), /inconsistent extension acquisition/);
-    assert.equal((await extensions.startAcquisition('registry.example/tool:2')).job, 'job-10');
+    assert.equal(
+      (await extensions.startAcquisition('registry.example/tool:2', { refresh: true })).job,
+      'job-10',
+    );
     assert.deepEqual(
       calls.map(({ call }) => call),
       ['extension_acquisition_status', 'extension_acquisition_start'],
     );
+    assert.deepEqual(calls.at(-1).with, {
+      reference: 'registry.example/tool:2',
+      refresh: true,
+    });
     await session.close();
   } finally {
     for (const connection of connections) connection.destroy();

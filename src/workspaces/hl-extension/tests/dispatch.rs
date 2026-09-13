@@ -1243,7 +1243,7 @@ impl ExtensionStore for Host {
         self.ledger.note("extensions.remove");
         Ok(())
     }
-    fn acquisition_start(&self, _reference: &str) -> Result<ExtensionAcquisitionJob, HostError> {
+    fn acquisition_start(&self, _reference: &str, _refresh: bool) -> Result<ExtensionAcquisitionJob, HostError> {
         self.ledger.note("extensions.acquisition_start");
         Ok(ExtensionAcquisitionJob { job: "job-1".into() })
     }
@@ -1663,6 +1663,7 @@ fn calls() -> Vec<(Request, Capability)> {
         (
             Request::ExtensionAcquisitionStart {
                 reference: "registry/example:1".into(),
+                refresh: false,
             },
             Capability::ExtensionInstall,
         ),
@@ -2655,7 +2656,8 @@ fn extension_acquisition_identifiers_are_bounded_before_the_host() {
     assert!(session
         .dispatch(
             &Request::ExtensionAcquisitionStart {
-                reference: "x".repeat(513)
+                reference: "x".repeat(513),
+                refresh: false,
             },
             &services(&host)
         )
@@ -2663,7 +2665,8 @@ fn extension_acquisition_identifiers_are_bounded_before_the_host() {
     assert!(session
         .dispatch(
             &Request::ExtensionAcquisitionStart {
-                reference: "bad reference".into()
+                reference: "bad reference".into(),
+                refresh: false,
             },
             &services(&host)
         )
@@ -3038,20 +3041,17 @@ fn configured_container_creation_is_bounded_before_control_authority() {
         cpus: Some(2),
         pids_limit: Some(128),
     };
-    let mut connect_only = session(
-        &[Capability::ContainerCreate, Capability::NetworkConnect],
-        &[],
-    )
-    .with_containers(hl_extension::ContainerGrant {
-        selectors: Vec::new(),
-        create: true,
-    })
-    .with_images(hl_extension::ImageGrant {
-        r#use: vec![hl_extension::ImageSelector::Reference {
-            reference: "docker.io/library/alpine:3.20".into(),
-        }],
-        ..hl_extension::ImageGrant::default()
-    });
+    let mut connect_only = session(&[Capability::ContainerCreate, Capability::NetworkConnect], &[])
+        .with_containers(hl_extension::ContainerGrant {
+            selectors: Vec::new(),
+            create: true,
+        })
+        .with_images(hl_extension::ImageGrant {
+            r#use: vec![hl_extension::ImageSelector::Reference {
+                reference: "docker.io/library/alpine:3.20".into(),
+            }],
+            ..hl_extension::ImageGrant::default()
+        });
     let mut published = spec.clone();
     published.mounts.clear();
     published.network = None;

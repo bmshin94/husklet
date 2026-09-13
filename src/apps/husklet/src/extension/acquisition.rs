@@ -1,16 +1,16 @@
 //! Bounded, asynchronous image acquisition awaiting explicit user consent.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::sync::{mpsc, Arc, Mutex, PoisonError};
 
-use hl_extension::Grant;
 use hl_extension::port::HostError;
+use hl_extension::Grant;
 
 use super::management_events::ExtensionEvents;
 use super::{Acquisition, Cancellation, Candidate, Roster};
 use crate::config::WorkspaceConfig;
 
-type Acquire = dyn Fn(&WorkspaceConfig, &str, &mpsc::Sender<Acquisition>, &Cancellation) + Send + Sync;
+type Acquire = dyn Fn(&WorkspaceConfig, &str, &mpsc::Sender<Acquisition>, &Cancellation, bool) + Send + Sync;
 
 /// Opaque identity of one bounded acquisition job.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -136,14 +136,18 @@ impl ExtensionAcquisitions {
     // without pretending the current protocol already routes these jobs.
     #[allow(dead_code)]
     pub(crate) fn new(workspace: &WorkspaceConfig, events: ExtensionEvents) -> Self {
-        Self::with_acquirer_and_events(workspace, events, |workspace, reference, progress, cancellation| {
-            Candidate::acquire_cancellable(workspace, reference, progress, cancellation);
-        })
+        Self::with_acquirer_and_events(
+            workspace,
+            events,
+            |workspace, reference, progress, cancellation, refresh| {
+                Candidate::acquire_cancellable_with_refresh(workspace, reference, progress, cancellation, refresh);
+            },
+        )
     }
 
     fn with_acquirer(
         workspace: &WorkspaceConfig,
-        acquire: impl Fn(&WorkspaceConfig, &str, &mpsc::Sender<Acquisition>, &Cancellation) + Send + Sync + 'static,
+        acquire: impl Fn(&WorkspaceConfig, &str, &mpsc::Sender<Acquisition>, &Cancellation, bool) + Send + Sync + 'static,
     ) -> Self {
         Self::with_acquirer_and_events(workspace, ExtensionEvents::default(), acquire)
     }
@@ -151,7 +155,7 @@ impl ExtensionAcquisitions {
     fn with_acquirer_and_events(
         workspace: &WorkspaceConfig,
         events: ExtensionEvents,
-        acquire: impl Fn(&WorkspaceConfig, &str, &mpsc::Sender<Acquisition>, &Cancellation) + Send + Sync + 'static,
+        acquire: impl Fn(&WorkspaceConfig, &str, &mpsc::Sender<Acquisition>, &Cancellation, bool) + Send + Sync + 'static,
     ) -> Self {
         Self {
             workspace: workspace.clone(),
@@ -163,7 +167,7 @@ impl ExtensionAcquisitions {
     }
 
     /// Queues acquisition without waiting for the daemon or registry.
-    pub(crate) fn start(&self, reference: &str) -> Result<AcquisitionJob, HostError> {
+    pub(crate) fn start(&self, reference: &str, refresh: bool) -> Result<AcquisitionJob, HostError> {
         let reference = reference.trim();
         if reference.is_empty() || reference.len() > Self::REFERENCE_LIMIT {
             return Err(HostError::Conflict(format!(
@@ -226,7 +230,7 @@ impl ExtensionAcquisitions {
         let observed_workspace = workspace.clone();
         let reference = reference.to_owned();
         let worker_cancel = cancellation.clone();
-        std::thread::spawn(move || acquire(&workspace, &reference, &send, &worker_cancel));
+        std::thread::spawn(move || acquire(&workspace, &reference, &send, &worker_cancel, refresh));
         let registry = Arc::clone(&self.registry);
         let events = self.events.clone();
         std::thread::spawn(move || {
@@ -253,7 +257,10 @@ impl ExtensionAcquisitions {
                 return;
             };
             if !current.snapshot.state.terminal()
-                && !matches!(current.snapshot.state, AcquisitionState::Ready(_) | AcquisitionState::Committing)
+                && !matches!(
+                    current.snapshot.state,
+                    AcquisitionState::Ready(_) | AcquisitionState::Committing
+                )
             {
                 current.candidate = None;
                 current.snapshot.revision = current.snapshot.revision.saturating_add(1);
@@ -605,15 +612,17 @@ mod tests {
             read: vec![hl_extension::WorkspaceEnvironmentSelector::All { all: true }],
             write: Vec::new(),
         };
-        let service =
-            ExtensionAcquisitions::with_acquirer(&workspace(root.path()), move |_, reference, progress, _| {
+        let service = ExtensionAcquisitions::with_acquirer(
+            &workspace(root.path()),
+            move |_, reference, progress, _, _refresh| {
                 let _ = progress.send(Acquisition::Ready(Candidate {
                     reference: reference.into(),
                     digest: "sha256:reviewed".into(),
                     manifest: rejected.clone(),
                 }));
-            });
-        let job = service.start("registry/sample:1").unwrap();
+            },
+        );
+        let job = service.start("registry/sample:1", false).unwrap();
         let reviewed = ready(&service, job);
 
         let failure = service
@@ -660,18 +669,19 @@ mod tests {
     #[test]
     fn start_is_non_blocking_and_cancel_prevents_late_ready() {
         let root = tempfile::tempdir().unwrap();
-        let service = ExtensionAcquisitions::with_acquirer(&workspace(root.path()), |_, _, progress, cancellation| {
-            while !cancellation.is_cancelled() {
-                std::thread::yield_now();
-            }
-            let _ = progress.send(Acquisition::Ready(Candidate {
-                reference: "late".into(),
-                digest: "sha256:late".into(),
-                manifest: manifest("1.0.0", &[]),
-            }));
-        });
+        let service =
+            ExtensionAcquisitions::with_acquirer(&workspace(root.path()), |_, _, progress, cancellation, _refresh| {
+                while !cancellation.is_cancelled() {
+                    std::thread::yield_now();
+                }
+                let _ = progress.send(Acquisition::Ready(Candidate {
+                    reference: "late".into(),
+                    digest: "sha256:late".into(),
+                    manifest: manifest("1.0.0", &[]),
+                }));
+            });
         let started = Instant::now();
-        let job = service.start("registry/sample:latest").unwrap();
+        let job = service.start("registry/sample:latest", false).unwrap();
         assert!(started.elapsed() < Duration::from_millis(100));
         let revision = service.status(job).unwrap().revision;
         service.cancel(job, revision).unwrap();
@@ -681,10 +691,26 @@ mod tests {
     }
 
     #[test]
+    fn start_forwards_explicit_registry_freshness_to_the_worker() {
+        let root = tempfile::tempdir().unwrap();
+        let (sent, received) = mpsc::channel();
+        let service =
+            ExtensionAcquisitions::with_acquirer(&workspace(root.path()), move |_, _, progress, _, refresh| {
+                sent.send(refresh).unwrap();
+                let _ = progress.send(Acquisition::Failed("observed freshness".into()));
+            });
+
+        service.start("registry/sample:stable", false).unwrap();
+        service.start("registry/sample:stable", true).unwrap();
+        assert_eq!(received.recv_timeout(Duration::from_secs(1)).unwrap(), false);
+        assert_eq!(received.recv_timeout(Duration::from_secs(1)).unwrap(), true);
+    }
+
+    #[test]
     fn abandoned_worker_becomes_retryable_failure_instead_of_consuming_an_active_slot() {
         let root = tempfile::tempdir().unwrap();
-        let service = ExtensionAcquisitions::with_acquirer(&workspace(root.path()), |_, _, _, _| {});
-        let job = service.start("registry/sample:latest").unwrap();
+        let service = ExtensionAcquisitions::with_acquirer(&workspace(root.path()), |_, _, _, _, _refresh| {});
+        let job = service.start("registry/sample:latest", false).unwrap();
         let deadline = Instant::now() + Duration::from_secs(1);
         loop {
             let snapshot = service.status(job).unwrap();
@@ -696,7 +722,9 @@ mod tests {
             std::thread::yield_now();
         }
         for _ in 0..ExtensionAcquisitions::ACTIVE_LIMIT {
-            service.start("registry/retry:latest").expect("abandoned job released its slot");
+            service
+                .start("registry/retry:latest", false)
+                .expect("abandoned job released its slot");
         }
     }
 
@@ -705,16 +733,18 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let release = Arc::new(std::sync::Barrier::new(2));
         let worker_release = Arc::clone(&release);
-        let service =
-            ExtensionAcquisitions::with_acquirer(&workspace(root.path()), move |_, reference, progress, _| {
+        let service = ExtensionAcquisitions::with_acquirer(
+            &workspace(root.path()),
+            move |_, reference, progress, _, _refresh| {
                 worker_release.wait();
                 let _ = progress.send(Acquisition::Ready(Candidate {
                     reference: reference.into(),
                     digest: "sha256:ready".into(),
                     manifest: manifest("1.0.0", &[]),
                 }));
-            });
-        let job = service.start("registry/sample:1").unwrap();
+            },
+        );
+        let job = service.start("registry/sample:1", false).unwrap();
         let observed = service.status(job).unwrap();
         release.wait();
         let ready = ready(&service, job);
@@ -736,25 +766,25 @@ mod tests {
     fn stale_job_handles_cannot_cross_a_host_restart() {
         let root = tempfile::tempdir().unwrap();
         let workspace = workspace(root.path());
-        let first = ExtensionAcquisitions::with_acquirer(&workspace, |_, reference, progress, _| {
+        let first = ExtensionAcquisitions::with_acquirer(&workspace, |_, reference, progress, _, _refresh| {
             let _ = progress.send(Acquisition::Ready(Candidate {
                 reference: reference.into(),
                 digest: "sha256:first".into(),
                 manifest: manifest("1.0.0", &[]),
             }));
         });
-        let stale = first.start("registry/sample:first").unwrap();
+        let stale = first.start("registry/sample:first", false).unwrap();
         let stale_wire = stale.wire();
         drop(first);
 
-        let second = ExtensionAcquisitions::with_acquirer(&workspace, |_, reference, progress, _| {
+        let second = ExtensionAcquisitions::with_acquirer(&workspace, |_, reference, progress, _, _refresh| {
             let _ = progress.send(Acquisition::Ready(Candidate {
                 reference: reference.into(),
                 digest: "sha256:second".into(),
                 manifest: manifest("2.0.0", &[]),
             }));
         });
-        let current = second.start("registry/sample:second").unwrap();
+        let current = second.start("registry/sample:second", false).unwrap();
         let current_ready = ready(&second, current);
 
         assert_ne!(
@@ -779,15 +809,17 @@ mod tests {
     fn install_persists_only_the_observed_digest_and_narrow_consent() {
         let root = tempfile::tempdir().unwrap();
         let observed = manifest("1.0.0", &[Capability::ContainerRead, Capability::ContainerLifecycle]);
-        let service =
-            ExtensionAcquisitions::with_acquirer(&workspace(root.path()), move |_, reference, progress, _| {
+        let service = ExtensionAcquisitions::with_acquirer(
+            &workspace(root.path()),
+            move |_, reference, progress, _, _refresh| {
                 let _ = progress.send(Acquisition::Ready(Candidate {
                     reference: reference.into(),
                     digest: "sha256:observed".into(),
                     manifest: observed.clone(),
                 }));
-            });
-        let job = service.start("registry/sample:1").unwrap();
+            },
+        );
+        let job = service.start("registry/sample:1", false).unwrap();
         let snapshot = ready(&service, job);
         let AcquisitionState::Ready(candidate) = &snapshot.state else {
             unreachable!()
@@ -824,14 +856,14 @@ mod tests {
             )
             .unwrap();
         let next = manifest("2.0.0", &[Capability::ContainerRead, Capability::ContainerLifecycle]);
-        let service = ExtensionAcquisitions::with_acquirer(&workspace, move |_, reference, progress, _| {
+        let service = ExtensionAcquisitions::with_acquirer(&workspace, move |_, reference, progress, _, _refresh| {
             let _ = progress.send(Acquisition::Ready(Candidate {
                 reference: reference.into(),
                 digest: "sha256:new".into(),
                 manifest: next.clone(),
             }));
         });
-        let job = service.start("registry/sample:2").unwrap();
+        let job = service.start("registry/sample:2", false).unwrap();
         let snapshot = ready(&service, job);
         let AcquisitionState::Ready(candidate) = &snapshot.state else {
             unreachable!()
@@ -871,7 +903,7 @@ mod tests {
             .unwrap();
         let service = Arc::new(ExtensionAcquisitions::with_acquirer(
             &workspace,
-            |_, reference, progress, _| {
+            |_, reference, progress, _, _refresh| {
                 let digest = if reference.ends_with(":2") {
                     "sha256:two"
                 } else {
@@ -885,8 +917,8 @@ mod tests {
                 }));
             },
         ));
-        let first = service.start("registry/sample:2").unwrap();
-        let second = service.start("registry/sample:3").unwrap();
+        let first = service.start("registry/sample:2", false).unwrap();
+        let second = service.start("registry/sample:3", false).unwrap();
         let first_ready = ready(&service, first);
         let second_ready = ready(&service, second);
 
@@ -917,21 +949,23 @@ mod tests {
     #[test]
     fn reference_and_active_job_bounds_are_enforced() {
         let root = tempfile::tempdir().unwrap();
-        let service = ExtensionAcquisitions::with_acquirer(&workspace(root.path()), |_, _, _, cancellation| {
-            while !cancellation.is_cancelled() {
-                std::thread::yield_now();
-            }
-        });
-        assert!(service.start("").is_err());
-        assert!(
-            service
-                .start(&"x".repeat(ExtensionAcquisitions::REFERENCE_LIMIT + 1))
-                .is_err()
-        );
+        let service =
+            ExtensionAcquisitions::with_acquirer(&workspace(root.path()), |_, _, _, cancellation, _refresh| {
+                while !cancellation.is_cancelled() {
+                    std::thread::yield_now();
+                }
+            });
+        assert!(service.start("", false).is_err());
+        assert!(service
+            .start(
+                &"x".repeat(ExtensionAcquisitions::REFERENCE_LIMIT + 1),
+                false,
+            )
+            .is_err());
         let jobs: Vec<_> = (0..ExtensionAcquisitions::ACTIVE_LIMIT)
-            .map(|index| service.start(&format!("sample:{index}")).unwrap())
+            .map(|index| service.start(&format!("sample:{index}"), false).unwrap())
             .collect();
-        assert!(service.start("sample:overflow").is_err());
+        assert!(service.start("sample:overflow", false).is_err());
         for job in jobs {
             let revision = service.status(job).unwrap().revision;
             service.cancel(job, revision).unwrap();

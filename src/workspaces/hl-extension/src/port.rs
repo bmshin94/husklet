@@ -1036,7 +1036,7 @@ pub trait ExtensionStore {
     fn remove(&self, _name: &str, _image_digest: &str) -> Result<(), HostError> {
         Err(HostError::Unsupported("extension removal is unavailable".into()))
     }
-    fn acquisition_start(&self, _reference: &str) -> Result<ExtensionAcquisitionJob, HostError> {
+    fn acquisition_start(&self, _reference: &str, _refresh: bool) -> Result<ExtensionAcquisitionJob, HostError> {
         Err(HostError::Unsupported("extension acquisition is unavailable".into()))
     }
     fn acquisition_status(&self, _job: &str) -> Result<ExtensionAcquisitionStatus, HostError> {

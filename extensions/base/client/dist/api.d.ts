@@ -1101,7 +1101,9 @@ export interface WorkspaceApi {
             name: string;
             image_digest: string;
         }>;
-        startAcquisition(reference: string): Promise<ExtensionAcquisitionJob>;
+        startAcquisition(reference: string, options?: {
+            refresh?: boolean;
+        }): Promise<ExtensionAcquisitionJob>;
         acquisition(job: string): Promise<ExtensionAcquisitionStatus>;
         /** Wait for this exact acquisition job revision to advance, then return its authoritative status. */
         waitForAcquisition(job: string, afterRevision: number, options?: {

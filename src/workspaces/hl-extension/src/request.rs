@@ -104,6 +104,7 @@ pub enum Request {
     },
     ExtensionAcquisitionStart {
         reference: String,
+        refresh: bool,
     },
     ExtensionAcquisitionStatus {
         job: String,

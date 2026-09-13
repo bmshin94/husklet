@@ -1616,9 +1616,11 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           name,
           image_digest: immutableDigest(imageDigest, 'extension image'),
         }),
-      startAcquisition: async (reference) => {
+      startAcquisition: async (reference, { refresh = false } = {}) => {
+        if (typeof refresh !== 'boolean')
+          throw new TypeError('extension acquisition refresh must be boolean');
         const started = expect(
-          await session.call('extension_acquisition_start', { reference }),
+          await session.call('extension_acquisition_start', { reference, refresh }),
           'extension_acquisition_job',
         );
         exactAcquisitionJob(started.job);

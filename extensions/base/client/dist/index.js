@@ -1270,8 +1270,10 @@ export function workspace(session, { signal } = {}) {
                 name,
                 image_digest: immutableDigest(imageDigest, 'extension image'),
             }),
-            startAcquisition: async (reference) => {
-                const started = expect(await session.call('extension_acquisition_start', { reference }), 'extension_acquisition_job');
+            startAcquisition: async (reference, { refresh = false } = {}) => {
+                if (typeof refresh !== 'boolean')
+                    throw new TypeError('extension acquisition refresh must be boolean');
+                const started = expect(await session.call('extension_acquisition_start', { reference, refresh }), 'extension_acquisition_job');
                 exactAcquisitionJob(started.job);
                 return started;
             },

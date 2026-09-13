@@ -1557,9 +1557,11 @@ impl Session {
                     .map(|()| Reply::Done)
                     .map_err(Failure::from)
             }
-            Request::ExtensionAcquisitionStart { reference } => {
+            Request::ExtensionAcquisitionStart { reference, refresh } => {
                 acquisition_reference(reference)?;
-                Ok(Reply::ExtensionAcquisitionJob(port.acquisition_start(reference)?))
+                Ok(Reply::ExtensionAcquisitionJob(
+                    port.acquisition_start(reference, *refresh)?,
+                ))
             }
             Request::ExtensionAcquisitionStatus { job } => {
                 acquisition_job(job)?;
