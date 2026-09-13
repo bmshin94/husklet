@@ -1875,6 +1875,20 @@ export interface WorkspaceApi {
     ): Promise<void>;
     /** Write exact bytes using one terminal snapshot as indivisible stale-pane authority. */
     writeObserved(before: PaneText, input: string | Iterable<number>): Promise<void>;
+    /**
+     * Re-observe a write whose acknowledgement was lost. This never declares replay safe:
+     * unchanged text can mean accepted input that has not produced output, while an advanced
+     * revision can contain unrelated output. Replacement identifies the new occupant only.
+     */
+    reconcileWriteFailure(
+      failure: TerminalOperationError,
+      options?: { lines?: number },
+    ): Promise<{
+      outcome: 'unchanged' | 'advanced' | 'replaced';
+      replaySafe: false;
+      before: Readonly<{ slot: string; generation: number; revision: number }>;
+      current: ReadablePane;
+    }>;
     /** Arm and read before CAS input, then return a later bounded terminal screen revision. */
     writeAndWait(
       slot: string,

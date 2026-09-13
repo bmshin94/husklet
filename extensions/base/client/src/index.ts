@@ -5419,6 +5419,32 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       options,
     ) as ReturnType<WorkspaceApi['terminal']['writeObservedAndWait']>;
   };
+  api.terminal.reconcileWriteFailure = async (failure, { lines } = {}) => {
+    if (
+      !(failure instanceof TerminalOperationError) ||
+      failure.operation !== 'write-input' ||
+      !('written' in failure.result) ||
+      failure.result.written !== 'unknown'
+    ) {
+      throw new TypeError(
+        'terminal input reconciliation requires an ambiguous write-input TerminalOperationError',
+      );
+    }
+    const before = Object.freeze({
+      slot: failure.result.slot,
+      generation: failure.result.generation,
+      revision: failure.result.revision,
+    });
+    const current = await api.terminal.toText(before.slot, { lines });
+    const cursor = current.snapshot;
+    const outcome =
+      cursor.generation !== before.generation
+        ? 'replaced'
+        : cursor.revision !== before.revision
+          ? 'advanced'
+          : 'unchanged';
+    return { outcome, replaySafe: false, before, current };
+  };
   api.terminal.writeObservedAndWaitForText = (before, input, options) => {
     if (
       !before ||

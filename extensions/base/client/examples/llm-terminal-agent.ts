@@ -1,6 +1,7 @@
 import {
   SemanticActionOperationError,
   TerminalCommandOperationError,
+  TerminalOperationError,
   connect,
   workspace,
 } from '@husklet/client';
@@ -9,7 +10,9 @@ declare const process: { argv: string[]; stdout: { write(value: string): void } 
 type Configuration = {
   path: string;
   slot: string;
-  prompt: string;
+  prompt?: string;
+  /** Exact interactive bytes, for example `[3]` for Ctrl-C. Never retried after reply loss. */
+  rawInput?: number[];
   deadlineMs?: number;
   semanticAction?: {
     node: number;
@@ -21,9 +24,11 @@ const configuration = JSON.parse(process.argv[2] ?? 'null') as Configuration | n
 if (
   !configuration?.path ||
   !configuration.slot ||
-  (!configuration.prompt && !configuration.semanticAction)
+  (!configuration.prompt && !configuration.rawInput && !configuration.semanticAction)
 ) {
-  throw new TypeError('usage: llm-terminal-agent.ts JSON(path, slot, prompt)');
+  throw new TypeError(
+    'usage: llm-terminal-agent.ts JSON(path, slot, prompt | rawInput | semanticAction)',
+  );
 }
 
 const session = await connect({ path: configuration.path, pendingLimit: 8, timeout: 5_000 });
@@ -72,46 +77,76 @@ try {
       `${JSON.stringify({ layout: context.topology, context: panes, incomplete: contextIncomplete, selected: { kind: 'ui', text: observed.text, complete: observed.complete }, action: actionResult })}\n`,
     );
   } else {
-    const deadlineMs = configuration.deadlineMs ?? 2_000;
-    if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 30_000) {
-      throw new RangeError('deadlineMs must be between 1 and 30000ms');
-    }
-    const cancellation = new AbortController();
-    const deadline = setTimeout(() => cancellation.abort('agent interaction deadline'), deadlineMs);
-    try {
-      let result;
+    if (configuration.rawInput) {
+      let inputResult;
       try {
-        result = await terminal.commandText(observed.snapshot, {
-          command: ['sh', '-lc', configuration.prompt],
-          maxBytes: 1024 * 1024,
-          signal: cancellation.signal,
-          cancelSignal: 'SIGINT',
-          cancelTimeoutMs: 1_000,
-        });
+        inputResult = await terminal.writeObservedAndWaitForText(
+          observed.snapshot,
+          configuration.rawInput,
+          { timeoutMs: configuration.deadlineMs ?? 2_000 },
+        );
       } catch (cause) {
-        if (!(cause instanceof TerminalCommandOperationError)) throw cause;
-        const resumedSession = await connect({
-          path: configuration.path,
-          pendingLimit: 8,
-          timeout: 5_000,
-        });
+        if (
+          !(cause instanceof TerminalOperationError) ||
+          !('written' in cause.result) ||
+          cause.result.written !== 'unknown'
+        ) {
+          throw cause;
+        }
+        const resumedSession = await connect({ path: configuration.path, timeout: 5_000 });
         try {
-          const resumedTerminal = workspace(resumedSession).terminal;
-          result = await resumedTerminal.resumeCommandText(cause.command, {
-            after: cause.after,
-            stdout: cause.stdout,
-            stderr: cause.stderr,
-            maxBytes: 1024 * 1024,
-          });
+          inputResult = await workspace(resumedSession).terminal.reconcileWriteFailure(cause);
+          // `replaySafe` is always false: neither output nor silence proves whether raw bytes arrived.
         } finally {
           await resumedSession.close();
         }
       }
-      process.stdout.write(
-        `${JSON.stringify({ layout: context.topology, context: panes, incomplete: contextIncomplete, selected: { kind: 'terminal', before: observed.text, command: result.command.id, stdout: result.stdout, stderr: result.stderr, exitCode: result.command.exit_code, completed: !result.command.running, pane: { slot: result.command.slot, generation: result.command.generation, revision: result.command.revision } } })}\n`,
+      process.stdout.write(`${JSON.stringify({ input: inputResult })}\n`);
+    } else {
+      const deadlineMs = configuration.deadlineMs ?? 2_000;
+      if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 30_000) {
+        throw new RangeError('deadlineMs must be between 1 and 30000ms');
+      }
+      const cancellation = new AbortController();
+      const deadline = setTimeout(
+        () => cancellation.abort('agent interaction deadline'),
+        deadlineMs,
       );
-    } finally {
-      clearTimeout(deadline);
+      try {
+        let result;
+        try {
+          result = await terminal.commandText(observed.snapshot, {
+            command: ['sh', '-lc', configuration.prompt!],
+            maxBytes: 1024 * 1024,
+            signal: cancellation.signal,
+            cancelSignal: 'SIGINT',
+            cancelTimeoutMs: 1_000,
+          });
+        } catch (cause) {
+          if (!(cause instanceof TerminalCommandOperationError)) throw cause;
+          const resumedSession = await connect({
+            path: configuration.path,
+            pendingLimit: 8,
+            timeout: 5_000,
+          });
+          try {
+            const resumedTerminal = workspace(resumedSession).terminal;
+            result = await resumedTerminal.resumeCommandText(cause.command, {
+              after: cause.after,
+              stdout: cause.stdout,
+              stderr: cause.stderr,
+              maxBytes: 1024 * 1024,
+            });
+          } finally {
+            await resumedSession.close();
+          }
+        }
+        process.stdout.write(
+          `${JSON.stringify({ layout: context.topology, context: panes, incomplete: contextIncomplete, selected: { kind: 'terminal', before: observed.text, command: result.command.id, stdout: result.stdout, stderr: result.stderr, exitCode: result.command.exit_code, completed: !result.command.running, pane: { slot: result.command.slot, generation: result.command.generation, revision: result.command.revision } } })}\n`,
+        );
+      } finally {
+        clearTimeout(deadline);
+      }
     }
   }
 } finally {
