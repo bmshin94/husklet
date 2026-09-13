@@ -1,4 +1,8 @@
-import { ExecutionOperationError, type WorkspaceApi } from '@husklet/client';
+import {
+  ExecutionOperationError,
+  FileWriteOperationError,
+  type WorkspaceApi,
+} from '@husklet/client';
 
 /** Resume an interrupted bounded Git status/diff without losing bytes acknowledged before reconnect. */
 export async function resumeGitText(
@@ -29,6 +33,12 @@ export async function resumeGitText(
   const decode = (bytes: number[]) =>
     new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(bytes));
   return { ...resumed, stdout: decode(stdout), stderr: decode(stderr) };
+}
+
+/** Reconcile a reviewed file whose atomic write committed before its reply was lost. */
+export async function resumeReviewedFileWrite(host: WorkspaceApi, failure: unknown) {
+  if (!(failure instanceof FileWriteOperationError)) throw failure;
+  return host.files.recoverObservedWrite(failure);
 }
 
 /** Apply one reviewed file edit against its exact read identity, then run a bounded check. */

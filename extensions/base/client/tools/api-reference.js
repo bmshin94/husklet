@@ -122,6 +122,7 @@ groups
     '- `host.files.walk(...)` — traverses arbitrarily broad directory trees through identity-pinned bounded pages with consumer backpressure and memory proportional to active depth; rejects duplicate or backward host cursors; requires `filesystem:read`.',
     '- `host.files.readRanges(...)` — reads up to 64 separately confined ranges in one 64 KiB aggregate request and rejects different identities or totals for repeated paths, so one batch cannot mix file generations; requires `filesystem:read`.',
     "- `host.files.write(...)`, `writeObserved(...)`, and `createObserved(...)` — consume byte iterables only through the host's 64 KiB mutation bound before framing; observed variants retain inode identity/race protection.",
+    '- `host.files.recoverObservedWrite(error)` — reconciles a lost `writeObserved` reply after reconnect: it retries only while the original identity is current, accepts a replacement only after an identity-pinned exact byte comparison, and fails closed on intervening content.',
     '- `host.files.readChunks(...)` — iterates an identity-pinned file through bounded ranges with consumer backpressure; requires `filesystem:read`.',
     '- `host.files.readText(path, { maxBytes, ... })` — reads identity-pinned UTF-8 across range boundaries, reports malformed text as `FileTextDecodeError`, and reports an oversized generation as `FileTextLimitError` with exact path, identity, authoritative total, and caller limit; requires `filesystem:read`.',
   );

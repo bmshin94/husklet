@@ -958,6 +958,14 @@ export declare class FileExtentChangedError extends Error {
   readonly offset: number;
 }
 
+/** A file CAS write lost its outcome; exact authority and candidate bytes remain recoverable. */
+export declare class FileWriteOperationError extends Error {
+  readonly path: string;
+  readonly observed: string;
+  readonly contents: readonly number[];
+  readonly cause: unknown;
+}
+
 export interface ConnectOptions {
   path?: string;
   /** Bounds pending calls, heartbeats, and queued event callback deliveries. */
@@ -2126,6 +2134,11 @@ export interface WorkspaceApi {
     write(path: string, contents: Iterable<number>): Promise<void>;
     /** Atomically replace exactly the file identity returned by stat/readRange. */
     writeObserved(path: string, observed: string, contents: Iterable<number>): Promise<string>;
+    /** Reconcile an ambiguous observed write without overwriting an intervening file generation. */
+    recoverObservedWrite(
+      failure: FileWriteOperationError,
+      options?: { signal?: AbortSignal },
+    ): Promise<string>;
     createObserved(path: string, contents: Iterable<number>): Promise<string>;
     mkdir(path: string): Promise<void>;
     rename(from: string, to: string): Promise<void>;

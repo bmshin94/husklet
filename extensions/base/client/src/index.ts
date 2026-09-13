@@ -241,6 +241,21 @@ export class StateWriteOperationError extends Error {
   }
 }
 
+/** A file CAS write lost its outcome; exact path, identity, and candidate bytes are recoverable. */
+export class FileWriteOperationError extends Error {
+  readonly path;
+  readonly observed;
+  readonly contents;
+
+  constructor(path, observed, contents, cause) {
+    super(`file write to ${path} after ${observed} failed before its outcome was known`, { cause });
+    this.name = 'FileWriteOperationError';
+    this.path = path;
+    this.observed = observed;
+    this.contents = Object.freeze([...contents]);
+  }
+}
+
 /** Catalogue discovery was bounded before it became a complete searchable set. */
 export class IncompleteCatalogueError extends Error {
   readonly received;
@@ -4156,15 +4171,75 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       },
       write: (path, contents) =>
         done('filesystem_write', { path, contents: exactFileContents(contents) }),
-      writeObserved: async (path, observed, contents) =>
-        expect(
-          await session.call('filesystem_write_observed', {
-            path,
-            observed,
-            contents: exactFileContents(contents),
-          }),
-          'identity',
-        ),
+      writeObserved: async (path, observed, contents) => {
+        const exact = exactFileContents(contents);
+        try {
+          return expect(
+            await session.call('filesystem_write_observed', {
+              path,
+              observed,
+              contents: exact,
+            }),
+            'identity',
+          );
+        } catch (cause) {
+          if (cause instanceof ExtensionError) throw cause;
+          throw new FileWriteOperationError(path, observed, exact, cause);
+        }
+      },
+      recoverObservedWrite: async (
+        failure: FileWriteOperationError,
+        { signal }: { signal?: AbortSignal } = {},
+      ) => {
+        if (!(failure instanceof FileWriteOperationError)) {
+          throw new TypeError('file write recovery requires a FileWriteOperationError');
+        }
+        requireFilesystemActive(signal);
+        const current = await api.files.stat(failure.path);
+        requireFilesystemActive(signal);
+        if (current.identity === failure.observed) {
+          try {
+            return expect(
+              await session.call(
+                'filesystem_write_observed',
+                {
+                  path: failure.path,
+                  observed: failure.observed,
+                  contents: failure.contents,
+                },
+                { signal },
+              ),
+              'identity',
+            );
+          } catch (cause) {
+            if (cause instanceof ExtensionError) throw cause;
+            throw new FileWriteOperationError(
+              failure.path,
+              failure.observed,
+              failure.contents,
+              cause,
+            );
+          }
+        }
+        let offset = 0;
+        for await (const range of api.files.readChunks(failure.path, {
+          observed: current.identity,
+          signal,
+        })) {
+          if (range.total !== failure.contents.length) {
+            throw new Error(`file ${failure.path} changed to different contents after write`);
+          }
+          for (const byte of range.contents) {
+            if (byte !== failure.contents[offset++]) {
+              throw new Error(`file ${failure.path} changed to different contents after write`);
+            }
+          }
+        }
+        if (offset !== failure.contents.length) {
+          throw new Error(`file ${failure.path} changed to different contents after write`);
+        }
+        return current.identity;
+      },
       createObserved: async (path, contents) =>
         expect(
           await session.call('filesystem_create_observed', {
@@ -6838,6 +6913,7 @@ export const protocolCoverage = Object.freeze({
       'stat',
       'write',
       'writeObserved',
+      'recoverObservedWrite',
       'createObserved',
       'mkdir',
       'rename',

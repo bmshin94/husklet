@@ -76,6 +76,13 @@ export declare class StateWriteOperationError extends Error {
     readonly contents: any;
     constructor(observed: any, contents: any, cause: any);
 }
+/** A file CAS write lost its outcome; exact path, identity, and candidate bytes are recoverable. */
+export declare class FileWriteOperationError extends Error {
+    readonly path: any;
+    readonly observed: any;
+    readonly contents: any;
+    constructor(path: any, observed: any, contents: any, cause: any);
+}
 /** Catalogue discovery was bounded before it became a complete searchable set. */
 export declare class IncompleteCatalogueError extends Error {
     readonly received: any;

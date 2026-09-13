@@ -13,6 +13,7 @@ import {
   ExecutionOutputGapError,
   ExecutionOutputProtocolError,
   FileIdentityChangedError,
+  FileWriteOperationError,
   FilesystemJournalGapError,
   JsonLineDecodeError,
   JsonLineParseError,
@@ -28,6 +29,125 @@ import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
 
 const FILE_JOURNAL = '0123456789abcdef0123456789abcdef';
 const REPLACEMENT_FILE_JOURNAL = 'fedcba9876543210fedcba9876543210';
+
+test('fragmented Unix file write recovery accepts only the exact committed review', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-file-write-recovery-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const reviewed = [110, 101, 119, 10];
+  let identity = 'source-v1';
+  let contents = [111, 108, 100, 10];
+  let connection = 0;
+  const peers = new Set();
+  const fragmented = (socket, frame) => {
+    for (const byte of frame) socket.write(Uint8Array.of(byte));
+  };
+  const server = net.createServer((socket) => {
+    peers.add(socket);
+    socket.on('close', () => peers.delete(socket));
+    connection += 1;
+    const thisConnection = connection;
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.kind !== KIND.request) continue;
+        const input = frame.payload.with;
+        if (frame.payload.call === 'filesystem_write_observed') {
+          assert.deepEqual(input, { path: 'src/review.ts', observed: 'source-v1', contents: reviewed });
+          identity = thisConnection === 1 ? 'reviewed-v2' : 'retried-v2';
+          contents = [...reviewed];
+          const reply = encode({
+            channel: frame.channel,
+            kind: KIND.response,
+            payload: { reply: 'identity', with: identity },
+          });
+          if (thisConnection === 1) socket.write(reply.subarray(0, 1), () => socket.destroy());
+          else fragmented(socket, reply);
+        } else if (frame.payload.call === 'filesystem_stat') {
+          fragmented(
+            socket,
+            encode({
+              channel: frame.channel,
+              kind: KIND.response,
+              payload: {
+                reply: 'entry',
+                with: { path: input.path, directory: false, size: contents.length, identity },
+              },
+            }),
+          );
+        } else if (frame.payload.call === 'filesystem_read_range') {
+          assert.equal(input.observed, identity);
+          fragmented(
+            socket,
+            encode({
+              channel: frame.channel,
+              kind: KIND.response,
+              payload: {
+                reply: 'file_range',
+                with: {
+                  path: input.path,
+                  identity,
+                  offset: input.offset,
+                  total: contents.length,
+                  contents,
+                  eof: true,
+                  truncated: false,
+                },
+              },
+            }),
+          );
+        }
+      }
+    });
+    fragmented(
+      socket,
+      encode({
+        channel: CONTROL,
+        kind: KIND.open,
+        payload: {
+          protocol: 1,
+          peer: 'git-review',
+          granted: ['filesystem:read', 'filesystem:write'],
+        },
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  let first;
+  let resumed;
+  try {
+    first = await connect({ path: socketPath, timeout: 1_000 });
+    let failure;
+    try {
+      await workspace(first).files.writeObserved('src/review.ts', 'source-v1', reviewed);
+      assert.fail('the committed write reply must be lost');
+    } catch (cause) {
+      assert.ok(cause instanceof FileWriteOperationError);
+      failure = cause;
+    }
+    assert.deepEqual(failure.contents, reviewed);
+    resumed = await connect({ path: socketPath, timeout: 1_000 });
+    assert.equal(await workspace(resumed).files.recoverObservedWrite(failure), 'reviewed-v2');
+
+    identity = 'concurrent-v3';
+    contents = [101, 118, 105, 108];
+    await assert.rejects(
+      workspace(resumed).files.recoverObservedWrite(failure),
+      /changed to different contents/,
+    );
+    assert.equal((await workspace(resumed).files.stat('src/review.ts')).identity, 'concurrent-v3');
+
+    identity = 'source-v1';
+    contents = [111, 108, 100, 10];
+    assert.equal(await workspace(resumed).files.recoverObservedWrite(failure), 'retried-v2');
+    assert.deepEqual(contents, reviewed);
+  } finally {
+    await first?.close();
+    await resumed?.close();
+    for (const peer of peers) peer.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('real Unix filesystem catch-up is bounded, resumable, and journal-gap safe', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-file-catch-up-'));
