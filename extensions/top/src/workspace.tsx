@@ -35,10 +35,6 @@ type Change = { value?: unknown; expanded?: boolean };
 type Numbers = { cpus: string; memory: string; scrollback: string; fontSize: string };
 const CONTROL_WIDTH = { chars: 56 } as const;
 const PAGE_WIDTH = { maximum: { chars: 110 } } as const;
-const SETTINGS_GROUP_WIDTH = {
-  minimum: { chars: 44 },
-  maximum: 'fill',
-} as const;
 
 export function Workspace({ api }: { api: WorkspaceApi }) {
   const [configuration, setConfiguration] = React.useState<WorkspaceConfiguration | null>(null);
@@ -273,7 +269,7 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
                 width={CONTROL_WIDTH}
                 wrap
               />
-              <Row gap={2} wrap width="fill" align="start">
+              <Column gap={2} width="fill" align="start">
                 <SettingsGroup
                   name="runtime"
                   label="Runtime"
@@ -475,7 +471,7 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
                     onChange={(value) => change('mounts', value)}
                   />
                 </SettingsGroup>
-              </Row>
+              </Column>
             </CardContent>
           </Card>
         </Container>
@@ -524,8 +520,7 @@ function SettingsGroup({
   return (
     <Accordion
       label={label}
-      width={open ? 'fill' : SETTINGS_GROUP_WIDTH}
-      grow
+      width="fill"
       expanded={open}
       onExpand={(event: Change) => onExpand((event.expanded ?? event.value) ? name : '')}
     >

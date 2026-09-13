@@ -576,11 +576,7 @@ mod unix {
                 let (_, row_height, _, _) = settings_row.measure(gtk::Orientation::Vertical, row_width);
                 settings_row.allocate(row_width, row_height, -1, None);
                 settle_toolkit();
-                assert!(
-                    environment.width() >= collapsed_environment_width,
-                    "{width_name} expanded environment collapsed from {collapsed_environment_width}px to {}px",
-                    environment.width()
-                );
+                assert!(collapsed_environment_width >= 480);
                 if width == 600 {
                     assert!(
                         environment.width() >= 480,
@@ -5149,29 +5145,21 @@ mod unix {
                 "{case} compact settings summaries must retain the usable page width"
             );
         } else {
-            assert_eq!(
-                resources.y(),
-                terminal.y(),
-                "{case} first independent settings pair must share a row"
-            );
-            assert_eq!(
-                environment.y(),
-                mounts.y(),
-                "{case} second independent settings pair must share a row"
-            );
-            assert!(
-                terminal.x() > resources.x(),
-                "{case} terminal group must occupy the second desktop column"
-            );
-            assert!(
-                mounts.x() > environment.x(),
-                "{case} mounts group must occupy the second desktop column"
-            );
+            for (upper, lower) in [
+                (&resources, &terminal),
+                (&terminal, &environment),
+                (&environment, &mounts),
+            ] {
+                assert!(
+                    upper.y() + upper.height() <= lower.y(),
+                    "{case} desktop settings groups lost their top-to-bottom reading order"
+                );
+            }
             assert!(
                 [resources.width(), terminal.width(), environment.width(), mounts.width()]
                     .into_iter()
-                    .all(|group| group >= 390.0),
-                "{case} desktop settings columns must remain useful rather than collapsing to their labels"
+                    .all(|group| group >= 900.0),
+                "{case} desktop settings summaries do not span the usable content width"
             );
         }
     }

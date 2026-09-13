@@ -802,21 +802,15 @@ test('Top owns workspace settings and extension management in the same tab', asy
     Length: 'Fill',
   });
   assert.deepEqual(taggedProperty(stage, 'Resources & connectivity', 'Accordion', 'Width'), {
-    Bounds: {
-      minimum: { Chars: 44 },
-      maximum: 'Fill',
-    },
+    Length: 'Fill',
   });
   assert.deepEqual(taggedProperty(stage, 'Terminal appearance', 'Accordion', 'Width'), {
-    Bounds: {
-      minimum: { Chars: 44 },
-      maximum: 'Fill',
-    },
+    Length: 'Fill',
   });
   assert.deepEqual(
-    ancestorProperty(stage, 'Resources & connectivity', 'Row', 'Wrap'),
-    { Flag: true },
-    'independent setting groups share a responsive wrapping desktop row',
+    ancestorProperty(stage, 'Resources & connectivity', 'Column', 'Width'),
+    { Length: 'Fill' },
+    'settings groups retain one stable reading order at every width',
   );
   assert.ok(
     labelled(stage, 'Runtime · Image alpine:3.20 · Shell /bin/sh'),
@@ -871,10 +865,7 @@ test('Top owns workspace settings and extension management in the same tab', asy
     Length: 'Fill',
   });
   assert.deepEqual(taggedProperty(stage, 'Runtime', 'Accordion', 'Width'), {
-    Bounds: {
-      minimum: { Chars: 44 },
-      maximum: 'Fill',
-    },
+    Length: 'Fill',
   });
   assert.deepEqual(ancestorTags(stage, 'Cursor shape').slice(0, 1), ['FormControl']);
   const cursorShape = formControlField(stage, 'Cursor shape', 'Select');
@@ -904,9 +895,7 @@ test('Top owns workspace settings and extension management in the same tab', asy
   );
   expand(stage, 'Environment variables');
   await settled();
-  assert.deepEqual(taggedProperty(stage, 'Environment variables', 'Accordion', 'Grow'), {
-    Number: 1,
-  });
+  assert.equal(taggedProperty(stage, 'Environment variables', 'Accordion', 'Grow'), undefined);
   assert.equal(placeholderProperty(stage, 'value', 'Secret')?.Flag, true);
   assert.deepEqual(
     taggedProperty(stage, 'Remove TOKEN', 'IconButton', 'Icon'),
