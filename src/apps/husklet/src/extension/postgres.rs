@@ -7,6 +7,7 @@
 //! must satisfy.
 
 use std::collections::{BTreeMap, HashMap};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -37,12 +38,18 @@ pub(crate) struct Binding {
 pub(crate) struct Secret(Vec<u8>);
 
 impl Secret {
+    const LIMIT: usize = 1024 * 1024;
+
     pub(crate) fn new(value: Vec<u8>) -> Self {
         Self(value)
     }
 
     pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+
+    fn valid(&self) -> bool {
+        !self.0.is_empty() && self.0.len() <= Self::LIMIT
     }
 }
 
@@ -52,9 +59,163 @@ impl Drop for Secret {
     }
 }
 
+/// Host-resolved TLS identity for one database endpoint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DatabaseTls {
+    server_name: String,
+}
+
+impl DatabaseTls {
+    const SERVER_NAME_LIMIT: usize = 253;
+
+    pub(crate) fn verify_full(server_name: impl Into<String>) -> Result<Self, HostError> {
+        let server_name = server_name.into();
+        let valid = !server_name.is_empty()
+            && server_name.len() <= Self::SERVER_NAME_LIMIT
+            && !server_name.contains('\0')
+            && server_name.split('.').all(|label| {
+                !label.is_empty()
+                    && label.len() <= 63
+                    && label.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+                    && label.as_bytes().last().is_some_and(u8::is_ascii_alphanumeric)
+                    && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            });
+        if !valid {
+            return Err(HostError::Conflict("postgres TLS server name is invalid".into()));
+        }
+        Ok(Self { server_name })
+    }
+
+    pub(crate) fn server_name(&self) -> &str {
+        &self.server_name
+    }
+}
+
+/// A private, already-authorized route. It is never serialized to an extension.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DatabaseEndpoint {
+    address: SocketAddr,
+    tls: DatabaseTls,
+    connect_timeout_ms: u32,
+    io_timeout_ms: u32,
+}
+
+impl DatabaseEndpoint {
+    const MIN_TIMEOUT_MS: u32 = 100;
+    const MAX_TIMEOUT_MS: u32 = 30_000;
+
+    pub(crate) fn new(
+        address: SocketAddr,
+        tls: DatabaseTls,
+        connect_timeout_ms: u32,
+        io_timeout_ms: u32,
+    ) -> Result<Self, HostError> {
+        if address.port() == 0
+            || !(Self::MIN_TIMEOUT_MS..=Self::MAX_TIMEOUT_MS).contains(&connect_timeout_ms)
+            || !(Self::MIN_TIMEOUT_MS..=Self::MAX_TIMEOUT_MS).contains(&io_timeout_ms)
+        {
+            return Err(HostError::Conflict("postgres endpoint or timeout is invalid".into()));
+        }
+        Ok(Self {
+            address,
+            tls,
+            connect_timeout_ms,
+            io_timeout_ms,
+        })
+    }
+
+    pub(crate) fn address(&self) -> SocketAddr {
+        self.address
+    }
+
+    pub(crate) fn tls(&self) -> &DatabaseTls {
+        &self.tls
+    }
+
+    pub(crate) fn timeouts_ms(&self) -> (u32, u32) {
+        (self.connect_timeout_ms, self.io_timeout_ms)
+    }
+}
+
+pub(crate) enum DatabaseCredential {
+    Password(Secret),
+    RootCertificate(Secret),
+    ClientCertificate(Secret),
+    ClientPrivateKey(Secret),
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum CredentialRole {
+    Password,
+    RootCertificate,
+    ClientCertificate,
+    ClientPrivateKey,
+}
+
+impl CredentialRole {
+    fn material(self, secret: Secret) -> DatabaseCredential {
+        match self {
+            Self::Password => DatabaseCredential::Password(secret),
+            Self::RootCertificate => DatabaseCredential::RootCertificate(secret),
+            Self::ClientCertificate => DatabaseCredential::ClientCertificate(secret),
+            Self::ClientPrivateKey => DatabaseCredential::ClientPrivateKey(secret),
+        }
+    }
+}
+
+/// Typed, host-only authentication material. Roles can never be inferred from key order.
+pub(crate) struct DatabaseAuthentication {
+    credentials: Vec<DatabaseCredential>,
+}
+
+impl DatabaseAuthentication {
+    const LIMIT: usize = 4;
+
+    pub(crate) fn new(credentials: Vec<DatabaseCredential>) -> Result<Self, HostError> {
+        let mut password = 0;
+        let mut root = 0;
+        let mut certificate = 0;
+        let mut private_key = 0;
+        for credential in &credentials {
+            let secret = match credential {
+                DatabaseCredential::Password(secret)
+                | DatabaseCredential::RootCertificate(secret)
+                | DatabaseCredential::ClientCertificate(secret)
+                | DatabaseCredential::ClientPrivateKey(secret) => secret,
+            };
+            if !secret.valid() {
+                return Err(HostError::Conflict("postgres credential material is invalid".into()));
+            }
+            match credential {
+                DatabaseCredential::Password(_) => password += 1,
+                DatabaseCredential::RootCertificate(_) => root += 1,
+                DatabaseCredential::ClientCertificate(_) => certificate += 1,
+                DatabaseCredential::ClientPrivateKey(_) => private_key += 1,
+            }
+        }
+        if credentials.is_empty()
+            || credentials.len() > Self::LIMIT
+            || password > 1
+            || root > 1
+            || certificate > 1
+            || private_key > 1
+            || certificate != private_key
+            || (password == 0 && certificate == 0)
+        {
+            return Err(HostError::Conflict("postgres credential roles are invalid".into()));
+        }
+        Ok(Self { credentials })
+    }
+
+    pub(crate) fn credentials(&self) -> &[DatabaseCredential] {
+        &self.credentials
+    }
+}
+
 pub(crate) struct Authentication {
     pub(crate) binding: Binding,
-    pub(crate) secrets: Vec<(String, Secret)>,
+    pub(crate) endpoint: DatabaseEndpoint,
+    pub(crate) material: DatabaseAuthentication,
 }
 
 /// Host authority queried atomically before authentication and on every use.
@@ -70,6 +231,14 @@ pub(crate) trait Authority: Send + Sync {
 /// authority.
 pub(crate) trait InstallationAuthority: Send + Sync {
     fn current(&self, installation: &InstallationIdentity) -> Result<bool, HostError>;
+}
+
+/// Host-private endpoint and credential-role configuration. Neither the
+/// resolved address nor a key's authentication role is accepted from the
+/// extension request.
+pub(crate) trait DatabaseResolver: Send + Sync {
+    fn endpoint(&self, connection: &PostgresConnection) -> Result<DatabaseEndpoint, HostError>;
+    fn role(&self, key: &str) -> Result<CredentialRole, HostError>;
 }
 
 /// Re-opens the durable roster for every check, so disable, removal, and
@@ -103,19 +272,21 @@ impl InstallationAuthority for WorkspaceInstallation {
 /// It never returns credential bytes to the extension protocol. Values move from
 /// the private state store into [`Authentication`] and from there directly into
 /// [`Peer::open`]. Every later operation re-reads all four authorities.
-pub(crate) struct ServiceAuthority<'a, C, N, S> {
+pub(crate) struct ServiceAuthority<'a, C, N, S, R> {
     installation: InstallationIdentity,
     installations: &'a dyn InstallationAuthority,
     containers: &'a C,
     networks: &'a N,
     credentials: &'a S,
+    resolver: &'a R,
 }
 
-impl<'a, C, N, S> ServiceAuthority<'a, C, N, S>
+impl<'a, C, N, S, R> ServiceAuthority<'a, C, N, S, R>
 where
     C: ContainerInventory + Sync,
     N: NetworkStore + Sync,
     S: ExtensionStateStore + Sync,
+    R: DatabaseResolver + Sync,
 {
     pub(crate) fn new(
         installation: InstallationIdentity,
@@ -123,6 +294,7 @@ where
         containers: &'a C,
         networks: &'a N,
         credentials: &'a S,
+        resolver: &'a R,
     ) -> Self {
         Self {
             installation,
@@ -130,6 +302,7 @@ where
             containers,
             networks,
             credentials,
+            resolver,
         }
     }
 
@@ -178,11 +351,12 @@ where
     }
 }
 
-impl<C, N, S> Authority for ServiceAuthority<'_, C, N, S>
+impl<C, N, S, R> Authority for ServiceAuthority<'_, C, N, S, R>
 where
     C: ContainerInventory + Sync,
     N: NetworkStore + Sync,
     S: ExtensionStateStore + Sync,
+    R: DatabaseResolver + Sync,
 {
     fn authenticate(&self, installation: &str, connection: &PostgresConnection) -> Result<Authentication, HostError> {
         if !self.installation_current(installation)? {
@@ -190,12 +364,13 @@ where
         }
         self.container(connection)?;
         let network_revision = self.network(connection)?;
+        let endpoint = self.resolver.endpoint(connection)?;
         let mut revisions = BTreeMap::new();
-        let mut secrets = Vec::with_capacity(connection.credential_keys.len());
+        let mut material = Vec::with_capacity(connection.credential_keys.len());
         for key in &connection.credential_keys {
             let (revision, secret) = self.credential(key)?;
             revisions.insert(key.clone(), revision);
-            secrets.push((key.clone(), secret));
+            material.push(self.resolver.role(key)?.material(secret));
         }
         Ok(Authentication {
             binding: Binding {
@@ -206,7 +381,8 @@ where
                 network_revision,
                 credentials: revisions,
             },
-            secrets,
+            endpoint,
+            material: DatabaseAuthentication::new(material)?,
         })
     }
 
@@ -249,8 +425,12 @@ where
 
 /// Authenticated `PostgreSQL` transport. Secret material enters only `open`.
 pub(crate) trait Peer: Send + Sync {
-    fn open(&self, connection: &PostgresConnection, secrets: &[(String, Secret)])
-    -> Result<PostgresLeaseId, HostError>;
+    fn open(
+        &self,
+        connection: &PostgresConnection,
+        endpoint: &DatabaseEndpoint,
+        material: &DatabaseAuthentication,
+    ) -> Result<PostgresLeaseId, HostError>;
     fn start(&self, lease: &PostgresLeaseId, query: &PostgresQuery) -> Result<PostgresQueryId, HostError>;
     fn page(
         &self,
@@ -371,7 +551,9 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
         if state.leases.len() >= LEASE_LIMIT {
             return Err(HostError::Conflict("postgres lease limit reached".into()));
         }
-        let id = self.peer.open(connection, &authentication.secrets)?;
+        let id = self
+            .peer
+            .open(connection, &authentication.endpoint, &authentication.material)?;
         if state.leases.contains_key(id.as_str()) {
             self.peer.close_lease(&id)?;
             return Err(HostError::Conflict("postgres peer reused a live lease identity".into()));
@@ -567,7 +749,17 @@ mod tests {
                     network_revision: self.network_revision.load(Ordering::SeqCst) as u64,
                     credentials: BTreeMap::from([("db.password".into(), self.revision.load(Ordering::SeqCst) as u64)]),
                 },
-                secrets: vec![("db.password".into(), Secret::new(b"host-only-password".to_vec()))],
+                endpoint: DatabaseEndpoint::new(
+                    "127.0.0.1:5432".parse().unwrap(),
+                    DatabaseTls::verify_full("database.internal").unwrap(),
+                    1_000,
+                    5_000,
+                )
+                .unwrap(),
+                material: DatabaseAuthentication::new(vec![DatabaseCredential::Password(Secret::new(
+                    b"host-only-password".to_vec(),
+                ))])
+                .unwrap(),
             })
         }
 
@@ -586,10 +778,20 @@ mod tests {
     }
 
     impl Peer for FakePeer {
-        fn open(&self, _: &PostgresConnection, secrets: &[(String, Secret)]) -> Result<PostgresLeaseId, HostError> {
-            assert_eq!(secrets.len(), 1);
-            assert_eq!(secrets[0].0, "db.password");
-            assert_eq!(secrets[0].1.as_bytes(), b"host-only-password");
+        fn open(
+            &self,
+            _: &PostgresConnection,
+            endpoint: &DatabaseEndpoint,
+            material: &DatabaseAuthentication,
+        ) -> Result<PostgresLeaseId, HostError> {
+            assert_eq!(endpoint.address(), "127.0.0.1:5432".parse().unwrap());
+            assert_eq!(endpoint.tls().server_name(), "database.internal");
+            assert_eq!(endpoint.timeouts_ms(), (1_000, 5_000));
+            assert_eq!(material.credentials().len(), 1);
+            let DatabaseCredential::Password(secret) = &material.credentials()[0] else {
+                panic!("expected password")
+            };
+            assert_eq!(secret.as_bytes(), b"host-only-password");
             self.opened.fetch_add(1, Ordering::SeqCst);
             self.authenticated.store(true, Ordering::SeqCst);
             PostgresLeaseId::new("lease-1")
@@ -712,6 +914,28 @@ mod tests {
         reads: AtomicUsize,
     }
 
+    struct Resolver {
+        resolutions: AtomicUsize,
+    }
+
+    impl DatabaseResolver for Resolver {
+        fn endpoint(&self, _: &PostgresConnection) -> Result<DatabaseEndpoint, HostError> {
+            self.resolutions.fetch_add(1, Ordering::SeqCst);
+            DatabaseEndpoint::new(
+                "127.0.0.1:5432".parse().unwrap(),
+                DatabaseTls::verify_full("database.internal").unwrap(),
+                1_000,
+                5_000,
+            )
+        }
+
+        fn role(&self, key: &str) -> Result<CredentialRole, HostError> {
+            (key == "db.password")
+                .then_some(CredentialRole::Password)
+                .ok_or_else(|| HostError::Conflict("postgres credential role is not configured".into()))
+        }
+    }
+
     impl ExtensionStateStore for CredentialService {
         fn read(&self) -> Result<ExtensionState, HostError> {
             Err(HostError::Unsupported("not used".into()))
@@ -752,8 +976,18 @@ mod tests {
             revision: AtomicUsize::new(7),
             reads: AtomicUsize::new(0),
         };
+        let resolver = Resolver {
+            resolutions: AtomicUsize::new(0),
+        };
         let peer = FakePeer::default();
-        let authority = ServiceAuthority::new(owner.clone(), &installations, &containers, &networks, &credentials);
+        let authority = ServiceAuthority::new(
+            owner.clone(),
+            &installations,
+            &containers,
+            &networks,
+            &credentials,
+            &resolver,
+        );
         let broker = HostPostgres::new(owner.clone(), authority, peer.clone());
         let PostgresOpenOutcome::Opened { lease } = broker
             .open_once(
@@ -772,6 +1006,7 @@ mod tests {
             Err(HostError::Conflict(_))
         ));
         assert_eq!(peer.closed.load(Ordering::SeqCst), 1);
+        assert_eq!(resolver.resolutions.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -791,13 +1026,17 @@ mod tests {
             revision: AtomicUsize::new(7),
             reads: AtomicUsize::new(0),
         };
-        let authority = ServiceAuthority::new(owner, &installations, &containers, &networks, &credentials);
+        let resolver = Resolver {
+            resolutions: AtomicUsize::new(0),
+        };
+        let authority = ServiceAuthority::new(owner, &installations, &containers, &networks, &credentials, &resolver);
 
         assert!(matches!(
             authority.authenticate(installation('b').as_str(), &connection()),
             Err(HostError::Absent(_))
         ));
         assert_eq!(credentials.reads.load(Ordering::SeqCst), 0);
+        assert_eq!(resolver.resolutions.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -808,6 +1047,50 @@ mod tests {
             hl_extension::ExtensionName::new("postgres-browser").unwrap(),
         );
         assert!(!authority.current(&installation('a')).unwrap());
+    }
+
+    #[test]
+    fn private_endpoint_and_credential_roles_are_strictly_bounded() {
+        assert!(DatabaseTls::verify_full("").is_err());
+        assert!(DatabaseTls::verify_full("-database.internal").is_err());
+        assert!(DatabaseTls::verify_full("database..internal").is_err());
+        let tls = DatabaseTls::verify_full("database.internal").unwrap();
+        let address = "127.0.0.1:5432".parse().unwrap();
+        assert!(DatabaseEndpoint::new(address, tls.clone(), 99, 1_000).is_err());
+        assert!(DatabaseEndpoint::new(address, tls.clone(), 1_000, 30_001).is_err());
+        let endpoint = DatabaseEndpoint::new(address, tls, 1_000, 5_000).unwrap();
+        assert_eq!(endpoint.address(), address);
+        assert_eq!(endpoint.timeouts_ms(), (1_000, 5_000));
+
+        assert!(DatabaseAuthentication::new(Vec::new()).is_err());
+        assert!(
+            DatabaseAuthentication::new(vec![DatabaseCredential::RootCertificate(
+                Secret::new(b"root".to_vec(),)
+            )])
+            .is_err()
+        );
+        assert!(
+            DatabaseAuthentication::new(vec![DatabaseCredential::ClientCertificate(Secret::new(
+                b"certificate".to_vec(),
+            ))])
+            .is_err()
+        );
+        assert!(
+            DatabaseAuthentication::new(vec![
+                CredentialRole::ClientCertificate.material(Secret::new(b"certificate".to_vec())),
+                CredentialRole::ClientPrivateKey.material(Secret::new(b"private-key".to_vec())),
+                CredentialRole::RootCertificate.material(Secret::new(b"root".to_vec())),
+                CredentialRole::Password.material(Secret::new(b"password".to_vec())),
+            ])
+            .is_ok()
+        );
+        assert!(
+            DatabaseAuthentication::new(vec![
+                DatabaseCredential::Password(Secret::new(b"first".to_vec())),
+                DatabaseCredential::Password(Secret::new(b"second".to_vec())),
+            ])
+            .is_err()
+        );
     }
 
     #[test]
