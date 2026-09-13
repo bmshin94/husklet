@@ -1161,7 +1161,11 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
 
   const content = (
     <Scroll grow width="fill" height="fill">
-      <Container pad={4} gap={3} width={PAGE_WIDTH}>
+      <Container
+        pad={acquisition?.candidate ? { top: 4, end: 4, bottom: 18, start: 4 } : 4}
+        gap={3}
+        width={PAGE_WIDTH}
+      >
         <Heading label="Extensions" scale="display" />
         <Text
           label="Discover tools, review their access, and manage what runs in this workspace."
@@ -1611,7 +1615,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                           setPermissionDetailsExpanded(Boolean(event.value))
                         }
                       >
-                        <Column gap={1}>
+                        <Column gap={1} pad={{ bottom: 18 }}>
                           {acquisition.candidate.requested.length > 0 && (
                             <Row gap={1} width="fill" align="center" justify="stretch">
                               <Text
@@ -2028,6 +2032,20 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                               );
                             }),
                           )}
+                          {requestedCredentials.read.length +
+                            requestedCredentials.write.length +
+                            requestedCredentials.inject.length >
+                            0 && (
+                            <>
+                              <Text label="Credential access" color="text-dim" />
+                              <Text
+                                label="Credentials may contain reusable secrets. Grant only the exact values this extension needs."
+                                color="text-dim"
+                                wrap
+                                width={COPY_WIDTH}
+                              />
+                            </>
+                          )}
                           {(['read', 'write', 'inject'] as const).flatMap((operation) =>
                             requestedCredentials[operation].map((key) => {
                               const checked = grantedCredentials[operation].includes(key);
@@ -2059,6 +2077,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                               );
                             }),
                           )}
+                          <Spacer height={6} />
                         </Column>
                       </Expander>
                     </CardContent>
@@ -2482,6 +2501,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
       {content}
       {acquisition?.candidate ? (
         <Column gap={0}>
+          <Spacer height={2} />
           <Separator orientation="horizontal" />
           <Row
             gap={1}

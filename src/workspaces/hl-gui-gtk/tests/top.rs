@@ -2958,7 +2958,19 @@ mod unix {
                                 }],
                                 write: Vec::new(),
                             },
-                            requested_credentials: Default::default(),
+                            requested_credentials: hl_extension::CredentialGrant {
+                                read: vec![
+                                    "registry.token".into(),
+                                    "registry.username".into(),
+                                    "signing.certificate".into(),
+                                ],
+                                write: vec!["deploy.key".into(), "release.token".into(), "artifact.password".into()],
+                                inject: vec![
+                                    "database.url".into(),
+                                    "cloud.credentials".into(),
+                                    "service.token".into(),
+                                ],
+                            },
                             installed_image_digest: Some(old_digest.clone()),
                         }),
                         error: None,
@@ -2972,7 +2984,7 @@ mod unix {
         drain_extension_renders(wire, tree, surface);
 
         let review_root = surface.widget().clone().upcast::<gtk::Widget>();
-        assert!(has_label(&review_root, "No access selected · 10 requested"));
+        assert!(has_label(&review_root, "No access selected · 19 requested"));
         assert!(has_label(&review_root, "Publisher · Community"));
         assert!(has_label(
             &review_root,
@@ -3044,7 +3056,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 1/10 selected",
+            "Review decision · 1/19 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected extension consent call: {other:?}"),
@@ -3067,7 +3079,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 3/10 selected",
+            "Review decision · 3/19 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected volume-create consent call: {other:?}"),
@@ -3095,7 +3107,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 5/10 selected",
+            "Review decision · 5/19 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected exact-image consent call: {other:?}"),
@@ -3118,7 +3130,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 3/10 selected",
+            "Review decision · 3/19 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected exact-image clearing call: {other:?}"),
@@ -3145,7 +3157,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 5/10 selected",
+            "Review decision · 5/19 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected exact-image reselection call: {other:?}"),
@@ -3168,7 +3180,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 7/10 selected",
+            "Review decision · 7/19 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected exact-file consent call: {other:?}"),
@@ -3191,7 +3203,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 5/10 selected",
+            "Review decision · 5/19 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected exact-file clearing call: {other:?}"),
@@ -3218,7 +3230,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 7/10 selected",
+            "Review decision · 7/19 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected exact-file reselection call: {other:?}"),
@@ -3241,7 +3253,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 9/10 selected",
+            "Review decision · 9/19 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected environment consent call: {other:?}"),
@@ -3251,6 +3263,7 @@ mod unix {
         let review_root = surface.widget().clone().upcast::<gtk::Widget>();
         assert!(has_label(&review_root, "Update with selected access"));
         capture_update_surface(window, &review_root, "update-review");
+        assert!(has_label(&review_root, "Inject credential service.token"));
         let update = find_button(&review_root, "Update with selected access");
         assert!(update.is_sensitive(), "required consent enables the update");
         update.emit_clicked();
@@ -3502,11 +3515,11 @@ mod unix {
             let capture_window = gtk::Window::new();
             capture_window.set_child(Some(root));
             capture_window.set_default_size(width, 800);
+            capture_window.set_size_request(width, 800);
             capture_window.present();
             settle_toolkit();
-            root.measure(gtk::Orientation::Horizontal, -1);
-            root.measure(gtk::Orientation::Vertical, width);
-            root.allocate(width, 800, -1, None);
+            assert_eq!(capture_window.width(), width, "{width_name} review capture width");
+            assert_eq!(capture_window.height(), 800, "{width_name} review capture height");
             assert_contained(root, &format!("extensions/{state}/{width_name}"));
             if state == "update-required" {
                 let required = find_button(root, "Select required access");
@@ -3592,9 +3605,9 @@ mod unix {
                 let status = find_label(
                     root,
                     if state == "update-required" {
-                        "No access selected · 10 requested"
+                        "No access selected · 19 requested"
                     } else {
-                        "Review decision · 9/10 selected"
+                        "Review decision · 9/19 selected"
                     },
                 );
                 let status_bounds = status
@@ -3673,8 +3686,91 @@ mod unix {
                     "{width_name} exact-file authority is stated without implying subtree access"
                 );
                 assert!(update.grab_focus(), "{width_name} sticky decision accepts focus");
+                let credential = [
+                    "Read credential registry.token",
+                    "Read credential registry.username",
+                    "Read credential signing.certificate",
+                    "Change credential deploy.key",
+                    "Change credential release.token",
+                    "Change credential artifact.password",
+                    "Inject credential database.url",
+                    "Inject credential cloud.credentials",
+                    "Inject credential service.token",
+                ]
+                .into_iter()
+                .map(|label| find_label(root, label))
+                .max_by_key(|label| vertical_end(root, label.upcast_ref()))
+                .expect("credential fixture is non-empty");
+                let scroll = credential
+                    .ancestor(gtk::ScrolledWindow::static_type())
+                    .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
+                    .expect("permission review retains its scrolling viewport");
+                let adjustment = scroll.vadjustment();
+                adjustment.set_value(0.0);
+                settle_toolkit();
+                let initial = credential
+                    .compute_bounds(root)
+                    .expect("final credential belongs to permission review");
+                let viewport = scroll
+                    .compute_bounds(root)
+                    .expect("permission review viewport belongs to review root");
+                if width == 600 {
+                    assert!(
+                        initial.y() + initial.height() > viewport.y() + viewport.height(),
+                        "narrow fixture no longer proves the final credential starts outside the viewport: credential={initial:?}, viewport={viewport:?}"
+                    );
+                } else {
+                    assert!(
+                        initial.y() + initial.height() <= viewport.y() + viewport.height(),
+                        "wide review needlessly hides the final credential: credential={initial:?}, viewport={viewport:?}"
+                    );
+                }
+                capture(&capture_window, &format!("extensions-{state}-{width_name}"), width, 800);
+                let before = adjustment.value();
+                adjustment.set_value(adjustment.upper() - adjustment.page_size());
+                settle_toolkit();
+                let scrolled = credential
+                    .compute_bounds(root)
+                    .expect("scrolled final credential remains rooted");
+                if width == 600 {
+                    assert!(
+                        adjustment.value() > before && scrolled.y() < initial.y(),
+                        "narrow capture did not drive the allocated permission viewport: adjustment={before}->{}, credential={initial:?}->{scrolled:?}",
+                        adjustment.value()
+                    );
+                } else {
+                    assert!(
+                        adjustment.value() > before
+                            && (adjustment.value() - (adjustment.upper() - adjustment.page_size())).abs() <= 1.0,
+                        "wide capture did not reach the allocated viewport end: adjustment={before}->{}/{}/{}",
+                        adjustment.value(),
+                        adjustment.upper(),
+                        adjustment.page_size()
+                    );
+                }
+                let footer = update
+                    .parent()
+                    .and_then(|row| row.parent())
+                    .expect("review decision row belongs to its footer");
+                let footer_bounds = footer.compute_bounds(root).expect("review footer belongs to root");
+                let separator_top = footer_bounds.y() + 8.0;
+                assert!(
+                    width != 600 || scrolled.y() + scrolled.height() <= separator_top - 8.0,
+                    "{width_name} final credential lacks 8px footer clearance: credential={scrolled:?}, separator={separator_top}, viewport={viewport:?}, adjustment={}/{}/{}",
+                    adjustment.value(),
+                    adjustment.upper(),
+                    adjustment.page_size()
+                );
+                capture(
+                    &capture_window,
+                    &format!("extensions-{state}-last-credential-{width_name}"),
+                    width,
+                    800,
+                );
             }
-            capture(&capture_window, &format!("extensions-{state}-{width_name}"), width, 800);
+            if state != "update-review" {
+                capture(&capture_window, &format!("extensions-{state}-{width_name}"), width, 800);
+            }
             gtk::prelude::GtkWindowExt::set_focus(&capture_window, None::<&gtk::Widget>);
             settle_toolkit();
             capture_window.set_child(None::<&gtk::Widget>);
