@@ -33,6 +33,7 @@ import { SliderWorkbench } from './slider.js';
 import { SplitterWorkbench } from './splitter.js';
 import { SwitchWorkbench } from './switch.js';
 import { TextAreaWorkbench } from './text-area.js';
+import { TestReportWorkbench } from './test-report.js';
 import { TerminalTranscriptStory } from './terminal-transcript.js';
 import { ToggleButtonWorkbench } from './toggle-button.js';
 import { ComponentDocument, DocumentationSection } from './component-document.js';
@@ -61,6 +62,7 @@ type NativeWorkbenchName =
   | 'Splitter'
   | 'Switch'
   | 'TextArea'
+  | 'TestReportView'
   | 'ToggleButton';
 
 const compositeExamples = {
@@ -122,6 +124,7 @@ const nativeWorkbenchPages = {
   Splitter: SplitterWorkbench,
   Switch: SwitchWorkbench,
   TextArea: TextAreaWorkbench,
+  TestReportView: TestReportWorkbench,
   ToggleButton: ToggleButtonWorkbench,
 } satisfies Record<NativeWorkbenchName, Page>;
 

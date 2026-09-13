@@ -384,6 +384,12 @@ fn components(css: &mut String, theme: &Theme) {
          .hl-chip {{ min-height: 24px; padding: 1px 8px; border-radius: {pill}px; background: {raised}; border-color: {line}; }}\n\
          .hl-separator {{ background: {line}; min-height: 1px; min-width: 1px; }}\n\
          .hl-datatable, .hl-list {{ background: {surface}; border: 1px solid {line}; border-radius: {radius}px; }}\n\
+         .hl-test-report-case {{ min-height: 32px; padding: 6px 8px; border-bottom: 1px solid {line}; }}\n\
+         .hl-test-report-case:last-child {{ border-bottom: none; }}\n\
+         .test-status-passed {{ color: {positive}; }}\n\
+         .test-status-failed {{ color: {danger}; }}\n\
+         .test-status-skipped {{ color: {warning}; }}\n\
+         .hl-test-report-failure {{ color: {danger}; padding-left: 108px; }}\n\
          columnview > listview > row {{ min-height: 31px; padding: 0; }}\n\
          columnview > listview > row > cell {{ min-height: 31px; padding: 0; }}\n\
          columnview .hl-table-details {{ min-width: 44px; min-height: 24px; padding: 0; margin: 0; border: none; }}\n\
@@ -404,6 +410,9 @@ fn components(css: &mut String, theme: &Theme) {
         dim = theme.color(Token::TextDim).hex(),
         text = theme.color(Token::Text).hex(),
         accent = theme.color(Token::Accent).hex(),
+        positive = theme.color(Token::Positive).hex(),
+        warning = theme.color(Token::Warning).hex(),
+        danger = theme.color(Token::Danger).hex(),
         ground = theme.color(Token::Ground).hex(),
         pill = radius * 3,
         radius = radius,

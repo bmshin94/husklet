@@ -85,7 +85,12 @@ pub(crate) fn dependency_value(widget: &gtk::Widget, value: &str) -> bool {
 }
 pub(crate) fn query_value(widget: &gtk::Widget, value: &str) -> bool {
     let ok = dependency_value(widget, value);
-    for class in ["query-plan-normal", "query-plan-hot", "query-plan-estimate_mismatch", "query-plan-spill"] {
+    for class in [
+        "query-plan-normal",
+        "query-plan-hot",
+        "query-plan-estimate_mismatch",
+        "query-plan-spill",
+    ] {
         widget.remove_css_class(class)
     }
     if let Some(state) = value.split_whitespace().find_map(|p| p.strip_prefix("state=")) {
@@ -645,26 +650,58 @@ pub(crate) fn test_report(widget: &gtk::Widget, value: &str) -> bool {
         if columns.len() != 5 {
             continue;
         }
-        let row = super::axis::row(8);
-        for (index, text) in columns.into_iter().enumerate() {
-            let label = super::axis::label();
-            label.set_text(text);
-            label.set_selectable(true);
-            label.set_xalign(0.0);
-            if index == 3 || index == 4 {
-                label.add_css_class("monospace");
-            }
-            label.set_width_chars(match index {
-                0 => 16,
-                1 => 28,
-                2 => 8,
-                3 => 10,
-                _ => 36,
-            });
-            label.set_hexpand(index == 4);
-            row.append(&label);
+        let case = super::axis::column(2);
+        case.add_css_class("hl-test-report-case");
+        let summary = super::axis::row(8);
+        let suite = super::axis::label();
+        suite.set_text(columns[0]);
+        suite.set_selectable(true);
+        suite.set_xalign(0.0);
+        suite.set_width_chars(12);
+        suite.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        suite.set_tooltip_text(Some(columns[0]));
+        summary.append(&suite);
+        let name = super::axis::label();
+        name.set_text(columns[1]);
+        name.set_selectable(true);
+        name.set_xalign(0.0);
+        name.set_hexpand(true);
+        name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        name.set_tooltip_text(Some(columns[1]));
+        summary.append(&name);
+        let status = super::axis::label();
+        status.set_text(match columns[2] {
+            "passed" => "✓ passed",
+            "failed" => "× failed",
+            "skipped" => "– skipped",
+            other => other,
+        });
+        status.set_selectable(true);
+        status.set_xalign(0.0);
+        status.set_width_chars(9);
+        status.add_css_class(&format!("test-status-{}", columns[2]));
+        summary.append(&status);
+        let duration = super::axis::label();
+        duration.set_text(&format!("{} ms", columns[3]));
+        duration.set_selectable(true);
+        duration.set_xalign(1.0);
+        duration.set_width_chars(7);
+        duration.add_css_class("monospace");
+        summary.append(&duration);
+        case.append(&summary);
+        if !columns[4].is_empty() {
+            let failure = super::axis::label();
+            failure.set_text(columns[4]);
+            failure.set_selectable(true);
+            failure.set_xalign(0.0);
+            failure.set_wrap(true);
+            failure.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+            failure.set_hexpand(true);
+            failure.add_css_class("monospace");
+            failure.add_css_class("hl-test-report-failure");
+            case.append(&failure);
         }
-        rows.append(&row);
+        rows.append(&case);
     }
     true
 }

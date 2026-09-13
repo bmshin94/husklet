@@ -31,7 +31,13 @@ import {
   boundedEvents,
   TIMELINE_LIMIT,
 } from '../dist/timeline-inspection.js';
-import { TestReportStory, boundedCases, CASE_LIMIT, FAILURE_LIMIT } from '../dist/test-report.js';
+import {
+  TestReportStory,
+  TestReportWorkbench,
+  boundedCases,
+  CASE_LIMIT,
+  FAILURE_LIMIT,
+} from '../dist/test-report.js';
 import {
   CoverageInspectionStory,
   boundedCoverage,
@@ -490,6 +496,47 @@ test('test report bounds cases and failure detail independently', () => {
   assert.equal(value.split('\n').length, CASE_LIMIT);
   assert(!value.includes('invalid'));
   assert.equal(value.split('\n')[0].split('\t')[4].length, FAILURE_LIMIT);
+});
+
+test('TestReportView owns one focused component page with distinct outcome specimens', () => {
+  const stage = host();
+  const frame = stage.render(h(TestReportWorkbench));
+  assert.equal(frame.patches.filter((patch) => patch.Create?.tag === 'TestReportView').length, 4);
+  for (const label of [
+    'Test Report View',
+    'Overview',
+    'States',
+    'Passed',
+    'Failed',
+    'Skipped',
+    'API',
+  ]) {
+    assert.ok(
+      frame.patches.some(
+        (patch) => patch.SetProp?.prop === 'Label' && patch.SetProp.value?.Text === label,
+      ),
+      `missing ${label}`,
+    );
+  }
+  const select = frame.patches.find((patch) => patch.Create?.tag === 'Select').Create.id;
+  const before = stage.frames.length;
+  assert(
+    stage.surface.dispatch({
+      trigger: 'Change',
+      node: select,
+      id: `${select}:Change`,
+      value: 'failed',
+    }),
+  );
+  assert(
+    stage
+      .since(before)
+      .some(
+        (patch) =>
+          patch.SetProp?.prop === 'Label' &&
+          patch.SetProp.value?.Text === 'Showing failed outcomes',
+      ),
+  );
 });
 
 test('timeline view rejects blank events and enforces its hard ceiling', () => {

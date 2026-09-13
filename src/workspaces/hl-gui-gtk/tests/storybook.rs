@@ -47,6 +47,7 @@ mod unix {
         "Drag and keyboard reorder",
         "Workspace layout control",
         "DataTable",
+        "TestReportView",
         "Navigation and transient UI",
         "Bounded streaming log",
         "Virtual event timeline",
@@ -250,6 +251,7 @@ mod unix {
                 | "ConfirmAction"
                 | "Switch"
                 | "DataTable"
+                | "TestReportView"
                 | "Splitter"
                 | "Workspace layout control"
         );
@@ -269,6 +271,31 @@ mod unix {
                 titles,
                 ["Data Table"],
                 "DataTable documentation must have one authoritative page title"
+            );
+        }
+        if story == "TestReportView" {
+            assert_eq!(
+                descendants::<gtk::ScrolledWindow>(&root)
+                    .into_iter()
+                    .filter(|view| view.has_css_class("hl-testreportview"))
+                    .count(),
+                4,
+                "TestReportView page must render overview plus passed, failed, and skipped specimens"
+            );
+            for label in ["✓ passed", "× failed", "– skipped", "expected ready, received offline"] {
+                assert!(
+                    descendants::<gtk::Label>(&root)
+                        .iter()
+                        .any(|candidate| candidate.text() == label && candidate.is_selectable()),
+                    "TestReportView did not render selectable {label:?} content"
+                );
+            }
+            assert!(
+                descendants::<gtk::ScrolledWindow>(&root)
+                    .into_iter()
+                    .filter(|view| view.has_css_class("hl-testreportview"))
+                    .all(|view| view.hadjustment().upper() <= view.hadjustment().page_size() + 1.0),
+                "TestReportView must not require horizontal scrolling at either documented width"
             );
         }
         if narrow_story {
@@ -3383,6 +3410,25 @@ mod unix {
                     button_caption(button).as_deref() == Some("Refresh metadata")
                 })
                 .emit_clicked();
+            }
+            "TestReportView" => {
+                let choice = find::<gtk::ToggleButton>(root, |button| {
+                    button.tooltip_text().as_deref() == Some("Visible test outcome")
+                });
+                assert!(
+                    choice.grab_focus(),
+                    "TestReportView state selector accepts keyboard focus"
+                );
+                choice.emit_clicked();
+                let popover = find::<gtk::Popover>(&choice.clone().upcast(), |_| true);
+                settle_until("TestReportView state options map", || {
+                    popover.is_visible() && popover.is_mapped()
+                });
+                let failed = find::<gtk::Button>(popover.upcast_ref(), |button| {
+                    button.label().as_deref() == Some("Failed")
+                });
+                assert!(failed.grab_focus(), "failed report state is keyboard reachable");
+                failed.emit_clicked();
             }
             _ => unreachable!(),
         }
