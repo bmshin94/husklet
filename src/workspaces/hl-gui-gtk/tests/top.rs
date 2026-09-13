@@ -324,11 +324,11 @@ mod unix {
                 "installed management omitted its search control"
             );
             assert!(
-                has_label(&root, "12 shown · 50 matching"),
+                has_label(&root, "Show 12 more · 38 remaining"),
                 "installed management omitted its visible pagination status"
             );
             assert!(
-                has_label(&root, "Show 12 more"),
+                has_label(&root, "Show 12 more · 38 remaining"),
                 "installed management hid pagination below its bounded card wall"
             );
         }
@@ -690,13 +690,28 @@ mod unix {
                 assert_eq!(refresh.icon_name().as_deref(), Some("view-refresh-symbolic"));
                 assert!(refresh.has_css_class("size-small"));
                 assert_eq!(refresh.height(), 28, "{width_name} refresh uses the compact tier");
-                let pagination = find_button(&root, "Show 12 more");
+                let pagination = find_button(&root, "Show 12 more · 38 remaining");
                 assert_eq!(pagination.accessible_role(), gtk::AccessibleRole::Button);
                 assert!(
                     pagination.is_focusable(),
                     "{width_name} installed pagination is keyboard reachable"
                 );
-                assert!(pagination.has_css_class("variant-ghost"));
+                assert!(pagination.has_css_class("variant-outline"));
+                assert!(pagination.has_css_class("size-small"));
+                assert!(pagination.height() >= 44, "{width_name} pagination lost its 44px target");
+                let pagination_chrome = widgets_with_class(pagination.upcast_ref(), "hl-button-chrome")
+                    .into_iter()
+                    .next()
+                    .expect("pagination owns visible chrome");
+                assert_eq!(
+                    pagination_chrome.height(),
+                    28,
+                    "{width_name} pagination uses compact chrome"
+                );
+                assert_eq!(
+                    find_image(pagination.upcast_ref()).icon_name().as_deref(),
+                    Some("go-down-symbolic")
+                );
                 let pagination_bounds = pagination
                     .compute_bounds(&root)
                     .expect("installed pagination belongs to Top root");
@@ -704,14 +719,13 @@ mod unix {
                     pagination_bounds.y() + pagination_bounds.height() <= 340.0,
                     "{width_name} installed pagination remained hidden below the card wall: {pagination_bounds:?}"
                 );
-                let shown = find_mapped_labelled(&root, "12 shown · 50 matching");
-                let shown_bounds = shown
-                    .compute_bounds(&root)
-                    .expect("installed pagination status belongs to Top root");
                 assert!(
-                    pagination_bounds.y() > shown_bounds.y()
-                        || pagination_bounds.x() - shown_bounds.x() - shown_bounds.width() <= 16.0,
-                    "{width_name} pagination action detached from its status: status={shown_bounds:?} action={pagination_bounds:?}"
+                    if width == 600 {
+                        (pagination_bounds.x() - 16.0).abs() <= 1.0
+                    } else {
+                        pagination_bounds.x() > 400.0
+                    },
+                    "{width_name} pagination action is not deliberately aligned: {pagination_bounds:?}"
                 );
                 let refresh_bounds = refresh
                     .compute_bounds(&root)
@@ -729,6 +743,35 @@ mod unix {
                         <= 1.0,
                     "{width_name} refresh is stranded beside the count instead of anchoring the toolbar: refresh={refresh_bounds:?}, toolbar={toolbar_bounds:?}"
                 );
+            }
+            if fixture == "populated" && name == "extensions" && width == 600 {
+                let pagination = find_button(&root, "Show 12 more · 38 remaining");
+                assert!(pagination.grab_focus(), "installed pagination accepts keyboard focus");
+                let _ = surface.reports().drain();
+                pagination.emit_clicked();
+                settle_toolkit();
+                let reports = surface.reports().drain();
+                assert_eq!(
+                    reports.iter().filter(|event| matches!(event, hl_gui::Event::Invoke { .. })).count(),
+                    1,
+                    "one pagination activation must emit exactly one Invoke"
+                );
+                let event = reports
+                    .into_iter()
+                    .find(|event| matches!(event, hl_gui::Event::Invoke { .. }))
+                    .expect("pagination emits Invoke");
+                let payload = codec::interaction(&event, Some(""))
+                    .expect("pagination interaction has a production wire representation");
+                wire.send(&Frame::new(ChannelId::new(93), hl_extension::Kind::Event, payload))
+                    .expect("pagination interaction reaches Top");
+                apply_until(
+                    &mut wire,
+                    &mut tree,
+                    &mut surface,
+                    "Show 12 more · 26 remaining",
+                    |request| panic!("unexpected installed pagination request: {request:?}"),
+                );
+                assert!(pagination.has_focus(), "pagination rerender must retain keyboard focus");
             }
             if fixture == "error" && name == "networks" {
                 for label in [
@@ -1557,7 +1600,7 @@ mod unix {
                 &mut wire,
                 &mut tree,
                 &mut surface,
-                "12 shown · 50 matching",
+                "Show 12 more · 38 remaining",
                 |request| panic!("unexpected installed search-clear render request: {request:?}"),
             );
             assert!(

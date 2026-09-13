@@ -2318,20 +2318,15 @@ export function Extensions({
                       }}
                     />
                     {visibleInstalled.length > renderedInstalled.length ? (
-                      <>
-                        <Text
-                          label={`${renderedInstalled.length} shown · ${visibleInstalled.length} matching`}
-                          color="text-dim"
-                        />
-                        <Button
-                          label={`Show ${Math.min(INSTALLED_PAGE_SIZE, visibleInstalled.length - renderedInstalled.length)} more`}
-                          size="small"
-                          variant="ghost"
-                          onInvoke={() =>
-                            setInstalledLimit((current) => current + INSTALLED_PAGE_SIZE)
-                          }
-                        />
-                      </>
+                      <Button
+                        label={`Show ${Math.min(INSTALLED_PAGE_SIZE, visibleInstalled.length - renderedInstalled.length)} more · ${visibleInstalled.length - renderedInstalled.length} remaining`}
+                        icon="go-down-symbolic"
+                        size="small"
+                        variant="outline"
+                        onInvoke={() =>
+                          setInstalledLimit((current) => current + INSTALLED_PAGE_SIZE)
+                        }
+                      />
                     ) : (
                       <Text
                         label={`${visibleInstalled.length} of ${countLabel(installed.length, 'installed extension')}`}
