@@ -12,6 +12,12 @@ export declare class ExtensionCommitOperationError extends Error {
     readonly review: any;
     constructor(operation: any, job: any, revision: any, candidate: any, review: any, cause: any);
 }
+/** An exact extension removal may have committed before its reply was lost. */
+export declare class ExtensionRemoveOperationError extends Error {
+    readonly extensionName: any;
+    readonly imageDigest: any;
+    constructor(name: any, imageDigest: any, cause: any);
+}
 /** A post-creation execution failure whose immutable identity remains recoverable. */
 export declare class ExecutionOperationError extends Error {
     readonly executionId: any;

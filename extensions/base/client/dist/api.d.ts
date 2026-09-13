@@ -42,6 +42,12 @@ export interface ExtensionSummary {
     /** Effective exact-key credential authority persisted for this exact image digest. */
     credentials?: CredentialGrant;
 }
+/** An exact extension removal may have committed before its reply was lost. Never replay it. */
+export declare class ExtensionRemoveOperationError extends Error {
+    readonly extensionName: string;
+    readonly imageDigest: string;
+    readonly cause: unknown;
+}
 export interface ExtensionProviderDeclaration {
     extension: string;
     image_digest: string;
@@ -1183,6 +1189,14 @@ export interface WorkspaceApi {
             changed: false;
             name: string;
             image_digest: string;
+        }>;
+        /** Reconcile a lost removal reply from authoritative inventory without replaying removal. */
+        recoverRemoval(failure: ExtensionRemoveOperationError): Promise<{
+            removed: {
+                name: string;
+                image_digest: string;
+            };
+            replacement: ExtensionSummary | null;
         }>;
         startAcquisition(reference: string, options?: {
             refresh?: boolean;

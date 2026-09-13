@@ -1,6 +1,7 @@
 import {
   connect,
   ExtensionCommitOperationError,
+  ExtensionRemoveOperationError,
   workspace,
   type ExtensionAcquisitionStatus,
 } from '@husklet/client';
@@ -70,7 +71,15 @@ host = workspace(session);
 const persisted = await host.extensions.inspect(identity.name);
 if (persisted.image_digest !== identity.image_digest || !persisted.enabled)
   throw new Error('installed lifecycle state did not survive host restart');
-await host.extensions.removeAndWait(identity.name, identity.image_digest);
+try {
+  await host.extensions.removeAndWait(identity.name, identity.image_digest);
+} catch (error) {
+  if (!(error instanceof ExtensionRemoveOperationError)) throw error;
+  await session.close();
+  session = await connect({ path: configuration.path, pendingLimit: 8, timeout: 5_000 });
+  host = workspace(session);
+  await host.extensions.recoverRemoval(error);
+}
 await session.close();
 process.stdout.write(
   `${JSON.stringify({ catalogue: catalogue.entries.length, removed: identity.name })}\n`,

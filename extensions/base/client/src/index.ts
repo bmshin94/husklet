@@ -101,6 +101,23 @@ export class ExtensionCommitOperationError extends Error {
   }
 }
 
+/** An exact extension removal may have committed before its reply was lost. */
+export class ExtensionRemoveOperationError extends Error {
+  readonly extensionName;
+  readonly imageDigest;
+
+  constructor(name, imageDigest, cause) {
+    super(
+      `extension ${name} at ${imageDigest} may have been removed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
+    this.name = 'ExtensionRemoveOperationError';
+    this.extensionName = name;
+    this.imageDigest = imageDigest;
+    this.cause = cause;
+  }
+}
+
 /** A post-creation execution failure whose immutable identity remains recoverable. */
 export class ExecutionOperationError extends Error {
   readonly executionId;
@@ -6971,22 +6988,60 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     });
     const stop = await api.watchExtensions(observed);
     let timer;
+    let primaryFailure: unknown;
+    let cleanupFailure: unknown;
+    let outcome:
+      | {
+          changed: true;
+          removed: { name: string; image_digest: string };
+          replacement: ExtensionSummary | null;
+        }
+      | { changed: false; name: string; image_digest: string };
     try {
       authorityIssued = true;
-      await api.extensions.remove(name, digest);
+      try {
+        await api.extensions.remove(name, digest);
+      } catch (error) {
+        throw new ExtensionRemoveOperationError(name, digest, error);
+      }
       const replacement = await Promise.race([
         inventory,
         new Promise<undefined>((resolve) => {
           timer = setTimeout(() => resolve(undefined), timeoutMs);
         }),
       ]);
-      return replacement === undefined
-        ? { changed: false, name, image_digest: digest }
-        : { changed: true, removed: { name, image_digest: digest }, replacement };
+      outcome =
+        replacement === undefined
+          ? { changed: false, name, image_digest: digest }
+          : { changed: true, removed: { name, image_digest: digest }, replacement };
+    } catch (error) {
+      primaryFailure = error;
     } finally {
       clearTimeout(timer);
-      await stop();
+      try {
+        await stop();
+      } catch (error) {
+        cleanupFailure = error;
+      }
     }
+    if (primaryFailure !== undefined) throw primaryFailure;
+    if (cleanupFailure !== undefined) throw cleanupFailure;
+    return outcome!;
+  };
+  api.extensions.recoverRemoval = async (failure) => {
+    if (!(failure instanceof ExtensionRemoveOperationError))
+      throw new TypeError('extension removal recovery requires ExtensionRemoveOperationError');
+    const current = (await api.extensions.list()).find(
+      ({ name }) => name === failure.extensionName,
+    );
+    if (current?.image_digest === failure.imageDigest)
+      throw new Error(
+        `extension ${failure.extensionName} at ${failure.imageDigest} is still installed; removal outcome is unresolved`,
+      );
+    return {
+      removed: { name: failure.extensionName, image_digest: failure.imageDigest },
+      replacement: current ?? null,
+    };
   };
   api.watchExtensionAcquisitions = (listener) =>
     watch('extension-acquisitions', 'extension_acquisitions', listener, 'extension acquisition');
