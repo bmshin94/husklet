@@ -4908,9 +4908,20 @@ mod unix {
         let terminal = bounds(&terminal);
         let environment = bounds(&environment);
         let mounts = bounds(&mounts);
+        let pointer_x = if width == 600 {
+            let settings_row = resources_widget
+                .parent()
+                .expect("settings disclosure belongs to its wrapping row");
+            let row = settings_row
+                .compute_bounds(root)
+                .expect("settings row belongs to the Top root");
+            f64::from(row.x() + row.width() - 2.0)
+        } else {
+            f64::from(resources.x() + resources.width() - 2.0)
+        };
         let far_right = root
             .pick(
-                f64::from(resources.x() + resources.width() - 2.0),
+                pointer_x,
                 f64::from(resources.y() + resources.height() / 2.0),
                 gtk::PickFlags::DEFAULT,
             )

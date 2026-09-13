@@ -160,11 +160,18 @@ impl Weave {
             && (0..=600).contains(&room)
             && !children.is_empty()
             && children.iter().all(|child| child.has_css_class("hl-card"));
+        let compact_accordions = !vertical
+            && (0..=600).contains(&room)
+            && !children.is_empty()
+            && children
+                .iter()
+                .all(|child| child.has_css_class("hl-accordion") && child.hexpands());
+        let compact_rows = compact_cards || compact_accordions;
         let packs_cards = !vertical && children.iter().any(|child| child.has_css_class("hl-card"));
         let mut lines = vec![Line::default()];
         for child in children {
             let (mut main, mut cross) = size(&child, vertical, room, packs_cards);
-            if compact_cards {
+            if compact_rows {
                 // A compact card owns its complete row. Measure its height at
                 // that final width rather than retaining the taller
                 // height-for-width result from its authored packing floor.
@@ -173,7 +180,7 @@ impl Weave {
             }
             let line = lines.last_mut().expect("a line is always open");
             let advance = if line.children.is_empty() { main } else { main + spacing };
-            if room >= 0 && !line.children.is_empty() && (compact_cards || line.main + advance > room) {
+            if room >= 0 && !line.children.is_empty() && (compact_rows || line.main + advance > room) {
                 lines.push(Line::open(child, main, cross));
                 continue;
             }
@@ -534,6 +541,35 @@ mod tests {
             eprintln!("skipped: no display connection");
             return;
         }
+    }
+
+    #[test]
+    fn compact_expanding_accordions_each_own_the_usable_row() {
+        if !crate::test_support::on_the_toolkit_thread(compact_expanding_accordions_scenario) {
+            eprintln!("skipped: no display connection");
+        }
+    }
+
+    fn compact_expanding_accordions_scenario() {
+        let container = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let flow = Flow::new(gtk::Orientation::Horizontal);
+        flow.set_spacing(8);
+        container.set_layout_manager(Some(flow));
+        for label in ["Resources", "Terminal"] {
+            let disclosure = gtk::Expander::new(Some(label));
+            disclosure.add_css_class("hl-accordion");
+            disclosure.set_hexpand(true);
+            disclosure.set_size_request(220, -1);
+            container.append(&disclosure);
+        }
+        measured_allocate(container.upcast_ref(), 600, 80);
+        assert_eq!(
+            children(container.upcast_ref())
+                .iter()
+                .map(gtk::Widget::width)
+                .collect::<Vec<_>>(),
+            [600, 600]
+        );
     }
 
     fn expanding_wrapped_content_scenario() {
