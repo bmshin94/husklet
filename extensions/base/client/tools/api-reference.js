@@ -176,7 +176,7 @@ groups
 groups
   .get('Networks')
   .push(
-    '- `host.networks.withTemporaryConnection(network, container, operation, options)` — inspects complete endpoint membership, attaches only when absent, and detaches only an endpoint the helper itself created. If disconnect fails, `TemporaryNetworkConnectionError` preserves the exact network/container cleanup authority and original operation failure for safe reconnect instead of masking it.',
+    '- `host.networks.withTemporaryConnection(network, container, operation, options)` — inspects complete endpoint membership, attaches only when absent, and detaches only an endpoint the helper itself created. A lost attach reply throws `TemporaryNetworkConnectionAcquisitionError` with exact reconciliation authority; if disconnect fails, `TemporaryNetworkConnectionError` preserves that cleanup authority and the original operation failure.',
   );
 
 const topicCapability = Object.fromEntries(

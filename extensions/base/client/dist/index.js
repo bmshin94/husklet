@@ -56,6 +56,21 @@ export class TemporaryNetworkConnectionError extends Error {
         this.cleanup = cleanup;
     }
 }
+/** A network attach may have committed before its reply was lost. */
+export class TemporaryNetworkConnectionAcquisitionError extends Error {
+    networkId;
+    containerId;
+    acquisition;
+    constructor(networkId, containerId, acquisition) {
+        super(`temporary network ${networkId} attachment for ${containerId} has an unknown outcome`, {
+            cause: acquisition,
+        });
+        this.name = 'TemporaryNetworkConnectionAcquisitionError';
+        this.networkId = networkId;
+        this.containerId = containerId;
+        this.acquisition = acquisition;
+    }
+}
 /** Output retention advanced past the cursor, so a transcript/result would be incomplete. */
 export class ExecutionOutputGapError extends Error {
     executionId;
@@ -2081,8 +2096,16 @@ export function workspace(session, { signal } = {}) {
                     throw new TypeError(`network ${networkId} membership is not complete; temporary attachment cannot safely decide cleanup ownership`);
                 }
                 const alreadyConnected = network.endpoints.containers.includes(containerId);
-                if (!alreadyConnected)
-                    await api.networks.connect(networkId, containerId, options);
+                if (!alreadyConnected) {
+                    try {
+                        await api.networks.connect(networkId, containerId, options);
+                    }
+                    catch (acquisition) {
+                        if (acquisition instanceof ExtensionError)
+                            throw acquisition;
+                        throw new TemporaryNetworkConnectionAcquisitionError(networkId, containerId, acquisition);
+                    }
+                }
                 let result;
                 let operationFailed = false;
                 let operationFailure;

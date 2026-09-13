@@ -829,6 +829,13 @@ export declare class TemporaryNetworkConnectionError extends Error {
     readonly operation: unknown;
     readonly cleanup: unknown;
 }
+/** A network attach may have committed before its reply was lost. */
+export declare class TemporaryNetworkConnectionAcquisitionError extends Error {
+    readonly networkId: string;
+    readonly containerId: string;
+    /** Transport/cancellation failure that made attachment ownership ambiguous. */
+    readonly acquisition: unknown;
+}
 /** The host retained output, but not the complete sequence after the requested cursor. */
 export declare class ExecutionOutputGapError extends Error {
     readonly executionId: string;
@@ -1573,6 +1580,7 @@ export interface WorkspaceApi {
         /**
          * Attach for one bounded operation and detach only when this call created the endpoint.
          * Refuses truncated membership because it cannot safely distinguish an existing attachment.
+         * A lost attach reply throws TemporaryNetworkConnectionAcquisitionError with exact recovery authority.
          */
         withTemporaryConnection<T>(reference: string, container: string, operation: () => Promise<T>, options?: {
             aliases?: readonly string[];

@@ -29,6 +29,13 @@ export declare class TemporaryNetworkConnectionError extends Error {
     readonly cleanup: any;
     constructor(networkId: any, containerId: any, operation: any, cleanup: any);
 }
+/** A network attach may have committed before its reply was lost. */
+export declare class TemporaryNetworkConnectionAcquisitionError extends Error {
+    readonly networkId: any;
+    readonly containerId: any;
+    readonly acquisition: any;
+    constructor(networkId: any, containerId: any, acquisition: any);
+}
 /** Output retention advanced past the cursor, so a transcript/result would be incomplete. */
 export declare class ExecutionOutputGapError extends Error {
     readonly executionId: any;

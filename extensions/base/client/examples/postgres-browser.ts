@@ -1,5 +1,6 @@
 import {
   ExecutionOperationError,
+  TemporaryNetworkConnectionAcquisitionError,
   TemporaryNetworkConnectionError,
   connect,
   workspace,
@@ -103,6 +104,26 @@ try {
     }
     process.stdout.write(`${JSON.stringify({ rows, preview, notices })}\n`);
   } catch (error) {
+    if (error instanceof TemporaryNetworkConnectionAcquisitionError) {
+      // The host may have attached before its reply was lost. Reconnect, inspect complete
+      // membership, and release the exact ambiguous endpoint without ever reading the password.
+      const resumedSession = await connect({
+        path: configuration.path,
+        pendingLimit: 8,
+        timeout: 5_000,
+      });
+      try {
+        const resumedNetworks = workspace(resumedSession).networks;
+        const network = await resumedNetworks.inspect(error.networkId);
+        if (network.endpoints === undefined || network.endpoints.truncated) throw error;
+        if (network.endpoints.containers.includes(error.containerId)) {
+          await resumedNetworks.disconnect(error.networkId, error.containerId);
+        }
+      } finally {
+        await resumedSession.close();
+      }
+      throw error;
+    }
     let recovered = false;
     const leaseFailure = error instanceof TemporaryNetworkConnectionError ? error : undefined;
     const operationFailure = leaseFailure?.operation ?? error;

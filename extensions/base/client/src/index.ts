@@ -134,6 +134,23 @@ export class TemporaryNetworkConnectionError extends Error {
   }
 }
 
+/** A network attach may have committed before its reply was lost. */
+export class TemporaryNetworkConnectionAcquisitionError extends Error {
+  readonly networkId;
+  readonly containerId;
+  readonly acquisition;
+
+  constructor(networkId, containerId, acquisition) {
+    super(`temporary network ${networkId} attachment for ${containerId} has an unknown outcome`, {
+      cause: acquisition,
+    });
+    this.name = 'TemporaryNetworkConnectionAcquisitionError';
+    this.networkId = networkId;
+    this.containerId = containerId;
+    this.acquisition = acquisition;
+  }
+}
+
 /** Output retention advanced past the cursor, so a transcript/result would be incomplete. */
 export class ExecutionOutputGapError extends Error {
   readonly executionId;
@@ -2669,7 +2686,18 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           );
         }
         const alreadyConnected = network.endpoints.containers.includes(containerId);
-        if (!alreadyConnected) await api.networks.connect(networkId, containerId, options);
+        if (!alreadyConnected) {
+          try {
+            await api.networks.connect(networkId, containerId, options);
+          } catch (acquisition) {
+            if (acquisition instanceof ExtensionError) throw acquisition;
+            throw new TemporaryNetworkConnectionAcquisitionError(
+              networkId,
+              containerId,
+              acquisition,
+            );
+          }
+        }
         let result;
         let operationFailed = false;
         let operationFailure;

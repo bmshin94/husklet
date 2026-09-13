@@ -258,7 +258,7 @@ order; the JavaScript client's checks are never treated as a security boundary.
 - `host.networks.remove(...)` — `network_remove`, requires `networks:remove`.
 - `host.networks.connect(...)` — `network_connect`, requires `networks:connect`.
 - `host.networks.disconnect(...)` — `network_disconnect`, requires `networks:disconnect`.
-- `host.networks.withTemporaryConnection(network, container, operation, options)` — inspects complete endpoint membership, attaches only when absent, and detaches only an endpoint the helper itself created. If disconnect fails, `TemporaryNetworkConnectionError` preserves the exact network/container cleanup authority and original operation failure for safe reconnect instead of masking it.
+- `host.networks.withTemporaryConnection(network, container, operation, options)` — inspects complete endpoint membership, attaches only when absent, and detaches only an endpoint the helper itself created. A lost attach reply throws `TemporaryNetworkConnectionAcquisitionError` with exact reconciliation authority; if disconnect fails, `TemporaryNetworkConnectionError` preserves that cleanup authority and the original operation failure.
 
 ## Volumes
 
