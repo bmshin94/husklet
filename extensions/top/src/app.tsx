@@ -43,7 +43,7 @@ import { Extensions } from './extensions.js';
 export { availableSections, Overview, SECTIONS } from './overview.js';
 export { Terminals } from './terminals.js';
 export { Processes } from './processes.js';
-export { Executions } from './executions.js';
+export { Executions, shellArgument } from './executions.js';
 export { Images } from './images.js';
 export { Volumes } from './volumes.js';
 export { Networks } from './networks.js';

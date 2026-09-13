@@ -369,7 +369,7 @@ test('execution summaries keep exact commands and container authority selectable
     command: ['/bin/sh', '-lc', 'printf ready'],
     user: 'developer',
   };
-  const command = '/bin/sh -lc printf ready';
+  const command = "/bin/sh -lc 'printf ready'";
   const compactContainerId = containerId.slice(0, 12);
   const stage = host();
   stage.render(

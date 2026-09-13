@@ -511,7 +511,13 @@ function ExecutionCardIdentity({ value }: { value: ExecutionSummary }) {
 }
 
 function executionCommand(value: ExecutionSummary): string {
-  return value.command?.join(' ') || 'Unavailable';
+  return value.command?.map(shellArgument).join(' ') || 'Unavailable';
+}
+
+/** A POSIX-shell command whose pasted value recreates the exact argv. */
+export function shellArgument(value: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function executionFailureSummary(error: unknown): string {

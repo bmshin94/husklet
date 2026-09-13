@@ -52,10 +52,10 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
   const [error, setError] = React.useState('');
   const [saved, setSaved] = React.useState('');
   const [saving, setSaving] = React.useState(false);
+  const [recovery, setRecovery] = React.useState<'load' | 'save' | null>(null);
   const [hydrated, setHydrated] = React.useState(false);
   const [expanded, setExpanded] = React.useState('runtime');
   const load = React.useCallback(async () => {
-    setHydrated(false);
     try {
       const current = await api.info();
       const inspected = await api.inspect(current.name);
@@ -63,10 +63,12 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
       setObserved(inspected);
       setNumbers(numberDraft(inspected));
       setError('');
+      setRecovery(null);
       setSaved('');
       setHydrated(true);
     } catch (cause) {
       setError(message(cause));
+      setRecovery('load');
     }
   }, [api]);
   React.useEffect(() => {
@@ -102,6 +104,7 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
       return;
     }
     setSaving(true);
+    setRecovery(null);
     try {
       const candidate = withNumbers(configuration, numbers);
       validate(candidate);
@@ -141,10 +144,12 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
             setError(
               `Settings were saved, but environment changes were not. Reloaded the latest workspace and retained your concealed environment edits for review and retry: ${patchError}`,
             );
+            setRecovery('save');
           } catch (reloadCause) {
             setError(
               `Settings were saved, but environment changes were not (${patchError}); reload also failed: ${message(reloadCause)}`,
             );
+            setRecovery('load');
           }
           return;
         }
@@ -153,11 +158,13 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
       setObserved(updated);
       setNumbers(numberDraft(updated));
       setError('');
+      setRecovery(null);
       setSaved(
         'Workspace settings saved. Reopen panes or restart the workspace for runtime changes.',
       );
     } catch (cause) {
       setError(`No successful save was confirmed. Your edits are retained: ${message(cause)}`);
+      setRecovery('save');
     } finally {
       setSaving(false);
     }
@@ -239,10 +246,12 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
         {invalid && <InlineMessage label={invalid} tone="danger" />}
         {error && (
           <RecoveryState
-            operation="Saving workspace settings"
+            operation={
+              recovery === 'load' ? 'Refreshing workspace settings' : 'Saving workspace settings'
+            }
             error={error}
-            retryLabel="Retry save"
-            onRetry={dirty && !invalid ? save : undefined}
+            retryLabel={recovery === 'load' ? 'Retry refresh' : 'Retry save'}
+            onRetry={recovery === 'load' ? load : dirty && !invalid ? save : undefined}
           />
         )}
         {saved && <InlineMessage label={saved} tone="positive" />}

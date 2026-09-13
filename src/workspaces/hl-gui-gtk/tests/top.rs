@@ -967,8 +967,8 @@ mod unix {
                 }
                 let command = assert_selectable_code(
                     &card,
-                    "/bin/sh -lc npm test",
-                    "/bin/sh -lc npm test",
+                    "/bin/sh -lc 'npm test'",
+                    "/bin/sh -lc 'npm test'",
                     &format!("{width_name} collapsed execution command"),
                 );
                 let container_id = "a".repeat(64);
@@ -2396,7 +2396,7 @@ mod unix {
             while Instant::now() < deadline
                 && !has_label(
                     surface.widget().upcast_ref::<gtk::Widget>(),
-                    "Command · /bin/sh -lc npm test",
+                    r#"Command · /bin/sh -lc 'npm test' 'single'"'"'quote' 'back\slash' '$HOME;rm' ''"#,
                 )
             {
                 let frame = match receive_until(&mut wire, (Instant::now() + Duration::from_millis(80)).min(deadline)) {
@@ -2418,7 +2418,15 @@ mod unix {
                         started_at_ms: Some(2),
                         finished_at_ms: Some(3),
                         pid: 412,
-                        command: vec!["/bin/sh".into(), "-lc".into(), "npm test".into()],
+                        command: vec![
+                            "/bin/sh".into(),
+                            "-lc".into(),
+                            "npm test".into(),
+                            "single'quote".into(),
+                            "back\\slash".into(),
+                            "$HOME;rm".into(),
+                            "".into(),
+                        ],
                         user: "developer".into(),
                     }),
                     Request::InterfaceRender { frame } | Request::InterfaceRenderAt { frame, .. } => {
@@ -2442,7 +2450,8 @@ mod unix {
             window.set_child(Some(&detail_root));
             assert!(has_label(&detail_root, "Execution summary"));
             assert!(has_label(&detail_root, "Command"));
-            assert!(has_label(&detail_root, "/bin/sh -lc npm test"));
+            let lossless_command = r#"/bin/sh -lc 'npm test' 'single'"'"'quote' 'back\slash' '$HOME;rm' ''"#;
+            assert!(has_label(&detail_root, lossless_command));
             assert!(has_label(&detail_root, "User · developer"));
             assert!(has_label(&detail_root, "Container ID"));
             assert!(has_label(&detail_root, &"a".repeat(64)));
@@ -2475,8 +2484,8 @@ mod unix {
                 );
                 let command = assert_wrapped_selectable_code(
                     &card,
-                    "/bin/sh -lc npm test",
-                    "/bin/sh -lc npm test",
+                    lossless_command,
+                    lossless_command,
                     &format!("{width_name} expanded execution command"),
                 );
                 let container_id = "a".repeat(64);

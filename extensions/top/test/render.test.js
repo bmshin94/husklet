@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import { createElement as h } from 'react';
 import { PROTOCOL_CAPABILITIES } from '@husklet/client';
@@ -37,7 +38,19 @@ import {
   filterInstalledExtensions,
   installedExtensionNeedsAttention,
   staleCatalogueExpectation,
+  shellArgument,
 } from '../dist/app.js';
+
+test('execution argv renders as a lossless pasteable POSIX shell command', () => {
+  const argv = ['printf', 'two words', "single'quote", 'back\\slash', '$HOME;rm', ''];
+  const command = argv.map(shellArgument).join(' ');
+  assert.equal(command, `printf 'two words' 'single'"'"'quote' 'back\\slash' '$HOME;rm' ''`);
+  const roundTrip = execFileSync('/bin/sh', [
+    '-c',
+    `set -- ${command}; printf '%s\\n' "$@"`,
+  ]).toString();
+  assert.deepEqual(roundTrip.split('\n').slice(0, -1), argv);
+});
 
 test('every host capability has explicit consent language and workspace lifecycle is not settings', () => {
   for (const { wire } of PROTOCOL_CAPABILITIES) {
@@ -1152,6 +1165,62 @@ test('workspace save failure retains edits and offers an explicit retry', async 
   await settled();
   await settled();
   assert.equal(attempts, 2);
+});
+
+test('workspace discard reconnect keeps its draft and offers an honest refresh retry', async () => {
+  const configuration = {
+    generation: 'a'.repeat(32),
+    configuration_revision: 'b'.repeat(32),
+    name: 'daily',
+    architecture: 'amd64',
+    image: 'alpine:3.20',
+    storage: null,
+    shell: '/bin/sh',
+    cpus: 2,
+    memory_mb: 1024,
+    environment: [],
+    mounts: [],
+    docker_socket: false,
+    scrollback: 10000,
+    vpn: null,
+    execution_lifetime: 'live',
+    terminal: {
+      font_family: null,
+      font_size: null,
+      foreground: null,
+      background: null,
+      cursor_shape: null,
+      cursor_blink: false,
+    },
+  };
+  let inspections = 0;
+  const managed = {
+    ...api,
+    info: async () => ({ name: 'daily', architecture: 'amd64', image: 'alpine:3.20' }),
+    inspect: async () => {
+      inspections += 1;
+      if (inspections === 2) throw new Error('workspace host is reconnecting');
+      return configuration;
+    },
+  };
+  const stage = host();
+  stage.render(h(Workspace, { api: managed }));
+  await settled();
+  await settled();
+  change(stage, 'Automatic when empty', '/bin/zsh');
+  invoke(stage, 'Discard');
+  await settled();
+  await settled();
+  assert.equal(fieldValue(stage, 'Automatic when empty'), '/bin/zsh');
+  assert.ok(labelled(stage, 'Unsaved changes'));
+  assert.ok(labelled(stage, 'workspace host is reconnecting'));
+  assert.ok(labelled(stage, 'Retry refresh'));
+  invoke(stage, 'Retry refresh');
+  await settled();
+  await settled();
+  assert.equal(inspections, 3);
+  assert.equal(fieldValue(stage, 'Automatic when empty'), '/bin/sh');
+  assert.ok(labelled(stage, 'Up to date'));
 });
 
 test('workspace patch conflict reloads authority and keeps the partial-save warning visible', async () => {
