@@ -10664,6 +10664,41 @@ test('history iterator applies backpressure and rejects same-slot replacement ov
   );
 });
 
+test('history iterator rejects a repeated continuation before duplicate page content escapes', async () => {
+  let requests = 0;
+  await withPaneIdentityHost(
+    ['terminals:output'],
+    (_request, socket) => {
+      requests += 1;
+      const payload = {
+        reply: 'terminal_history',
+        with: {
+          slot: 'agent-pane',
+          generation: 7,
+          revision: 11,
+          lines: [requests === 1 ? 'original' : 'must-not-escape'],
+          next: 'same-cursor',
+        },
+      };
+      const frame = encode({ channel: 2, kind: KIND.response, payload });
+      for (let index = 0; index < frame.length; index += 1)
+        socket.write(frame.subarray(index, index + 1));
+    },
+    async (session) => {
+      const yielded = [];
+      await assert.rejects(async () => {
+        for await (const page of workspace(session).terminal.historyPages(
+          { slot: 'agent-pane', generation: 7, revision: 11 },
+          { maxPages: 3 },
+        ))
+          yielded.push(...page.lines);
+      }, /cursor repeated/);
+      assert.deepEqual(yielded, ['original']);
+      assert.equal(requests, 2);
+    },
+  );
+});
+
 test('real Unix inspectAndAct rejects wrong pre-action pane identity before mutation', async () => {
   await withPaneIdentityHost(
     ['panes:observe', 'panes:semantic-read', 'panes:semantic-control', 'terminals:read'],

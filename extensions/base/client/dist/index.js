@@ -2945,12 +2945,13 @@ export function workspace(session, { signal } = {}) {
                     if (bytes + pageBytes > maxBytes)
                         throw new RangeError('terminal history exceeded maxBytes');
                     bytes += pageBytes;
+                    if (page.next != null && seen.has(page.next))
+                        throw new Error('terminal history cursor repeated');
+                    if (page.next != null)
+                        seen.add(page.next);
                     yield page;
                     if (page.next == null)
                         return;
-                    if (seen.has(page.next))
-                        throw new Error('terminal history cursor repeated');
-                    seen.add(page.next);
                     cursor = page.next;
                 }
                 throw new RangeError('terminal history exceeded maxPages');
