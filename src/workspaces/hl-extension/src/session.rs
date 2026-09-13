@@ -2320,12 +2320,12 @@ impl Session {
             }
             Request::CredentialSet { observed, key, value } => {
                 validate_credential_key(key)?;
-                if value.len() > CREDENTIAL_VALUE_BYTES {
+                if value.as_bytes().len() > CREDENTIAL_VALUE_BYTES {
                     return Err(Failure::Conflict {
                         detail: "credentials are limited to 64 KiB".into(),
                     });
                 }
-                port.credential_set(*observed, key, value)
+                port.credential_set(*observed, key, value.as_bytes())
                     .map(Reply::Revision)
                     .map_err(Failure::from)
             }

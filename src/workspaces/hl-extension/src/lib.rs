@@ -59,7 +59,7 @@ pub use port::{
     WorkspaceTerminal,
 };
 pub use port::{Notification, NotificationSink};
-pub use request::{ExecEnvironmentValue, Failure, Reply, Request, Topic, WorkspaceInfo};
+pub use request::{CredentialValue, ExecEnvironmentValue, Failure, Reply, Request, Topic, WorkspaceInfo};
 pub use session::{ExecutionOwnership, Services, Session, SurfaceEvent, SurfaceFrame, SurfaceMutation};
 pub use subscription::{
     ContainerInventory, ExtensionAcquisitionChange, PaneChange, PaneChangeKind, PointerPhase, Snapshot, Subscriptions,

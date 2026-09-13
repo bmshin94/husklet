@@ -1354,6 +1354,22 @@
         }
       ]
     },
+    "CredentialValue": {
+      "kind": "newtype",
+      "of": {
+        "kind": "array",
+        "of": {
+          "bits": 8,
+          "kind": "integer",
+          "maximum": 255,
+          "minimum": 0,
+          "signed": false
+        }
+      },
+      "serde": {
+        "transparent": true
+      }
+    },
     "DirectoryPage": {
       "fields": [
         {
@@ -13547,14 +13563,8 @@
                 "name": "value",
                 "optional": false,
                 "schema": {
-                  "kind": "array",
-                  "of": {
-                    "bits": 8,
-                    "kind": "integer",
-                    "maximum": 255,
-                    "minimum": 0,
-                    "signed": false
-                  }
+                  "kind": "ref",
+                  "name": "CredentialValue"
                 }
               }
             ],
@@ -14790,7 +14800,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:53d848d1b3b679b5",
+  "source_fingerprint": "fnv1a64:a2f344e8a6c133ed",
   "specification_version": 1,
   "topics": [
     {

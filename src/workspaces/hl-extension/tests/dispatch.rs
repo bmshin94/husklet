@@ -2257,7 +2257,7 @@ fn all_calls() -> Vec<(Request, Capability)> {
             Request::CredentialSet {
                 observed: 0,
                 key: "postgres.password".into(),
-                value: vec![0, 255],
+                value: hl_extension::CredentialValue::new(vec![0, 255]),
             },
             Capability::CredentialWrite,
         ),

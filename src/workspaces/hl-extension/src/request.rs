@@ -37,6 +37,29 @@ impl std::fmt::Debug for ExecEnvironmentValue {
     }
 }
 
+/// Credential bytes carried on the wire but never exposed by diagnostics.
+#[derive(Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(transparent)]
+pub struct CredentialValue(Vec<u8>);
+
+impl CredentialValue {
+    #[must_use]
+    pub fn new(value: impl Into<Vec<u8>>) -> Self {
+        Self(value.into())
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for CredentialValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("[REDACTED]")
+    }
+}
+
 /// A call from an extension.
 ///
 /// Adjacently tagged rather than internally tagged: an internal tag silently
@@ -574,7 +597,7 @@ pub enum Request {
     CredentialSet {
         observed: u64,
         key: String,
-        value: Vec<u8>,
+        value: CredentialValue,
     },
     CredentialRemove {
         observed: u64,
@@ -1182,5 +1205,19 @@ mod tests {
             serde_json::from_value::<Request>(serde_json::to_value(&rename).unwrap()).unwrap(),
             rename
         );
+    }
+
+    #[test]
+    fn credential_values_cross_the_wire_but_never_enter_request_diagnostics() {
+        let request = Request::CredentialSet {
+            observed: 7,
+            key: "postgres.password".into(),
+            value: super::CredentialValue::new(b"database-password-sentinel".to_vec()),
+        };
+        let encoded = serde_json::to_vec(&request).expect("credential request");
+        let decoded: Request = serde_json::from_slice(&encoded).expect("credential request round trip");
+        assert_eq!(decoded, request);
+        assert!(!format!("{request:?}").contains("database-password-sentinel"));
+        assert!(format!("{request:?}").contains("[REDACTED]"));
     }
 }
