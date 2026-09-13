@@ -332,19 +332,13 @@ mod unix {
                 "installed management hid pagination below its bounded card wall"
             );
         }
-        let window = gtk::Window::new();
+        let mut window = gtk::Window::new();
         window.set_child(Some(&root));
-        // The fixture's initial catalogue capture leaves this window wide. Keep
-        // each subsequent state wide-first so GTK never treats a prior 1200px
-        // allocation as the minimum for an attempted narrow allocation.
         for (width_name, width) in [("wide", 1_200), ("narrow", 600)] {
             if deny_volume_access {
                 continue;
             }
-            window.set_default_size(width, 800);
-            window.set_size_request(width, 800);
-            window.present();
-            settle_toolkit();
+            present_in_fresh_window(&mut window, &root, width, 800);
             root.measure(gtk::Orientation::Horizontal, -1);
             root.measure(gtk::Orientation::Vertical, width);
             root.allocate(width, 1_600, -1, None);
@@ -5611,6 +5605,21 @@ mod unix {
                 .expect("chooser content belongs to Top root");
             assert_texture_has_ink(&texture, bounds, &format!("{case} chooser {name}"));
         }
+    }
+
+    fn present_in_fresh_window(window: &mut gtk::Window, root: &gtk::Widget, width: i32, height: i32) {
+        gtk::prelude::RootExt::set_focus(window, None::<&gtk::Widget>);
+        settle_toolkit();
+        window.set_child(None::<&gtk::Widget>);
+        window.close();
+        settle_toolkit();
+        let replacement = gtk::Window::new();
+        replacement.set_child(Some(root));
+        replacement.set_default_size(width, height);
+        replacement.set_size_request(width, height);
+        replacement.present();
+        settle_toolkit();
+        *window = replacement;
     }
 
     fn capture(window: &gtk::Window, name: &str, width: i32, height: i32) {
