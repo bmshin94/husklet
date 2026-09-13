@@ -491,6 +491,21 @@ export class FileTextLimitError extends RangeError {
         this.limit = limit;
     }
 }
+/** A bounded text read lost transport after an exact prefix had been acknowledged. */
+export class FileTextOperationError extends Error {
+    path;
+    identity;
+    contents;
+    maxBytes;
+    constructor(path, identity, contents, maxBytes, cause) {
+        super(`filesystem text ${path} at identity ${identity} failed after ${contents.length} acknowledged bytes`, { cause });
+        this.name = 'FileTextOperationError';
+        this.path = path;
+        this.identity = identity;
+        this.contents = Object.freeze([...contents]);
+        this.maxBytes = maxBytes;
+    }
+}
 /** A ranged read crossed file generations and must be restarted from a coherent identity. */
 export class FileIdentityChangedError extends Error {
     path;
@@ -3279,6 +3294,7 @@ export function workspace(session, { signal } = {}) {
                 const [, limit] = exactFileRange(0, chunkBytes);
                 const decoder = new TextDecoder('utf-8', { fatal: true });
                 const parts = [];
+                const chunks = [];
                 let bytes = 0;
                 let identity = observed;
                 try {
@@ -3291,8 +3307,10 @@ export function workspace(session, { signal } = {}) {
                         if (range.total > maxBytes || bytes + range.contents.length > maxBytes) {
                             throw new FileTextLimitError(path, range.identity, range.total, maxBytes);
                         }
-                        bytes += range.contents.length;
-                        parts.push(decoder.decode(Uint8Array.from(range.contents), { stream: !range.eof }));
+                        const chunk = Uint8Array.from(range.contents);
+                        chunks.push(chunk);
+                        bytes += chunk.length;
+                        parts.push(decoder.decode(chunk, { stream: !range.eof }));
                     }
                     parts.push(decoder.decode());
                 }
@@ -3302,11 +3320,60 @@ export function workspace(session, { signal } = {}) {
                         /encoded data was not valid/i.test(error.message)) {
                         throw new FileTextDecodeError(path, identity, bytes, error);
                     }
+                    if (identity &&
+                        !(error instanceof FileIdentityChangedError) &&
+                        !(error instanceof FileExtentChangedError) &&
+                        !(error instanceof FileTextLimitError) &&
+                        !(error instanceof FileTextOperationError) &&
+                        !(error instanceof Error && error.name === 'AbortError')) {
+                        const contents = chunks.flatMap((chunk) => Array.from(chunk));
+                        throw new FileTextOperationError(path, identity, contents, maxBytes, error);
+                    }
                     throw error;
                 }
                 if (!identity)
                     throw new TypeError('host returned a filesystem file without an identity');
                 return { text: parts.join(''), identity, bytes };
+            },
+            resumeText: async (failure, { signal } = {}) => {
+                if (!(failure instanceof FileTextOperationError))
+                    throw new TypeError('filesystem text recovery requires a FileTextOperationError');
+                if (!Number.isSafeInteger(failure.maxBytes) ||
+                    failure.maxBytes < 1 ||
+                    failure.maxBytes > 64 * 1024 * 1024 ||
+                    !Array.isArray(failure.contents) ||
+                    failure.contents.length > failure.maxBytes ||
+                    failure.contents.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255))
+                    throw new TypeError('filesystem text recovery record is invalid or exceeds its bound');
+                const contents = [...failure.contents];
+                try {
+                    for await (const range of api.files.readChunks(failure.path, {
+                        offset: contents.length,
+                        observed: failure.identity,
+                        signal,
+                    })) {
+                        if (range.total > failure.maxBytes ||
+                            contents.length + range.contents.length > failure.maxBytes) {
+                            throw new FileTextLimitError(failure.path, failure.identity, range.total, failure.maxBytes);
+                        }
+                        contents.push(...range.contents);
+                    }
+                }
+                catch (error) {
+                    if (!(error instanceof FileIdentityChangedError) &&
+                        !(error instanceof FileExtentChangedError) &&
+                        !(error instanceof FileTextLimitError) &&
+                        !(error instanceof Error && error.name === 'AbortError'))
+                        throw new FileTextOperationError(failure.path, failure.identity, contents, failure.maxBytes, error);
+                    throw error;
+                }
+                try {
+                    const text = new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(contents));
+                    return { text, identity: failure.identity, bytes: contents.length };
+                }
+                catch (error) {
+                    throw new FileTextDecodeError(failure.path, failure.identity, contents.length, error);
+                }
             },
             stat: async (path) => {
                 const entry = expect(await session.call('filesystem_stat', { path }), 'entry');
@@ -5887,6 +5954,7 @@ export const protocolCoverage = Object.freeze({
             'readRanges',
             'readChunks',
             'readText',
+            'resumeText',
             'stat',
             'write',
             'writeObserved',

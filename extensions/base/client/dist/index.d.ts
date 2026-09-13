@@ -185,6 +185,14 @@ export declare class FileTextLimitError extends RangeError {
     readonly limit: any;
     constructor(path: any, identity: any, total: any, limit: any);
 }
+/** A bounded text read lost transport after an exact prefix had been acknowledged. */
+export declare class FileTextOperationError extends Error {
+    readonly path: any;
+    readonly identity: any;
+    readonly contents: any;
+    readonly maxBytes: any;
+    constructor(path: any, identity: any, contents: any, maxBytes: any, cause: any);
+}
 /** A ranged read crossed file generations and must be restarted from a coherent identity. */
 export declare class FileIdentityChangedError extends Error {
     readonly path: any;

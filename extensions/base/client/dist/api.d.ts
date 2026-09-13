@@ -968,6 +968,14 @@ export declare class FileTextLimitError extends RangeError {
     readonly total: number;
     readonly limit: number;
 }
+/** A bounded text read lost transport after an exact prefix had been acknowledged. */
+export declare class FileTextOperationError extends Error {
+    readonly path: string;
+    readonly identity: string;
+    readonly contents: readonly number[];
+    readonly maxBytes: number;
+    readonly cause: unknown;
+}
 /** A ranged read crossed file generations and must be restarted from a coherent identity. */
 export declare class FileIdentityChangedError extends Error {
     readonly path: string;
@@ -2171,6 +2179,10 @@ export interface WorkspaceApi {
             maxBytes: number;
             chunkBytes?: number;
             observed?: string | null;
+            signal?: AbortSignal;
+        }): Promise<FileText>;
+        /** Resume an interrupted text read from its exact acknowledged byte prefix and file identity. */
+        resumeText(failure: FileTextOperationError, options?: {
             signal?: AbortSignal;
         }): Promise<FileText>;
         write(path: string, contents: Iterable<number>): Promise<void>;

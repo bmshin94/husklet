@@ -1,4 +1,10 @@
-import { StateWriteOperationError, connect, workspace, type FileEntry } from '@husklet/client';
+import {
+  FileTextOperationError,
+  StateWriteOperationError,
+  connect,
+  workspace,
+  type FileEntry,
+} from '@husklet/client';
 
 declare const process: {
   argv: string[];
@@ -50,9 +56,9 @@ const checkpointCodec = {
 const controller = new AbortController();
 process.once('SIGINT', () => controller.abort('SIGINT'));
 process.once('SIGTERM', () => controller.abort('SIGTERM'));
-const session = await connect({ path: configuration.path, pendingLimit: 8, timeout: 30_000 });
+let session = await connect({ path: configuration.path, pendingLimit: 8, timeout: 30_000 });
 try {
-  const host = workspace(session);
+  let host = workspace(session);
   const persistCheckpoint = async (update: (current: Checkpoint) => Checkpoint) => {
     try {
       return await host.state.updateJson(checkpointCodec, update, { signal: controller.signal });
@@ -88,12 +94,21 @@ try {
   ) => {
     const exact = entry.identity ? entry : await host.files.stat(entry.path);
     if (!exact.identity || checkpoint.documents[entry.path]?.identity === exact.identity) return;
-    const document = await host.files.readText(entry.path, {
-      maxBytes: maxDocumentBytes,
-      chunkBytes,
-      observed: exact.identity,
-      signal,
-    });
+    let document;
+    try {
+      document = await host.files.readText(entry.path, {
+        maxBytes: maxDocumentBytes,
+        chunkBytes,
+        observed: exact.identity,
+        signal,
+      });
+    } catch (cause) {
+      if (!(cause instanceof FileTextOperationError)) throw cause;
+      await session.close().catch(() => {});
+      session = await connect({ path: configuration.path, pendingLimit: 8, timeout: 30_000 });
+      host = workspace(session);
+      document = await host.files.resumeText(cause, { signal });
+    }
     let digest: string;
     if (configuration.model) {
       let executionId: string | undefined;

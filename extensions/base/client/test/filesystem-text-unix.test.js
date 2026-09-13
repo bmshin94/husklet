@@ -11,6 +11,7 @@ import {
   FileIdentityChangedError,
   FileTextDecodeError,
   FileTextLimitError,
+  FileTextOperationError,
   workspace,
 } from '../dist/index.js';
 import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
@@ -132,14 +133,17 @@ test('readText decodes split UTF-8 over fragmented real Unix frames and enforces
       },
     );
 
-    await assert.rejects(files.readText('docs/bad.txt', { maxBytes: 3, chunkBytes: 1 }), (error) => {
-      assert(error instanceof FileTextDecodeError);
-      assert.equal(error.path, 'docs/bad.txt');
-      assert.equal(error.identity, 'bad-v1');
-      assert.equal(error.bytes, 3);
-      assert(error.cause instanceof TypeError);
-      return true;
-    });
+    await assert.rejects(
+      files.readText('docs/bad.txt', { maxBytes: 3, chunkBytes: 1 }),
+      (error) => {
+        assert(error instanceof FileTextDecodeError);
+        assert.equal(error.path, 'docs/bad.txt');
+        assert.equal(error.identity, 'bad-v1');
+        assert.equal(error.bytes, 3);
+        assert(error.cause instanceof TypeError);
+        return true;
+      },
+    );
     assert.equal(
       (await files.readText('docs/good.txt', { maxBytes: 5, chunkBytes: 5 })).identity,
       'good-v1',
@@ -148,6 +152,96 @@ test('readText decodes split UTF-8 over fragmented real Unix frames and enforces
     await session.close();
   } finally {
     for (const connection of connections) connection.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('readText resumes an exact UTF-8 prefix after fragmented Unix loss and rejects replacement', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-file-text-resume-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const bytes = [0x41, 0xe2, 0x82, 0xac, 0x42];
+  const requests = [];
+  const sockets = new Set();
+  let connection = 0;
+  let replaced = false;
+  const server = net.createServer((socket) => {
+    connection += 1;
+    const currentConnection = connection;
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.kind !== KIND.request) continue;
+        const input = frame.payload.with;
+        requests.push({ connection: currentConnection, ...input });
+        if (currentConnection === 1 && input.offset === 2) {
+          socket.destroy();
+          continue;
+        }
+        const contents = bytes.slice(input.offset, input.offset + input.limit);
+        const eof = input.offset + contents.length >= bytes.length;
+        const reply = encode({
+          channel: frame.channel,
+          kind: KIND.response,
+          payload: {
+            reply: 'file_range',
+            with: {
+              path: input.path,
+              identity: replaced ? 'document-v2' : 'document-v1',
+              offset: input.offset,
+              total: bytes.length,
+              contents,
+              eof,
+              truncated: !eof,
+            },
+          },
+        });
+        for (const byte of reply) socket.write(Uint8Array.of(byte));
+      }
+    });
+    const greeting = encode({
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: { protocol: 1, peer: 'file-text-resume', granted: ['filesystem:read'] },
+    });
+    for (const byte of greeting) socket.write(Uint8Array.of(byte));
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const first = await connect({ path: socketPath });
+    let failure;
+    await assert.rejects(
+      workspace(first).files.readText('docs/model.txt', { maxBytes: 5, chunkBytes: 2 }),
+      (error) => {
+        failure = error;
+        assert(error instanceof FileTextOperationError);
+        assert.equal(error.identity, 'document-v1');
+        assert.deepEqual(error.contents, [0x41, 0xe2]);
+        assert(Object.isFrozen(error.contents));
+        return true;
+      },
+    );
+    const second = await connect({ path: socketPath });
+    assert.deepEqual(await workspace(second).files.resumeText(failure), {
+      text: 'A€B',
+      identity: 'document-v1',
+      bytes: 5,
+    });
+    assert.deepEqual(
+      requests.filter(({ connection: value }) => value === 2).map(({ offset }) => offset),
+      [2],
+      'reconnect resumes at the acknowledged byte cursor instead of rereading the prefix',
+    );
+    await second.close();
+
+    replaced = true;
+    const third = await connect({ path: socketPath });
+    await assert.rejects(workspace(third).files.resumeText(failure), FileIdentityChangedError);
+    await third.close();
+  } finally {
+    for (const socket of sockets) socket.destroy();
     await new Promise((resolve) => server.close(resolve));
     await rm(directory, { recursive: true, force: true });
   }
