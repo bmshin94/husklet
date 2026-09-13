@@ -88,7 +88,7 @@ mod unix {
         );
         for fixture in ["populated", "error"] {
             for (name, section) in CASES {
-                render_case(&repository, fixture, name, section, false, false);
+                render_case(&repository, fixture, name, section, false, false, false);
             }
         }
         render_case(
@@ -98,9 +98,26 @@ mod unix {
             "processes",
             false,
             false,
+            false,
         );
-        render_case(&repository, "populated", "extensions", "extensions", true, false);
-        render_case(&repository, "populated", "volumes-denied", "volumes", false, true);
+        render_case(&repository, "populated", "extensions", "extensions", true, false, false);
+        render_case(
+            &repository,
+            "populated",
+            "volumes-denied",
+            "volumes",
+            false,
+            true,
+            false,
+        );
+    }
+
+    #[test]
+    fn managed_top_card_is_real_compact_and_actionable_at_both_widths() {
+        assert!(gtk::init().is_ok(), "run this test under Xvfb");
+        let repository = repository();
+        assert!(repository.join("extensions/top/dist/main.js").exists());
+        render_case(&repository, "populated", "extensions", "extensions", false, false, true);
     }
 
     fn render_case(
@@ -110,6 +127,7 @@ mod unix {
         section: &str,
         catalogue_empty: bool,
         deny_volume_access: bool,
+        stop_after_managed_top: bool,
     ) {
         let capture_fixture = if catalogue_empty { "installed" } else { fixture };
         let socket = std::env::temp_dir().join(format!(
@@ -1421,6 +1439,100 @@ mod unix {
             );
             let cards = widgets_with_class(&root, "hl-card");
             assert_installed_density(&root, &cards, 1_200, "wide-after-narrow");
+        }
+        if fixture == "populated" && name == "extensions" && !catalogue_empty {
+            let search = find_search_with_placeholder(&root, "Search installed");
+            search.set_text("top");
+            settle_toolkit();
+            let change = send_report(&surface, &mut wire, 96, |event| {
+                matches!(event, hl_gui::Event::Change { .. })
+            });
+            let hl_gui::Event::Change { value, .. } = change else {
+                unreachable!()
+            };
+            assert_eq!(value, hl_gui::PropValue::Text("top".into()));
+            apply_until(
+                &mut wire,
+                &mut tree,
+                &mut surface,
+                "Top is managed by Husklet and stays available for workspace recovery.",
+                |request| panic!("unexpected managed Top render request: {request:?}"),
+            );
+            let managed_root = surface.widget().clone().upcast::<gtk::Widget>();
+            assert!(search.grab_focus(), "installed search is keyboard reachable");
+            for (width_name, width) in [("wide", 1_200), ("narrow", 600)] {
+                window.set_default_size(width, 800);
+                window.set_size_request(width, 800);
+                settle_toolkit();
+                managed_root.measure(gtk::Orientation::Horizontal, -1);
+                managed_root.measure(gtk::Orientation::Vertical, width);
+                managed_root.allocate(width, 1_600, -1, None);
+                window.queue_draw();
+                settle_frame();
+
+                let cards = widgets_with_class(&managed_root, "hl-card");
+                assert_eq!(cards.len(), 1, "{width_name} Top search must isolate exactly one card");
+                let card = cards.into_iter().next().expect("managed Top remains a real GTK card");
+                assert!(has_label(&card, "top"));
+                assert!(has_label(&card, "Running"));
+                assert!(has_label(&card, "Built-in"));
+                assert!(has_label(
+                    &card,
+                    "Top is managed by Husklet and stays available for workspace recovery."
+                ));
+                let open = find_tooltip_button(&card, "Open Workspace manager");
+                find_expander(&card, "Granted access · Render this extension interface");
+                assert_eq!(open.accessible_role(), gtk::AccessibleRole::Button);
+                assert!(
+                    open.is_focusable(),
+                    "{width_name} managed Top Open is keyboard reachable"
+                );
+                assert!(open.has_css_class("size-small"));
+                for impossible in ["Disable", "More actions", "Review update", "Check for changes"] {
+                    assert!(
+                        !has_label(&card, impossible),
+                        "{width_name} managed Top exposed impossible {impossible:?} action"
+                    );
+                }
+                let bounds = card
+                    .compute_bounds(&managed_root)
+                    .expect("managed Top card belongs to its rendered root");
+                assert!(
+                    bounds.x() >= if width == 600 { 16.0 } else { 0.0 }
+                        && bounds.x() + bounds.width() <= if width == 600 { 584.0 } else { width as f32 },
+                    "{width_name} managed Top escaped its {width}px viewport: {bounds:?}"
+                );
+                assert!(
+                    card.height() <= 180,
+                    "{width_name} managed Top card expanded beyond its compact summary: {}px",
+                    card.height()
+                );
+                assert_contained(&managed_root, &format!("managed-top/{width_name}"));
+                capture(&window, &format!("managed-top-{width_name}"), width, 800);
+            }
+            search.set_text("");
+            let change = send_report(&surface, &mut wire, 95, |event| {
+                matches!(event, hl_gui::Event::Change { .. })
+            });
+            let hl_gui::Event::Change { value, .. } = change else {
+                unreachable!()
+            };
+            assert_eq!(value, hl_gui::PropValue::Text(String::new()));
+            apply_until(
+                &mut wire,
+                &mut tree,
+                &mut surface,
+                "12 shown · 50 matching",
+                |request| panic!("unexpected installed search-clear render request: {request:?}"),
+            );
+            assert!(
+                widgets_with_class(surface.widget().upcast_ref(), "hl-card").len() > 1,
+                "clearing installed search restores the extension collection"
+            );
+            if stop_after_managed_top {
+                assert!(child.stop().is_empty(), "managed Top fixture wrote to stderr");
+                return;
+            }
         }
         if fixture == "populated" && name == "extensions" && !catalogue_empty {
             let search = find_search_with_placeholder(&root, "Search installed");
@@ -3988,7 +4100,13 @@ mod unix {
                     "0.4.0".into()
                 },
                 enabled: name != "disabled-linter",
-                pane_providers: if name == "storybook" {
+                pane_providers: if name == "top" {
+                    vec![PaneProvider {
+                        id: ExtensionName::new("main").expect("valid provider id"),
+                        title: "Workspace manager".into(),
+                        icon: Some("applications-system-symbolic".into()),
+                    }]
+                } else if name == "storybook" {
                     vec![PaneProvider {
                         id: ExtensionName::new("playground").expect("valid provider id"),
                         title: "Component playground".into(),
