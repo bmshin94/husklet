@@ -32,6 +32,7 @@ pub(crate) struct Binding {
     pub(crate) container_generation: u64,
     pub(crate) network: String,
     pub(crate) network_revision: u64,
+    pub(crate) endpoint: DatabaseEndpoint,
     pub(crate) credentials: BTreeMap<String, u64>,
 }
 
@@ -330,9 +331,7 @@ where
                 "postgres container is not an authoritative member of the requested network".into(),
             ));
         }
-        let bytes = serde_json::to_vec(&network).map_err(|error| HostError::Failed(error.to_string()))?;
-        let digest = Sha256::digest(bytes);
-        Ok(u64::from_be_bytes(digest[..8].try_into().expect("sha256 prefix")) | 1)
+        network_revision(&network)
     }
 
     fn credential(&self, key: &str) -> Result<(u64, Secret), HostError> {
@@ -349,6 +348,12 @@ where
     fn installation_current(&self, supplied: &str) -> Result<bool, HostError> {
         Ok(supplied == self.installation.as_str() && self.installations.current(&self.installation)?)
     }
+}
+
+pub(crate) fn network_revision(network: &hl_extension::port::NetworkSummary) -> Result<u64, HostError> {
+    let bytes = serde_json::to_vec(network).map_err(|error| HostError::Failed(error.to_string()))?;
+    let digest = Sha256::digest(bytes);
+    Ok(u64::from_be_bytes(digest[..8].try_into().expect("sha256 prefix")) | 1)
 }
 
 impl<C, N, S, R> Authority for ServiceAuthority<'_, C, N, S, R>
@@ -379,6 +384,7 @@ where
                 container_generation: connection.container_generation,
                 network: connection.network.clone(),
                 network_revision,
+                endpoint: endpoint.clone(),
                 credentials: revisions,
             },
             endpoint,
@@ -394,7 +400,7 @@ where
             container_id: binding.container_id.clone(),
             container_generation: binding.container_generation,
             network: binding.network.clone(),
-            port: 1,
+            port: binding.endpoint.address().port(),
             database: "authority-check".into(),
             user: "authority-check".into(),
             credential_keys: binding.credentials.keys().cloned().collect(),
@@ -406,6 +412,11 @@ where
         }
         match self.network(&connection) {
             Ok(revision) if revision == binding.network_revision => {}
+            Ok(_) | Err(HostError::Absent(_) | HostError::Conflict(_)) => return Ok(false),
+            Err(error) => return Err(error),
+        }
+        match self.resolver.endpoint(&connection) {
+            Ok(endpoint) if endpoint == binding.endpoint => {}
             Ok(_) | Err(HostError::Absent(_) | HostError::Conflict(_)) => return Ok(false),
             Err(error) => return Err(error),
         }
@@ -739,8 +750,8 @@ mod tests {
     use super::*;
     use hl_extension::port::{ContainerSummary, ExtensionCredential, ExtensionState};
     use hl_extension::{NetworkEndpointInventory, NetworkKind, NetworkSummary};
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     #[derive(Clone)]
     struct FakeAuthority {
@@ -755,6 +766,13 @@ mod tests {
             installation: &str,
             connection: &PostgresConnection,
         ) -> Result<Authentication, HostError> {
+            let endpoint = DatabaseEndpoint::new(
+                "127.0.0.1:5432".parse().unwrap(),
+                DatabaseTls::verify_full("database.internal").unwrap(),
+                1_000,
+                5_000,
+            )
+            .unwrap();
             Ok(Authentication {
                 binding: Binding {
                     installation: installation.into(),
@@ -762,15 +780,10 @@ mod tests {
                     container_generation: connection.container_generation,
                     network: connection.network.clone(),
                     network_revision: self.network_revision.load(Ordering::SeqCst) as u64,
+                    endpoint: endpoint.clone(),
                     credentials: BTreeMap::from([("db.password".into(), self.revision.load(Ordering::SeqCst) as u64)]),
                 },
-                endpoint: DatabaseEndpoint::new(
-                    "127.0.0.1:5432".parse().unwrap(),
-                    DatabaseTls::verify_full("database.internal").unwrap(),
-                    1_000,
-                    5_000,
-                )
-                .unwrap(),
+                endpoint,
                 material: DatabaseAuthentication::new(vec![DatabaseCredential::Password(Secret::new(
                     b"host-only-password".to_vec(),
                 ))])
@@ -935,13 +948,14 @@ mod tests {
 
     struct Resolver {
         resolutions: AtomicUsize,
+        port: AtomicUsize,
     }
 
     impl DatabaseResolver for Resolver {
         fn endpoint(&self, _: &PostgresConnection) -> Result<DatabaseEndpoint, HostError> {
             self.resolutions.fetch_add(1, Ordering::SeqCst);
             DatabaseEndpoint::new(
-                "127.0.0.1:5432".parse().unwrap(),
+                SocketAddr::from(([127, 0, 0, 1], self.port.load(Ordering::SeqCst) as u16)),
                 DatabaseTls::verify_full("database.internal").unwrap(),
                 1_000,
                 5_000,
@@ -979,7 +993,7 @@ mod tests {
     }
 
     #[test]
-    fn production_authority_binds_real_service_snapshots_and_revokes_live() {
+    fn production_authority_binds_real_service_snapshots_and_revokes_a_changed_private_route() {
         let owner = installation('a');
         let installations = CurrentInstallation {
             owner: owner.clone(),
@@ -997,6 +1011,7 @@ mod tests {
         };
         let resolver = Resolver {
             resolutions: AtomicUsize::new(0),
+            port: AtomicUsize::new(5432),
         };
         let peer = FakePeer::default();
         let authority = ServiceAuthority::new(
@@ -1019,13 +1034,13 @@ mod tests {
             panic!("new service snapshot must open")
         };
 
-        credentials.revision.store(8, Ordering::SeqCst);
+        resolver.port.store(6432, Ordering::SeqCst);
         assert!(matches!(
             broker.start_once(&owner, &lease, &query("production-query", "select 42")),
             Err(HostError::Conflict(_))
         ));
         assert_eq!(peer.closed.load(Ordering::SeqCst), 1);
-        assert_eq!(resolver.resolutions.load(Ordering::SeqCst), 1);
+        assert_eq!(resolver.resolutions.load(Ordering::SeqCst), 3);
     }
 
     #[test]
@@ -1047,6 +1062,7 @@ mod tests {
         };
         let resolver = Resolver {
             resolutions: AtomicUsize::new(0),
+            port: AtomicUsize::new(5432),
         };
         let authority = ServiceAuthority::new(owner, &installations, &containers, &networks, &credentials, &resolver);
 
@@ -1163,34 +1179,28 @@ mod tests {
         assert_eq!(endpoint.timeouts_ms(), (1_000, 5_000));
 
         assert!(DatabaseAuthentication::new(Vec::new()).is_err());
-        assert!(
-            DatabaseAuthentication::new(vec![DatabaseCredential::RootCertificate(
-                Secret::new(b"root".to_vec(),)
-            )])
-            .is_err()
-        );
+        assert!(DatabaseAuthentication::new(vec![DatabaseCredential::RootCertificate(
+            Secret::new(b"root".to_vec(),)
+        )])
+        .is_err());
         assert!(
             DatabaseAuthentication::new(vec![DatabaseCredential::ClientCertificate(Secret::new(
                 b"certificate".to_vec(),
             ))])
             .is_err()
         );
-        assert!(
-            DatabaseAuthentication::new(vec![
-                CredentialRole::ClientCertificate.material(Secret::new(b"certificate".to_vec())),
-                CredentialRole::ClientPrivateKey.material(Secret::new(b"private-key".to_vec())),
-                CredentialRole::RootCertificate.material(Secret::new(b"root".to_vec())),
-                CredentialRole::Password.material(Secret::new(b"password".to_vec())),
-            ])
-            .is_ok()
-        );
-        assert!(
-            DatabaseAuthentication::new(vec![
-                DatabaseCredential::Password(Secret::new(b"first".to_vec())),
-                DatabaseCredential::Password(Secret::new(b"second".to_vec())),
-            ])
-            .is_err()
-        );
+        assert!(DatabaseAuthentication::new(vec![
+            CredentialRole::ClientCertificate.material(Secret::new(b"certificate".to_vec())),
+            CredentialRole::ClientPrivateKey.material(Secret::new(b"private-key".to_vec())),
+            CredentialRole::RootCertificate.material(Secret::new(b"root".to_vec())),
+            CredentialRole::Password.material(Secret::new(b"password".to_vec())),
+        ])
+        .is_ok());
+        assert!(DatabaseAuthentication::new(vec![
+            DatabaseCredential::Password(Secret::new(b"first".to_vec())),
+            DatabaseCredential::Password(Secret::new(b"second".to_vec())),
+        ])
+        .is_err());
     }
 
     #[test]

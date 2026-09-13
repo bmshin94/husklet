@@ -1,11 +1,15 @@
 //! Volume and network ports over the workspace's Docker-compatible daemon.
 
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use hl_extension::port::{
     HostError, NetworkEndpointInventory, NetworkStore, NetworkSummary, VolumeStore, VolumeSummary,
 };
+use hl_extension::PostgresConnection;
 
+use super::postgres::network_revision;
+use super::postgres_dial::{DialAuthority, DialTarget};
 use super::{failure, Bridge};
 
 pub struct Resources {
@@ -15,6 +19,97 @@ pub struct Resources {
 impl Resources {
     pub(super) fn new(bridge: Arc<Bridge>) -> Self {
         Self { bridge }
+    }
+
+    /// Resolves an authorized connection intent to a host-private route.
+    ///
+    /// Callers retain the target and pass it to [`DialAuthority`] so a network
+    /// or container replacement is observed again immediately before and after
+    /// opening the socket.
+    #[allow(dead_code)] // used when the host-private TLS/credential profile is installed at composition
+    pub(crate) fn database_dial_target(&self, connection: &PostgresConnection) -> Result<DialTarget, HostError> {
+        self.database_route(
+            &connection.container_id,
+            connection.container_generation,
+            &connection.network,
+            connection.port,
+        )
+    }
+
+    fn database_route(
+        &self,
+        container_id: &str,
+        container_generation: u64,
+        network_reference: &str,
+        port: u16,
+    ) -> Result<DialTarget, HostError> {
+        let container = self
+            .bridge
+            .wait(self.bridge.client().containers().inspect(container_id))
+            .map_err(|error| failure(&error))?;
+        if container.metadata.id != container_id || container.metadata.generation != container_generation {
+            return Err(HostError::Conflict("database container identity was replaced".into()));
+        }
+        let inspected = self
+            .bridge
+            .wait(self.bridge.client().networks().inspect(network_reference))
+            .map_err(|error| failure(&error))?;
+        route_from_inspection(container_id, container_generation, network_reference, port, &inspected)
+    }
+}
+
+fn endpoint_address(value: &str, port: u16) -> Result<SocketAddr, HostError> {
+    if port == 0 {
+        return Err(HostError::Conflict("database endpoint port is invalid".into()));
+    }
+    let address = value.split_once('/').map_or(value, |(address, _)| address);
+    let address = address
+        .parse::<IpAddr>()
+        .map_err(|_| HostError::Conflict("database network endpoint has no usable IP address".into()))?;
+    Ok(SocketAddr::new(address, port))
+}
+
+fn route_from_inspection(
+    container_id: &str,
+    container_generation: u64,
+    network_reference: &str,
+    port: u16,
+    inspected: &hl_client::model::Network,
+) -> Result<DialTarget, HostError> {
+    if inspected.id != network_reference && inspected.name != network_reference {
+        return Err(HostError::Conflict(
+            "database network identity does not match the request".into(),
+        ));
+    }
+    let endpoint = inspected
+        .containers
+        .get(container_id)
+        .ok_or_else(|| HostError::Conflict("database container is not a member of the requested network".into()))?;
+    let summary = network(inspected, true);
+    DialTarget::new(
+        container_id,
+        container_generation,
+        inspected.id.clone(),
+        network_revision(&summary)?,
+        endpoint_address(
+            if endpoint.ipv4_address.is_empty() {
+                &endpoint.ipv6_address
+            } else {
+                &endpoint.ipv4_address
+            },
+            port,
+        )?,
+    )
+}
+
+impl DialAuthority for Resources {
+    fn current(&self, expected: &DialTarget) -> Result<DialTarget, HostError> {
+        self.database_route(
+            expected.container_id(),
+            expected.container_generation(),
+            expected.network_id(),
+            expected.address().port(),
+        )
     }
 }
 
@@ -145,6 +240,40 @@ impl NetworkStore for Resources {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use hl_client::model::{ConfigFrom, Ipam, Network, NetworkContainer, NetworkKind};
+
+    fn inspected(container: &str, address: &str) -> Network {
+        Network {
+            name: "backend".into(),
+            id: "network-id".into(),
+            created: String::new(),
+            scope: "local".into(),
+            driver: "bridge".into(),
+            husklet_kind: NetworkKind::Custom,
+            enable_ipv6: false,
+            ipam: Ipam::default(),
+            internal: false,
+            attachable: false,
+            ingress: false,
+            config_from: ConfigFrom::default(),
+            config_only: false,
+            containers: BTreeMap::from([(
+                container.into(),
+                NetworkContainer {
+                    name: "postgres".into(),
+                    endpoint_id: "endpoint".into(),
+                    mac_address: String::new(),
+                    ipv4_address: address.into(),
+                    ipv6_address: String::new(),
+                },
+            )]),
+            options: BTreeMap::new(),
+            labels: BTreeMap::new(),
+        }
+    }
+
     #[test]
     fn network_aliases_reach_the_daemon_request_without_rewriting() {
         let aliases = vec!["database.internal".to_owned(), "database_2".to_owned()];
@@ -153,5 +282,51 @@ mod tests {
         assert!(super::network_connect_request(&"b".repeat(64), &[])
             .endpoint_config
             .is_none());
+    }
+
+    #[test]
+    fn database_route_uses_only_the_exact_inspected_member_and_strips_the_prefix() {
+        let container = "a".repeat(64);
+        let route =
+            super::route_from_inspection(&container, 7, "backend", 5432, &inspected(&container, "172.30.0.7/24"))
+                .unwrap();
+        assert_eq!(route.container_id(), container);
+        assert_eq!(route.container_generation(), 7);
+        assert_eq!(route.network_id(), "network-id");
+        assert_ne!(route.network_revision(), 0);
+        assert_eq!(route.address(), "172.30.0.7:5432".parse().unwrap());
+    }
+
+    #[test]
+    fn database_route_uses_an_inspected_ipv6_endpoint_when_ipv4_is_absent() {
+        let container = "a".repeat(64);
+        let mut network = inspected(&container, "");
+        network.containers.get_mut(&container).unwrap().ipv6_address = "fd00::7/64".into();
+        let route = super::route_from_inspection(&container, 7, "network-id", 5432, &network).unwrap();
+        assert_eq!(route.address(), "[fd00::7]:5432".parse().unwrap());
+    }
+
+    #[test]
+    fn database_route_rejects_spoofed_network_membership_and_addresses() {
+        let container = "a".repeat(64);
+        let other = "b".repeat(64);
+        assert!(
+            super::route_from_inspection(&container, 7, "other", 5432, &inspected(&container, "172.30.0.7/24"))
+                .is_err()
+        );
+        assert!(
+            super::route_from_inspection(&container, 7, "backend", 5432, &inspected(&other, "172.30.0.7/24")).is_err()
+        );
+        assert!(super::route_from_inspection(
+            &container,
+            7,
+            "backend",
+            5432,
+            &inspected(&container, "postgres.internal/24")
+        )
+        .is_err());
+        assert!(
+            super::route_from_inspection(&container, 7, "backend", 0, &inspected(&container, "172.30.0.7/24")).is_err()
+        );
     }
 }

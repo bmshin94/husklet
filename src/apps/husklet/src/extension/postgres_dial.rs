@@ -56,6 +56,22 @@ impl DialTarget {
     pub(crate) fn address(&self) -> SocketAddr {
         self.address
     }
+
+    pub(crate) fn container_id(&self) -> &str {
+        &self.container_id
+    }
+
+    pub(crate) fn container_generation(&self) -> u64 {
+        self.container_generation
+    }
+
+    pub(crate) fn network_id(&self) -> &str {
+        &self.network_id
+    }
+
+    pub(crate) fn network_revision(&self) -> u64 {
+        self.network_revision
+    }
 }
 
 /// Re-resolves current container identity and network membership atomically.
