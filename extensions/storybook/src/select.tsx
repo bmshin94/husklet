@@ -1,5 +1,14 @@
 import React from 'react';
-import { Code, Column, Expander, FormControlLabel, Select, Switch, Text } from '@husklet/react';
+import {
+  Code,
+  Column,
+  Expander,
+  FormControlLabel,
+  Row,
+  Select,
+  Switch,
+  Text,
+} from '@husklet/react';
 import {
   ApiReference,
   ComponentDocument,
@@ -64,53 +73,9 @@ export function SelectWorkbench() {
         </Column>
       </DocumentationSection>
       <DocumentationSection title="States">
-        <SpecimenGrid>
-          <FieldSpecimen
-            label="Empty"
-            helper="Ask for a choice without inventing one"
-            width={{ chars: 30 }}
-          >
-            <Select value="" choices={shells} width={{ chars: 30 }} />
-          </FieldSpecimen>
-          <FieldSpecimen
-            label="Focused"
-            helper="Keyboard focus remains visible"
-            width={{ chars: 30 }}
-          >
-            <Select
-              value="zsh"
-              choices={shells}
-              tooltip="Focused shell selector"
-              width={{ chars: 30 }}
-            />
-          </FieldSpecimen>
-          <FieldSpecimen label="Selected" helper="Changes apply to new panes" width={{ chars: 30 }}>
-            <Select value="zsh" choices={shells} width={{ chars: 30 }} />
-          </FieldSpecimen>
-          <FieldSpecimen
-            label="Disabled"
-            helper="Restart the workspace to change this value"
-            width={{ chars: 30 }}
-          >
-            <Select value="bash" choices={shells} enabled={false} width={{ chars: 30 }} />
-          </FieldSpecimen>
-          <FieldSpecimen label="Invalid" helper="Choose a default shell" width={{ chars: 30 }}>
-            <Select value="" choices={shells} tone="danger" width={{ chars: 30 }} />
-          </FieldSpecimen>
-          <FieldSpecimen
-            label="Long label"
-            helper="The value remains bounded by the field"
-            width={{ chars: 30 }}
-          >
-            <Select
-              value="long"
-              choices={[
-                { value: 'long', label: 'Remote development shell with workspace defaults' },
-              ]}
-              width={{ chars: 30 }}
-            />
-          </FieldSpecimen>
-        </SpecimenGrid>
+        <Row gap={3} width="fill" wrap>
+          <SelectStateSpecimens />
+        </Row>
         <Text
           label="Keep the selected option visible; explain why an unavailable selector is disabled."
           color="text-dim"
@@ -146,4 +111,56 @@ export function SelectWorkbench() {
       </Expander>
     </ComponentDocument>
   );
+}
+
+const stateSpecimens: Array<{
+  label: string;
+  helper: string;
+  value: string;
+  tooltip?: string;
+  enabled?: boolean;
+  tone?: 'danger';
+  choices?: Array<{ value: string; label: string }>;
+}> = [
+  { label: 'Empty', helper: 'A choice is required', value: '' },
+  {
+    label: 'Focused',
+    helper: 'Keyboard focus stays visible',
+    value: 'zsh',
+    tooltip: 'Focused shell selector',
+  },
+  { label: 'Selected', helper: 'Applies to new panes', value: 'zsh' },
+  {
+    label: 'Disabled',
+    helper: 'Restart workspace to edit',
+    value: 'bash',
+    enabled: false,
+  },
+  { label: 'Invalid', helper: 'Choose a default shell', value: '', tone: 'danger' },
+  {
+    label: 'Long label',
+    helper: 'Value truncates within the field',
+    value: 'long',
+    choices: [{ value: 'long', label: 'Remote development shell with workspace defaults' }],
+  },
+];
+
+function SelectStateSpecimens() {
+  return stateSpecimens.map((specimen) => (
+    <FieldSpecimen
+      key={specimen.label}
+      label={specimen.label}
+      helper={specimen.helper}
+      width={{ chars: 30 }}
+    >
+      <Select
+        value={specimen.value}
+        choices={specimen.choices ?? shells}
+        enabled={specimen.enabled}
+        tone={specimen.tone}
+        tooltip={specimen.tooltip}
+        width={{ chars: 30 }}
+      />
+    </FieldSpecimen>
+  ));
 }

@@ -972,6 +972,31 @@ mod unix {
                 if width == 1_200 {
                     document.vadjustment().set_value(0.0);
                     settle_toolkit();
+                    let state_bounds = ["Empty", "Focused", "Selected", "Disabled", "Invalid", "Long label"]
+                        .map(|label| {
+                            let widget = find::<gtk::Label>(&root, |candidate| candidate.text() == label);
+                            widget
+                                .compute_bounds(&root)
+                                .unwrap_or_else(|| panic!("{label} state label belongs to the wide Select document"))
+                        });
+                    assert!(
+                        state_bounds[..3]
+                            .windows(2)
+                            .all(|pair| pair[1].x() - pair[0].x() >= 280.0),
+                        "wide Select states did not form three distinct comparison columns: {state_bounds:?}"
+                    );
+                    assert!(
+                        state_bounds[..3]
+                            .iter()
+                            .all(|bounds| (bounds.y() - state_bounds[0].y()).abs() <= 1.0)
+                            && state_bounds[3..5]
+                                .iter()
+                                .all(|bounds| (bounds.y() - state_bounds[3].y()).abs() <= 1.0)
+                            && state_bounds[3].y() > state_bounds[0].y() + 56.0
+                            && (state_bounds[5].x() - state_bounds[0].x()).abs() <= 1.0
+                            && state_bounds[5].y() > state_bounds[3].y() + 56.0,
+                        "wide Select states did not form a compact 3/2/1 comparison grid: {state_bounds:?}"
+                    );
                     capture_story(&realized_window, "Select wide");
                 }
                 if width == 600 {
@@ -1010,6 +1035,19 @@ mod unix {
                             .iter()
                             .all(|bounds| bounds.x() >= 16.0 && bounds.x() + bounds.width() <= 584.0),
                         "a Select specimen escaped the 16px narrow content lane at {label}: {specimen_bounds:?}"
+                    );
+                    let state_bounds = ["Empty", "Focused", "Selected", "Disabled", "Invalid", "Long label"]
+                        .map(|state| {
+                            let widget = find::<gtk::Label>(&root, |candidate| candidate.text() == state);
+                            widget
+                                .compute_bounds(&root)
+                                .unwrap_or_else(|| panic!("{state} state label belongs to the narrow Select document"))
+                        });
+                    assert!(
+                        state_bounds.windows(2).all(|pair| {
+                            (pair[1].x() - pair[0].x()).abs() <= 1.0 && pair[1].y() > pair[0].y()
+                        }),
+                        "narrow Select states must remain one ordered column: {state_bounds:?}"
                     );
                 }
             }

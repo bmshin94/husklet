@@ -248,12 +248,24 @@ test('dense state specimens use the shared source-ordered narrow layout', () => 
   }
 });
 
-test('Select state specimens declare matching bounded widths in source', () => {
+test('Select state specimens use one bounded wrapping comparison row', () => {
+  const frame = host().render(h(SelectWorkbench));
+  const rows = new Set(created(frame.patches, 'Row'));
+  assert.ok(
+    frame.patches.some(
+      (patch) =>
+        rows.has(patch.SetProp?.id) &&
+        patch.SetProp.prop === 'Wrap' &&
+        patch.SetProp.value?.Flag === true,
+    ),
+    'Select state specimens must reflow without imposing a wide minimum',
+  );
   const source = readFileSync(new URL('../src/select.tsx', import.meta.url), 'utf8');
   const states = source.match(
     /<DocumentationSection title="States">([\s\S]*?)<\/DocumentationSection>/,
   )?.[1];
   assert.ok(states, 'Select states section is missing');
-  assert.equal(states.match(/width=\{\{ chars: 30 \}\}/g)?.length, 12);
-  assert.doesNotMatch(states, /width="fill"/);
+  assert.match(states, /<SelectStateSpecimens \/>/);
+  assert.match(states, /<Row gap=\{3\} width="fill" wrap>/);
+  assert.match(source, /width=\{\{ chars: 30 \}\}/);
 });
