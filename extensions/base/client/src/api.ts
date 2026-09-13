@@ -1033,6 +1033,14 @@ export declare class FileTextLimitError extends RangeError {
   readonly total: number;
   readonly limit: number;
 }
+export declare class FileChunkLimitError extends RangeError {
+  readonly path: string;
+  readonly identity: string;
+  readonly offset: number;
+  readonly total: number;
+  readonly maxBytes: number;
+  readonly maxChunks: number;
+}
 /** A bounded text read lost transport after an exact prefix had been acknowledged. */
 export declare class FileTextOperationError extends Error {
   readonly path: string;
@@ -2371,6 +2379,10 @@ export interface WorkspaceApi {
       options?: {
         offset?: number;
         chunkBytes?: number;
+        /** Maximum bytes yielded before a resumable FileChunkLimitError. */
+        maxBytes?: number;
+        /** Maximum pages yielded before a resumable FileChunkLimitError. */
+        maxChunks?: number;
         /** Pin every range to an identity obtained from stat, inventory, or persisted state. */
         observed?: string | null;
         signal?: AbortSignal;

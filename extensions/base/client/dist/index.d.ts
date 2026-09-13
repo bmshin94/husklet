@@ -240,6 +240,16 @@ export declare class FileTextLimitError extends RangeError {
     readonly limit: any;
     constructor(path: any, identity: any, total: any, limit: any);
 }
+/** A chunk stream reached its caller-owned work bound with an exact resume cursor. */
+export declare class FileChunkLimitError extends RangeError {
+    readonly path: any;
+    readonly identity: any;
+    readonly offset: any;
+    readonly total: any;
+    readonly maxBytes: any;
+    readonly maxChunks: any;
+    constructor(path: any, identity: any, offset: any, total: any, maxBytes: any, maxChunks: any);
+}
 /** A bounded text read lost transport after an exact prefix had been acknowledged. */
 export declare class FileTextOperationError extends Error {
     readonly path: any;

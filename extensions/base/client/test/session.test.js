@@ -4358,6 +4358,22 @@ test('real Unix filesystem iterators page recursively, stream stable chunks, and
     chunks.push(...secondRange.contents);
     assert.deepEqual(chunks, [65, 66, 67, 68]);
     assert.equal((await stable.next()).done, true);
+    const bounded = host.files.readChunks('src/a.ts', {
+      chunkBytes: 2,
+      maxBytes: 2,
+      maxChunks: 4,
+    });
+    assert.deepEqual((await bounded.next()).value.contents, [65, 66]);
+    const callsAtBound = rangeCalls;
+    await assert.rejects(bounded.next(), (error) => {
+      assert.equal(error.name, 'FileChunkLimitError');
+      assert.deepEqual(
+        [error.path, error.identity, error.offset, error.total, error.maxBytes, error.maxChunks],
+        ['src/a.ts', 'file-v1', 2, 4, 2, 4],
+      );
+      return true;
+    });
+    assert.equal(rangeCalls, callsAtBound, 'the continuation bound prevents another host read');
     assert.equal(
       requests.some(
         ({ call, with: value }) =>

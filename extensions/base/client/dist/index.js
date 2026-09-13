@@ -606,6 +606,25 @@ export class FileTextLimitError extends RangeError {
         this.limit = limit;
     }
 }
+/** A chunk stream reached its caller-owned work bound with an exact resume cursor. */
+export class FileChunkLimitError extends RangeError {
+    path;
+    identity;
+    offset;
+    total;
+    maxBytes;
+    maxChunks;
+    constructor(path, identity, offset, total, maxBytes, maxChunks) {
+        super(`filesystem chunks for ${path} reached a bounded continuation at offset ${offset}`);
+        this.name = 'FileChunkLimitError';
+        this.path = path;
+        this.identity = identity;
+        this.offset = offset;
+        this.total = total;
+        this.maxBytes = maxBytes;
+        this.maxChunks = maxChunks;
+    }
+}
 /** A bounded text read lost transport after an exact prefix had been acknowledged. */
 export class FileTextOperationError extends Error {
     path;
@@ -3588,15 +3607,25 @@ export function workspace(session, { signal } = {}) {
                     throw new TypeError('host returned an inconsistent filesystem range batch');
                 return values;
             },
-            readChunks: async function* (path, { offset = 0, chunkBytes = 65_536, observed = null, signal, } = {}) {
+            readChunks: async function* (path, { offset = 0, chunkBytes = 65_536, maxBytes = 64 * 1024 * 1024, maxChunks = 4_096, observed = null, signal, } = {}) {
                 const [start, limit] = exactFileRange(offset, chunkBytes);
+                if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 1024 * 1024 * 1024)
+                    throw new RangeError('filesystem chunk maxBytes must be between 1 and 1073741824');
+                if (!Number.isSafeInteger(maxChunks) || maxChunks < 1 || maxChunks > 65_536)
+                    throw new RangeError('filesystem maxChunks must be between 1 and 65536');
                 const scoped = signal ? api.withSignal(signal) : api;
                 let cursor = start;
+                let delivered = 0;
+                let chunks = 0;
                 let identity = observed;
                 let total;
                 for (;;) {
                     requireFilesystemActive(signal);
-                    const range = await scoped.files.readRange(path, cursor, limit, identity);
+                    if (chunks === maxChunks || delivered === maxBytes) {
+                        throw new FileChunkLimitError(path, identity, cursor, total, maxBytes, maxChunks);
+                    }
+                    const requestLimit = Math.min(limit, maxBytes - delivered);
+                    const range = await scoped.files.readRange(path, cursor, requestLimit, identity);
                     requireFilesystemActive(signal);
                     identity ??= range.identity;
                     if (range.identity !== identity) {
@@ -3608,6 +3637,8 @@ export function workspace(session, { signal } = {}) {
                     }
                     const eof = range.eof;
                     const next = cursor + range.contents.length;
+                    chunks += 1;
+                    delivered += range.contents.length;
                     yield range;
                     if (eof)
                         return;
