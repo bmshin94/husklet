@@ -4093,21 +4093,14 @@ mod unix {
                     last_whole + 8.0 <= footer_top,
                     "{width_name} {state} last complete permission row lacks footer clearance: end={last_whole}, footer={footer_top}"
                 );
-                if width == 600 {
-                    assert!(
-                        status_bounds.y() + status_bounds.height() <= update_bounds.y(),
-                        "narrow decision status does not own its first row: status={status_bounds:?}, actions={update_bounds:?}"
-                    );
-                    assert!(
-                        update_bounds.y() - status_bounds.y() <= 36.0,
-                        "narrow decision footer grew beyond two compact rows: status={status_bounds:?}, actions={update_bounds:?}"
-                    );
-                } else {
-                    assert!(
-                        (status_bounds.y() - update_bounds.y()).abs() <= 8.0,
-                        "wide decision bar no longer shares one row: status={status_bounds:?}, actions={update_bounds:?}"
-                    );
-                }
+                assert!(
+                    status_bounds.y() + status_bounds.height() <= update_bounds.y(),
+                    "{width_name} decision status does not own its first row: status={status_bounds:?}, actions={update_bounds:?}"
+                );
+                assert!(
+                    update_bounds.y() - status_bounds.y() <= 36.0,
+                    "{width_name} decision footer grew beyond two compact rows: status={status_bounds:?}, actions={update_bounds:?}"
+                );
             }
             if state == "update-success" {
                 assert!(
@@ -4288,7 +4281,13 @@ mod unix {
                 let footer_before = footer.compute_bounds(root).expect("review footer belongs to root");
                 let separator_top = footer_before.y() + 8.0;
                 let header = find_label(root, "Review developer-tool-01");
-                let header_before = header.compute_bounds(root).expect("review identity belongs to root");
+                let header_before = header
+                    .compute_bounds(&capture_window)
+                    .expect("review identity belongs to capture window");
+                assert!(
+                    header_before.x() >= 16.0,
+                    "{width_name} review identity clips the capture viewport: {header_before:?}"
+                );
                 let control = credential
                     .mnemonic_widget()
                     .expect("required credential label names its permission switch");
@@ -4326,8 +4325,8 @@ mod unix {
                     .compute_bounds(root)
                     .expect("focused review footer belongs to root");
                 let header_after = header
-                    .compute_bounds(root)
-                    .expect("focused review identity belongs to root");
+                    .compute_bounds(&capture_window)
+                    .expect("focused review identity belongs to capture window");
                 assert_eq!(
                     footer_before, footer_after,
                     "{width_name} focus moved the fixed decision footer"

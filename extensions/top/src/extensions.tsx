@@ -2618,13 +2618,11 @@ export function Extensions({
         <Column gap={0} grow={false} height={{ step: 17 }}>
           <Spacer height={1} />
           <Separator orientation="horizontal" />
-          <Row
+          <Column
             gap={1}
             pad={{ top: 1, end: 2, bottom: 1, start: 2 }}
             width="fill"
-            align="center"
-            justify="stretch"
-            wrap
+            align="stretch"
           >
             <Text
               label={
@@ -2634,15 +2632,9 @@ export function Extensions({
               }
               color="text-dim"
               wrap={false}
-              grow
-              width={{ minimum: { chars: 22 }, maximum: { chars: 50 } }}
+              width="fill"
             />
-            <Row
-              gap={1}
-              align="center"
-              justify="end"
-              width={{ minimum: { chars: 69 }, maximum: 'fill' }}
-            >
+            <Row gap={1} align="center" justify="end" width="fill">
               <Spacer />
               <Button
                 label={
@@ -2673,7 +2665,7 @@ export function Extensions({
                 onInvoke={dismissReview}
               />
             </Row>
-          </Row>
+          </Column>
         </Column>
       ) : null}
     </Column>

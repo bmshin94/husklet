@@ -3154,13 +3154,13 @@ for (const updating of [false, true]) {
     );
     assert.equal(
       ancestorTags(stage, commitLabel).filter((tag) => tag === 'Row').length,
-      2,
-      'decision action is nested inside the responsive footer row',
+      1,
+      'decision actions own one full-width footer row without an intrinsic-width wrapper',
     );
     assert.equal(
       ancestorTags(stage, 'Review decision · 8/13 selected').filter((tag) => tag === 'Row').length,
-      1,
-      'status stays outside the compact action group',
+      0,
+      'status stays in the footer column outside the compact action group',
     );
     assert.deepEqual(taggedProperty(stage, commitLabel, 'Button', 'Size'), {
       ControlSize: 'Small',
