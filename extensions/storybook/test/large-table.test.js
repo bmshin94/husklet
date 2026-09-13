@@ -49,9 +49,9 @@ test('one DataTable node represents one million rows without materializing row n
       (patch) =>
         patch.SetProp?.id === table &&
         patch.SetProp.prop === 'Height' &&
-        patch.SetProp.value?.Length?.Step === 80,
+        patch.SetProp.value?.Length?.Step === 81,
     ),
-    'the live table authors an explicit 320px viewport instead of ambient growth',
+    'the live table authors a 324px viewport so nine compact rows remain complete below its header',
   );
 });
 

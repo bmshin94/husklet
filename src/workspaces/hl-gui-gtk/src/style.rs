@@ -384,12 +384,18 @@ fn components(css: &mut String, theme: &Theme) {
          .hl-chip {{ min-height: 24px; padding: 1px 8px; border-radius: {pill}px; background: {raised}; border-color: {line}; }}\n\
          .hl-separator {{ background: {line}; min-height: 1px; min-width: 1px; }}\n\
          .hl-datatable, .hl-list {{ background: {surface}; border: 1px solid {line}; border-radius: {radius}px; }}\n\
-         columnview entry.hl-table-editor {{ min-height: 24px; padding: 1px 8px; margin: 2px 0; background: transparent; border-color: transparent; box-shadow: none; border-radius: {radius}px; }}\n\
+         columnview > listview > row {{ min-height: 31px; padding: 0; }}\n\
+         columnview > listview > row > cell {{ min-height: 31px; padding: 0; }}\n\
+         columnview .hl-table-details {{ min-width: 44px; min-height: 24px; padding: 0; margin: 0; border: none; }}\n\
+         columnview .hl-table-details-chrome {{ min-height: 22px; padding: 0 8px; background: transparent; border-color: transparent; box-shadow: none; border-radius: {radius}px; }}\n\
+         columnview .hl-table-details-chrome:hover {{ background: {raised}; border-color: {line}; }}\n\
+         columnview .hl-table-details:focus-visible .hl-table-details-chrome {{ background: {raised}; border-color: {accent}; box-shadow: inset 0 0 0 1px {accent}; }}\n\
+         columnview entry.hl-table-editor {{ min-height: 20px; padding: 1px 8px; margin: 1px 0; background: transparent; border-color: transparent; box-shadow: none; border-radius: {radius}px; }}\n\
          columnview entry.hl-table-editor:hover {{ background: {raised}; border-color: {line}; }}\n\
          columnview entry.hl-table-editor:focus-within {{ background: {surface}; border-color: {accent}; box-shadow: inset 0 0 0 1px {accent}; }}\n\
          .hl-heading {{ font-weight: 600; letter-spacing: -0.1px; }}\n\
          .hl-text {{ color: {text}; }}\n\
-         columnview header button {{ background: {raised}; color: {dim}; font-weight: 600; }}\n\
+         columnview header button {{ min-height: 30px; padding: 0 8px; background: {raised}; color: {dim}; font-weight: 600; }}\n\
          row:selected, :selected {{ background: {accent}; color: {ground}; }}\n\
          .hl-link {{ padding: 0; }}",
         raised = theme.color(Token::Raised).hex(),
@@ -664,10 +670,19 @@ mod tests {
     }
 
     #[test]
-    fn editable_table_cells_are_quiet_until_the_edit_affordance_is_relevant() {
+    fn windowed_table_cells_are_compact_and_quiet_until_an_affordance_is_relevant() {
         let css = super::sheet(&Theme::dark());
+        assert!(css.contains("columnview > listview > row { min-height: 31px; padding: 0;"));
+        assert!(css.contains("columnview > listview > row > cell { min-height: 31px; padding: 0;"));
+        assert!(css.contains("columnview header button { min-height: 30px; padding: 0 8px;"));
         assert!(css.contains(
-            "columnview entry.hl-table-editor { min-height: 24px; padding: 1px 8px; margin: 2px 0; background: transparent; border-color: transparent; box-shadow: none;"
+            "columnview .hl-table-details { min-width: 44px; min-height: 24px; padding: 0; margin: 0; border: none;"
+        ));
+        assert!(css.contains(
+            "columnview .hl-table-details:focus-visible .hl-table-details-chrome { background: #21252d; border-color: #559df7;"
+        ));
+        assert!(css.contains(
+            "columnview entry.hl-table-editor { min-height: 20px; padding: 1px 8px; margin: 1px 0; background: transparent; border-color: transparent; box-shadow: none;"
         ));
         assert!(css.contains("columnview entry.hl-table-editor:hover { background: #21252d; border-color: #323843;"));
         assert!(css.contains(

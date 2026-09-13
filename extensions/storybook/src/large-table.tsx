@@ -316,7 +316,7 @@ export function LargeDataTableStory({ source }: { source: LargeRecordSource }) {
         <DataTable
           source={SOURCE}
           schema={SCHEMA}
-          height={{ step: 80 }}
+          height={{ step: 81 }}
           onFocus={() => record('focused records')}
           onSelect={(event) => {
             const rows = Array.isArray(event.collection?.rows)

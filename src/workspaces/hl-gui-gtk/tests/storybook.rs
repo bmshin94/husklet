@@ -1735,8 +1735,8 @@ mod unix {
                 .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
                 .expect("DataTable ColumnView remains inside its scrolling viewport");
             assert!(
-                (318..=322).contains(&table.height()),
-                "authored step80 DataTable allocated {}px instead of 320px",
+                (322..=326).contains(&table.height()),
+                "authored DataTable allocated {}px instead of 324px",
                 table.height(),
             );
             let model = view.model().expect("ready DataTable keeps a selection model");
@@ -1771,8 +1771,8 @@ mod unix {
             root.allocate(600, 800, -1, None);
             settle_toolkit();
             assert!(
-                (318..=322).contains(&table.height()),
-                "narrow authored DataTable allocated {}px instead of 320px",
+                (322..=326).contains(&table.height()),
+                "narrow authored DataTable allocated {}px instead of 324px",
                 table.height(),
             );
             let narrow_columns = view
@@ -1789,9 +1789,46 @@ mod unix {
             );
             let details = descendants::<gtk::MenuButton>(&root)
                 .into_iter()
-                .find(|button| button.label().as_deref() == Some("View 3 fields"))
+                .find(|button| {
+                    button.label().as_deref() == Some("View 3 fields") && button.is_mapped() && button.width() > 0
+                })
                 .expect("narrow DataTable rows expose keyboard-reachable details");
             assert!(details.is_focusable());
+            assert!(details.has_css_class("hl-table-details"));
+            assert!(
+                details.width() >= 44 && (24..=32).contains(&details.height()),
+                "narrow Details target must retain 44px horizontal reach without inflating its row: {}x{}px",
+                details.width(),
+                details.height()
+            );
+            let mut row_tops = descendants::<gtk::Entry>(view.upcast_ref())
+                .into_iter()
+                .filter_map(|entry| {
+                    let cell = entry.parent()?;
+                    cell.compute_bounds(&view).and_then(|bounds| {
+                        (entry.is_mapped()
+                            && bounds.y() >= 0.0
+                            && bounds.y() + bounds.height() <= table.height() as f32)
+                            .then_some(bounds.y().round() as i32)
+                    })
+                })
+                .collect::<Vec<_>>();
+            row_tops.sort_unstable();
+            row_tops.dedup();
+            assert!(
+                row_tops.len() >= 9,
+                "narrow 324px DataTable realizes only {} complete compact rows at {row_tops:?}",
+                row_tops.len()
+            );
+            assert!(
+                (32..=36).contains(&row_tops[0]),
+                "DataTable header must remain 32 to 36px, first body row starts at {}px",
+                row_tops[0]
+            );
+            assert!(
+                row_tops.windows(2).all(|rows| (32..=36).contains(&(rows[1] - rows[0]))),
+                "narrow DataTable row advances must remain 32 to 36px: {row_tops:?}"
+            );
             assert!(details.tooltip_text().is_some_and(|text| {
                 text.contains("3 hidden fields") && text.contains("Owner:") && text.contains("CPU:")
             }));
@@ -1815,8 +1852,8 @@ mod unix {
             root.allocate(1_200, 800, -1, None);
             settle_toolkit();
             assert!(
-                (318..=322).contains(&table.height()),
-                "wide authored DataTable allocated {}px instead of 320px",
+                (322..=326).contains(&table.height()),
+                "wide authored DataTable allocated {}px instead of 324px",
                 table.height(),
             );
             let wide_columns = view

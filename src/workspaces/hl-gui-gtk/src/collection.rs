@@ -84,6 +84,10 @@ fn details_column(
         };
         let button = gtk::MenuButton::new();
         button.set_label("Details");
+        button.add_css_class("hl-table-details");
+        if let Some(chrome) = button.first_child() {
+            chrome.add_css_class("hl-table-details-chrome");
+        }
         button.set_focusable(true);
         button.set_halign(gtk::Align::Start);
         button.set_margin_start(CELL_MARGIN);
@@ -129,10 +133,7 @@ fn details_column(
             if count == 1 { "" } else { "s" },
             item.position() + 1
         );
-        button.set_label(&format!(
-            "View {count} field{}",
-            if count == 1 { "" } else { "s" }
-        ));
+        button.set_label(&format!("View {count} field{}", if count == 1 { "" } else { "s" }));
         button.set_tooltip_text(Some(&format!("{accessible}: {}", disclosure.join("; "))));
         button.update_property(&[gtk::accessible::Property::Label(&accessible)]);
         if let Some(popover) = button.popover() {
