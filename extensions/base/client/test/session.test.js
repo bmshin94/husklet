@@ -18,6 +18,7 @@ import {
   JsonLineParseError,
   PaneInventoryChangedError,
   PaneUnavailableError,
+  SemanticActionOperationError,
   Session,
   StateDecodeError,
   TerminalOperationError,
@@ -9879,6 +9880,91 @@ test('real Unix inspectAndAct rejects a replacement generation after mutation', 
   );
 });
 
+test('fragmented Unix semantic action disconnect preserves exact no-replay authority', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-semantic-action-loss-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const connections = new Set();
+  const server = net.createServer((socket) => {
+    connections.add(socket);
+    socket.on('close', () => connections.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.kind !== KIND.request) continue;
+        if (frame.payload.call === 'event_subscribe') {
+          socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
+        } else if (frame.payload.call === 'pane_semantic_read') {
+          socket.write(
+            encode({
+              channel: 2,
+              kind: KIND.response,
+              payload: { reply: 'semantics', with: semanticTree('pane-a') },
+            }),
+          );
+        } else if (frame.payload.call === 'pane_semantic_action') {
+          const event = encode({
+            channel: 92,
+            kind: KIND.event,
+            payload: {
+              snapshot: 'pane_changes',
+              of: { slot: 'pane-a', kind: 'native', generation: 2, revision: 5, coalesced: 0 },
+            },
+          });
+          let offset = 0;
+          const write = () => {
+            if (offset === event.length) return socket.destroy();
+            socket.write(event.subarray(offset, offset + 1));
+            offset += 1;
+            setImmediate(write);
+          };
+          write();
+        }
+      }
+    });
+    socket.write(
+      encode({
+        channel: CONTROL,
+        kind: KIND.open,
+        payload: {
+          protocol: 1,
+          peer: 'semantic-action-loss',
+          granted: ['panes:observe', 'panes:semantic-read', 'panes:semantic-control'],
+        },
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const session = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(session).terminal.inspectAndAct('pane-a', { node: 7, action: 'invoke' }),
+      (error) => {
+        assert(error instanceof SemanticActionOperationError);
+        assert.equal(error.before.snapshot.revision, 4);
+        assert.deepEqual(error.action, {
+          generation: 2,
+          revision: 4,
+          node: 7,
+          action: 'invoke',
+          value: null,
+        });
+        assert.deepEqual(error.observed, {
+          slot: 'pane-a',
+          kind: 'native',
+          generation: 2,
+          revision: 5,
+          coalesced: 0,
+        });
+        return true;
+      },
+    );
+  } finally {
+    for (const connection of connections) connection.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('real Unix semantic action waits cancel, release observation, and preserve the session', async () => {
   let cancel;
   await withPaneIdentityHost(
@@ -9941,7 +10027,10 @@ test('real Unix semantic action waits cancel, release observation, and preserve 
           { node: 7, action: 'invoke' },
           { timeoutMs: 1_000, signal: cancel.signal },
         ),
-        (error) => error.name === 'AbortError' && error.cause === 'agent request superseded',
+        (error) =>
+          error instanceof SemanticActionOperationError &&
+          error.cause?.name === 'AbortError' &&
+          error.cause?.cause === 'agent request superseded',
       );
       assert.deepEqual(
         calls.map(({ call }) => call),

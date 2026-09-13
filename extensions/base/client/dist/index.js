@@ -292,6 +292,20 @@ export class TerminalOperationError extends Error {
         this.cause = cause;
     }
 }
+/** A revision-bound semantic action may have committed before observation failed. */
+export class SemanticActionOperationError extends Error {
+    before;
+    action;
+    observed;
+    constructor(before, action, observed, cause) {
+        super(`semantic action ${action.action} on node ${action.node} may have committed: ${cause instanceof Error ? cause.message : String(cause)}`);
+        this.name = 'SemanticActionOperationError';
+        this.before = Object.freeze({ ...before });
+        this.action = Object.freeze({ ...action });
+        this.observed = observed === undefined ? undefined : Object.freeze({ ...observed });
+        this.cause = cause;
+    }
+}
 /** A supervised terminal command failed after creation, retaining exact recovery state. */
 export class TerminalCommandOperationError extends Error {
     command;
@@ -4376,17 +4390,23 @@ export function workspace(session, { signal } = {}) {
         const scoped = signal ? api.withSignal(signal) : api;
         let changed;
         let cursor;
+        let observedChange;
         const observed = new Promise((resolve) => {
             changed = resolve;
         });
         const stop = await scoped.watchPaneChanges((change) => {
             if (cursor &&
                 change.slot === slot &&
-                (change.generation !== cursor.generation || change.revision !== cursor.revision))
+                (change.generation !== cursor.generation || change.revision !== cursor.revision)) {
+                observedChange = change;
                 changed(change);
+            }
         });
         let timer;
         let abort;
+        let before;
+        let action;
+        let actionAttempted = false;
         try {
             const snapshot = await scoped.terminal.semantics(slot);
             cursor = { generation: snapshot.generation, revision: snapshot.revision };
@@ -4408,13 +4428,15 @@ export function workspace(session, { signal } = {}) {
                 throw new Error('semantic node is disabled');
             if (!node.actions.includes(proposal.action))
                 throw new Error('semantic node does not advertise the requested action');
-            const before = { snapshot, ...semanticText(snapshot) };
-            await scoped.terminal.act(slot, {
+            before = { snapshot, ...semanticText(snapshot) };
+            action = {
                 ...cursor,
                 node: proposal.node,
                 action: proposal.action,
                 value: proposal.value ?? null,
-            });
+            };
+            actionAttempted = true;
+            await scoped.terminal.act(slot, action);
             const change = await Promise.race([
                 observed,
                 new Promise((resolve) => {
@@ -4441,11 +4463,17 @@ export function workspace(session, { signal } = {}) {
                 after: { snapshot: afterSnapshot, ...semanticText(afterSnapshot) },
             };
         }
+        catch (cause) {
+            if (actionAttempted && before && action) {
+                throw new SemanticActionOperationError(before, action, observedChange, cause);
+            }
+            throw cause;
+        }
         finally {
             clearTimeout(timer);
             if (abort)
                 signal?.removeEventListener('abort', abort);
-            await stop();
+            await stop().catch(() => { });
         }
     };
     api.terminal.splitAndWait = async (slot, generation, revision, division, { timeoutMs = 30_000 } = {}) => {

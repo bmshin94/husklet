@@ -87,6 +87,13 @@ export declare class TerminalOperationError extends Error {
     readonly result: any;
     constructor(operation: any, result: any, cause: any);
 }
+/** A revision-bound semantic action may have committed before observation failed. */
+export declare class SemanticActionOperationError extends Error {
+    readonly before: any;
+    readonly action: any;
+    readonly observed: any;
+    constructor(before: any, action: any, observed: any, cause: any);
+}
 /** A supervised terminal command failed after creation, retaining exact recovery state. */
 export declare class TerminalCommandOperationError extends Error {
     readonly command: any;

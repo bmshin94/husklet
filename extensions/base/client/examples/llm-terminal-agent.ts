@@ -1,9 +1,28 @@
-import { TerminalCommandOperationError, connect, workspace } from '@husklet/client';
+import {
+  SemanticActionOperationError,
+  TerminalCommandOperationError,
+  connect,
+  workspace,
+} from '@husklet/client';
 declare const process: { argv: string[]; stdout: { write(value: string): void } };
 
-type Configuration = { path: string; slot: string; prompt: string; deadlineMs?: number };
+type Configuration = {
+  path: string;
+  slot: string;
+  prompt: string;
+  deadlineMs?: number;
+  semanticAction?: {
+    node: number;
+    action: 'invoke' | 'change' | 'submit' | 'toggle' | 'expand' | 'focus';
+    value?: string;
+  };
+};
 const configuration = JSON.parse(process.argv[2] ?? 'null') as Configuration | null;
-if (!configuration?.path || !configuration.slot || !configuration.prompt) {
+if (
+  !configuration?.path ||
+  !configuration.slot ||
+  (!configuration.prompt && !configuration.semanticAction)
+) {
   throw new TypeError('usage: llm-terminal-agent.ts JSON(path, slot, prompt)');
 }
 
@@ -23,8 +42,37 @@ try {
     text: readable.text,
   }));
   if (observed.kind === 'ui') {
+    let actionResult;
+    if (configuration.semanticAction) {
+      try {
+        actionResult = await terminal.inspectAndAct(
+          configuration.slot,
+          configuration.semanticAction,
+        );
+      } catch (cause) {
+        if (!(cause instanceof SemanticActionOperationError)) throw cause;
+        const resumedSession = await connect({
+          path: configuration.path,
+          pendingLimit: 8,
+          timeout: 5_000,
+        });
+        try {
+          const after = await workspace(resumedSession).terminal.semantics(configuration.slot);
+          actionResult = {
+            changed:
+              after.generation === cause.action.generation &&
+              after.revision > cause.action.revision,
+            before: cause.before,
+            after,
+            replayed: false,
+          };
+        } finally {
+          await resumedSession.close();
+        }
+      }
+    }
     process.stdout.write(
-      `${JSON.stringify({ layout: context.topology, context: panes, incomplete: contextIncomplete, selected: { kind: 'ui', text: observed.text, complete: observed.complete } })}\n`,
+      `${JSON.stringify({ layout: context.topology, context: panes, incomplete: contextIncomplete, selected: { kind: 'ui', text: observed.text, complete: observed.complete }, action: actionResult })}\n`,
     );
   } else {
     const deadlineMs = configuration.deadlineMs ?? 2_000;

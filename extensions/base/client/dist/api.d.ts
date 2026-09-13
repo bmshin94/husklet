@@ -893,6 +893,14 @@ export declare class TerminalOperationError extends Error {
     }>;
     readonly cause: unknown;
 }
+/** A revision-bound semantic action may have committed before observation failed. Never replay it blindly. */
+export declare class SemanticActionOperationError extends Error {
+    readonly before: Readonly<SemanticTextObservation>;
+    readonly action: Readonly<PaneSemanticAction>;
+    /** Post-action pane cursor observed before failure, when one reached the client. */
+    readonly observed?: Readonly<PaneChange>;
+    readonly cause: unknown;
+}
 /** A supervised command failed after creation; reconnect using `command` and resume output at `after`. */
 export declare class TerminalCommandOperationError extends Error {
     readonly command: Readonly<TerminalCommand>;
