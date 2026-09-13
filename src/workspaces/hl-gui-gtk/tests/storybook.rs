@@ -319,6 +319,9 @@ mod unix {
                     if story == "Splitter" { 160 } else { 140 },
                     &format!("{story} narrow"),
                 );
+                if story == "Splitter" {
+                    assert_vertical_splitter(&root, &format!("{story} narrow"));
+                }
                 if story == "Workspace layout control" {
                     assert_workspace_layout_is_compact(&root, "Workspace layout control narrow");
                 }
@@ -1214,6 +1217,9 @@ mod unix {
                 if story == "Splitter" { 160 } else { 140 },
                 &format!("{story} wide"),
             );
+            if story == "Splitter" {
+                assert_vertical_splitter(&root, &format!("{story} wide"));
+            }
             if story == "Workspace layout control" {
                 assert_workspace_layout_is_compact(&root, "Workspace layout control wide");
             }
@@ -2224,6 +2230,7 @@ mod unix {
                 realized_window.set_size_request(width, 800);
                 settle_window_width(&realized_window, width);
                 assert_public_splitter(&realized_window, &root, 192, &format!("Splitter changed {name}"));
+                assert_vertical_splitter(&root, &format!("Splitter changed {name}"));
                 capture_story(&realized_window, &format!("Splitter changed {name}"));
             }
         }
@@ -3219,7 +3226,10 @@ mod unix {
             "Splitter" => {
                 let splitter = descendants::<gtk::Paned>(root)
                     .into_iter()
-                    .find(|paned| paned.has_css_class("hl-splitter-native"))
+                    .find(|paned| {
+                        paned.has_css_class("hl-splitter-native")
+                            && paned.orientation() == gtk::Orientation::Horizontal
+                    })
                     .expect("Splitter story owns its public divider");
                 splitter.set_position(192);
             }
@@ -3916,7 +3926,10 @@ mod unix {
     fn assert_public_splitter(window: &gtk::Window, root: &gtk::Widget, expected_position: i32, case: &str) {
         let paned = descendants::<gtk::Paned>(root)
             .into_iter()
-            .find(|paned| paned.has_css_class("hl-splitter-native"))
+            .find(|paned| {
+                paned.has_css_class("hl-splitter-native")
+                    && paned.orientation() == gtk::Orientation::Horizontal
+            })
             .expect("component document owns a public Splitter");
         assert_eq!(paned.accessible_role(), gtk::AccessibleRole::Separator);
         assert_eq!(paned.position(), expected_position, "{case} lost its authored position");
@@ -3974,6 +3987,33 @@ mod unix {
         assert_splitter_pixels(window, root, &paned, true, case);
         gtk::prelude::RootExt::set_focus(window, None::<&gtk::Widget>);
         settle_toolkit();
+    }
+
+    fn assert_vertical_splitter(root: &gtk::Widget, case: &str) {
+        let splitters = descendants::<gtk::Paned>(root)
+            .into_iter()
+            .filter(|paned| paned.has_css_class("hl-splitter-native"))
+            .collect::<Vec<_>>();
+        assert_eq!(splitters.len(), 2, "{case} must render one Splitter per orientation");
+        let paned = splitters
+            .into_iter()
+            .find(|paned| paned.orientation() == gtk::Orientation::Vertical)
+            .expect("Splitter document owns a vertical example");
+        assert_eq!(paned.position(), 88, "{case} vertical Splitter lost its authored position");
+        assert_eq!(paned.accessible_role(), gtk::AccessibleRole::Separator);
+        assert!(paned.is_focusable(), "{case} vertical Splitter is not keyboard focusable");
+        let start = paned.start_child().expect("vertical Splitter owns an upper pane");
+        let end = paned.end_child().expect("vertical Splitter owns a lower pane");
+        let start_bounds = start.compute_bounds(&paned).expect("upper pane belongs to Splitter");
+        let end_bounds = end.compute_bounds(&paned).expect("lower pane belongs to Splitter");
+        let gap = end_bounds.y() - start_bounds.y() - start_bounds.height();
+        assert_eq!(gap, 8.0, "{case} vertical Splitter gutter is not exactly 8px: {gap}");
+        assert!(
+            start_bounds.y() >= -2.0
+                && end_bounds.y() + end_bounds.height() <= paned.height() as f32 + 2.0,
+            "{case} vertical Splitter children escape their allocation: paned={} start={start_bounds:?} end={end_bounds:?}",
+            paned.height()
+        );
     }
 
     fn assert_workspace_layout_is_compact(root: &gtk::Widget, case: &str) {
