@@ -1714,7 +1714,6 @@ test('installed extension management searches, filters, pages, and clears fifty 
   assert.ok(labelled(stage, '1 of 50 installed extensions'));
   assert.ok(labelled(stage, 'faulted-agent'));
   assert.ok(labelled(stage, 'Needs attention'));
-
   change(stage, 'Search installed', 'no such extension');
   await settled();
   assert.ok(labelled(stage, '0 of 50 installed extensions'));
@@ -3700,6 +3699,59 @@ test('installed extension lifecycle reconciles a lost reply without masking a re
   );
 });
 
+test('fault retry keeps its primary slot while the lifecycle request is pending', async () => {
+  let finish;
+  const pending = new Promise((resolve) => {
+    finish = resolve;
+  });
+  const faulted = {
+    name: 'faulted-agent',
+    image_digest: `sha256:${'f'.repeat(64)}`,
+    version: '1.0.0',
+    enabled: true,
+    status: 'fault:extension process exited',
+  };
+  const stage = host();
+  stage.render(
+    h(Extensions, {
+      api: {
+        extensions: {
+          list: async () => [faulted],
+          retryAndWait: async () => pending,
+        },
+        watchExtensions: async () => () => {},
+      },
+    }),
+  );
+  await settled();
+  assert.deepEqual(taggedProperty(stage, 'Retry', 'Button', 'Variant'), { Variant: 'Filled' });
+  assert.deepEqual(taggedProperty(stage, 'Retry', 'Button', 'Tone'), { Tone: 'Accent' });
+  assert.deepEqual(taggedProperty(stage, 'Retry', 'Button', 'Size'), { ControlSize: 'Small' });
+  assert.deepEqual(taggedProperty(stage, 'More', 'Button', 'Variant'), { Variant: 'Outline' });
+  const faultFooter = sharedAncestor(stage, ['Retry', 'More'], 'Row');
+  assert.notEqual(faultFooter, undefined);
+  const faultChildren = stage.frames
+    .flatMap((frame) => frame.patches)
+    .filter((patch) => patch.Insert && patch.Insert.parent === faultFooter)
+    .map((patch) => patch.Insert.child);
+  assert(
+    faultChildren.indexOf(labelled(stage, 'Retry').SetProp.id) <
+      faultChildren.indexOf(labelled(stage, 'More').SetProp.id),
+    'fault recovery primary precedes the secondary overflow action',
+  );
+  invoke(stage, 'Retry');
+  await settled();
+  assert.deepEqual(taggedProperty(stage, 'Retrying…', 'Button', 'Variant'), {
+    Variant: 'Filled',
+  });
+  assert.deepEqual(taggedProperty(stage, 'Retrying…', 'Button', 'Tone'), { Tone: 'Neutral' });
+  assert.deepEqual(taggedProperty(stage, 'Retrying…', 'Button', 'Enabled'), { Flag: false });
+  assert.deepEqual(taggedProperty(stage, 'More', 'Button', 'Enabled'), { Flag: false });
+  assert.notEqual(sharedAncestor(stage, ['Retrying…', 'More'], 'Row'), undefined);
+  finish({ changed: false });
+  await settled();
+});
+
 test('a newer lifecycle event wins over a stale lost-reply reconciliation list', async () => {
   const extension = {
     name: 'assistant',
@@ -3920,10 +3972,11 @@ test('installed extensions expose truthful enabled, disabled, fault and retry st
   );
   assert.ok(labelled(stage, 'Retry'));
   assert.deepEqual(
-    taggedProperty(stage, 'Retry', 'InlineButton', 'Variant'),
-    { Variant: 'Outline' },
-    'fault recovery uses compact secondary chrome',
+    taggedProperty(stage, 'Retry', 'Button', 'Variant'),
+    { Variant: 'Filled' },
+    'fault recovery uses clear primary chrome',
   );
+  assert.deepEqual(taggedProperty(stage, 'Retry', 'Button', 'Tone'), { Tone: 'Accent' });
   invoke(stage, 'Retry');
   await settled();
   assert.ok(labelled(stage, 'Retrying assistant…'));

@@ -5168,7 +5168,7 @@ mod unix {
             };
             assert_eq!(action.accessible_role(), gtk::AccessibleRole::Button);
             assert!(action.is_focusable(), "{case} {label} action is keyboard reachable");
-            if label == "Review update" {
+            if matches!(label, "Review update" | "Retry") {
                 assert!(
                     action.has_css_class("size-small"),
                     "{case} {label} action uses the compact card tier"
@@ -5178,6 +5178,23 @@ mod unix {
                 assert_inline_action(&action, case, label);
             }
         }
+        let retry = find_button(&first, "Retry");
+        let more = find_button(&first, "More");
+        assert!(retry.has_css_class("variant-filled"), "{case} Retry is the fault card primary");
+        assert!(retry.has_css_class("tone-accent"), "{case} Retry uses accent emphasis");
+        assert!(more.has_css_class("variant-outline"), "{case} More remains neutral secondary chrome");
+        assert!(more.has_css_class("tone-neutral"), "{case} More remains neutral");
+        let retry_bounds = retry.compute_bounds(&first).expect("Retry belongs to its fault card");
+        let more_bounds = more.compute_bounds(&first).expect("More belongs to its fault card");
+        assert_eq!(
+            more_bounds.x() - retry_bounds.x() - retry_bounds.width(),
+            8.0,
+            "{case} fault actions keep one 8px gap"
+        );
+        assert!(retry.grab_focus(), "{case} Retry is the first keyboard action");
+        assert!(retry.has_focus(), "{case} Retry owns keyboard focus");
+        assert!(root.child_focus(gtk::DirectionType::TabForward), "{case} focus advances after Retry");
+        assert!(more.has_focus(), "{case} More follows Retry in native tab order");
         if width > 600 {
             assert!(
                 healthy.height() < first.height(),

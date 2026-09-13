@@ -2389,6 +2389,10 @@ export function Extensions({
                                 (entry) => entry.id === extension.name,
                               );
                               const builtIn = extension.name === 'top';
+                              const faulted = extension.status.startsWith('fault:');
+                              const retrying =
+                                pendingLifecycle?.name === extension.name &&
+                                pendingLifecycle.action === 'retry';
                               const update =
                                 !builtIn &&
                                 catalogueEntry &&
@@ -2438,7 +2442,7 @@ export function Extensions({
                                       <Badge
                                         label={capitalize(extensionState(extension))}
                                         tone={
-                                          extension.status.startsWith('fault:')
+                                          faulted
                                             ? 'danger'
                                             : extension.enabled
                                               ? 'positive'
@@ -2486,7 +2490,7 @@ export function Extensions({
                                     )}
                                     {hasCardAction || extension.name !== 'top' ? (
                                       <Row gap={2} width="fill" align="center" justify="start" wrap>
-                                        {!builtIn ? (
+                                        {!builtIn && !faulted ? (
                                           <Button
                                             label={
                                               removalMenu === extension.name ? 'Close' : 'More'
@@ -2525,14 +2529,13 @@ export function Extensions({
                                             onInvoke={() => inspect(update.reference, update)}
                                           />
                                         )}
-                                        {!update &&
-                                        extension.name !== 'top' &&
-                                        extension.status.startsWith('fault:') ? (
-                                          <InlineButton
+                                        {!update && extension.name !== 'top' && faulted ? (
+                                          <Button
                                             key="lifecycle"
-                                            label="Retry"
-                                            variant="outline"
-                                            tone="neutral"
+                                            label={retrying ? 'Retrying…' : 'Retry'}
+                                            variant="filled"
+                                            tone={retrying ? 'neutral' : 'accent'}
+                                            size="small"
                                             enabled={!busy}
                                             onInvoke={() => lifecycle(extension, 'retry')}
                                           />
@@ -2549,6 +2552,32 @@ export function Extensions({
                                           />
                                         ) : !update && provider ? (
                                           providerAction(extension, provider)
+                                        ) : null}
+                                        {!builtIn && faulted ? (
+                                          <Button
+                                            label={
+                                              removalMenu === extension.name ? 'Close' : 'More'
+                                            }
+                                            icon={
+                                              removalMenu === extension.name
+                                                ? 'pan-up-symbolic'
+                                                : 'view-more-symbolic'
+                                            }
+                                            variant="outline"
+                                            tone="neutral"
+                                            size="small"
+                                            tooltip={
+                                              removalMenu === extension.name
+                                                ? `Close actions for ${extension.name}`
+                                                : `More actions for ${extension.name}`
+                                            }
+                                            enabled={!busy}
+                                            onInvoke={() =>
+                                              setRemovalMenu((current) =>
+                                                current === extension.name ? '' : extension.name,
+                                              )
+                                            }
+                                          />
                                         ) : null}
                                         {!builtIn && !update && catalogueEntry ? (
                                           <Button
