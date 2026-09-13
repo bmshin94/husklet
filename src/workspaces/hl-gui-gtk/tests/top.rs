@@ -548,6 +548,10 @@ mod unix {
                     widths.iter().all(|control_width| (440..=500).contains(control_width)),
                     "{width_name} settings controls escaped the compact readable measure: {widths:?}"
                 );
+                assert!(
+                    widths.iter().max().unwrap() - widths.iter().min().unwrap() <= 1,
+                    "{width_name} equal character widths produced unequal Entry/Select chrome: {widths:?}"
+                );
                 assert_eq!(image.accessible_role(), gtk::AccessibleRole::TextBox);
                 assert_eq!(shell.accessible_role(), gtk::AccessibleRole::TextBox);
                 assert_eq!(select.accessible_role(), gtk::AccessibleRole::ComboBox);
@@ -557,6 +561,41 @@ mod unix {
                         "desktop settings controls must not stretch across the entire page: {widths:?}"
                     );
                 }
+                let environment = find_expander(&root, "Environment variables · 1 variable");
+                environment.emit_by_name::<()>("activate", &[]);
+                settle_toolkit();
+                send_report(&surface, &mut wire, 610, |event| {
+                    matches!(event, hl_gui::Event::Expand { .. })
+                });
+                apply_until(
+                    &mut wire,
+                    &mut tree,
+                    &mut surface,
+                    "Show environment values",
+                    |request| panic!("unexpected settings expansion call: {request:?}"),
+                );
+                let name_entry = find_entry_placeholder(&root, "NAME");
+                assert!(name_entry.grab_focus(), "{width_name} credential name accepts focus");
+                let _ = surface.reports().drain();
+                name_entry.set_text("TOKEN_NEXT");
+                settle_toolkit();
+                let changed = surface
+                    .reports()
+                    .drain()
+                    .into_iter()
+                    .find(|event| {
+                        matches!(
+                            event,
+                            hl_gui::Event::Change {
+                                value: hl_gui::PropValue::Text(value),
+                                ..
+                            } if value == "TOKEN_NEXT"
+                        )
+                    })
+                    .expect("credential Entry reports the exact typed value");
+                assert!(matches!(changed, hl_gui::Event::Change { .. }));
+                assert_eq!(name_entry.text(), "TOKEN_NEXT");
+                capture(&window, &format!("settings-credential-edit-{width_name}"), width, 800);
             }
             if fixture == "populated" && name == "images" {
                 let reference = find_entry_placeholder(&root, "registry/image:tag");
@@ -5372,7 +5411,10 @@ mod unix {
                 Err(error) => panic!("interactive socket failed: {error:?}"),
             }
         }
-        assert!(has_label(surface.widget().upcast_ref::<gtk::Widget>(), wanted));
+        assert!(
+            has_label(surface.widget().upcast_ref::<gtk::Widget>(), wanted),
+            "interactive surface never rendered {wanted:?}"
+        );
     }
 
     fn invoke_and_apply_until_button(

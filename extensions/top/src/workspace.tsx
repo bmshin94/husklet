@@ -562,7 +562,7 @@ function Environment({
         </FormControlLabel>
       )}
       {values.map((row, index) => (
-        <Row key={`${index}:${row[0]}`} gap={1} align="center" wrap>
+        <Row key={`environment-${index}`} gap={1} align="center" wrap>
           <Entry
             value={row[0]}
             placeholder="NAME"
@@ -603,7 +603,7 @@ function Mounts({
   return (
     <Column gap={2}>
       {values.map((mount, index) => (
-        <Column key={`${index}:${mount.container}`} gap={1}>
+        <Column key={`mount-${index}`} gap={1}>
           <Row gap={1} wrap>
             <Entry
               value={mount.host}

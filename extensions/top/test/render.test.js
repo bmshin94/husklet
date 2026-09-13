@@ -918,6 +918,21 @@ test('Top owns workspace settings and extension management in the same tab', asy
   toggleLatestSwitch(stage, true);
   await settled();
   assert.equal(placeholderProperty(stage, 'value', 'Secret')?.Flag, false);
+  const environmentName = placeholderNode(stage, 'NAME');
+  const frameCount = stage.frames.length;
+  change(stage, 'NAME', 'TOKEN_NEXT');
+  await settled();
+  const reconciliation = stage.frames.slice(frameCount).flatMap((frame) => frame.patches);
+  assert.equal(
+    reconciliation.some((patch) => patch.Remove?.id === environmentName),
+    false,
+    'typing a credential name retains the native field, caret, and reveal context',
+  );
+  assert.equal(
+    reconciliation.some((patch) => patch.Create?.tag === 'Entry'),
+    false,
+    'typing a credential name updates its value without remounting the row',
+  );
   invoke(stage, 'Extensions');
   await settled();
   await settled();
@@ -8986,6 +9001,15 @@ function placeholderProperty(stage, placeholder, prop) {
     .at(-1)?.SetProp.id;
   return patches.filter((patch) => patch.SetProp?.id === node && patch.SetProp.prop === prop).at(-1)
     ?.SetProp.value;
+}
+
+function placeholderNode(stage, placeholder) {
+  return stage.frames
+    .flatMap((frame) => frame.patches)
+    .filter(
+      (patch) => patch.SetProp?.prop === 'Placeholder' && patch.SetProp.value?.Text === placeholder,
+    )
+    .at(-1)?.SetProp.id;
 }
 
 function placeholderTag(stage, placeholder) {

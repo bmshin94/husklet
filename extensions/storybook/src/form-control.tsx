@@ -8,7 +8,10 @@ import {
   FormLabel,
   IconButton,
   InlineMessage,
+  NumberEntry,
+  PasswordEntry,
   Row,
+  Select,
   Text,
 } from '@husklet/react';
 import {
@@ -53,6 +56,33 @@ export function FormControlWorkbench() {
           <Entry value="" placeholder="Automatic when empty" />
           <FormHelperText label="A placeholder shows an example; it does not replace the field label." />
         </FormControl>
+        <Text
+          label="The same character width means the same outer field chrome; selectors keep their arrow inside that width."
+          color="text-dim"
+          wrap
+        />
+        <Row gap={2} wrap width="fill" align="end">
+          <FormControl gap={1}>
+            <FormLabel label="Text" />
+            <Entry value="worker" width={{ chars: 56 }} />
+          </FormControl>
+          <FormControl gap={1}>
+            <FormLabel label="Secret" />
+            <PasswordEntry value="token" width={{ chars: 56 }} />
+          </FormControl>
+          <FormControl gap={1}>
+            <FormLabel label="Number" />
+            <NumberEntry value={2} width={{ chars: 56 }} />
+          </FormControl>
+          <FormControl gap={1}>
+            <FormLabel label="Choice" />
+            <Select
+              value="live"
+              width={{ chars: 56 }}
+              choices={[{ value: 'live', label: 'While workspace runs' }]}
+            />
+          </FormControl>
+        </Row>
       </DocumentationSection>
 
       <DocumentationSection title="Inline actions">

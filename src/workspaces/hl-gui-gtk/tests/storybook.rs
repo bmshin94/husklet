@@ -2458,6 +2458,29 @@ mod unix {
             let entry = find::<gtk::Entry>(&root, |entry| entry.tooltip_text().as_deref() == Some("Extension name"));
             assert!(entry.grab_focus(), "controlled FormControl restores child focus");
             capture_story(&realized_window, "FormControl focused");
+            for (width, width_name) in [(600, "narrow"), (1_200, "wide")] {
+                allocate(&root, width, 1_500);
+                let text = find::<gtk::Entry>(&root, |entry| entry.text() == "worker");
+                let secret = find::<gtk::PasswordEntry>(&root, |entry| entry.text() == "token");
+                let number = find::<gtk::SpinButton>(&root, |entry| entry.value() == 2.0);
+                let choice = find::<gtk::Label>(&root, |label| label.text() == "While workspace runs")
+                    .ancestor(gtk::ToggleButton::static_type())
+                    .expect("Choice label belongs to its Select")
+                    .upcast::<gtk::Widget>();
+                let widths = [text.width(), secret.width(), number.width(), choice.width()];
+                let spread = widths.iter().max().unwrap() - widths.iter().min().unwrap();
+                assert!(
+                    spread <= 1,
+                    "{width_name} equal character widths produced unequal field chrome: {widths:?}"
+                );
+                assert!(
+                    choice
+                        .first_child()
+                        .is_some_and(|child| child.width() <= choice.width()),
+                    "{width_name} Select arrow escaped its declared outer width"
+                );
+                capture_story(&realized_window, &format!("FormControl equal fields {width_name}"));
+            }
         }
         if story == "Slider" {
             settle_toolkit();

@@ -416,6 +416,15 @@ fn characters(widget: &gtk::Widget, count: u16) {
     }
     if let Some(entry) = widget.downcast_ref::<gtk::Entry>() {
         entry.set_width_chars(count.into());
+        let (_, natural, _, _) = entry.measure(gtk::Orientation::Horizontal, -1);
+        entry.set_size_request(natural + 24, entry.height_request());
+        return;
+    }
+    if widget.is::<gtk::PasswordEntry>() || widget.is::<gtk::SpinButton>() {
+        let reference = gtk::Entry::new();
+        reference.set_width_chars(count.into());
+        let (_, natural, _, _) = reference.measure(gtk::Orientation::Horizontal, -1);
+        widget.set_size_request(natural + 24, widget.height_request());
         return;
     }
     if let Some(label) = widget.downcast_ref::<gtk::Label>() {
