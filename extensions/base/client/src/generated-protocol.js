@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:0b84c7f564b00abe
+// Protocol artifact fnv1a64:711d756bdc459eca
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -1751,7 +1751,7 @@ const definitions = {
         }
       },
       {
-        "name": "r#use",
+        "name": "use",
         "optional": true,
         "schema": {
           "kind": "array",

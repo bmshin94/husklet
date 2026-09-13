@@ -3416,6 +3416,7 @@ mod unix {
                                     "cloud.credentials".into(),
                                     "service.token".into(),
                                 ],
+                                r#use: Vec::new(),
                             },
                             installed_image_digest: Some(old_digest.clone()),
                         }),

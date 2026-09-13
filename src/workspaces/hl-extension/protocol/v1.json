@@ -1398,7 +1398,7 @@
           }
         },
         {
-          "name": "r#use",
+          "name": "use",
           "optional": true,
           "schema": {
             "kind": "array",
@@ -15052,7 +15052,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:3e7a1a9a545db277",
+  "source_fingerprint": "fnv1a64:2667465c678def4b",
   "specification_version": 1,
   "topics": [
     {

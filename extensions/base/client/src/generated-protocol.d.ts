@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:0b84c7f564b00abe
+// Protocol artifact fnv1a64:711d756bdc459eca
 export const PROTOCOL_SPECIFICATION_VERSION: 1;
 export const PROTOCOL_VERSION: 1;
 export const PROTOCOL_BOUNDS: Readonly<{ "extension_job_bytes": number; "extension_reference_bytes": number; "pane_input_bytes": number; "pane_inventory_items": number; "pane_text_bytes": number; "resource_inventory_items": number; "semantic_action_value_bytes": number; "semantic_depth": number; "semantic_nodes": number; "semantic_text_bytes": number; "terminal_command_argument_bytes": number; "terminal_command_bytes": number }>;
@@ -27,7 +27,7 @@ export type ContainerSelector = { "id": string } | { "name": string } | { "all":
 export type ContainerSummary = { "id": string; "name": string; "image": string; "state": string; "created": number; "generation"?: number; "ports"?: Array<ContainerPublishedPort> };
 export type ContainerVolumeMount = { "volume": string; "target": string; "read_only": boolean };
 export type ControlSize = "Small" | "Medium" | "Large";
-export type CredentialGrant = { "read"?: Array<string>; "write"?: Array<string>; "expose_to_execution"?: Array<string>; "r#use"?: Array<string> };
+export type CredentialGrant = { "read"?: Array<string>; "write"?: Array<string>; "expose_to_execution"?: Array<string>; "use"?: Array<string> };
 export type CredentialValue = Array<number>;
 export type DirectoryPage = { "entries": Array<Entry>; "identity": string; "next"?: RelativePath | null; "more": boolean };
 export type Division = "beside" | "below";

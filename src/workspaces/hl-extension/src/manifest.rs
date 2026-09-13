@@ -13,7 +13,7 @@ pub struct CredentialGrant {
     pub write: Vec<String>,
     #[serde(default)]
     pub expose_to_execution: Vec<String>,
-    #[serde(default)]
+    #[serde(default, rename = "use")]
     pub r#use: Vec<String>,
 }
 
