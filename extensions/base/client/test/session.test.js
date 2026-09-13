@@ -9164,6 +9164,110 @@ test('observed terminal input keeps snapshot authority intact over one-byte Unix
   }
 });
 
+test('fragmented Unix input reply loss preserves exact no-replay authority across reconnect', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-input-reply-loss-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const peers = new Set();
+  const input = [0, 3, 255, 10];
+  let connection = 0;
+  let revision = 7;
+  const screen = () => ({
+    slot: 'agent-pane',
+    generation: 4,
+    revision,
+    columns: 80,
+    rows: 24,
+    lines: revision === 7 ? ['$ '] : ['$ command may have run'],
+    cursor_column: 0,
+    cursor_row: 1,
+    truncated: false,
+  });
+  const fragmented = (socket, frame) => {
+    for (const byte of frame) socket.write(Uint8Array.of(byte));
+  };
+  const server = net.createServer((socket) => {
+    peers.add(socket);
+    socket.on('close', () => peers.delete(socket));
+    connection += 1;
+    const currentConnection = connection;
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.channel !== 2) continue;
+        let payload;
+        if (frame.payload.call === 'terminal_read_pane') {
+          payload = { reply: 'text', with: screen() };
+        } else if (frame.payload.call === 'terminal_write_pane') {
+          assert.equal(currentConnection, 1, 'ambiguous input must never be replayed');
+          assert.deepEqual(frame.payload.with, {
+            slot: 'agent-pane',
+            generation: 4,
+            revision: 7,
+            contents: input,
+          });
+          revision = 8;
+          const response = encode({
+            channel: 2,
+            kind: KIND.response,
+            payload: { reply: 'done' },
+          });
+          socket.write(response.subarray(0, 1), () => socket.destroy());
+          continue;
+        } else {
+          payload = { reply: 'done' };
+        }
+        fragmented(socket, encode({ channel: 2, kind: KIND.response, payload }));
+      }
+    });
+    fragmented(
+      socket,
+      encode({
+        channel: CONTROL,
+        kind: KIND.open,
+        payload: {
+          protocol: 1,
+          peer: 'input-reply-loss',
+          granted: ['panes:observe', 'terminals:read', 'terminals:output', 'terminals:input'],
+        },
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  let first;
+  let resumed;
+  try {
+    first = await connect({ path: socketPath, timeout: 1_000 });
+    await assert.rejects(
+      workspace(first).terminal.writeObservedAndWait(
+        { ...screen(), lines: ['$ '] },
+        input,
+        { timeoutMs: 1_000 },
+      ),
+      (error) => {
+        assert(error instanceof TerminalOperationError, `${error?.constructor?.name}: ${error?.message}`);
+        assert.deepEqual(error.result, {
+          slot: 'agent-pane',
+          generation: 4,
+          revision: 7,
+          written: 'unknown',
+          input,
+        });
+        return true;
+      },
+    );
+    resumed = await connect({ path: socketPath, timeout: 1_000 });
+    const observed = await workspace(resumed).terminal.read('agent-pane');
+    assert.equal(observed.revision, 8);
+    assert.equal(connection, 2);
+  } finally {
+    await first?.close();
+    await resumed?.close();
+    for (const peer of peers) peer.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('real Unix quiet terminal wait does not mistake local echo for an agent response', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-terminal-quiet-'));
   const socketPath = path.join(directory, 'host.sock');

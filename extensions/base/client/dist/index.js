@@ -4152,12 +4152,14 @@ export function workspace(session, { signal } = {}) {
         });
         let timer;
         let abort;
+        let inputAttempted = false;
         let inputWritten = false;
         try {
             const before = await scoped.terminal.read(slot, lines);
             if (before.generation !== generation || before.revision !== revision) {
                 throw new Error('terminal screen cursor changed before input authority');
             }
+            inputAttempted = true;
             await scoped.terminal.writeInput(slot, generation, revision, contents);
             inputWritten = true;
             const deadline = Date.now() + timeoutMs;
@@ -4201,8 +4203,18 @@ export function workspace(session, { signal } = {}) {
             }
         }
         catch (cause) {
-            if (inputWritten && !(cause instanceof TerminalOperationError)) {
-                throw new TerminalOperationError('write-input', { slot, generation, revision, written: true }, cause);
+            if (inputAttempted &&
+                !(cause instanceof ExtensionError) &&
+                !(cause instanceof TerminalOperationError)) {
+                throw new TerminalOperationError('write-input', inputWritten
+                    ? { slot, generation, revision, written: true }
+                    : {
+                        slot,
+                        generation,
+                        revision,
+                        written: 'unknown',
+                        input: Object.freeze([...contents]),
+                    }, cause);
             }
             throw cause;
         }
@@ -4210,7 +4222,7 @@ export function workspace(session, { signal } = {}) {
             clearTimeout(timer);
             if (abort)
                 signal?.removeEventListener('abort', abort);
-            await stop();
+            await stop().catch(() => { });
         }
     };
     api.terminal.writeAndWait = (slot, generation, revision, input, options) => writeAndWait(slot, generation, revision, input, options);

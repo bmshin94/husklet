@@ -871,7 +871,9 @@ export declare class TerminalOperationError extends Error {
         slot: string;
         generation: number;
         revision: number;
-        written: true;
+        written: true | 'unknown';
+        /** Present only when the write reply was lost; never replay these bytes blindly. */
+        input?: readonly number[];
         after?: Readonly<{ kind: 'terminal' | 'ui'; generation: number; revision: number }>;
       }>;
   readonly cause: unknown;
