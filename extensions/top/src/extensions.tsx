@@ -2614,7 +2614,8 @@ export function Extensions({
                                           <Button
                                             label="Disable"
                                             size="small"
-                                            variant="ghost"
+                                            variant="outline"
+                                            tone="neutral"
                                             enabled={!busy}
                                             onInvoke={() => lifecycle(extension, 'disable')}
                                           />

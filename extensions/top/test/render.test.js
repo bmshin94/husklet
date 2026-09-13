@@ -3948,8 +3948,8 @@ test('installed extensions expose truthful enabled, disabled, fault and retry st
     labelled(stage, 'Remove extension'),
     'quiet overflow reveals the destructive action on request',
   );
-  assert.deepEqual(taggedProperty(stage, 'Disable', 'Button', 'Size'), {
-    ControlSize: 'Small',
+  assert.deepEqual(taggedProperty(stage, 'Disable', 'Button', 'Variant'), {
+    Variant: 'Outline',
   });
   invoke(stage, 'Disable');
   invoke(stage, 'Disable');

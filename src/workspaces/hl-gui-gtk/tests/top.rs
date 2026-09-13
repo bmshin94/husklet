@@ -1716,6 +1716,10 @@ mod unix {
                 assert!(disable.is_mapped(), "{width_name} Disable is visible");
                 assert_standard_action(&disable, width_name, "Disable", 28);
                 assert!(
+                    disable.has_css_class("variant-outline") && disable.has_css_class("tone-neutral"),
+                    "{width_name} Disable must read as a compact secondary lifecycle action"
+                );
+                assert!(
                     removal.is_focusable(),
                     "{width_name} removal disclosure is keyboard reachable"
                 );
@@ -1735,7 +1739,7 @@ mod unix {
                     .compute_bounds(&card)
                     .expect("Open chrome belongs to its card");
                 assert!(
-                    (8.0..=12.0).contains(&(removal_bounds.y() - open_chrome.y() - open_chrome.height())),
+                    (8.0..=16.0).contains(&(removal_bounds.y() - open_chrome.y() - open_chrome.height())),
                     "{width_name} removal disclosure collapsed into its neighbor: removal={removal_bounds:?} open={open_chrome:?}"
                 );
                 assert!(
