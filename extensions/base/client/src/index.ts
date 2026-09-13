@@ -2817,6 +2817,97 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           await onValue(decoded, line);
         });
       },
+      execJsonLinePages: async (id, generation, configuration, onPage) => {
+        const { maxLineBytes, maxLines, decode = (value) => value, ...options } = configuration;
+        if (
+          !Number.isSafeInteger(maxLineBytes) ||
+          maxLineBytes < 1 ||
+          maxLineBytes > 16 * 1024 * 1024
+        )
+          throw new RangeError('execution line maxLineBytes must be between 1 and 16777216');
+        exactExecutionLineLimit(maxLines);
+        if (typeof decode !== 'function')
+          throw new TypeError('JSON lines decode must be a function');
+        if (typeof onPage !== 'function') throw new TypeError('JSON line pages require a callback');
+        let pending: number[] = [];
+        let lines = 0;
+        try {
+          const result = await api.containers.execStreaming(
+            id,
+            generation,
+            options,
+            async (page) => {
+              const candidate = [...pending];
+              const values = [];
+              const stderr = [];
+              let candidateLines = lines;
+              const deliver = () => {
+                let bytes = candidate.splice(0);
+                if (bytes.at(-1) === 13) bytes = bytes.slice(0, -1);
+                const line = candidateLines + 1;
+                if (maxLines !== undefined && line > maxLines)
+                  throw new RangeError(`execution output exceeded the ${maxLines} line limit`);
+                let value;
+                try {
+                  value = JSON.parse(
+                    new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(bytes)),
+                  );
+                } catch (cause) {
+                  throw new JsonLineParseError(line, cause);
+                }
+                try {
+                  values.push(decode(value, line));
+                } catch (cause) {
+                  throw new JsonLineDecodeError(line, cause);
+                }
+                candidateLines = line;
+              };
+              for (const entry of page.entries) {
+                if (entry.stream === 'stderr') {
+                  stderr.push(...entry.bytes);
+                  continue;
+                }
+                for (const byte of entry.bytes) {
+                  if (byte === 10) deliver();
+                  else {
+                    candidate.push(byte);
+                    if (candidate.length > maxLineBytes)
+                      throw new RangeError(
+                        `execution line exceeded the ${maxLineBytes} byte limit`,
+                      );
+                  }
+                }
+              }
+              if (page.eof && candidate.length > 0) deliver();
+              await onPage(
+                Object.freeze({
+                  values: Object.freeze(values),
+                  stderr: Object.freeze(stderr),
+                  next: page.next,
+                }),
+              );
+              pending = candidate;
+              lines = candidateLines;
+            },
+          );
+          return { ...result, lines, partialLine: Object.freeze([...pending]) };
+        } catch (cause) {
+          if (cause instanceof ExecutionOperationError)
+            throw new ExecutionOperationError(
+              cause.executionId,
+              cause.phase,
+              cause.cause,
+              cause.execution,
+              cause.after,
+              {
+                containerId: cause.containerId,
+                partialLine: Object.freeze([...pending]),
+                lines,
+              },
+            );
+          throw cause;
+        }
+      },
       attachTerminal: (id, command) =>
         session
           .call('container_attach_terminal', {

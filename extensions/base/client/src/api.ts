@@ -1504,6 +1504,42 @@ export interface WorkspaceApi {
       },
       onValue: (value: Value, line: number) => void | Promise<void>,
     ): Promise<{ executionId: string; execution: ExecutionSummary; lines: number }>;
+    /**
+     * Start an execution and deliver every decoded JSON record from one raw output page in one
+     * callback transaction. Its continuation advances only after the whole callback settles.
+     */
+    execJsonLinePages<Value = unknown>(
+      id: string,
+      generation: number,
+      options: {
+        command: string[];
+        environment?: [string, string][];
+        credentials?: [environment: string, key: string][];
+        user?: string;
+        workingDirectory?: string;
+        input?: Iterable<string | Iterable<number>> | AsyncIterable<string | Iterable<number>>;
+        maxLineBytes: number;
+        maxLines?: number;
+        decode?: (value: unknown, line: number) => Value;
+        pageLimit?: number;
+        pollIntervalMs?: number;
+        signal?: AbortSignal;
+        deadlineMs?: number;
+        cancelSignal?: string;
+        cancelTimeoutMs?: number;
+        onStarted?: (executionId: string) => void | Promise<void>;
+      },
+      onPage: (page: {
+        values: readonly Value[];
+        stderr: readonly number[];
+        next: number;
+      }) => void | Promise<void>,
+    ): Promise<{
+      executionId: string;
+      execution: ExecutionSummary;
+      lines: number;
+      partialLine: readonly number[];
+    }>;
     signalExecution(id: string, signal: string): Promise<void>;
     /** Atomically signal and await one execution without blocking cancellation behind a prior wait. */
     cancelExecution(id: string, options?: { signal?: string; timeoutMs?: number }): Promise<void>;

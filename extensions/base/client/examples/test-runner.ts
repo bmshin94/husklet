@@ -13,6 +13,36 @@ export type TestRunEvent =
     };
 
 /**
+ * Run a JSON-lines reporter with page-atomic persistence. `commit` receives every event and stderr
+ * byte covered by `next` together; if it rejects, reconnect from ExecutionOperationError.after and
+ * the whole uncommitted page is replayed rather than an unknowable suffix of its events.
+ */
+export async function runStructuredTests(
+  host: WorkspaceApi,
+  container: { id: string; generation: number },
+  command: string[],
+  commit: (page: {
+    values: readonly unknown[];
+    stderr: readonly number[];
+    next: number;
+  }) => void | Promise<void>,
+  signal: AbortSignal,
+) {
+  return host.containers.execJsonLinePages(
+    container.id,
+    container.generation,
+    {
+      command,
+      maxLineBytes: 256 * 1024,
+      maxLines: 1_000_000,
+      pageLimit: 8,
+      signal,
+    },
+    commit,
+  );
+}
+
+/**
  * Resume a test execution after transport loss. Each raw output page is one callback transaction,
  * so a durable UI advances `next` only after it has stored every stdout/stderr entry in that page.
  */
