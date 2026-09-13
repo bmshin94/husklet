@@ -22,12 +22,26 @@ macro_rules! opaque_impl {
             pub const LIMIT: usize = 128;
             pub fn new(value: impl Into<String>) -> Result<Self, HostError> {
                 let value = value.into();
-                bounded(&value, Self::LIMIT).then_some(Self(value)).ok_or_else(|| HostError::Conflict(concat!(stringify!($name), " is invalid").into()))
+                bounded(&value, Self::LIMIT)
+                    .then_some(Self(value))
+                    .ok_or_else(|| HostError::Conflict(concat!(stringify!($name), " is invalid").into()))
             }
-            #[must_use] pub fn as_str(&self) -> &str { &self.0 }
+            #[must_use]
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
         }
-        impl TryFrom<String> for $name { type Error = HostError; fn try_from(value: String) -> Result<Self, Self::Error> { Self::new(value) } }
-        impl From<$name> for String { fn from(value: $name) -> Self { value.0 } }
+        impl TryFrom<String> for $name {
+            type Error = HostError;
+            fn try_from(value: String) -> Result<Self, Self::Error> {
+                Self::new(value)
+            }
+        }
+        impl From<$name> for String {
+            fn from(value: $name) -> Self {
+                value.0
+            }
+        }
     };
 }
 
@@ -193,18 +207,25 @@ impl PostgresQuery {
         page_bytes: u32,
     ) -> Result<Self, HostError> {
         let statement = statement.into();
-        if !bounded(&statement, QUERY_LIMIT)
-            || !(1..=PAGE_ROWS_LIMIT).contains(&page_rows)
-            || !(1..=PAGE_BYTES_LIMIT).contains(&page_bytes)
-        {
-            return Err(HostError::Conflict("query or page bound is invalid".into()));
-        }
-        Ok(Self {
+        let query = Self {
             operation,
             statement,
             page_rows,
             page_bytes,
-        })
+        };
+        query.validate()?;
+        Ok(query)
+    }
+
+    /// Revalidates values decoded from the untrusted socket.
+    pub fn validate(&self) -> Result<(), HostError> {
+        if !bounded(&self.statement, QUERY_LIMIT)
+            || !(1..=PAGE_ROWS_LIMIT).contains(&self.page_rows)
+            || !(1..=PAGE_BYTES_LIMIT).contains(&self.page_bytes)
+        {
+            return Err(HostError::Conflict("query or page bound is invalid".into()));
+        }
+        Ok(())
     }
 }
 
@@ -264,9 +285,24 @@ impl PostgresPage {
 /// Host boundary. Implementations resolve credential values internally,
 /// authenticate, and persist operation-token reconciliation records.
 pub trait PostgresBroker: Send + Sync {
-    fn open_once(&self, installation: &hl_rpc::InstallationIdentity, operation: &QueryOperationToken, connection: &PostgresConnection) -> Result<PostgresOpenOutcome, HostError>;
-    fn start_once(&self, installation: &hl_rpc::InstallationIdentity, lease: &PostgresLeaseId, query: &PostgresQuery) -> Result<PostgresStartOutcome, HostError>;
-    fn status(&self, installation: &hl_rpc::InstallationIdentity, lease: &PostgresLeaseId, query: &PostgresQueryId) -> Result<PostgresQueryState, HostError>;
+    fn open_once(
+        &self,
+        installation: &hl_rpc::InstallationIdentity,
+        operation: &QueryOperationToken,
+        connection: &PostgresConnection,
+    ) -> Result<PostgresOpenOutcome, HostError>;
+    fn start_once(
+        &self,
+        installation: &hl_rpc::InstallationIdentity,
+        lease: &PostgresLeaseId,
+        query: &PostgresQuery,
+    ) -> Result<PostgresStartOutcome, HostError>;
+    fn status(
+        &self,
+        installation: &hl_rpc::InstallationIdentity,
+        lease: &PostgresLeaseId,
+        query: &PostgresQueryId,
+    ) -> Result<PostgresQueryState, HostError>;
     fn page(
         &self,
         installation: &hl_rpc::InstallationIdentity,
@@ -274,9 +310,23 @@ pub trait PostgresBroker: Send + Sync {
         query: &PostgresQueryId,
         cursor: Option<&PostgresCursor>,
     ) -> Result<PostgresPage, HostError>;
-    fn cancel(&self, installation: &hl_rpc::InstallationIdentity, lease: &PostgresLeaseId, query: &PostgresQueryId) -> Result<PostgresQueryState, HostError>;
-    fn close_query(&self, installation: &hl_rpc::InstallationIdentity, lease: &PostgresLeaseId, query: &PostgresQueryId) -> Result<(), HostError>;
-    fn close_lease(&self, installation: &hl_rpc::InstallationIdentity, lease: &PostgresLeaseId) -> Result<(), HostError>;
+    fn cancel(
+        &self,
+        installation: &hl_rpc::InstallationIdentity,
+        lease: &PostgresLeaseId,
+        query: &PostgresQueryId,
+    ) -> Result<PostgresQueryState, HostError>;
+    fn close_query(
+        &self,
+        installation: &hl_rpc::InstallationIdentity,
+        lease: &PostgresLeaseId,
+        query: &PostgresQueryId,
+    ) -> Result<(), HostError>;
+    fn close_lease(
+        &self,
+        installation: &hl_rpc::InstallationIdentity,
+        lease: &PostgresLeaseId,
+    ) -> Result<(), HostError>;
 }
 
 #[cfg(test)]

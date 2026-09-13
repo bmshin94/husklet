@@ -19,9 +19,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use hl_extension::{
-    Authority, ChannelId, Channels, Compatibility, Emission, Failure, Frame, Hello, Kind, Limits, Outbox, PROTOCOL,
+    codec, Authority, ChannelId, Channels, Compatibility, Emission, Failure, Frame, Hello, Kind, Limits, Outbox,
     PaneChange, PaneChangeKind, Permission, Reply, Services, Session, Snapshot, Streams, Subscriptions, SurfaceFrame,
-    SurfaceMutation, Topic, Transit, Welcome, Wire, codec,
+    SurfaceMutation, Topic, Transit, Welcome, Wire, PROTOCOL,
 };
 
 /// Interface work an extension has produced and the GUI has not collected yet.
@@ -1239,9 +1239,10 @@ impl Conversation {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::io::Write as _;
     use std::os::unix::net::UnixStream;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::thread::JoinHandle;
     use std::time::{Duration, Instant};
@@ -1251,9 +1252,12 @@ mod tests {
         PaneSummary, TabSummary, TerminalSurface, WorkspaceFiles,
     };
     use hl_extension::{
-        Authority, Capability, Channels, ExtensionName, Failure, Flags, Frame, Grant, Hello, Kind, PROTOCOL,
-        PreferenceValue, RelativePath, Reply, Request, Services, Transit, Wire, WorkspaceInfo, codec,
+        codec, Authority, Capability, Channels, ExtensionName, Failure, Flags, Frame, Grant, Hello, Kind,
+        PostgresBroker, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage,
+        PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, PreferenceValue, QueryOperationToken,
+        RelativePath, Reply, Request, Services, Transit, Wire, WorkspaceInfo, PROTOCOL,
     };
+    use hl_rpc::InstallationIdentity;
 
     use super::{Compatibility, Conversation, Emission, Fault, Queue, Snapshot};
     use crate::extension::extension_state::StateBlob;
@@ -1344,6 +1348,167 @@ mod tests {
     /// In-memory adapters: no container runtime and no window.
     struct Host {
         ledger: Arc<Ledger>,
+    }
+
+    #[derive(Default)]
+    struct PostgresState {
+        opens: BTreeMap<String, (PostgresConnection, PostgresLeaseId)>,
+        queries: BTreeMap<String, (PostgresQuery, PostgresQueryId, PostgresQueryState)>,
+    }
+
+    struct SocketPostgres {
+        installation: InstallationIdentity,
+        state: Mutex<PostgresState>,
+        peer_opens: AtomicUsize,
+        peer_starts: AtomicUsize,
+    }
+
+    impl SocketPostgres {
+        fn new(installation: InstallationIdentity) -> Self {
+            Self {
+                installation,
+                state: Mutex::new(PostgresState::default()),
+                peer_opens: AtomicUsize::new(0),
+                peer_starts: AtomicUsize::new(0),
+            }
+        }
+
+        fn owns(&self, installation: &InstallationIdentity) -> Result<(), HostError> {
+            (installation == &self.installation)
+                .then_some(())
+                .ok_or_else(|| HostError::Absent("postgres installation is not the lease owner".into()))
+        }
+    }
+
+    impl PostgresBroker for SocketPostgres {
+        fn open_once(
+            &self,
+            installation: &InstallationIdentity,
+            operation: &QueryOperationToken,
+            connection: &PostgresConnection,
+        ) -> Result<PostgresOpenOutcome, HostError> {
+            self.owns(installation)?;
+            let mut state = self.state.lock().expect("postgres state");
+            if let Some((existing, lease)) = state.opens.get(operation.as_str()) {
+                if existing != connection {
+                    return Err(HostError::Conflict("open token request changed".into()));
+                }
+                return Ok(PostgresOpenOutcome::Reconciled { lease: lease.clone() });
+            }
+            self.peer_opens.fetch_add(1, Ordering::SeqCst);
+            let lease = PostgresLeaseId::new(format!("lease-{}", state.opens.len() + 1))?;
+            state
+                .opens
+                .insert(operation.as_str().into(), (connection.clone(), lease.clone()));
+            Ok(PostgresOpenOutcome::Opened { lease })
+        }
+
+        fn start_once(
+            &self,
+            installation: &InstallationIdentity,
+            lease: &PostgresLeaseId,
+            query: &PostgresQuery,
+        ) -> Result<PostgresStartOutcome, HostError> {
+            self.owns(installation)?;
+            let mut state = self.state.lock().expect("postgres state");
+            if !state.opens.values().any(|(_, owned)| owned == lease) {
+                return Err(HostError::Absent("postgres lease is not owned".into()));
+            }
+            if let Some((existing, id, status)) = state.queries.get(query.operation.as_str()) {
+                if existing != query {
+                    return Err(HostError::Conflict("query token request changed".into()));
+                }
+                return Ok(PostgresStartOutcome::Reconciled {
+                    query: id.clone(),
+                    state: status.clone(),
+                });
+            }
+            self.peer_starts.fetch_add(1, Ordering::SeqCst);
+            let id = PostgresQueryId::new(format!("query-{}", state.queries.len() + 1))?;
+            state.queries.insert(
+                query.operation.as_str().into(),
+                (query.clone(), id.clone(), PostgresQueryState::Running),
+            );
+            Ok(PostgresStartOutcome::Started { query: id })
+        }
+
+        fn status(
+            &self,
+            installation: &InstallationIdentity,
+            _lease: &PostgresLeaseId,
+            query: &PostgresQueryId,
+        ) -> Result<PostgresQueryState, HostError> {
+            self.owns(installation)?;
+            self.state
+                .lock()
+                .expect("postgres state")
+                .queries
+                .values()
+                .find(|(_, id, _)| id == query)
+                .map(|(_, _, status)| status.clone())
+                .ok_or_else(|| HostError::Absent("postgres query is not owned".into()))
+        }
+
+        fn page(
+            &self,
+            installation: &InstallationIdentity,
+            lease: &PostgresLeaseId,
+            query: &PostgresQueryId,
+            cursor: Option<&PostgresCursor>,
+        ) -> Result<PostgresPage, HostError> {
+            let status = self.status(installation, lease, query)?;
+            if status != PostgresQueryState::Running || cursor.is_some() {
+                return Err(HostError::Conflict("postgres page cursor is stale".into()));
+            }
+            Ok(PostgresPage {
+                columns: vec!["answer".into()],
+                rows: vec![vec![Some("42".into())]],
+                next_cursor: None,
+                bytes: 2,
+            })
+        }
+
+        fn cancel(
+            &self,
+            installation: &InstallationIdentity,
+            _lease: &PostgresLeaseId,
+            query: &PostgresQueryId,
+        ) -> Result<PostgresQueryState, HostError> {
+            self.owns(installation)?;
+            let mut state = self.state.lock().expect("postgres state");
+            let (_, _, status) = state
+                .queries
+                .values_mut()
+                .find(|(_, id, _)| id == query)
+                .ok_or_else(|| HostError::Absent("postgres query is not owned".into()))?;
+            *status = PostgresQueryState::Cancelled;
+            Ok(status.clone())
+        }
+
+        fn close_query(
+            &self,
+            installation: &InstallationIdentity,
+            _lease: &PostgresLeaseId,
+            query: &PostgresQueryId,
+        ) -> Result<(), HostError> {
+            self.owns(installation)?;
+            self.state
+                .lock()
+                .expect("postgres state")
+                .queries
+                .retain(|_, (_, id, _)| id != query);
+            Ok(())
+        }
+
+        fn close_lease(&self, installation: &InstallationIdentity, lease: &PostgresLeaseId) -> Result<(), HostError> {
+            self.owns(installation)?;
+            self.state
+                .lock()
+                .expect("postgres state")
+                .opens
+                .retain(|_, (_, id)| id != lease);
+            Ok(())
+        }
     }
 
     impl hl_extension::NotificationSink for Host {
@@ -1846,6 +2011,73 @@ mod tests {
         }
     }
 
+    fn postgres_host(
+        broker: Arc<SocketPostgres>,
+        installation: InstallationIdentity,
+        permitted: bool,
+    ) -> (UnixStream, JoinHandle<Result<(), Fault>>) {
+        let (ours, theirs) = UnixStream::pair().expect("socket pair");
+        let served = std::thread::spawn(move || {
+            let host = Host {
+                ledger: Arc::new(Ledger::default()),
+            };
+            let granted = permitted.then_some(Capability::CredentialUse).into_iter();
+            let authority = Authority::new(ExtensionName::new("postgres").unwrap(), Grant::new(granted), Vec::new())
+                .for_installation(installation);
+            let mut conversation = Conversation::new_scoped_owned(
+                ours,
+                authority,
+                "postgres-installation",
+                hl_extension::ExecutionOwnership::default(),
+                "dev",
+                Queue::new(),
+                hl_extension::ContainerGrant {
+                    selectors: vec![hl_extension::ContainerSelector::Id { id: "a".repeat(64) }],
+                    create: false,
+                },
+                hl_extension::ImageGrant::default(),
+                hl_extension::NetworkGrant {
+                    selectors: vec![hl_extension::NetworkSelector::Name {
+                        name: "database".into(),
+                    }],
+                    create: false,
+                },
+                hl_extension::VolumeGrant::default(),
+                hl_extension::FilesystemGrant::default(),
+                hl_extension::WorkspaceEnvironmentGrant::default(),
+                hl_extension::CredentialGrant {
+                    r#use: vec!["password".into()],
+                    ..Default::default()
+                },
+            )?;
+            conversation.greet()?;
+            let mut ports = services(&host);
+            ports.postgres = Some(broker.as_ref());
+            conversation.serve(&ports)
+        });
+        (theirs, served)
+    }
+
+    fn postgres_connection() -> PostgresConnection {
+        PostgresConnection {
+            container_id: "a".repeat(64),
+            container_generation: 7,
+            network: "database".into(),
+            port: 5432,
+            database: "app".into(),
+            user: "reader".into(),
+            credential_keys: vec!["password".into()],
+        }
+    }
+
+    fn fragmented_ask(writer: &mut UnixStream, wire: &mut Wire<UnixStream>, request: &Request) -> Frame {
+        let bytes = codec::request(request).expect("request").encode().expect("frame");
+        for byte in bytes {
+            writer.write_all(&[byte]).expect("fragment");
+        }
+        wire.receive().expect("an answer")
+    }
+
     /// The grant every test starts from: read containers/extensions, and draw.
     fn authority() -> Authority {
         Authority::new(
@@ -1919,6 +2151,173 @@ mod tests {
             conversation.serve(&services(&host))
         });
         (theirs, served)
+    }
+
+    #[test]
+    fn postgres_protocol_reconciles_fragmented_lost_replies_and_keeps_bounds_failures_local() {
+        let owner = InstallationIdentity::new("a".repeat(32)).unwrap();
+        let broker = Arc::new(SocketPostgres::new(owner.clone()));
+        let operation = QueryOperationToken::new("open-once").unwrap();
+        let open = Request::PostgresOpenOnce {
+            operation: operation.clone(),
+            connection: postgres_connection(),
+        };
+
+        // The host commits the open before its reply reaches the disconnected client.
+        let (stream, served) = postgres_host(Arc::clone(&broker), owner.clone(), true);
+        let mut writer = stream.try_clone().expect("writer clone");
+        let mut wire = Wire::new(stream);
+        shake(&mut wire, PROTOCOL);
+        let bytes = codec::request(&open).unwrap().encode().unwrap();
+        for byte in bytes {
+            writer.write_all(&[byte]).expect("fragmented open");
+        }
+        drop(writer);
+        drop(wire);
+        let _ = served.join().expect("first conversation");
+        assert_eq!(broker.peer_opens.load(Ordering::SeqCst), 1);
+
+        let (stream, served) = postgres_host(Arc::clone(&broker), owner.clone(), true);
+        let mut writer = stream.try_clone().unwrap();
+        let mut wire = Wire::new(stream);
+        shake(&mut wire, PROTOCOL);
+        let answer = fragmented_ask(&mut writer, &mut wire, &open);
+        let Ok(Reply::PostgresOpen(PostgresOpenOutcome::Reconciled { lease })) = codec::read_reply(&answer) else {
+            panic!("lost open reply was not reconciled")
+        };
+        assert_eq!(
+            broker.peer_opens.load(Ordering::SeqCst),
+            1,
+            "reconciliation reopened the peer"
+        );
+
+        let query = PostgresQuery::new(QueryOperationToken::new("query-once").unwrap(), "select 42", 10, 1024).unwrap();
+        let start = Request::PostgresQueryStartOnce {
+            lease: lease.clone(),
+            query: query.clone(),
+        };
+        let bytes = codec::request(&start).unwrap().encode().unwrap();
+        for byte in bytes {
+            writer.write_all(&[byte]).expect("fragmented start");
+        }
+        drop(writer);
+        drop(wire);
+        let _ = served.join().expect("second conversation");
+        assert_eq!(broker.peer_starts.load(Ordering::SeqCst), 1);
+
+        let (stream, served) = postgres_host(Arc::clone(&broker), owner.clone(), true);
+        let mut writer = stream.try_clone().unwrap();
+        let mut wire = Wire::new(stream);
+        shake(&mut wire, PROTOCOL);
+        let answer = fragmented_ask(&mut writer, &mut wire, &start);
+        let Ok(Reply::PostgresStart(PostgresStartOutcome::Reconciled {
+            query: query_id,
+            state: PostgresQueryState::Running,
+        })) = codec::read_reply(&answer)
+        else {
+            panic!("lost query reply was not reconciled")
+        };
+        assert_eq!(
+            broker.peer_starts.load(Ordering::SeqCst),
+            1,
+            "reconciliation restarted SQL"
+        );
+
+        let invalid = PostgresQuery {
+            operation: QueryOperationToken::new("invalid-query").unwrap(),
+            statement: "select 1".into(),
+            page_rows: 0,
+            page_bytes: 1,
+        };
+        let failed = fragmented_ask(
+            &mut writer,
+            &mut wire,
+            &Request::PostgresQueryStartOnce {
+                lease: lease.clone(),
+                query: invalid,
+            },
+        );
+        assert!(matches!(codec::read_failure(&failed), Ok(Failure::Conflict { detail }) if detail.contains("bound")));
+        assert_eq!(
+            broker.peer_starts.load(Ordering::SeqCst),
+            1,
+            "invalid SQL reached the broker"
+        );
+
+        assert!(matches!(
+            codec::read_reply(&fragmented_ask(
+                &mut writer,
+                &mut wire,
+                &Request::PostgresQueryStatus {
+                    lease: lease.clone(),
+                    query: query_id.clone()
+                },
+            )),
+            Ok(Reply::PostgresState(PostgresQueryState::Running))
+        ));
+        assert!(matches!(
+            codec::read_reply(&fragmented_ask(
+                &mut writer,
+                &mut wire,
+                &Request::PostgresQueryPage { lease: lease.clone(), query: query_id.clone(), cursor: None },
+            )),
+            Ok(Reply::PostgresPage(PostgresPage { ref rows, .. })) if rows.len() == 1
+        ));
+        assert!(matches!(
+            codec::read_reply(&fragmented_ask(
+                &mut writer,
+                &mut wire,
+                &Request::PostgresQueryCancel {
+                    lease: lease.clone(),
+                    query: query_id.clone()
+                },
+            )),
+            Ok(Reply::PostgresState(PostgresQueryState::Cancelled))
+        ));
+        assert!(matches!(
+            codec::read_reply(&fragmented_ask(
+                &mut writer,
+                &mut wire,
+                &Request::PostgresQueryClose {
+                    lease: lease.clone(),
+                    query: query_id
+                },
+            )),
+            Ok(Reply::Done)
+        ));
+        assert!(matches!(
+            codec::read_reply(&fragmented_ask(
+                &mut writer,
+                &mut wire,
+                &Request::PostgresLeaseClose { lease },
+            )),
+            Ok(Reply::Done)
+        ));
+        drop(writer);
+        drop(wire);
+        let _ = served.join().expect("final conversation");
+
+        let (stream, served) = postgres_host(Arc::clone(&broker), owner.clone(), false);
+        let mut wire = Wire::new(stream);
+        shake(&mut wire, PROTOCOL);
+        assert!(matches!(
+            codec::read_failure(&ask(&mut wire, &open)),
+            Ok(Failure::Denied { .. })
+        ));
+        drop(wire);
+        let _ = served.join().expect("denied conversation");
+
+        let outsider = InstallationIdentity::new("b".repeat(32)).unwrap();
+        let (stream, served) = postgres_host(Arc::clone(&broker), outsider, true);
+        let mut wire = Wire::new(stream);
+        shake(&mut wire, PROTOCOL);
+        assert!(matches!(
+            codec::read_failure(&ask(&mut wire, &open)),
+            Ok(Failure::Absent { .. })
+        ));
+        assert_eq!(broker.peer_opens.load(Ordering::SeqCst), 1);
+        drop(wire);
+        let _ = served.join().expect("outsider conversation");
     }
 
     #[test]
@@ -3180,12 +3579,10 @@ mod tests {
             if capability == Capability::WorkspaceEnvironmentWrite.as_str())
         );
         assert!(ledger.reached().is_empty(), "the host create callback was reached");
-        assert!(
-            !answer
-                .payload
-                .windows(b"must-not-cross".len())
-                .any(|part| part == b"must-not-cross")
-        );
+        assert!(!answer
+            .payload
+            .windows(b"must-not-cross".len())
+            .any(|part| part == b"must-not-cross"));
         drop(wire);
         assert_eq!(served.join().unwrap(), Ok(()));
     }

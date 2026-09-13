@@ -2377,15 +2377,41 @@ impl Session {
         match request {
             Request::PostgresOpenOnce { operation, connection } => {
                 connection.authorize(&self.containers, &self.networks, &self.credentials)?;
-                broker.open_once(installation, operation, connection).map(Reply::PostgresOpen).map_err(Into::into)
+                broker
+                    .open_once(installation, operation, connection)
+                    .map(Reply::PostgresOpen)
+                    .map_err(Into::into)
             }
-            Request::PostgresQueryStartOnce { lease, query } => broker.start_once(installation, lease, query).map(Reply::PostgresStart).map_err(Into::into),
-            Request::PostgresQueryStatus { lease, query } => broker.status(installation, lease, query).map(Reply::PostgresState).map_err(Into::into),
-            Request::PostgresQueryPage { lease, query, cursor } => broker.page(installation, lease, query, cursor.as_ref()).map(Reply::PostgresPage).map_err(Into::into),
-            Request::PostgresQueryCancel { lease, query } => broker.cancel(installation, lease, query).map(Reply::PostgresState).map_err(Into::into),
-            Request::PostgresQueryClose { lease, query } => broker.close_query(installation, lease, query).map(|()| Reply::Done).map_err(Into::into),
-            Request::PostgresLeaseClose { lease } => broker.close_lease(installation, lease).map(|()| Reply::Done).map_err(Into::into),
-            _ => Err(Failure::Unsupported { call: "postgres".into() }),
+            Request::PostgresQueryStartOnce { lease, query } => {
+                query.validate()?;
+                broker
+                    .start_once(installation, lease, query)
+                    .map(Reply::PostgresStart)
+                    .map_err(Into::into)
+            }
+            Request::PostgresQueryStatus { lease, query } => broker
+                .status(installation, lease, query)
+                .map(Reply::PostgresState)
+                .map_err(Into::into),
+            Request::PostgresQueryPage { lease, query, cursor } => broker
+                .page(installation, lease, query, cursor.as_ref())
+                .map(Reply::PostgresPage)
+                .map_err(Into::into),
+            Request::PostgresQueryCancel { lease, query } => broker
+                .cancel(installation, lease, query)
+                .map(Reply::PostgresState)
+                .map_err(Into::into),
+            Request::PostgresQueryClose { lease, query } => broker
+                .close_query(installation, lease, query)
+                .map(|()| Reply::Done)
+                .map_err(Into::into),
+            Request::PostgresLeaseClose { lease } => broker
+                .close_lease(installation, lease)
+                .map(|()| Reply::Done)
+                .map_err(Into::into),
+            _ => Err(Failure::Unsupported {
+                call: "postgres".into(),
+            }),
         }
     }
 
