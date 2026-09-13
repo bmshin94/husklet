@@ -2428,10 +2428,19 @@ for (const updating of [false, true]) {
     toggleSwitch(stage, 6, true);
     toggleSwitch(stage, 9, true);
     assert.deepEqual(latestSwitchValues(stage).slice(0, 5), [false, true, false, false, true]);
+    toggleSwitch(stage, 0, true);
+    assert.ok(labelled(stage, 'Clear product access'));
+    invoke(stage, 'Clear product access');
+    assert.deepEqual(
+      latestSwitchValues(stage),
+      [false, false, false, false, false, false, true, false, false, true],
+      'clearing Product access preserves every exact image grant byte-for-byte',
+    );
+    assert.ok(labelled(stage, 'Review decision · 2/10 selected'));
     invoke(stage, updating ? 'Update with selected access' : 'Install with selected access');
     await settled();
     await settled();
-    assert.deepEqual(calls[0][2].capabilities, ['containers:create', 'images:prune']);
+    assert.deepEqual(calls[0][2].capabilities, []);
     assert.deepEqual(calls[0][2].images, {
       read: [],
       use: [{ digest: `sha256:${'b'.repeat(64)}` }],

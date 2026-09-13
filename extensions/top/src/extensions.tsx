@@ -1708,34 +1708,15 @@ export function Extensions({
                                 color="text-dim"
                               />
                               <Spacer />
-                              {granted.length > 0 && (
-                                <Button
-                                  label="Clear product access"
-                                  size="small"
-                                  variant="ghost"
-                                  onInvoke={() => {
-                                    setGranted([]);
-                                    setGrantedImages({
-                                      read: [],
-                                      use: [],
-                                      pull: [],
-                                      remove: [],
-                                      prune_all_unused: false,
-                                    });
-                                    setGrantedContainers((current) => ({
-                                      ...current,
-                                      create: false,
-                                    }));
-                                    setGrantedNetworks((current) => ({
-                                      ...current,
-                                      create: false,
-                                    }));
-                                    setGrantedVolumes((current) => ({ ...current, create: false }));
-                                    setGrantedFilesystem(emptyFilesystemGrant());
-                                    setGrantedWorkspaceEnvironment({ read: [], write: [] });
-                                  }}
-                                />
-                              )}
+                              <Button
+                                label="Clear product access"
+                                size="small"
+                                variant="ghost"
+                                enabled={!busy && granted.length > 0}
+                                onInvoke={() => {
+                                  setGranted([]);
+                                }}
+                              />
                             </Row>
                           )}
                           {acquisition.candidate.requested.map((capability) => (
