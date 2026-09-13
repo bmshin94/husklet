@@ -1332,6 +1332,20 @@ export interface WorkspaceApi {
           complete: true;
         }
     >;
+    /**
+     * Resume directly from a failed streaming operation's indivisible execution, container, and
+     * acknowledged output cursor. Options cannot substitute any of those recovery identities.
+     */
+    resumeExecutionFailureStreaming(
+      failure: ExecutionOperationError,
+      options: {
+        pageLimit?: number;
+        maxPages?: number;
+        pollIntervalMs?: number;
+        signal?: AbortSignal;
+      },
+      onPage: (page: ExecutionOutputPage) => void | Promise<void>,
+    ): ReturnType<WorkspaceApi['containers']['resumeExecutionStreaming']>;
     /** Resume newline-delimited JSON as atomically acknowledged, bounded result pages. */
     resumeJsonLinePages<Value = unknown>(
       id: string,

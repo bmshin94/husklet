@@ -17,11 +17,9 @@ export async function resumeGitText(
   const stderr = [...(failure.stderr ?? [])];
   if (stdout.length + stderr.length > maxBytes)
     throw new RangeError('saved Git output is too large');
-  const resumed = await host.containers.resumeExecutionStreaming(
-    failure.executionId,
+  const resumed = await host.containers.resumeExecutionFailureStreaming(
+    failure,
     {
-      after: failure.after,
-      expectedContainerId: failure.containerId,
       pageLimit: 2,
       maxPages: 4_096,
     },

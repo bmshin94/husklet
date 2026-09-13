@@ -68,9 +68,9 @@ export async function resumeTestRun(
     throw new Error('test execution failed before exposing an acknowledged output cursor');
   }
   let after = failure.after;
-  return host.containers.resumeExecutionStreaming(
-    failure.executionId,
-    { after, pageLimit: 8, signal: options.signal },
+  return host.containers.resumeExecutionFailureStreaming(
+    failure,
+    { pageLimit: 8, signal: options.signal },
     async (page) => {
       await options.reportPage({
         executionId: failure.executionId,

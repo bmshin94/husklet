@@ -1598,6 +1598,22 @@ export function workspace(session, { signal } = {}) {
                     });
                 }
             },
+            resumeExecutionFailureStreaming: (failure, options = {}, onPage) => {
+                if (!(failure instanceof ExecutionOperationError)) {
+                    throw new TypeError('execution recovery requires an ExecutionOperationError');
+                }
+                if (!Number.isSafeInteger(failure.after) || failure.after < 0) {
+                    throw new Error('execution recovery has no acknowledged output cursor');
+                }
+                if (!failure.containerId) {
+                    throw new Error('execution recovery has no original container identity');
+                }
+                return api.containers.resumeExecutionStreaming(failure.executionId, {
+                    ...options,
+                    after: failure.after,
+                    expectedContainerId: failure.containerId,
+                }, onPage);
+            },
             resumeJsonLinePages: async (id, configuration, onPage) => {
                 const { partialLine = [], lines: initialLines = 0, maxLineBytes, maxLines, decode = (value) => value, ...options } = configuration;
                 if (!Number.isSafeInteger(maxLineBytes) ||
