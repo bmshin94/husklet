@@ -7698,6 +7698,77 @@ test('real Unix container start wait arms first and ignores unchanged initial st
   }
 });
 
+test('real Unix container start wait keeps fragmented state proof when its reply is lost', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-container-start-proof-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const connections = new Set();
+  const id = '9'.repeat(64);
+  const summary = {
+    id,
+    name: 'postgres',
+    image: 'postgres:17',
+    state: 'running',
+    created: 1,
+    generation: 8,
+  };
+  const fragmented = (socket, value, done) => {
+    const frame = encode(value);
+    let offset = 0;
+    const write = () => {
+      if (offset === frame.length) return done();
+      socket.write(frame.subarray(offset, offset + 1));
+      offset += 1;
+      setImmediate(write);
+    };
+    write();
+  };
+  const server = net.createServer((socket) => {
+    connections.add(socket);
+    socket.on('close', () => connections.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.channel !== 2) continue;
+        if (frame.payload.call === 'event_subscribe') {
+          socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
+        } else if (frame.payload.call === 'container_start') {
+          fragmented(
+            socket,
+            {
+              channel: 41,
+              kind: KIND.event,
+              payload: { snapshot: 'containers', of: [summary] },
+            },
+            () => socket.destroy(),
+          );
+        }
+      }
+    });
+    socket.write(
+      encode({
+        channel: CONTROL,
+        kind: KIND.open,
+        payload: {
+          protocol: 1,
+          peer: 'container-start-proof',
+          granted: ['containers:read', 'containers:lifecycle'],
+        },
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const session = await connect({ path: socketPath });
+    const result = await workspace(session).containers.startAndWait(id, 7);
+    assert.deepEqual(result, { changed: true, container: summary });
+    await session.close();
+  } finally {
+    for (const connection of connections) connection.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('real Unix container stop wait arms first and ignores unchanged running state', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-container-stop-wait-'));
   const socketPath = path.join(directory, 'host.sock');

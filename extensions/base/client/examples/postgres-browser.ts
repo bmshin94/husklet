@@ -40,11 +40,15 @@ try {
   const containers = workspace(session).containers;
   // A saved database target is an exact lifecycle identity. Never follow a reused
   // container ID/name onto a replacement generation without fresh user selection.
-  const container = await containers.inspectObserved(
+  let container = await containers.inspectObserved(
     configuration.containerId,
     configuration.generation,
   );
-  if (container.state !== 'running') throw new Error('Postgres container is not running');
+  if (container.state !== 'running') {
+    const started = await containers.startAndWait(container.id, container.generation);
+    if (!started.changed) throw new Error('Postgres container did not become ready to inspect');
+    container = started.container;
+  }
 
   const query = configuration.query.trim().replace(/;$/, '');
   if (!query) throw new TypeError('query must contain a row-producing statement');

@@ -1467,7 +1467,10 @@ export interface WorkspaceApi {
     /** Backwards-compatible shorthand for an image and optional container name. */
     create(image: string, name?: string): Promise<string>;
     start(id: string, generation: number): Promise<void>;
-    /** Arm bounded inventory, start an immutable ID, then accept only a later running snapshot. */
+    /**
+     * Arm bounded inventory, start an immutable ID, then accept only a later running snapshot.
+     * A proven post-baseline running snapshot remains authoritative if the ordered mutation reply is lost.
+     */
     startAndWait(
       id: string,
       generation: number,
@@ -1477,7 +1480,10 @@ export interface WorkspaceApi {
       | { changed: false; id: string; state: 'running' }
     >;
     stop(id: string, generation: number): Promise<void>;
-    /** Arm bounded inventory, stop an immutable ID, then accept only a later exited snapshot. */
+    /**
+     * Arm bounded inventory, stop an immutable ID, then accept only a later exited snapshot.
+     * A proven post-baseline exited snapshot remains authoritative if the ordered mutation reply is lost.
+     */
     stopAndWait(
       id: string,
       generation: number,
@@ -1487,7 +1493,10 @@ export interface WorkspaceApi {
       | { changed: false; id: string; state: 'exited' }
     >;
     remove(id: string, generation: number): Promise<void>;
-    /** Remove an immutable ID and accept absence only from a later complete bounded inventory. */
+    /**
+     * Remove an immutable ID and accept absence only from a later complete bounded inventory.
+     * Proven absence remains authoritative if the ordered mutation reply is lost.
+     */
     removeAndWait(
       id: string,
       generation: number,
@@ -1496,7 +1505,10 @@ export interface WorkspaceApi {
     pause(id: string, generation: number): Promise<void>;
     unpause(id: string, generation: number): Promise<void>;
     restart(id: string, generation: number): Promise<void>;
-    /** Restart only after observing a generation; resolves on the same ID running at a newer generation. */
+    /**
+     * Restart only after observing a generation; resolves on the same ID running at a newer generation.
+     * That exact newer snapshot remains authoritative if the ordered mutation reply is lost.
+     */
     restartAndWait(
       id: string,
       generation: number,

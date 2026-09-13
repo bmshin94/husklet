@@ -4272,6 +4272,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     let sequence = 0;
     let baseline = 0;
     let started = false;
+    let startReplyLost = false;
+    let observedRunning: ContainerSummary | undefined;
     let observed;
     let timer;
     const running = new Promise<ContainerSummary>((resolve) => {
@@ -4279,14 +4281,25 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         sequence += 1;
         if (!started || sequence <= baseline) return;
         const current = containers.find((container) => container.id === identity);
-        if (current?.state === 'running') resolve(current);
+        if (current?.state === 'running') {
+          observedRunning = current;
+          resolve(current);
+        }
       };
     });
     const stop = await api.watchContainers(observed);
     baseline = sequence;
     try {
       started = true;
-      await api.containers.start(identity, generation);
+      try {
+        await api.containers.start(identity, generation);
+      } catch (error) {
+        if (observedRunning) {
+          startReplyLost = true;
+          return { changed: true, container: observedRunning };
+        }
+        throw error;
+      }
       const container = await Promise.race([
         running,
         new Promise<null>((resolve) => {
@@ -4298,7 +4311,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         : { changed: true, container };
     } finally {
       clearTimeout(timer);
-      await stop();
+      if (startReplyLost) await stop().catch(() => {});
+      else await stop();
     }
   };
   api.containers.stopAndWait = async (id, generation, { timeoutMs = 30_000 } = {}) => {
@@ -4309,6 +4323,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     let sequence = 0;
     let baseline = 0;
     let stopped = false;
+    let stopReplyLost = false;
+    let observedExited: ContainerSummary | undefined;
     let observed;
     let timer;
     const exited = new Promise<ContainerSummary>((resolve) => {
@@ -4316,14 +4332,25 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         sequence += 1;
         if (!stopped || sequence <= baseline) return;
         const current = containers.find((container) => container.id === identity);
-        if (current?.state === 'exited') resolve(current);
+        if (current?.state === 'exited') {
+          observedExited = current;
+          resolve(current);
+        }
       };
     });
     const stopWatching = await api.watchContainers(observed);
     baseline = sequence;
     try {
       stopped = true;
-      await api.containers.stop(identity, generation);
+      try {
+        await api.containers.stop(identity, generation);
+      } catch (error) {
+        if (observedExited) {
+          stopReplyLost = true;
+          return { changed: true, container: observedExited };
+        }
+        throw error;
+      }
       const container = await Promise.race([
         exited,
         new Promise<null>((resolve) => {
@@ -4335,7 +4362,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         : { changed: true, container };
     } finally {
       clearTimeout(timer);
-      await stopWatching();
+      if (stopReplyLost) await stopWatching().catch(() => {});
+      else await stopWatching();
     }
   };
   api.containers.removeAndWait = async (id, generation, { timeoutMs = 30_000 } = {}) => {
@@ -4345,20 +4373,33 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     let sequence = 0;
     let baseline = 0;
     let removing = false;
+    let removeReplyLost = false;
+    let observedAbsent = false;
     let observed;
     let timer;
     const absent = new Promise<void>((resolve) => {
       observed = (inventory) => {
         sequence += 1;
         if (!removing || sequence <= baseline || !inventory.complete) return;
-        if (!inventory.containers.some((container) => container.id === identity)) resolve();
+        if (!inventory.containers.some((container) => container.id === identity)) {
+          observedAbsent = true;
+          resolve();
+        }
       };
     });
     const stopWatching = await api.watchContainerInventory(observed);
     baseline = sequence;
     try {
       removing = true;
-      await api.containers.remove(identity, generation);
+      try {
+        await api.containers.remove(identity, generation);
+      } catch (error) {
+        if (observedAbsent) {
+          removeReplyLost = true;
+          return { changed: true, id: identity };
+        }
+        throw error;
+      }
       const removed = await Promise.race([
         absent.then(() => true),
         new Promise<boolean>((resolve) => {
@@ -4368,7 +4409,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       return { changed: removed, id: identity };
     } finally {
       clearTimeout(timer);
-      await stopWatching();
+      if (removeReplyLost) await stopWatching().catch(() => {});
+      else await stopWatching();
     }
   };
   api.containers.restartAndWait = async (id, generation, { timeoutMs = 30_000 } = {}) => {
@@ -4380,16 +4422,29 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000)
       throw new RangeError('container restart wait timeout must be between 1 and 30000ms');
     let observed;
+    let observedRestarted: ContainerSummary | undefined;
+    let restartReplyLost = false;
     let timer;
     const restarted = new Promise<ContainerSummary>((resolve) => {
       observed = (containers) => {
         const current = containers.find((container) => container.id === identity);
-        if (current?.state === 'running' && current.generation > generation) resolve(current);
+        if (current?.state === 'running' && current.generation > generation) {
+          observedRestarted = current;
+          resolve(current);
+        }
       };
     });
     const stopWatching = await api.watchContainers(observed);
     try {
-      await api.containers.restart(identity, generation);
+      try {
+        await api.containers.restart(identity, generation);
+      } catch (error) {
+        if (observedRestarted) {
+          restartReplyLost = true;
+          return { changed: true, container: observedRestarted };
+        }
+        throw error;
+      }
       const container = await Promise.race([
         restarted,
         new Promise<null>((resolve) => {
@@ -4401,7 +4456,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         : { changed: true, container };
     } finally {
       clearTimeout(timer);
-      await stopWatching();
+      if (restartReplyLost) await stopWatching().catch(() => {});
+      else await stopWatching();
     }
   };
   api.watchImageInventory = (listener) => watch('images', 'images', listener, 'image inventory');
