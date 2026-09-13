@@ -271,6 +271,9 @@ mod unix {
         if narrow_story {
             assert!(realized_window.width() <= 600, "{story} narrow capture remained wide");
             assert_contained(&root, story);
+            if story == "ConfirmAction" {
+                assert_confirm_action_document(&realized_window, &root, 16.0, "initial narrow");
+            }
             if story == "RecoveryState" {
                 assert_recovery_state(&root, "narrow");
             }
@@ -530,6 +533,7 @@ mod unix {
             let _ = surface.reports().drain();
         }
         if story == "ConfirmAction" {
+            assert_confirm_action_document(&realized_window, &root, 264.0, "initial wide");
             find::<gtk::Label>(&root, |label| label.text() == "Live specimens");
             find::<gtk::Label>(&root, |label| label.text() == "API");
             let disabled = find::<gtk::Button>(&root, |button| {
@@ -2091,10 +2095,28 @@ mod unix {
                     cancel_bounds.x() + cancel_bounds.width()
                 );
                 assert!(cancel_bounds.x() + cancel_bounds.width() - confirm_bounds.x() <= 560.0);
+                assert_confirm_action_document(
+                    &realized_window,
+                    &root,
+                    if width == 600 { 16.0 } else { 264.0 },
+                    &format!("armed {name}"),
+                );
                 capture_story(&realized_window, &format!("ConfirmAction armed {name}"));
                 assert!(confirm.grab_focus());
+                assert_confirm_action_document(
+                    &realized_window,
+                    &root,
+                    if width == 600 { 16.0 } else { 264.0 },
+                    &format!("confirm focus {name}"),
+                );
                 capture_story(&realized_window, &format!("ConfirmAction focused confirm {name}"));
                 assert!(cancel.grab_focus());
+                assert_confirm_action_document(
+                    &realized_window,
+                    &root,
+                    if width == 600 { 16.0 } else { 264.0 },
+                    &format!("cancel focus {name}"),
+                );
                 capture_story(&realized_window, &format!("ConfirmAction focused cancel {name}"));
             }
             assert!(confirm.grab_focus());
@@ -2718,6 +2740,72 @@ mod unix {
                 "{case} rounded focus corner contains a gap: {corner} accent pixels"
             );
         }
+    }
+
+    fn assert_confirm_action_document(window: &gtk::Window, root: &gtk::Widget, expected_x: f32, case: &str) {
+        settle_toolkit();
+        let document = descendants::<gtk::ScrolledWindow>(root)
+            .into_iter()
+            .filter(|scroll| scroll.has_css_class("hl-scroll"))
+            .max_by(|left, right| {
+                left.hadjustment()
+                    .page_size()
+                    .total_cmp(&right.hadjustment().page_size())
+            })
+            .expect("ConfirmAction owns a document viewport");
+        let horizontal = document.hadjustment();
+        assert!(
+            horizontal.upper() <= horizontal.page_size() + 1.0 && horizontal.value().abs() <= 0.5,
+            "{case} ConfirmAction document has unintended horizontal travel: upper={}, page={}, value={}",
+            horizontal.upper(),
+            horizontal.page_size(),
+            horizontal.value()
+        );
+        let title = find::<gtk::Label>(root, |label| {
+            label.has_css_class("hl-heading") && label.text() == "ConfirmAction"
+        });
+        let bounds = title
+            .compute_bounds(root)
+            .expect("ConfirmAction title belongs to its document");
+        assert!(
+            (bounds.x() - expected_x).abs() <= 1.0
+                && bounds.x() >= 0.0
+                && bounds.x() + bounds.width() <= root.width() as f32 - 16.0,
+            "{case} ConfirmAction title escaped its content lane: {bounds:?} in {}px",
+            root.width()
+        );
+
+        let paintable = gtk::WidgetPaintable::new(Some(root));
+        let snapshot = gtk::Snapshot::new();
+        paintable.snapshot(
+            snapshot.upcast_ref::<gtk::gdk::Snapshot>(),
+            f64::from(root.width()),
+            f64::from(root.height()),
+        );
+        let node = snapshot.to_node().expect("ConfirmAction document renders");
+        let texture = window
+            .renderer()
+            .expect("Storybook window owns renderer")
+            .render_texture(&node, None);
+        let stride = texture.width() as usize * 4;
+        let mut pixels = vec![0_u8; stride * texture.height() as usize];
+        texture.download(&mut pixels, stride);
+        let x0 = bounds.x().floor().max(0.0) as usize;
+        let y0 = bounds.y().floor().max(0.0) as usize;
+        let x1 = (bounds.x() + bounds.width()).ceil().min(texture.width() as f32) as usize;
+        let y1 = (bounds.y() + bounds.height()).ceil().min(texture.height() as f32) as usize;
+        let bright = (y0..y1)
+            .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+            .filter(|(x, y)| {
+                pixels[*y * stride + *x * 4..*y * stride + *x * 4 + 3]
+                    .iter()
+                    .all(|channel| *channel >= 128)
+            })
+            .count();
+        assert!(
+            bright >= 100,
+            "{case} ConfirmAction title allocation exists but its glyphs are not painted: {bright} bright pixels in {bounds:?}"
+        );
     }
 
     fn reveal_for_capture(root: &gtk::Widget, target: &gtk::Widget) {
