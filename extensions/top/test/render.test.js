@@ -2647,7 +2647,7 @@ test('exact workspace environment consent carries its required verb and clears c
           }),
           installAndWait: async (...arguments_) => {
             installs.push(arguments_);
-            return { changed: true, extension: { ...candidate, status: 'standby' } };
+            return { changed: true, extension: { ...candidate, status: 'duty', enabled: true } };
           },
         },
         watchExtensions: async () => () => {},
@@ -2999,7 +2999,7 @@ test('extension review grants one exact network without workspace-wide network a
           }),
           installAndWait: async (...args) => {
             calls.push(args);
-            return { changed: true, extension: { ...candidate, status: 'running' } };
+            return { changed: true, extension: { ...candidate, status: 'duty', enabled: true } };
           },
         },
         watchExtensions: async () => () => {},

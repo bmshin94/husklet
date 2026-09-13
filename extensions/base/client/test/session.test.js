@@ -7399,8 +7399,8 @@ test('real Unix install wait inspects revision, arms inventory, then commits exa
     name: 'sample',
     image_digest: digest,
     version: '1',
-    status: 'standby',
-    enabled: false,
+    status: 'duty',
+    enabled: true,
     pane_providers: [],
   };
   const server = net.createServer((socket) => {
@@ -7443,20 +7443,20 @@ test('real Unix install wait inspects revision, arms inventory, then commits exa
             delete: [],
             rename: [],
           });
-          socket.write(
-            encode({
+          const committed = encode({
+            channel: 2,
+            kind: KIND.response,
+            payload: { reply: 'extension', with: summary },
+          });
+          for (const byte of committed) socket.write(Uint8Array.of(byte));
+          setImmediate(() => {
+            const activated = encode({
               channel: 21,
               kind: KIND.event,
               payload: { snapshot: 'extensions', of: [summary] },
-            }),
-          );
-          socket.write(
-            encode({
-              channel: 2,
-              kind: KIND.response,
-              payload: { reply: 'extension', with: summary },
-            }),
-          );
+            });
+            for (const byte of activated) socket.write(Uint8Array.of(byte));
+          });
         } else
           socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
       }
@@ -7601,7 +7601,7 @@ test('real Unix install wait rejects broader published authority and preserves t
       extensions.installAndWait('job-authority', 4, {
         capabilities: ['extensions:read'],
       }),
-      /replaced or disappeared after install/,
+      /replaced, disappeared, or did not activate after install/,
     );
     assert.deepEqual(await extensions.list(), [committed]);
     assert.deepEqual(calls, [

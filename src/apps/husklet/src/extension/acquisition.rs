@@ -347,7 +347,7 @@ impl ExtensionAcquisitions {
             .and_then(|()| Roster::workspace(&self.workspace).map_err(|error| HostError::Failed(error.to_string())))
             .and_then(|mut roster| {
                 roster
-                    .register_resource_scoped(
+                    .register_enabled_resource_scoped(
                         &candidate.manifest,
                         &candidate.digest,
                         consented,
@@ -849,6 +849,11 @@ mod tests {
         assert_eq!(entries[0].image_digest, "sha256:observed");
         assert!(entries[0].granted.holds(Capability::ContainerRead));
         assert!(!entries[0].granted.holds(Capability::ContainerLifecycle));
+        assert_eq!(
+            entries[0].stage,
+            hl_extension::Stage::Duty,
+            "install activates the extension"
+        );
     }
 
     #[test]

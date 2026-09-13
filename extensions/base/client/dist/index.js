@@ -5137,10 +5137,11 @@ export function workspace(session, { signal } = {}) {
                 }
                 if (current?.image_digest === digest &&
                     current.version === committed?.version &&
-                    extensionAuthority(current) === extensionAuthority(committed))
+                    extensionAuthority(current) === extensionAuthority(committed) &&
+                    (operation !== 'install' || (current.enabled === true && current.status === 'duty')))
                     resolve(current);
                 else
-                    reject(new Error(`extension ${candidate.name} was replaced or disappeared after ${operation}`));
+                    reject(new Error(`extension ${candidate.name} was replaced, disappeared, or did not activate after ${operation}`));
             };
         });
         const stop = await api.watchExtensions(observed);

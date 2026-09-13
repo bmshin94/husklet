@@ -269,10 +269,73 @@ impl<S: Storage> Roster<S> {
         credentials: &hl_extension::CredentialGrant,
         at: i64,
     ) -> Result<(), Refusal> {
+        self.register_resource_scoped_as(
+            manifest,
+            digest,
+            consented,
+            containers,
+            images,
+            networks,
+            volumes,
+            filesystem,
+            workspace_environment,
+            credentials,
+            at,
+            false,
+        )
+    }
+
+    /// Atomically records and enables a newly consented extension.
+    pub fn register_enabled_resource_scoped(
+        &mut self,
+        manifest: &Manifest,
+        digest: &str,
+        consented: &Grant,
+        containers: &hl_extension::ContainerGrant,
+        images: &hl_extension::ImageGrant,
+        networks: &hl_extension::NetworkGrant,
+        volumes: &hl_extension::VolumeGrant,
+        filesystem: &hl_extension::FilesystemGrant,
+        workspace_environment: &hl_extension::WorkspaceEnvironmentGrant,
+        credentials: &hl_extension::CredentialGrant,
+        at: i64,
+    ) -> Result<(), Refusal> {
+        self.register_resource_scoped_as(
+            manifest,
+            digest,
+            consented,
+            containers,
+            images,
+            networks,
+            volumes,
+            filesystem,
+            workspace_environment,
+            credentials,
+            at,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn register_resource_scoped_as(
+        &mut self,
+        manifest: &Manifest,
+        digest: &str,
+        consented: &Grant,
+        containers: &hl_extension::ContainerGrant,
+        images: &hl_extension::ImageGrant,
+        networks: &hl_extension::NetworkGrant,
+        volumes: &hl_extension::VolumeGrant,
+        filesystem: &hl_extension::FilesystemGrant,
+        workspace_environment: &hl_extension::WorkspaceEnvironmentGrant,
+        credentials: &hl_extension::CredentialGrant,
+        at: i64,
+        enabled: bool,
+    ) -> Result<(), Refusal> {
         let _registration = registration_lock();
         self.reload()?;
         let previous = self.installation.clone();
-        let record = self
+        let mut record = self
             .installation
             .install_resource_scoped(
                 manifest,
@@ -288,6 +351,9 @@ impl<S: Storage> Roster<S> {
                 at,
             )?
             .clone();
+        if enabled {
+            record = self.installation.enable(&manifest.name)?.clone();
+        }
         if let Err(fault) = self.records.save(&record) {
             self.installation = previous;
             return Err(fault.into());
@@ -639,6 +705,37 @@ mod tests {
     struct RefuseFaultClear {
         inner: Directory,
         refuse: Arc<AtomicBool>,
+    }
+
+    #[derive(Clone)]
+    struct RefusePut(Directory);
+
+    impl Storage for RefusePut {
+        type Error = hl_ws::storage::Error;
+
+        fn put(&self, _key: &Key, _bytes: &[u8]) -> Result<(), Self::Error> {
+            Err(std::io::Error::other("injected record refusal").into())
+        }
+
+        fn get(&self, key: &Key) -> Result<Vec<u8>, Self::Error> {
+            self.0.get(key)
+        }
+
+        fn list(&self, prefix: Option<&Key>) -> Result<Vec<Key>, Self::Error> {
+            self.0.list(prefix)
+        }
+
+        fn list_until(&self, prefix: Option<&Key>, deadline: Instant) -> Result<Vec<Key>, Self::Error> {
+            self.0.list_until(prefix, deadline)
+        }
+
+        fn remove(&self, key: &Key) -> Result<(), Self::Error> {
+            self.0.remove(key)
+        }
+
+        fn remove_until(&self, key: &Key, deadline: Instant) -> Result<(), Self::Error> {
+            self.0.remove_until(key, deadline)
+        }
     }
 
     impl Storage for RefuseFaultClear {
@@ -1177,5 +1274,34 @@ mod tests {
         let listed: Vec<String> = roster.entries().iter().map(|entry| entry.name.to_string()).collect();
 
         assert_eq!(listed, ["alpha", "zulu"], "the listing is ordered by name");
+    }
+
+    #[test]
+    fn failed_atomic_install_activation_leaves_no_partial_registration() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let directory = Directory::open(temporary.path()).expect("storage");
+        let mut roster = Roster::open(RefusePut(directory.clone())).expect("roster");
+        let asked = manifest("database", &[Capability::Interface]);
+        let result = roster.register_enabled_resource_scoped(
+            &asked,
+            "sha256:activated",
+            &asked.capabilities,
+            &asked.containers,
+            &asked.images,
+            &asked.networks,
+            &asked.volumes,
+            &asked.filesystem,
+            &asked.workspace_environment,
+            &asked.credentials,
+            7,
+        );
+
+        assert!(result.is_err(), "the single durable publication is refused");
+        assert_eq!(roster.stage(&asked.name), Stage::Vacancy);
+        assert_eq!(
+            Roster::open(directory).expect("reopen").stage(&asked.name),
+            Stage::Vacancy,
+            "neither enabled authority nor a standby record escaped the failed transaction"
+        );
     }
 }
