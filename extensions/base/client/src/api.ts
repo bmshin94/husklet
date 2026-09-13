@@ -1842,6 +1842,15 @@ export interface WorkspaceApi {
         }
       | { changed: false; before: SemanticTextObservation }
     >;
+    /** Invoke only an action advertised by the exact semantic observation the caller selected. */
+    actObservedAndWait(
+      before: SemanticTextObservation,
+      proposal: { node: number; action: SemanticActionKind; value?: string | null },
+      options?: { timeoutMs?: number; signal?: AbortSignal },
+    ): Promise<
+      | { changed: true; before: SemanticTextObservation; after: ReadablePane }
+      | { changed: false; before: SemanticTextObservation }
+    >;
     writeInput(
       slot: string,
       generation: number,

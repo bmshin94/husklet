@@ -147,6 +147,7 @@ groups
   .get('Semantics')
   .push(
     '- `host.terminal.inspectAndAct(slot, proposal, options)` — arms observation, reads the bounded semantic tree, verifies an enabled advertised node action, invokes it at that exact revision, and returns bounded XML before/after; requires `panes:observe`, `panes:semantic-read`, and `panes:semantic-control`.',
+    '- `host.terminal.actObservedAndWait(observation, proposal, options)` — invokes only an enabled action advertised by the exact semantic observation an agent selected. It never re-reads a mutable slot before mutation, so replacement cannot redirect a stale node choice; requires `panes:observe` and `panes:semantic-control` after the observation has already been obtained.',
   );
 groups
   .get('Extensions')

@@ -1841,6 +1841,22 @@ export interface WorkspaceApi {
             changed: false;
             before: SemanticTextObservation;
         }>;
+        /** Invoke only an action advertised by the exact semantic observation the caller selected. */
+        actObservedAndWait(before: SemanticTextObservation, proposal: {
+            node: number;
+            action: SemanticActionKind;
+            value?: string | null;
+        }, options?: {
+            timeoutMs?: number;
+            signal?: AbortSignal;
+        }): Promise<{
+            changed: true;
+            before: SemanticTextObservation;
+            after: ReadablePane;
+        } | {
+            changed: false;
+            before: SemanticTextObservation;
+        }>;
         writeInput(slot: string, generation: number, revision: number, input: string | Iterable<number>): Promise<void>;
         /** Write exact bytes using one terminal snapshot as indivisible stale-pane authority. */
         writeObserved(before: PaneText, input: string | Iterable<number>): Promise<void>;

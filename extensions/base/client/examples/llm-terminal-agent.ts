@@ -45,10 +45,7 @@ try {
     let actionResult;
     if (configuration.semanticAction) {
       try {
-        actionResult = await terminal.inspectAndAct(
-          configuration.slot,
-          configuration.semanticAction,
-        );
+        actionResult = await terminal.actObservedAndWait(observed, configuration.semanticAction);
       } catch (cause) {
         if (!(cause instanceof SemanticActionOperationError)) throw cause;
         const resumedSession = await connect({

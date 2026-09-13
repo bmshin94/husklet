@@ -5684,6 +5684,74 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       await stop().catch(() => {});
     }
   };
+  api.terminal.actObservedAndWait = async (
+    before,
+    proposal,
+    { timeoutMs = 30_000, signal } = {},
+  ) => {
+    const snapshot = before?.snapshot;
+    if (
+      !snapshot ||
+      typeof snapshot.slot !== 'string' ||
+      snapshot.slot.length === 0 ||
+      !Number.isSafeInteger(snapshot.generation) ||
+      !Number.isSafeInteger(snapshot.revision)
+    ) {
+      throw new TypeError('observed semantic action requires an exact semantic observation');
+    }
+    const actions = ['invoke', 'change', 'submit', 'toggle', 'expand', 'focus'];
+    if (
+      !Number.isSafeInteger(proposal?.node) ||
+      proposal.node < 0 ||
+      !actions.includes(proposal?.action)
+    ) {
+      throw new TypeError('observed semantic action requires a nonnegative node and known action');
+    }
+    if (
+      proposal.value != null &&
+      (typeof proposal.value !== 'string' ||
+        new TextEncoder().encode(proposal.value).byteLength > 4096)
+    ) {
+      throw new RangeError('observed semantic action value exceeds 4096 bytes');
+    }
+    const pending = [snapshot.root];
+    let node;
+    while (pending.length > 0) {
+      const candidate = pending.pop();
+      if (candidate.id === proposal.node) {
+        node = candidate;
+        break;
+      }
+      pending.push(...candidate.children);
+    }
+    if (!node) {
+      throw new Error(
+        snapshot.truncated
+          ? 'semantic node cannot be resolved from a truncated observation'
+          : 'semantic node does not exist in the observed tree',
+      );
+    }
+    if (node.disabled) throw new Error('observed semantic node is disabled');
+    if (!node.actions.includes(proposal.action)) {
+      throw new Error('observed semantic node does not advertise the requested action');
+    }
+    const action = {
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+      node: proposal.node,
+      action: proposal.action,
+      value: proposal.value ?? null,
+    };
+    try {
+      const result = await api.terminal.actAndWait(snapshot.slot, action, { timeoutMs, signal });
+      return result.changed
+        ? { changed: true, before, after: result.readable }
+        : { changed: false, before };
+    } catch (cause) {
+      if (cause instanceof ExtensionError) throw cause;
+      throw new SemanticActionOperationError(before, action, undefined, cause);
+    }
+  };
   api.terminal.splitAndWait = async (
     slot,
     generation,

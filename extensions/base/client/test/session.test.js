@@ -10282,6 +10282,85 @@ function semanticTree(slot, revision = 4, generation = 2) {
   };
 }
 
+test('observed semantic action never reselects a replacement UI over one-byte Unix frames', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-observed-semantic-action-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const calls = [];
+  const peers = new Set();
+  const fragmented = (socket, frame) => {
+    for (const byte of frame) socket.write(Uint8Array.of(byte));
+  };
+  const server = net.createServer((socket) => {
+    peers.add(socket);
+    socket.on('close', () => peers.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.channel !== 2) continue;
+        calls.push(frame.payload);
+        const stale = frame.payload.call === 'pane_semantic_action';
+        fragmented(
+          socket,
+          encode({
+            channel: 2,
+            kind: KIND.response,
+            flags: stale ? 3 : 1,
+            payload: stale
+              ? { error: 'conflict', detail: 'observed UI was replaced' }
+              : { reply: 'done' },
+          }),
+        );
+      }
+    });
+    fragmented(
+      socket,
+      encode({
+        channel: CONTROL,
+        kind: KIND.open,
+        payload: {
+          protocol: 1,
+          peer: 'observed-semantic-action',
+          granted: ['panes:observe', 'panes:semantic-control'],
+        },
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const session = await connect({ path: socketPath });
+    const snapshot = semanticTree('settings', 4, 2);
+    const before = {
+      snapshot,
+      text: '<button node="7">Apply</button>',
+      complete: true,
+      sourceTruncated: false,
+      projectionTruncated: false,
+    };
+    await assert.rejects(
+      workspace(session).terminal.actObservedAndWait(before, { node: 7, action: 'toggle' }),
+      /does not advertise/,
+    );
+    assert.deepEqual(calls, [], 'an unadvertised action must not acquire mutation authority');
+    await assert.rejects(
+      workspace(session).terminal.actObservedAndWait(before, { node: 7, action: 'invoke' }),
+      /observed UI was replaced/,
+    );
+    assert.deepEqual(
+      calls.map(({ call }) => call),
+      ['event_subscribe', 'pane_semantic_action', 'event_unsubscribe'],
+    );
+    assert.deepEqual(calls[1].with, {
+      slot: 'settings',
+      action: { generation: 2, revision: 4, node: 7, action: 'invoke', value: null },
+    });
+    await session.close();
+  } finally {
+    for (const peer of peers) peer.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 async function withPaneIdentityHost(granted, respond, exercise) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-pane-identity-'));
   const socketPath = path.join(directory, 'host.sock');
