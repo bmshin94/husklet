@@ -4885,6 +4885,7 @@ mod unix {
 
     fn assert_settings_group_layout(root: &gtk::Widget, width: i32, case: &str) {
         let resources = find_expander(root, "Resources & connectivity · CPU 4 · Memory 4096 MB");
+        let resources_widget = resources.clone();
         let terminal = find_expander(
             root,
             "Terminal appearance · Font host default · Size default · Cursor default",
@@ -4907,6 +4908,34 @@ mod unix {
         let terminal = bounds(&terminal);
         let environment = bounds(&environment);
         let mounts = bounds(&mounts);
+        let far_right = root
+            .pick(
+                f64::from(resources.x() + resources.width() - 2.0),
+                f64::from(resources.y() + resources.height() / 2.0),
+                gtk::PickFlags::DEFAULT,
+            )
+            .unwrap_or_else(|| panic!("{case} settings summary has no far-right pointer target"));
+        assert!(
+            far_right == resources_widget.clone().upcast::<gtk::Widget>()
+                || far_right.is_ancestor(resources_widget.upcast_ref::<gtk::Widget>()),
+            "{case} far-right settings pointer target escaped its summary"
+        );
+        assert!(
+            resources_widget.grab_focus(),
+            "{case} settings summary accepts keyboard focus"
+        );
+        resources_widget.emit_by_name::<()>("activate", &[]);
+        settle_toolkit();
+        assert!(
+            resources_widget.is_expanded(),
+            "{case} keyboard activation opens settings summary"
+        );
+        resources_widget.emit_by_name::<()>("activate", &[]);
+        settle_toolkit();
+        assert!(
+            !resources_widget.is_expanded(),
+            "{case} second keyboard activation restores summary"
+        );
         if width == 600 {
             for (upper, lower) in [
                 (&resources, &terminal),

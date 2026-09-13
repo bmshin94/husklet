@@ -804,13 +804,13 @@ test('Top owns workspace settings and extension management in the same tab', asy
   assert.deepEqual(taggedProperty(stage, 'Resources & connectivity', 'Accordion', 'Width'), {
     Bounds: {
       minimum: { Chars: 44 },
-      maximum: { Chars: 52 },
+      maximum: 'Fill',
     },
   });
   assert.deepEqual(taggedProperty(stage, 'Terminal appearance', 'Accordion', 'Width'), {
     Bounds: {
       minimum: { Chars: 44 },
-      maximum: { Chars: 52 },
+      maximum: 'Fill',
     },
   });
   assert.deepEqual(
@@ -873,7 +873,7 @@ test('Top owns workspace settings and extension management in the same tab', asy
   assert.deepEqual(taggedProperty(stage, 'Runtime', 'Accordion', 'Width'), {
     Bounds: {
       minimum: { Chars: 44 },
-      maximum: { Chars: 52 },
+      maximum: 'Fill',
     },
   });
   assert.deepEqual(ancestorTags(stage, 'Cursor shape').slice(0, 1), ['FormControl']);

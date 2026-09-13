@@ -37,7 +37,7 @@ const CONTROL_WIDTH = { chars: 56 } as const;
 const PAGE_WIDTH = { maximum: { chars: 110 } } as const;
 const SETTINGS_GROUP_WIDTH = {
   minimum: { chars: 44 },
-  maximum: { chars: 52 },
+  maximum: 'fill',
 } as const;
 
 export function Workspace({ api }: { api: WorkspaceApi }) {
