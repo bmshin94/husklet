@@ -556,6 +556,14 @@ fn moment() -> i64 {
 }
 
 fn external_workspace_environment(manifest: &hl_extension::Manifest) -> Result<(), HostError> {
+    if super::defaults::DEFAULT_EXTENSIONS
+        .iter()
+        .any(|(required, _)| manifest.name.as_str() == *required)
+    {
+        return Err(HostError::Failed(
+            "Top is the required workspace management extension and can only be installed or updated by trusted workspace provisioning".into(),
+        ));
+    }
     if manifest
         .workspace_environment
         .read
@@ -611,6 +619,67 @@ mod tests {
 
         assert!(external_workspace_environment(&candidate).is_err(), "install boundary");
         assert!(external_workspace_environment(&candidate).is_err(), "update boundary");
+    }
+
+    #[test]
+    fn external_acquisition_cannot_install_the_reserved_top_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let mut spoof = manifest("99.0.0", &[]);
+        spoof.name = ExtensionName::new("top").unwrap();
+        let service = ExtensionAcquisitions::with_acquirer(
+            &workspace(root.path()),
+            move |_, reference, progress, _, _refresh| {
+                let _ = progress.send(Acquisition::Ready(Candidate {
+                    reference: reference.into(),
+                    digest: "sha256:spoof".into(),
+                    manifest: spoof.clone(),
+                }));
+            },
+        );
+        let job = service.start("registry.example/attacker/top:latest", false).unwrap();
+        let reviewed = ready(&service, job);
+        let error = service
+            .install(job, reviewed.revision, &Grant::default())
+            .expect_err("the built-in identity must not be externally installed");
+        assert!(error.to_string().contains("trusted workspace provisioning"));
+        assert!(Roster::workspace(&workspace(root.path())).unwrap().entries().is_empty());
+        assert_eq!(
+            service.status(job).unwrap().state,
+            reviewed.state,
+            "the exact candidate remains available for inspection and explicit cancellation"
+        );
+    }
+
+    #[test]
+    fn external_acquisition_cannot_replace_the_required_top_generation() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = workspace(root.path());
+        let mut installed = manifest("1.0.0", &[]);
+        installed.name = ExtensionName::new("top").unwrap();
+        Roster::workspace(&workspace)
+            .unwrap()
+            .register(&installed, "sha256:trusted", &Grant::default(), 1)
+            .unwrap();
+        let mut spoof = installed.clone();
+        spoof.version = "99.0.0".into();
+        let service = ExtensionAcquisitions::with_acquirer(&workspace, move |_, reference, progress, _, _refresh| {
+            let _ = progress.send(Acquisition::Ready(Candidate {
+                reference: reference.into(),
+                digest: "sha256:spoof".into(),
+                manifest: spoof.clone(),
+            }));
+        });
+        let job = service.start("registry.example/attacker/top:latest", true).unwrap();
+        let reviewed = ready(&service, job);
+        let error = service
+            .update(job, reviewed.revision, &Grant::default())
+            .expect_err("the built-in identity must not be externally replaced");
+        assert!(error.to_string().contains("trusted workspace provisioning"));
+        let entry = Roster::workspace(&workspace).unwrap().entries().remove(0);
+        assert_eq!(
+            (entry.version.as_str(), entry.image_digest.as_str()),
+            ("1.0.0", "sha256:trusted")
+        );
     }
 
     #[test]
