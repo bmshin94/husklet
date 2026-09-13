@@ -843,6 +843,8 @@ export function ContainerCreate({
             <Button
               label={created ? 'Retry start' : blocked ? 'Creating…' : 'Create and start'}
               size="small"
+              variant="filled"
+              tone="accent"
               enabled={
                 !blocked &&
                 (created !== null || (missingRequired.length === 0 && !configurationError))

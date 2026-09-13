@@ -464,8 +464,17 @@ mod unix {
                 );
                 let submit = find_button(&root, "Create and start");
                 assert!(submit.has_css_class("size-small"));
+                assert!(submit.has_css_class("variant-filled"));
+                assert!(submit.has_css_class("tone-accent"));
                 assert_standard_action(&submit, width_name, "container submit", 28);
                 assert!(!submit.is_sensitive(), "missing required fields disable submission");
+                assert_filled_button_state_pixels(
+                    &window,
+                    &root,
+                    &submit,
+                    false,
+                    &format!("{width_name} disabled container submit"),
+                );
                 for placeholder in ["Image reference", "Container name"] {
                     let field = find_entry_placeholder(&root, placeholder);
                     assert_eq!(field.accessible_role(), gtk::AccessibleRole::TextBox);
@@ -5188,12 +5197,10 @@ mod unix {
             "{case} has wrong perimeter color: {:?}",
             pixel((x0 + x1) / 2, y0)
         );
-        let label = find_label(action.upcast_ref(), "Update with selected access");
-        let label_bounds = label.compute_bounds(root).expect("filled label belongs to Top root");
-        let lx0 = label_bounds.x().floor() as usize;
-        let ly0 = label_bounds.y().floor() as usize;
-        let lx1 = (label_bounds.x() + label_bounds.width()).ceil() as usize;
-        let ly1 = (label_bounds.y() + label_bounds.height()).ceil() as usize;
+        let lx0 = x0 + 2;
+        let ly0 = y0 + 2;
+        let lx1 = x1.saturating_sub(1);
+        let ly1 = (bounds.y() + bounds.height()).round() as usize - 2;
         let glyph_pixels = (ly0..ly1)
             .flat_map(|y| (lx0..lx1).map(move |x| (x, y)))
             .filter(|(x, y)| close(pixel(*x, *y), text))
