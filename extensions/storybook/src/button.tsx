@@ -82,7 +82,7 @@ export function ButtonWorkbench() {
         <SectionBlock title="Variants">
           <Row gap={2} wrap>
             {(['filled', 'outline', 'ghost', 'plain'] as const).map((value) => (
-              <Button key={value} label={title(value)} variant={value} tone="accent" />
+              <Button key={value} label={title(value)} variant={value} tone={specimenTone(value)} />
             ))}
           </Row>
         </SectionBlock>
@@ -106,7 +106,7 @@ export function ButtonWorkbench() {
                   label={title(emphasis)}
                   size={controlSize}
                   variant={emphasis}
-                  tone="accent"
+                  tone={specimenTone(emphasis)}
                 />
               ))}
             </Row>
@@ -258,6 +258,10 @@ function title(value: string) {
 }
 function height(size: Size) {
   return { small: 28, medium: 36, large: 44 }[size];
+}
+
+function specimenTone(variant: Variant): Tone {
+  return variant === 'filled' || variant === 'outline' ? 'accent' : 'neutral';
 }
 function choices(values: readonly string[]) {
   return values.map((value) => ({ value, label: title(value) }));

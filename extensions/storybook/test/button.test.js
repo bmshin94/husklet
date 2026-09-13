@@ -46,6 +46,27 @@ test('Button documents every semantic size, variant, and tone as live controls',
   );
 });
 
+test('Button specimens preserve the visible hierarchy between ghost and plain actions', () => {
+  const frame = host().render(h(ButtonWorkbench));
+  const buttons = propsFor(frame.patches, 'Button');
+  for (const [label, variant, tone] of [
+    ['Filled', 'Filled', 'Accent'],
+    ['Outline', 'Outline', 'Accent'],
+    ['Ghost', 'Ghost', 'Neutral'],
+    ['Plain', 'Plain', 'Neutral'],
+  ]) {
+    assert(
+      buttons.some(
+        (props) =>
+          props.Label?.Text === label &&
+          props.Variant?.Variant === variant &&
+          props.Tone?.Tone === tone,
+      ),
+      `${label} specimen lost its deliberate emphasis`,
+    );
+  }
+});
+
 test('Button teaches specimens before its full API and keeps the playground secondary', () => {
   const frame = host().render(h(ButtonWorkbench));
   const headings = propsFor(frame.patches, 'Heading').map((props) => props.Label?.Text);

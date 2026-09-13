@@ -411,6 +411,26 @@ mod unix {
                         "rightmost {caption} specimen is absent or clipped"
                     );
                 }
+                let ghost = find::<gtk::Button>(&root, |button| {
+                    button_caption(button).as_deref() == Some("Ghost")
+                });
+                let plain = find::<gtk::Button>(&root, |button| {
+                    button_caption(button).as_deref() == Some("Plain")
+                });
+                assert!(
+                    ghost.has_css_class("variant-ghost") && ghost.has_css_class("tone-neutral"),
+                    "Button Ghost specimen lost its deliberately dim neutral treatment"
+                );
+                assert!(
+                    plain.has_css_class("variant-plain") && plain.has_css_class("tone-neutral"),
+                    "Button Plain specimen lost its normal neutral text treatment"
+                );
+                let ghost_bounds = ghost.compute_bounds(&root).expect("Ghost belongs to Button page");
+                let plain_bounds = plain.compute_bounds(&root).expect("Plain belongs to Button page");
+                assert!(
+                    ghost_bounds.x() + ghost_bounds.width() <= plain_bounds.x(),
+                    "Button hierarchy specimens overlap: ghost={ghost_bounds:?} plain={plain_bounds:?}"
+                );
                 for (class, expected) in [("size-small", 28), ("size-medium", 36), ("size-large", 44)] {
                     let buttons = descendants::<gtk::Button>(&root)
                         .into_iter()
