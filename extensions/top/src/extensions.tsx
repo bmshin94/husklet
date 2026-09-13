@@ -2550,7 +2550,11 @@ export function Extensions({
                                       </Row>
                                     ) : null}
                                     {!builtIn ? (
-                                      <Column width="fill" align="start" pad={{ top: 1 }}>
+                                      <Column
+                                        width="fill"
+                                        align="start"
+                                        pad={{ top: faulted ? 1 : 0 }}
+                                      >
                                         <Expander
                                           label="Remove extension…"
                                           expanded={removalMenu === extension.name}

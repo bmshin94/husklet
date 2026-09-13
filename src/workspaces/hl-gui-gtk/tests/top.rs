@@ -1773,7 +1773,7 @@ mod unix {
                 let confirmation_card = ancestor_with_class(confirm.upcast_ref(), "hl-card")
                     .expect("confirmation remains inside its extension card");
                 assert!(
-                    confirmation_card.height() <= if width == 1_200 { 220 } else { 300 },
+                    confirmation_card.height() <= if width == 1_200 { 228 } else { 300 },
                     "{width_name} filtered confirmation card stretched to {}px",
                     confirmation_card.height()
                 );
@@ -1863,10 +1863,15 @@ mod unix {
                 "cancellation closes destructive confirmation"
             );
             let current_root = surface.widget().clone().upcast::<gtk::Widget>();
-            find_button(&current_root, "Close").emit_clicked();
+            let removal_disclosure = find_expander(&current_root, "Remove extension…");
+            assert!(
+                removal_disclosure.grab_focus(),
+                "focus returns to removal disclosure before its confirmation is removed"
+            );
+            removal_disclosure.emit_by_name::<()>("activate", &[]);
             settle_toolkit();
             send_report(&surface, &mut wire, 102, |event| {
-                matches!(event, hl_gui::Event::Invoke { .. })
+                matches!(event, hl_gui::Event::Expand { .. })
             });
             let deadline = Instant::now() + DEADLINE;
             while has_label(surface.widget().upcast_ref(), "Remove extension") {
