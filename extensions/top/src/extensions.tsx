@@ -1178,73 +1178,68 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                 <Column gap={1}>
                   {catalogueState === 'ready' && catalogueEntries.length > 0 ? (
                     <Row gap={2} width="fill" wrap align="center" justify="start">
-                      <Row gap={1} width="fill" wrap align="center" justify="start">
-                        <Search
-                          grow
-                          value={catalogueQuery}
-                          placeholder="Search extensions"
-                          tooltip="Search by name, identifier, publisher, or description"
-                          width={{ minimum: { chars: 18 }, maximum: { chars: 36 } }}
-                          onChange={(event: Change) => {
-                            setCatalogueQuery(String(event.value ?? '').slice(0, 128));
+                      <Search
+                        grow
+                        value={catalogueQuery}
+                        placeholder="Search extensions"
+                        tooltip="Search by name, identifier, publisher, or description"
+                        width={{ minimum: { chars: 18 } }}
+                        onChange={(event: Change) => {
+                          setCatalogueQuery(String(event.value ?? '').slice(0, 128));
+                          setCatalogueLimit(CATALOGUE_PAGE_SIZE);
+                        }}
+                      />
+                      <Select
+                        value={catalogueFilter}
+                        tooltip="Filter extension catalogue by status"
+                        width={{ minimum: { chars: 22 }, maximum: { chars: 22 } }}
+                        choices={[
+                          { value: 'discover', label: 'Available & updates' },
+                          { value: 'all', label: 'All extensions' },
+                          { value: 'available', label: 'Available' },
+                          { value: 'installed', label: 'Installed' },
+                          { value: 'updates', label: 'Updates' },
+                          { value: 'incompatible', label: 'Incompatible' },
+                        ]}
+                        onChange={(event: Change) => {
+                          const selected = String(event.value ?? '');
+                          if (
+                            [
+                              'discover',
+                              'all',
+                              'available',
+                              'installed',
+                              'updates',
+                              'incompatible',
+                            ].includes(selected)
+                          ) {
+                            setCatalogueFilter(selected as CatalogueFilter);
                             setCatalogueLimit(CATALOGUE_PAGE_SIZE);
-                          }}
-                        />
-                        <Select
-                          value={catalogueFilter}
-                          tooltip="Filter extension catalogue by status"
-                          width={{ minimum: { chars: 22 }, maximum: { chars: 22 } }}
-                          choices={[
-                            { value: 'discover', label: 'Available & updates' },
-                            { value: 'all', label: 'All extensions' },
-                            { value: 'available', label: 'Available' },
-                            { value: 'installed', label: 'Installed' },
-                            { value: 'updates', label: 'Updates' },
-                            { value: 'incompatible', label: 'Incompatible' },
-                          ]}
-                          onChange={(event: Change) => {
-                            const selected = String(event.value ?? '');
-                            if (
-                              [
-                                'discover',
-                                'all',
-                                'available',
-                                'installed',
-                                'updates',
-                                'incompatible',
-                              ].includes(selected)
-                            ) {
-                              setCatalogueFilter(selected as CatalogueFilter);
-                              setCatalogueLimit(CATALOGUE_PAGE_SIZE);
-                            }
-                          }}
-                        />
-                      </Row>
-                      <Row gap={3} align="center" justify="start" wrap>
-                        <Text
-                          label={`${visibleCatalogueEntries.length} of ${countLabel(catalogueEntries.length, 'extension')}`}
-                          color="text-dim"
-                        />
-                        <Row gap={1} align="center" justify="start">
-                          <Text label="Category" color="text-dim" />
-                          <Select
-                            value={catalogueCategory}
-                            tooltip="Filter extension catalogue by category"
-                            width={{ minimum: { chars: 18 }, maximum: { chars: 22 } }}
-                            choices={[
-                              { value: '', label: 'All categories' },
-                              ...catalogueCategories.map((category) => ({
-                                value: category,
-                                label: category,
-                              })),
-                            ]}
-                            onChange={(event: Change) => {
-                              setCatalogueCategory(String(event.value ?? ''));
-                              setCatalogueLimit(CATALOGUE_PAGE_SIZE);
-                            }}
-                          />
-                        </Row>
-                      </Row>
+                          }
+                        }}
+                      />
+                      <Text
+                        label={`${visibleCatalogueEntries.length} of ${countLabel(catalogueEntries.length, 'extension')}`}
+                        color="text-dim"
+                      />
+                      <Text label="Category" color="text-dim" />
+                      <Select
+                        grow
+                        value={catalogueCategory}
+                        tooltip="Filter extension catalogue by category"
+                        width={{ minimum: { chars: 18 } }}
+                        choices={[
+                          { value: '', label: 'All categories' },
+                          ...catalogueCategories.map((category) => ({
+                            value: category,
+                            label: category,
+                          })),
+                        ]}
+                        onChange={(event: Change) => {
+                          setCatalogueCategory(String(event.value ?? ''));
+                          setCatalogueLimit(CATALOGUE_PAGE_SIZE);
+                        }}
+                      />
                     </Row>
                   ) : null}
                   {catalogueState === 'loading' && (

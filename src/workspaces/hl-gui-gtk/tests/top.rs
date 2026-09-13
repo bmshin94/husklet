@@ -1694,9 +1694,27 @@ mod unix {
                     .expect("Discover category label belongs to Top root");
                 let filter_gap = category_bounds.x() - count_bounds.x() - count_bounds.width();
                 assert!(
-                    category_bounds.y() > count_bounds.y() || filter_gap >= 12.0,
+                    category_bounds.y() > count_bounds.y() || filter_gap >= 8.0,
                     "{width_name} Discover count ran into Category: count={count_bounds:?} category={category_bounds:?}"
                 );
+                let search = find_search_with_placeholder(&discover_root, "Search extensions");
+                let search_bounds = search
+                    .compute_bounds(&discover_root)
+                    .expect("Discover search belongs to Top root");
+                if width == 600 {
+                    assert!(
+                        (search_bounds.x() - 16.0).abs() <= 1.0,
+                        "narrow Discover search lost the shared 16px content edge: {search_bounds:?}"
+                    );
+                    assert!(
+                        search_bounds.width() >= 300.0,
+                        "narrow Discover search did not consume the available row width: {search_bounds:?}"
+                    );
+                    assert!(
+                        (count_bounds.x() - 16.0).abs() <= 1.0,
+                        "narrow Discover secondary row lost the shared 16px content edge: {count_bounds:?}"
+                    );
+                }
                 assert_contained(&discover_root, &format!("discover/extensions/{width_name}"));
                 for (label, action) in [("update", &review), ("access", &review_access)] {
                     assert_standard_action(action, width_name, &format!("Discover {label}"), 28);
