@@ -548,6 +548,23 @@ export class TerminalOperationError extends Error {
   }
 }
 
+/** A tab pin/unpin may have committed before its reply was lost. */
+export class TerminalPinOperationError extends Error {
+  readonly tab;
+  readonly pinned;
+
+  constructor(tab, pinned, cause) {
+    super(
+      `terminal tab ${tab} may have been ${pinned ? 'pinned' : 'unpinned'}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
+    this.name = 'TerminalPinOperationError';
+    this.tab = tab;
+    this.pinned = pinned;
+    this.cause = cause;
+  }
+}
+
 /** A revision-bound semantic action may have committed before observation failed. */
 export class SemanticActionOperationError extends Error {
   readonly before;
@@ -6083,20 +6100,48 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     });
     const stop = await api.watchTerminal(observed);
     let timer;
+    let primaryFailure: unknown;
+    let cleanupFailure: unknown;
+    let outcome:
+      { changed: true; tab: TabSummary } | { changed: false; tab: string; pinned: boolean };
     try {
       authorityIssued = true;
-      await api.terminal.pinTab(tab, pinned);
+      try {
+        await api.terminal.pinTab(tab, pinned);
+      } catch (error) {
+        throw new TerminalPinOperationError(tab, pinned, error);
+      }
       const current = await Promise.race([
         inventory,
         new Promise<null>((resolve) => {
           timer = setTimeout(() => resolve(null), timeoutMs);
         }),
       ]);
-      return current === null ? { changed: false, tab, pinned } : { changed: true, tab: current };
+      outcome =
+        current === null ? { changed: false, tab, pinned } : { changed: true, tab: current };
+    } catch (error) {
+      primaryFailure = error;
     } finally {
       clearTimeout(timer);
-      await stop();
+      try {
+        await stop();
+      } catch (error) {
+        cleanupFailure = error;
+      }
     }
+    if (primaryFailure !== undefined) throw primaryFailure;
+    if (cleanupFailure !== undefined) throw cleanupFailure;
+    return outcome!;
+  };
+  api.terminal.recoverPinTab = async (failure) => {
+    if (!(failure instanceof TerminalPinOperationError))
+      throw new TypeError('terminal pin recovery requires TerminalPinOperationError');
+    const current = (await api.terminal.tabs()).find(({ id }) => id === failure.tab);
+    if (!current)
+      throw new Error(`terminal tab ${failure.tab} disappeared; pin outcome is unresolved`);
+    if (current.pinned !== failure.pinned)
+      throw new Error(`terminal tab ${failure.tab} does not match the ambiguous pin state`);
+    return current;
   };
   api.terminal.actAndWait = async (slot, action, { lines, timeoutMs = 30_000, signal } = {}) => {
     if (typeof slot !== 'string' || slot.length === 0)

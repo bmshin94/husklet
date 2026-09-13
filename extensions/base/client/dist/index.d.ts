@@ -133,6 +133,12 @@ export declare class TerminalOperationError extends Error {
     readonly result: any;
     constructor(operation: any, result: any, cause: any);
 }
+/** A tab pin/unpin may have committed before its reply was lost. */
+export declare class TerminalPinOperationError extends Error {
+    readonly tab: any;
+    readonly pinned: any;
+    constructor(tab: any, pinned: any, cause: any);
+}
 /** A revision-bound semantic action may have committed before observation failed. */
 export declare class SemanticActionOperationError extends Error {
     readonly before: any;

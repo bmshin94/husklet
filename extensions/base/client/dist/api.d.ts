@@ -938,6 +938,12 @@ export declare class TerminalOperationError extends Error {
     }>;
     readonly cause: unknown;
 }
+/** A tab pin/unpin may have committed before its reply was lost. Never replay it blindly. */
+export declare class TerminalPinOperationError extends Error {
+    readonly tab: string;
+    readonly pinned: boolean;
+    readonly cause: unknown;
+}
 /** A revision-bound semantic action may have committed before observation failed. Never replay it blindly. */
 export declare class SemanticActionOperationError extends Error {
     readonly before: Readonly<SemanticTextObservation>;
@@ -1800,6 +1806,8 @@ export interface WorkspaceApi {
             tab: string;
             pinned: boolean;
         }>;
+        /** Reconcile a lost pin/unpin reply from exact tab inventory without replaying mutation. */
+        recoverPinTab(failure: TerminalPinOperationError): Promise<TabSummary>;
         /** Arm pane observation before opening the session-owned tab and verify its exact returned identity. Observation failures retain the created tab in TerminalOperationError. */
         openTabAndWait(title: string, options?: {
             timeoutMs?: number;
