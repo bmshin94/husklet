@@ -525,7 +525,7 @@ function SettingsGroup({
     <Accordion
       label={label}
       width={open ? 'fill' : SETTINGS_GROUP_WIDTH}
-      grow={!open}
+      grow
       expanded={open}
       onExpand={(event: Change) => onExpand((event.expanded ?? event.value) ? name : '')}
     >

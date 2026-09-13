@@ -904,6 +904,9 @@ test('Top owns workspace settings and extension management in the same tab', asy
   );
   expand(stage, 'Environment variables');
   await settled();
+  assert.deepEqual(taggedProperty(stage, 'Environment variables', 'Accordion', 'Grow'), {
+    Number: 1,
+  });
   assert.equal(placeholderProperty(stage, 'value', 'Secret')?.Flag, true);
   assert.deepEqual(
     taggedProperty(stage, 'Remove TOKEN', 'IconButton', 'Icon'),

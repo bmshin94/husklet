@@ -562,6 +562,7 @@ mod unix {
                     );
                 }
                 let environment = find_expander(&root, "Environment variables · 1 variable");
+                let collapsed_environment_width = environment.width();
                 environment.emit_by_name::<()>("activate", &[]);
                 settle_toolkit();
                 send_report(&surface, &mut wire, 610, |event| {
@@ -574,6 +575,25 @@ mod unix {
                     "Show environment values",
                     |request| panic!("unexpected settings expansion call: {request:?}"),
                 );
+                let settings_row = environment
+                    .parent()
+                    .expect("expanded environment belongs to the settings flow");
+                let row_width = settings_row.width();
+                let (_, row_height, _, _) = settings_row.measure(gtk::Orientation::Vertical, row_width);
+                settings_row.allocate(row_width, row_height, -1, None);
+                settle_toolkit();
+                assert!(
+                    environment.width() >= collapsed_environment_width,
+                    "{width_name} expanded environment collapsed from {collapsed_environment_width}px to {}px",
+                    environment.width()
+                );
+                if width == 600 {
+                    assert!(
+                        environment.width() >= 480,
+                        "compact expanded environment lost the usable page width: {}px",
+                        environment.width()
+                    );
+                }
                 let name_entry = find_entry_placeholder(&root, "NAME");
                 assert!(name_entry.grab_focus(), "{width_name} credential name accepts focus");
                 let _ = surface.reports().drain();
