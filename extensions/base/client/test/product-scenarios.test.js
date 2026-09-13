@@ -125,6 +125,13 @@ function respond(socket, frame, payload) {
   socket.write(encode({ channel: frame.channel, kind: KIND.response, payload }));
 }
 
+function respondFragmented(socket, frame, payload) {
+  const bytes = encode({ channel: frame.channel, kind: KIND.response, payload });
+  socket.write(bytes.subarray(0, 1));
+  socket.write(bytes.subarray(1, 4));
+  socket.write(bytes.subarray(4));
+}
+
 function topologyFor(panes) {
   const leaves = panes.map((pane) => ({
     kind: 'pane',
@@ -311,7 +318,7 @@ test('LLM terminal agent reads a selected semantic surface without terminal inpu
   assert.equal(run.calls.includes('terminal_write_pane'), false);
 });
 
-test('embeddings indexer reconciles, recursively discovers, streams, and checkpoints', async () => {
+test('embeddings indexer pages beyond a truncated inventory over fragmented Unix framing', async () => {
   const document = new TextEncoder().encode('alpha beta gamma');
   const run = await scenario(
     'embeddings-indexer.ts',
@@ -319,7 +326,7 @@ test('embeddings indexer reconciles, recursively discovers, streams, and checkpo
     (socket, frame) => {
       const { call } = frame.payload;
       if (call === 'state_read')
-        respond(socket, frame, {
+        respondFragmented(socket, frame, {
           reply: 'state',
           with: {
             identity: `sha256:${'c'.repeat(64)}`,
@@ -339,20 +346,20 @@ test('embeddings indexer reconciles, recursively discovers, streams, and checkpo
           },
         });
       else if (call === 'filesystem_inventory')
-        respond(socket, frame, {
+        respondFragmented(socket, frame, {
           reply: 'file_inventory',
           with: {
             entries: [
               { path: 'src/a.md', directory: false, size: document.length, identity: 'doc-v1' },
             ],
-            complete: true,
+            complete: false,
             coalesced: 0,
             revision: 7,
             journal: FILE_JOURNAL,
           },
         });
       else if (call === 'filesystem_list_page')
-        respond(socket, frame, {
+        respondFragmented(socket, frame, {
           reply: 'directory_page',
           with: {
             entries: [
@@ -371,7 +378,7 @@ test('embeddings indexer reconciles, recursively discovers, streams, and checkpo
       else if (call === 'filesystem_read_range') {
         const offset = frame.payload.with.offset;
         const contents = Array.from(document.slice(offset, offset + 6));
-        respond(socket, frame, {
+        respondFragmented(socket, frame, {
           reply: 'file_range',
           with: {
             path: 'src/a.md',
@@ -384,7 +391,7 @@ test('embeddings indexer reconciles, recursively discovers, streams, and checkpo
           },
         });
       } else if (call === 'filesystem_changes')
-        respond(socket, frame, {
+        respondFragmented(socket, frame, {
           reply: 'file_changes',
           with: {
             journal: FILE_JOURNAL,
@@ -404,7 +411,10 @@ test('embeddings indexer reconciles, recursively discovers, streams, and checkpo
         );
         assert.doesNotMatch(checkpoint, /src\/deleted.md/);
         assert.match(checkpoint, /notes\/retained.md/);
-        respond(socket, frame, { reply: 'identity', with: `sha256:${'d'.repeat(64)}` });
+        respondFragmented(socket, frame, {
+          reply: 'identity',
+          with: `sha256:${'d'.repeat(64)}`,
+        });
       }
     },
   );

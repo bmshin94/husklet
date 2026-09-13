@@ -166,7 +166,9 @@ try {
   };
 
   const inventory = await host.files.inventory();
-  if (!inventory.complete) throw new Error('filesystem inventory is incomplete');
+  // `entries` is only a bounded convenience snapshot. This workflow performs
+  // its own paged walk, so the journal cursor remains sufficient even when
+  // the inventory entry list is truncated.
   const scanned: Record<string, DocumentState> = {};
   for (const root of roots) {
     if (root.grant === 'exact') {
