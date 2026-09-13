@@ -64,7 +64,7 @@ export function RecoveryState({
           React.createElement(Button, {
             label: retryLabel,
             size: 'small',
-            variant: 'outline',
+            variant: 'filled',
             tone: 'accent',
             onInvoke: onRetry,
           }),

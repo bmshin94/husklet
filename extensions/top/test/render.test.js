@@ -6151,6 +6151,10 @@ test('network inventory failures use typed causes and one honest recovery action
     );
     assert.ok(labelled(stage, summary), `${kind} has resource-specific recovery`);
     assert.ok(labelled(stage, action), `${kind} has one primary action`);
+    assert.deepEqual(taggedProperty(stage, action, 'Button', 'Variant'), {
+      Variant: 'Filled',
+    });
+    assert.deepEqual(taggedProperty(stage, action, 'Button', 'Tone'), { Tone: 'Accent' });
     assert.ok(labelled(stage, 'Technical details'));
     assert.ok(labelled(stage, detail), 'the exact diagnostic remains disclosed');
     assert.equal(labelled(stage, 'This view could not be completed.'), undefined);
@@ -6198,6 +6202,12 @@ test('network inventory retry stays visible and disabled until a recovered snaps
   );
   assert.ok(labelled(stage, 'Retrying networks…'));
   assert.equal(isEnabled(stage, 'Retrying networks…'), false);
+  assert.deepEqual(taggedProperty(stage, 'Retrying networks…', 'Button', 'Variant'), {
+    Variant: 'Filled',
+  });
+  assert.deepEqual(taggedProperty(stage, 'Retrying networks…', 'Button', 'Tone'), {
+    Tone: 'Neutral',
+  });
   assert.ok(labelled(stage, 'Technical details'));
 
   stage.render(

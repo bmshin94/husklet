@@ -68,9 +68,8 @@ test('error retry dispatches exactly once and bounds host text', () => {
   ).SetProp.id;
   const parent = patches.find((patch) => patch.Insert?.child === retry)?.Insert.parent;
   assert.deepEqual(
-    patches.findLast(
-      (patch) => patch.SetProp?.id === retry && patch.SetProp.prop === 'Size',
-    )?.SetProp.value,
+    patches.findLast((patch) => patch.SetProp?.id === retry && patch.SetProp.prop === 'Size')
+      ?.SetProp.value,
     { ControlSize: 'Small' },
     'shared recovery actions use the compact control height',
   );
@@ -107,6 +106,11 @@ test('frame failures lead with recovery and disclose bounded diagnostics separat
   assert(visible.includes('Technical details'));
   assert(visible.includes('expected frame 8, received frame 10'));
   assert(patches.some((patch) => patch.Create?.tag === 'Expander'));
+  assert(
+    patches.some(
+      (patch) => patch.SetProp?.prop === 'Variant' && patch.SetProp.value?.Variant === 'Filled',
+    ),
+  );
 });
 
 test('partial failures accept an exact warning summary without fabricating a retry', () => {
@@ -127,9 +131,8 @@ test('partial failures accept an exact warning summary without fabricating a ret
   )?.SetProp.id;
   assert.ok(summary, 'the caller-authored partial-result summary is retained');
   assert.deepEqual(
-    patches.findLast(
-      (patch) => patch.SetProp?.id === summary && patch.SetProp.prop === 'Tone',
-    )?.SetProp.value,
+    patches.findLast((patch) => patch.SetProp?.id === summary && patch.SetProp.prop === 'Tone')
+      ?.SetProp.value,
     { Tone: 'Warning' },
   );
   assert.equal(

@@ -784,6 +784,17 @@ mod unix {
                         "{width_name} network recovery {label:?} fell below the first 320px"
                     );
                 }
+                let retry = find_button(&root, "Retry networks");
+                assert!(retry.has_css_class("variant-filled"));
+                assert!(retry.has_css_class("tone-accent"));
+                assert_standard_action(&retry, width_name, "network recovery", 28);
+                assert_filled_button_state_pixels(
+                    &window,
+                    &root,
+                    &retry,
+                    true,
+                    &format!("{width_name} network recovery"),
+                );
             }
             if fixture == "populated" && name == "networks" {
                 let title = find_heading(&root, "Networks");

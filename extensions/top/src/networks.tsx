@@ -630,8 +630,8 @@ function NetworkInventoryFailure({
                   ? 'Refresh networks'
                   : 'Retry networks'
           }
-          variant={denied ? 'filled' : 'outline'}
-          tone="accent"
+          variant="filled"
+          tone={retrying && !denied ? 'neutral' : 'accent'}
           size="small"
           enabled={!retrying}
           onInvoke={denied ? onOpenExtensions : onRetry}
