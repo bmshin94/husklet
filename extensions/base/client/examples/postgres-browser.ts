@@ -57,12 +57,13 @@ try {
   let rows = 0;
   const preview: unknown[] = [];
   const notices: string[] = [];
+  let queryCheckpoint: { after: number; lines: number; partialLine: readonly number[] } | undefined;
   try {
     const result = await workspace(session).networks.withTemporaryConnection(
       configuration.networkId,
       container.id,
       () =>
-        containers.execJsonLines(
+        containers.execJsonLinePages(
           container.id,
           container.generation,
           {
@@ -85,13 +86,21 @@ try {
             onStarted: (id) => {
               executionId = id;
             },
-            onStderr: (text) => {
-              if (notices.length < 25) notices.push(text.slice(0, 4_096));
-            },
           },
-          (value) => {
-            rows += 1;
-            if (preview.length < 25) preview.push(value);
+          (page) => {
+            for (const value of page.values) {
+              rows += 1;
+              if (preview.length < 25) preview.push(value);
+            }
+            if (page.stderr.length > 0 && notices.length < 25) {
+              notices.push(new TextDecoder().decode(Uint8Array.from(page.stderr)).slice(0, 4_096));
+            }
+            // Persist this together with rows/notices in the same UI-state transaction.
+            queryCheckpoint = {
+              after: page.next,
+              lines: page.lines,
+              partialLine: page.partialLine,
+            };
           },
         ),
       { aliases: ['postgres-inspector'] },
@@ -106,7 +115,7 @@ try {
         `psql exited with status ${execution.exit_code ?? 'unknown'}: ${new TextDecoder().decode(Uint8Array.from(output.stderr))}`,
       );
     }
-    process.stdout.write(`${JSON.stringify({ rows, preview, notices })}\n`);
+    process.stdout.write(`${JSON.stringify({ rows, preview, notices, queryCheckpoint })}\n`);
   } catch (error) {
     if (error instanceof TemporaryNetworkConnectionAcquisitionError) {
       // The host may have attached before its reply was lost. Reconnect, inspect complete
@@ -164,10 +173,17 @@ try {
                   new TextDecoder().decode(Uint8Array.from(page.stderr)).slice(0, 4_096),
                 );
               }
+              queryCheckpoint = {
+                after: page.next,
+                lines: page.lines,
+                partialLine: page.partialLine,
+              };
             },
           );
           if (resumed.complete && resumed.execution.exit_code === 0) {
-            process.stdout.write(`${JSON.stringify({ rows, preview, notices })}\n`);
+            process.stdout.write(
+              `${JSON.stringify({ rows, preview, notices, queryCheckpoint })}\n`,
+            );
             recovered = true;
           }
         } finally {

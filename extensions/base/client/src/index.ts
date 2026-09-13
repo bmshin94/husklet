@@ -2166,6 +2166,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
                   values: Object.freeze(values),
                   stderr: Object.freeze(stderr),
                   next: page.next,
+                  lines: candidateLines,
+                  partialLine: Object.freeze([...candidate]),
                 }),
               );
               pending = candidate;
@@ -2884,6 +2886,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
                   values: Object.freeze(values),
                   stderr: Object.freeze(stderr),
                   next: page.next,
+                  lines: candidateLines,
+                  partialLine: Object.freeze([...candidate]),
                 }),
               );
               pending = candidate;

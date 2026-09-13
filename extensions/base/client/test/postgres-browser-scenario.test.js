@@ -93,7 +93,15 @@ test('Postgres browser atomically resumes a split JSON row over fragmented Unix 
       },
       (page) => committed.push(page),
     );
-    assert.deepEqual(committed, [{ values: [{ id: 1 }, { id: 2 }], stderr: [], next: 8 }]);
+    assert.deepEqual(committed, [
+      {
+        values: [{ id: 1 }, { id: 2 }],
+        stderr: [],
+        next: 8,
+        lines: 2,
+        partialLine: [],
+      },
+    ]);
     assert.equal(result.complete, true);
     assert.equal(result.lines, 2);
     assert.deepEqual(result.partialLine, []);

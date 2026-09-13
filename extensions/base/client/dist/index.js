@@ -1660,6 +1660,8 @@ export function workspace(session, { signal } = {}) {
                             values: Object.freeze(values),
                             stderr: Object.freeze(stderr),
                             next: page.next,
+                            lines: candidateLines,
+                            partialLine: Object.freeze([...candidate]),
                         }));
                         pending = candidate;
                         lines = candidateLines;
@@ -2247,6 +2249,8 @@ export function workspace(session, { signal } = {}) {
                             values: Object.freeze(values),
                             stderr: Object.freeze(stderr),
                             next: page.next,
+                            lines: candidateLines,
+                            partialLine: Object.freeze([...candidate]),
                         }));
                         pending = candidate;
                         lines = candidateLines;

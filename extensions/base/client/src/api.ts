@@ -1348,6 +1348,10 @@ export interface WorkspaceApi {
         values: readonly Value[];
         stderr: readonly number[];
         next: number;
+        /** Complete decoded stdout records through `next`. */
+        lines: number;
+        /** Unterminated stdout bytes through `next`; persist atomically with values and next. */
+        partialLine: readonly number[];
       }) => void | Promise<void>,
     ): Promise<
       | {
@@ -1533,6 +1537,10 @@ export interface WorkspaceApi {
         values: readonly Value[];
         stderr: readonly number[];
         next: number;
+        /** Complete decoded stdout records through `next`. */
+        lines: number;
+        /** Unterminated stdout bytes through `next`; persist atomically with values and next. */
+        partialLine: readonly number[];
       }) => void | Promise<void>,
     ): Promise<{
       executionId: string;
