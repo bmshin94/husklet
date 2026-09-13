@@ -55,6 +55,7 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
   const [recovery, setRecovery] = React.useState<'load' | 'save' | null>(null);
   const [hydrated, setHydrated] = React.useState(false);
   const [expanded, setExpanded] = React.useState('runtime');
+  const editRevision = React.useRef(0);
   const load = React.useCallback(async () => {
     try {
       const current = await api.info();
@@ -75,6 +76,7 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
     void load();
   }, [load]);
   const changed = () => {
+    editRevision.current += 1;
     setSaved('');
   };
   const change = <K extends keyof WorkspaceConfiguration>(
@@ -105,6 +107,7 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
     }
     setSaving(true);
     setRecovery(null);
+    const submittedRevision = editRevision.current;
     try {
       const candidate = withNumbers(configuration, numbers);
       validate(candidate);
@@ -154,14 +157,18 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
           return;
         }
       }
-      setConfiguration(updated);
       setObserved(updated);
-      setNumbers(numberDraft(updated));
       setError('');
       setRecovery(null);
-      setSaved(
-        'Workspace settings saved. Reopen panes or restart the workspace for runtime changes.',
-      );
+      if (editRevision.current === submittedRevision) {
+        setConfiguration(updated);
+        setNumbers(numberDraft(updated));
+        setSaved(
+          'Workspace settings saved. Reopen panes or restart the workspace for runtime changes.',
+        );
+      } else {
+        setSaved('Earlier changes saved. Your newer edits are still ready to save.');
+      }
     } catch (cause) {
       setError(`No successful save was confirmed. Your edits are retained: ${message(cause)}`);
       setRecovery('save');

@@ -163,6 +163,19 @@ export function ButtonWorkbench() {
           wrap
         />
       </SectionBlock>
+      <SectionBlock title="Pointer states">
+        <Text
+          label="Hover previews an available action; pressed confirms pointer-down without moving or resizing the control. Compare each state across the three common emphasis levels."
+          color="text-dim"
+          wrap
+        />
+        {(['filled', 'outline', 'ghost'] as const).map((emphasis) => (
+          <Row key={emphasis} gap={2} wrap align="center">
+            <Button label={`Hover ${emphasis}`} variant={emphasis} tone="accent" />
+            <Button label={`Pressed ${emphasis}`} variant={emphasis} tone="accent" />
+          </Row>
+        ))}
+      </SectionBlock>
       <SectionBlock title="Inline reset action">
         <Row gap={1} width="fill" align="center" justify="stretch">
           <Text label="Product access · 5/6" color="text-dim" />

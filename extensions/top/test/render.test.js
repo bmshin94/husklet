@@ -1167,6 +1167,59 @@ test('workspace save failure retains edits and offers an explicit retry', async 
   assert.equal(attempts, 2);
 });
 
+test('workspace save reply cannot erase a newer edit made while the request is pending', async () => {
+  const configuration = {
+    generation: 'a'.repeat(32),
+    configuration_revision: 'b'.repeat(32),
+    name: 'daily',
+    architecture: 'amd64',
+    image: 'alpine:3.20',
+    storage: null,
+    shell: '/bin/sh',
+    cpus: 2,
+    memory_mb: 1024,
+    environment: [],
+    mounts: [],
+    docker_socket: false,
+    scrollback: 10000,
+    vpn: null,
+    execution_lifetime: 'live',
+    terminal: {
+      font_family: null,
+      font_size: null,
+      foreground: null,
+      background: null,
+      cursor_shape: null,
+      cursor_blink: false,
+    },
+  };
+  let finish;
+  const update = new Promise((resolve) => {
+    finish = resolve;
+  });
+  const managed = {
+    ...api,
+    info: async () => ({ name: 'daily', architecture: 'amd64', image: 'alpine:3.20' }),
+    inspect: async () => configuration,
+    update: async () => update,
+  };
+  const stage = host();
+  stage.render(h(Workspace, { api: managed }));
+  await settled();
+  await settled();
+  change(stage, 'Automatic when empty', '/bin/zsh');
+  invoke(stage, 'Save changes');
+  await settled();
+  change(stage, 'Automatic when empty', '/bin/fish');
+  finish({ ...configuration, shell: '/bin/zsh', configuration_revision: 'c'.repeat(32) });
+  await settled();
+  await settled();
+  assert.equal(fieldValue(stage, 'Automatic when empty'), '/bin/fish');
+  assert.ok(labelled(stage, 'Unsaved changes'));
+  assert.ok(labelled(stage, 'Earlier changes saved. Your newer edits are still ready to save.'));
+  assert.equal(isEnabled(stage, 'Save changes'), true);
+});
+
 test('workspace discard reconnect keeps its draft and offers an honest refresh retry', async () => {
   const configuration = {
     generation: 'a'.repeat(32),

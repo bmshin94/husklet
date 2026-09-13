@@ -505,6 +505,53 @@ mod unix {
                     chrome.remove_css_class("hl-focus-visible-proof");
                     action.unset_state_flags(gtk::StateFlags::FOCUSED | gtk::StateFlags::FOCUS_VISIBLE);
                 }
+                for (state, flag) in [
+                    ("Hover", gtk::StateFlags::PRELIGHT),
+                    ("Pressed", gtk::StateFlags::ACTIVE),
+                ] {
+                    for variant in ["filled", "outline", "ghost"] {
+                        let label = format!("{state} {variant}");
+                        let action = find::<gtk::Button>(&root, |button| {
+                            button_caption(button).as_deref() == Some(label.as_str())
+                        });
+                        assert!(action.is_sensitive() && action.is_focusable());
+                        assert!(action.has_css_class(&format!("variant-{variant}")));
+                        reveal_for_capture(&root, action.upcast_ref());
+                        action.unset_state_flags(gtk::StateFlags::PRELIGHT | gtk::StateFlags::ACTIVE);
+                        settle_toolkit();
+                        let chrome = action.child().expect("stateful Button owns chrome");
+                        let allocation = chrome.allocation();
+                        let before = widget_pixels(&realized_window, action.upcast_ref());
+                        action.set_state_flags(flag, false);
+                        let proof = if state == "Hover" {
+                            "hl-hover-proof"
+                        } else {
+                            "hl-active-proof"
+                        };
+                        // Xvfb cannot place a physical pointer over each offscreen
+                        // specimen. Assert GTK's native state, then mirror the exact
+                        // production selector on its chrome for the pixel proof.
+                        chrome.add_css_class(proof);
+                        settle_toolkit();
+                        std::thread::sleep(std::time::Duration::from_millis(80));
+                        settle_toolkit();
+                        assert!(action.state_flags().contains(flag));
+                        assert_eq!(
+                            chrome.allocation(),
+                            allocation,
+                            "{label} chrome moved when its state changed"
+                        );
+                        let after = widget_pixels(&realized_window, action.upcast_ref());
+                        assert_ne!(before, after, "{label} has no visible native state difference");
+                        capture_widget(
+                            &realized_window,
+                            &chrome,
+                            &format!("Button {state} {variant} {width_name}"),
+                        );
+                        chrome.remove_css_class(proof);
+                        action.unset_state_flags(flag);
+                    }
+                }
             }
         }
         if story == "IconButton" {
@@ -2913,6 +2960,27 @@ mod unix {
         texture
             .save_to_png(directory.join(format!("{name}.png")))
             .expect("Storybook screenshot is written");
+    }
+
+    fn widget_pixels(window: &gtk::Window, widget: &gtk::Widget) -> Vec<u8> {
+        let paintable = gtk::WidgetPaintable::new(Some(widget));
+        window.queue_draw();
+        settle_toolkit();
+        let snapshot = gtk::Snapshot::new();
+        paintable.snapshot(
+            snapshot.upcast_ref::<gtk::gdk::Snapshot>(),
+            f64::from(widget.width()),
+            f64::from(widget.height()),
+        );
+        let node = snapshot.to_node().expect("stateful Button produces a render node");
+        let texture = window
+            .renderer()
+            .expect("Storybook window has a renderer")
+            .render_texture(&node, None);
+        let stride = texture.width() as usize * 4;
+        let mut pixels = vec![0; stride * texture.height() as usize];
+        texture.download(&mut pixels, stride);
+        pixels
     }
 
     fn receive_rerender(wire: &mut Wire<std::os::unix::net::UnixStream>, story: &str) -> hl_gui::Frame {

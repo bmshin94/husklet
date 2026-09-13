@@ -108,6 +108,20 @@ test('Button documents one chrome focus ring across variants and sizes', () => {
   assert(copy.some((label) => label.includes('one accent ring around the visible chrome')));
 });
 
+test('Button exposes enabled hover and pressed specimens for common emphasis levels', () => {
+  const frame = host().render(h(ButtonWorkbench));
+  const buttons = propsFor(frame.patches, 'Button');
+  for (const variant of ['filled', 'outline', 'ghost']) {
+    const expected = variant[0].toUpperCase() + variant.slice(1);
+    for (const state of ['Hover', 'Pressed']) {
+      const specimen = buttons.find((props) => props.Label?.Text === `${state} ${variant}`);
+      assert.ok(specimen, `missing ${state.toLowerCase()} ${variant} specimen`);
+      assert.deepEqual(specimen.Variant, { Variant: expected });
+      assert.notDeepEqual(specimen.Enabled, { Flag: false });
+    }
+  }
+});
+
 test('Button documents a compact reset beside the value it affects', () => {
   const frame = host().render(h(ButtonWorkbench));
   const buttons = propsFor(frame.patches, 'Button');
