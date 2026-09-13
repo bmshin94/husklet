@@ -8,9 +8,9 @@ if (!configuration?.path || !configuration.token || !configuration.spec)
   throw new TypeError('usage: container-create-once.ts JSON(path, token, spec)');
 
 // Persist `token` before this call. If the socket closes after creation but before
-// its reply, reconnect to the same workspace host and repeat this exact call:
+// its reply, reconnect—even after a workspace-host restart—and repeat this exact call:
 // the host returns only the original immutable ID and rejects a token paired
-// with a different spec. A full host restart clears this bounded ledger.
+// with a different spec. Persisted tombstones also survive container removal and name reuse.
 const session = await connect({ path: configuration.path, pendingLimit: 1, timeout: 5_000 });
 try {
   const id = await workspace(session).containers.createOnce(

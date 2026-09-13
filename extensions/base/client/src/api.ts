@@ -1492,8 +1492,9 @@ export interface WorkspaceApi {
     /** Backwards-compatible shorthand for an image and optional container name. */
     create(image: string, name?: string): Promise<string>;
     /**
-     * Create exactly once per authenticated extension incarnation and current workspace-host lifetime;
-     * reuse the token after socket reconnect. A host restart clears this bounded 4096-record ledger.
+     * Create exactly once per authenticated extension incarnation, including across socket and host restarts.
+     * Tokens remain bound to the full specification and immutable result until that incarnation is retired.
+     * The fixed 4096-token ledger never evicts entries; reinstall to begin a new incarnation after exhaustion.
      */
     createOnce(token: string, configuration: ContainerCreateSpec): Promise<string>;
     start(id: string, generation: number): Promise<void>;

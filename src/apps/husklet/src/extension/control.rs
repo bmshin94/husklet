@@ -5,14 +5,19 @@ use std::time::Duration;
 
 use hl_client::model::{
     Attachment, CreateContainer, DockerMount, EndpointConfig, EndpointsConfig, ExecConfig, ExecStart, ExposedPorts,
-    HostConfig, NetworkingConfig, PortBinding, PortBindings,
+    HostConfig, List, NetworkingConfig, PortBinding, PortBindings,
 };
 use hl_extension::port::{ContainerControl, ContainerCreateSpec, HostError};
+use sha2::Digest as _;
 
 use super::{failure, Bridge};
 
 /// How long a stop waits for the initial process before the daemon forces it.
 const STOP_SECONDS: u64 = 10;
+const PRIVATE_PREFIX: &str = "dev.husklet.private.create-once.";
+const INCARNATION_LABEL: &str = "dev.husklet.private.create-once.incarnation";
+const TOKEN_LABEL: &str = "dev.husklet.private.create-once.token";
+const SPEC_LABEL: &str = "dev.husklet.private.create-once.spec";
 
 /// The container control port over the workspace's container daemon.
 ///
@@ -91,6 +96,26 @@ impl ContainerLifecycle {
         }
     }
 
+    fn digest(spec: &ContainerCreateSpec) -> Result<String, HostError> {
+        let bytes = serde_json::to_vec(spec).map_err(|error| HostError::Failed(error.to_string()))?;
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut encoded = String::with_capacity(64);
+        for byte in sha2::Sha256::digest(bytes) {
+            encoded.push(HEX[usize::from(byte >> 4)] as char);
+            encoded.push(HEX[usize::from(byte & 15)] as char);
+        }
+        Ok(encoded)
+    }
+
+    fn reject_private_labels(spec: &ContainerCreateSpec) -> Result<(), HostError> {
+        if spec.labels.iter().any(|(name, _)| name.starts_with(PRIVATE_PREFIX)) {
+            return Err(HostError::Conflict(
+                "container label uses a host-reserved namespace".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn execution(
         command: &[String],
         environment: &[(String, hl_extension::ExecEnvironmentValue)],
@@ -148,6 +173,7 @@ impl ContainerControl for ContainerLifecycle {
     }
 
     fn create_spec(&self, spec: &ContainerCreateSpec) -> Result<String, HostError> {
+        Self::reject_private_labels(spec)?;
         let request = Self::creation(spec);
         let client = self.bridge.client();
         let created = self
@@ -155,6 +181,51 @@ impl ContainerControl for ContainerLifecycle {
             .wait(client.containers().create(&request, Some(&spec.name)))
             .map_err(|error| failure(&error))?;
         Ok(created.id)
+    }
+
+    fn create_spec_once(
+        &self,
+        spec: &ContainerCreateSpec,
+        incarnation: &str,
+        token: &str,
+    ) -> Result<String, HostError> {
+        Self::reject_private_labels(spec)?;
+        let mut request = Self::creation(spec);
+        request.labels.insert(INCARNATION_LABEL.into(), incarnation.into());
+        request.labels.insert(TOKEN_LABEL.into(), token.into());
+        request.labels.insert(SPEC_LABEL.into(), Self::digest(spec)?);
+        let client = self.bridge.client();
+        let created = self
+            .bridge
+            .wait(client.containers().create(&request, Some(&spec.name)))
+            .map_err(|error| failure(&error))?;
+        Ok(created.id)
+    }
+
+    fn reconcile_spec_once(
+        &self,
+        spec: &ContainerCreateSpec,
+        incarnation: &str,
+        token: &str,
+    ) -> Result<Vec<String>, HostError> {
+        let digest = Self::digest(spec)?;
+        let client = self.bridge.client();
+        let containers = self
+            .bridge
+            .wait(client.containers().list(List::default().all()))
+            .map_err(|error| failure(&error))?;
+        Ok(containers
+            .into_iter()
+            .filter(|container| {
+                container
+                    .labels
+                    .get(INCARNATION_LABEL)
+                    .is_some_and(|value| value == incarnation)
+                    && container.labels.get(TOKEN_LABEL).is_some_and(|value| value == token)
+                    && container.labels.get(SPEC_LABEL).is_some_and(|value| value == &digest)
+            })
+            .map(|container| container.details.metadata.id)
+            .collect())
     }
 
     /// # Errors
@@ -365,6 +436,48 @@ impl ContainerControl for ContainerLifecycle {
             ));
         }
         Ok(created.id)
+    }
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::{ContainerLifecycle, PRIVATE_PREFIX};
+    use hl_extension::port::{ContainerCreateSpec, HostError};
+
+    fn spec() -> ContainerCreateSpec {
+        ContainerCreateSpec {
+            image: "postgres:17".into(),
+            name: "database".into(),
+            hostname: None,
+            entrypoint: None,
+            command: Vec::new(),
+            environment: Vec::new(),
+            working_directory: None,
+            user: None,
+            labels: Vec::new(),
+            mounts: Vec::new(),
+            network: None,
+            ports: Vec::new(),
+            memory_mb: None,
+            cpus: None,
+            pids_limit: None,
+        }
+    }
+
+    #[test]
+    fn provenance_digest_binds_the_full_spec_and_reserved_labels_cannot_be_spoofed() {
+        let first = spec();
+        let mut changed = first.clone();
+        changed.command.push("postgres".into());
+        assert_ne!(
+            ContainerLifecycle::digest(&first).unwrap(),
+            ContainerLifecycle::digest(&changed).unwrap()
+        );
+        changed.labels.push((format!("{PRIVATE_PREFIX}token"), "forged".into()));
+        assert!(matches!(
+            ContainerLifecycle::reject_private_labels(&changed),
+            Err(HostError::Conflict(_))
+        ));
     }
 }
 

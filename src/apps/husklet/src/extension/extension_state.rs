@@ -6,7 +6,10 @@ use std::os::fd::{AsFd, OwnedFd};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use hl_extension::port::{ExtensionCredential, ExtensionPreferences, ExtensionState, ExtensionStateStore, HostError, PreferenceValue};
+use hl_extension::port::{
+    ContainerCreateSpec, ContainerCreationRecord, ContainerCreationReservation, ExtensionCredential,
+    ExtensionPreferences, ExtensionState, ExtensionStateStore, HostError, PreferenceValue,
+};
 use sha2::Digest as _;
 
 const MAX_STATE_BYTES: usize = 1024 * 1024;
@@ -15,6 +18,8 @@ const MAX_PREFERENCES: usize = 64;
 const MAX_CREDENTIALS: usize = 64;
 const MAX_CREDENTIAL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CREDENTIAL_FILE_BYTES: usize = 4 * 1024 * 1024 + 16 * 1024;
+const MAX_CREATIONS: usize = 4_096;
+const MAX_CREATION_FILE_BYTES: usize = 16 * 1024 * 1024;
 static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 
 pub struct StateBlob {
@@ -23,6 +28,7 @@ pub struct StateBlob {
     lock_name: CString,
     preferences_name: CString,
     credentials_name: CString,
+    creations_name: CString,
 }
 
 impl StateBlob {
@@ -34,6 +40,7 @@ impl StateBlob {
         rustix::fs::fchmod(&directory, rustix::fs::Mode::from_raw_mode(0o700))?;
         let preferences_name = CString::new(format!("{name}.preferences")).expect("extension names are NUL-free");
         let credentials_name = CString::new(format!("{name}.credentials")).expect("extension names are NUL-free");
+        let creations_name = CString::new(format!("{name}.create-once")).expect("extension names are NUL-free");
         let lock_name = CString::new(format!(".{name}.state.lock")).expect("extension names are NUL-free");
         let name = CString::new(format!("{name}.state")).expect("extension names are NUL-free");
         Ok(Self {
@@ -42,6 +49,7 @@ impl StateBlob {
             lock_name,
             preferences_name,
             credentials_name,
+            creations_name,
         })
     }
 
@@ -59,6 +67,11 @@ impl StateBlob {
             Err(error) => Err(Self::failure(error)),
         }?;
         match rustix::fs::unlinkat(&self.directory, &self.credentials_name, rustix::fs::AtFlags::empty()) {
+            Ok(()) => rustix::fs::fsync(&self.directory).map_err(Self::failure),
+            Err(rustix::io::Errno::NOENT) => Ok(()),
+            Err(error) => Err(Self::failure(error)),
+        }?;
+        match rustix::fs::unlinkat(&self.directory, &self.creations_name, rustix::fs::AtFlags::empty()) {
             Ok(()) => rustix::fs::fsync(&self.directory).map_err(Self::failure),
             Err(rustix::io::Errno::NOENT) => Ok(()),
             Err(error) => Err(Self::failure(error)),
@@ -209,7 +222,8 @@ impl StateBlob {
 
     fn read_credentials_unlocked(&self) -> Result<CredentialFile, HostError> {
         let descriptor = match rustix::fs::openat(
-            &self.directory, &self.credentials_name,
+            &self.directory,
+            &self.credentials_name,
             rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::NOFOLLOW,
             rustix::fs::Mode::empty(),
         ) {
@@ -219,22 +233,35 @@ impl StateBlob {
         };
         let status = rustix::fs::fstat(&descriptor).map_err(Self::failure)?;
         if rustix::fs::FileType::from_raw_mode(status.st_mode) != rustix::fs::FileType::RegularFile
-            || status.st_size < 0 || status.st_size as usize > MAX_CREDENTIAL_FILE_BYTES
+            || status.st_size < 0
+            || status.st_size as usize > MAX_CREDENTIAL_FILE_BYTES
             || status.st_mode & 0o077 != 0
         {
-            return Err(HostError::Failed("extension credential store is not a private bounded regular file".into()));
+            return Err(HostError::Failed(
+                "extension credential store is not a private bounded regular file".into(),
+            ));
         }
         let mut bytes = Vec::with_capacity(status.st_size as usize);
-        std::fs::File::from(descriptor).take((MAX_CREDENTIAL_FILE_BYTES + 1) as u64)
-            .read_to_end(&mut bytes).map_err(Self::failure)?;
+        std::fs::File::from(descriptor)
+            .take((MAX_CREDENTIAL_FILE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(Self::failure)?;
         let file: CredentialFile = serde_json::from_slice(&bytes).map_err(Self::failure)?;
         let mut keys = std::collections::BTreeSet::new();
         if file.entries.len() > MAX_CREDENTIALS
-            || file.entries.iter().any(|(key, value)| key.is_empty() || key.len() > 64
-                || !key.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-                || value.len() > MAX_CREDENTIAL_VALUE_BYTES || !keys.insert(key))
+            || file.entries.iter().any(|(key, value)| {
+                key.is_empty()
+                    || key.len() > 64
+                    || !key
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+                    || value.len() > MAX_CREDENTIAL_VALUE_BYTES
+                    || !keys.insert(key)
+            })
         {
-            return Err(HostError::Failed("extension credential store is invalid or oversized".into()));
+            return Err(HostError::Failed(
+                "extension credential store is invalid or oversized".into(),
+            ));
         }
         Ok(file)
     }
@@ -242,25 +269,122 @@ impl StateBlob {
     fn publish_credentials_unlocked(&self, credentials: &CredentialFile) -> Result<(), HostError> {
         let bytes = serde_json::to_vec(credentials).map_err(Self::failure)?;
         if bytes.len() > MAX_CREDENTIAL_FILE_BYTES {
-            return Err(HostError::Conflict("extension credentials exceed their 4 MiB storage quota".into()));
+            return Err(HostError::Conflict(
+                "extension credentials exceed their 4 MiB storage quota".into(),
+            ));
         }
-        let temporary = CString::new(format!(".{}.{}-{}.tmp", self.credentials_name.to_string_lossy(), std::process::id(), TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)))
-            .expect("generated credential filenames are NUL-free");
-        let descriptor = rustix::fs::openat(&self.directory, &temporary,
-            rustix::fs::OFlags::WRONLY | rustix::fs::OFlags::CREATE | rustix::fs::OFlags::EXCL | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::NOFOLLOW,
-            rustix::fs::Mode::from_raw_mode(0o600)).map_err(Self::failure)?;
+        let temporary = CString::new(format!(
+            ".{}.{}-{}.tmp",
+            self.credentials_name.to_string_lossy(),
+            std::process::id(),
+            TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)
+        ))
+        .expect("generated credential filenames are NUL-free");
+        let descriptor = rustix::fs::openat(
+            &self.directory,
+            &temporary,
+            rustix::fs::OFlags::WRONLY
+                | rustix::fs::OFlags::CREATE
+                | rustix::fs::OFlags::EXCL
+                | rustix::fs::OFlags::CLOEXEC
+                | rustix::fs::OFlags::NOFOLLOW,
+            rustix::fs::Mode::from_raw_mode(0o600),
+        )
+        .map_err(Self::failure)?;
         let mut file = std::fs::File::from(descriptor);
-        let prepared = file.write_all(&bytes).and_then(|()| file.sync_all()); drop(file);
-        if let Err(error) = prepared { let _ = rustix::fs::unlinkat(&self.directory, &temporary, rustix::fs::AtFlags::empty()); return Err(Self::failure(error)); }
+        let prepared = file.write_all(&bytes).and_then(|()| file.sync_all());
+        drop(file);
+        if let Err(error) = prepared {
+            let _ = rustix::fs::unlinkat(&self.directory, &temporary, rustix::fs::AtFlags::empty());
+            return Err(Self::failure(error));
+        }
         let published = rustix::fs::renameat(&self.directory, &temporary, &self.directory, &self.credentials_name)
             .and_then(|()| rustix::fs::fsync(&self.directory));
-        if published.is_err() { let _ = rustix::fs::unlinkat(&self.directory, &temporary, rustix::fs::AtFlags::empty()); }
+        if published.is_err() {
+            let _ = rustix::fs::unlinkat(&self.directory, &temporary, rustix::fs::AtFlags::empty());
+        }
         published.map_err(Self::failure)
     }
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
-struct CredentialFile { revision: u64, entries: Vec<(String, Vec<u8>)> }
+struct CredentialFile {
+    revision: u64,
+    entries: Vec<(String, Vec<u8>)>,
+}
+
+#[derive(Default, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct CreationFile {
+    incarnation: String,
+    entries: std::collections::BTreeMap<String, ContainerCreationRecord>,
+}
+
+impl StateBlob {
+    fn read_creations_unlocked(&self) -> Result<Option<CreationFile>, HostError> {
+        let descriptor = match rustix::fs::openat(
+            &self.directory,
+            &self.creations_name,
+            rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::NOFOLLOW,
+            rustix::fs::Mode::empty(),
+        ) {
+            Ok(descriptor) => descriptor,
+            Err(rustix::io::Errno::NOENT) => return Ok(None),
+            Err(error) => return Err(Self::failure(error)),
+        };
+        let status = rustix::fs::fstat(&descriptor).map_err(Self::failure)?;
+        if rustix::fs::FileType::from_raw_mode(status.st_mode) != rustix::fs::FileType::RegularFile
+            || status.st_size < 0
+            || status.st_size as usize > MAX_CREATION_FILE_BYTES
+            || status.st_mode & 0o077 != 0
+        {
+            return Err(HostError::Failed("container creation ledger is not a private bounded regular file".into()));
+        }
+        serde_json::from_reader(std::fs::File::from(descriptor))
+            .map(Some)
+            .map_err(|error| HostError::Failed(format!("container creation ledger is corrupt: {error}")))
+    }
+
+    fn write_creations_unlocked(&self, ledger: &CreationFile) -> Result<(), HostError> {
+        let bytes = serde_json::to_vec(ledger).map_err(Self::failure)?;
+        if bytes.len() > MAX_CREATION_FILE_BYTES {
+            return Err(HostError::Conflict(
+                "container creation ledger exceeds its fixed quota".into(),
+            ));
+        }
+        let temporary = CString::new(format!(
+            ".{}.{}-{}.tmp",
+            self.creations_name.to_string_lossy(),
+            std::process::id(),
+            TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)
+        ))
+        .expect("generated state filenames are NUL-free");
+        let descriptor = rustix::fs::openat(
+            &self.directory,
+            &temporary,
+            rustix::fs::OFlags::WRONLY
+                | rustix::fs::OFlags::CREATE
+                | rustix::fs::OFlags::EXCL
+                | rustix::fs::OFlags::CLOEXEC
+                | rustix::fs::OFlags::NOFOLLOW,
+            rustix::fs::Mode::from_raw_mode(0o600),
+        )
+        .map_err(Self::failure)?;
+        let mut file = std::fs::File::from(descriptor);
+        let prepared = file.write_all(&bytes).and_then(|()| file.sync_all());
+        drop(file);
+        if let Err(error) = prepared {
+            let _ = rustix::fs::unlinkat(&self.directory, &temporary, rustix::fs::AtFlags::empty());
+            return Err(Self::failure(error));
+        }
+        let published = rustix::fs::renameat(&self.directory, &temporary, &self.directory, &self.creations_name)
+            .and_then(|()| rustix::fs::fsync(&self.directory));
+        if published.is_err() {
+            let _ = rustix::fs::unlinkat(&self.directory, &temporary, rustix::fs::AtFlags::empty());
+        }
+        published.map_err(Self::failure)
+    }
+}
 
 impl ExtensionStateStore for StateBlob {
     fn read(&self) -> Result<ExtensionState, HostError> {
@@ -328,6 +452,70 @@ impl ExtensionStateStore for StateBlob {
         self.remove_unlocked()
     }
 
+    fn reserve_container_creation(
+        &self,
+        incarnation: &str,
+        token: &str,
+        spec: &ContainerCreateSpec,
+    ) -> Result<ContainerCreationReservation, HostError> {
+        let lock = self.lock()?;
+        fs2::FileExt::lock_exclusive(&lock).map_err(Self::failure)?;
+        let mut ledger = self.read_creations_unlocked()?.unwrap_or_default();
+        if ledger.incarnation != incarnation {
+            ledger = CreationFile {
+                incarnation: incarnation.to_owned(),
+                entries: Default::default(),
+            };
+        }
+        if let Some(record) = ledger.entries.get(token) {
+            return Ok(ContainerCreationReservation::Existing(record.clone()));
+        }
+        if ledger.entries.len() >= MAX_CREATIONS {
+            return Err(HostError::Conflict(
+                "container creation ledger reached its fixed 4096-token capacity; reinstall the extension to retire this incarnation".into(),
+            ));
+        }
+        ledger.entries.insert(
+            token.to_owned(),
+            ContainerCreationRecord {
+                spec: spec.clone(),
+                id: None,
+            },
+        );
+        self.write_creations_unlocked(&ledger)?;
+        Ok(ContainerCreationReservation::New)
+    }
+
+    fn commit_container_creation(
+        &self,
+        incarnation: &str,
+        token: &str,
+        spec: &ContainerCreateSpec,
+        id: &str,
+    ) -> Result<(), HostError> {
+        let lock = self.lock()?;
+        fs2::FileExt::lock_exclusive(&lock).map_err(Self::failure)?;
+        let mut ledger = self
+            .read_creations_unlocked()?
+            .ok_or_else(|| HostError::Failed("container creation ledger disappeared before commit".into()))?;
+        if ledger.incarnation != incarnation {
+            return Err(HostError::Conflict(
+                "container creation belongs to a retired extension incarnation".into(),
+            ));
+        }
+        let record = ledger
+            .entries
+            .get_mut(token)
+            .ok_or_else(|| HostError::Failed("container creation reservation disappeared before commit".into()))?;
+        if record.spec != *spec || record.id.as_deref().is_some_and(|recorded| recorded != id) {
+            return Err(HostError::Conflict(
+                "container creation reservation does not match its commit".into(),
+            ));
+        }
+        record.id = Some(id.to_owned());
+        self.write_creations_unlocked(&ledger)
+    }
+
     fn preferences(&self) -> Result<ExtensionPreferences, HostError> {
         let lock = self.lock()?;
         fs2::FileExt::lock_shared(&lock).map_err(Self::failure)?;
@@ -380,30 +568,64 @@ impl ExtensionStateStore for StateBlob {
     }
 
     fn credential(&self, key: &str) -> Result<ExtensionCredential, HostError> {
-        let lock = self.lock()?; fs2::FileExt::lock_shared(&lock).map_err(Self::failure)?;
+        let lock = self.lock()?;
+        fs2::FileExt::lock_shared(&lock).map_err(Self::failure)?;
         let credentials = self.read_credentials_unlocked()?;
-        Ok(ExtensionCredential { key: key.to_owned(), revision: credentials.revision, value: credentials.entries.iter().find(|(current, _)| current == key).map(|(_, value)| value.clone()) })
+        Ok(ExtensionCredential {
+            key: key.to_owned(),
+            revision: credentials.revision,
+            value: credentials
+                .entries
+                .iter()
+                .find(|(current, _)| current == key)
+                .map(|(_, value)| value.clone()),
+        })
     }
 
     fn credential_set(&self, observed: u64, key: &str, value: &[u8]) -> Result<u64, HostError> {
-        let lock = self.lock()?; fs2::FileExt::lock_exclusive(&lock).map_err(Self::failure)?;
+        let lock = self.lock()?;
+        fs2::FileExt::lock_exclusive(&lock).map_err(Self::failure)?;
         let mut credentials = self.read_credentials_unlocked()?;
-        if credentials.revision != observed { return Err(HostError::Conflict("extension credentials changed after they were read".into())); }
-        if let Some((_, current)) = credentials.entries.iter_mut().find(|(current, _)| current == key) { current.clear(); current.extend_from_slice(value); }
-        else if credentials.entries.len() < MAX_CREDENTIALS { credentials.entries.push((key.to_owned(), value.to_vec())); }
-        else { return Err(HostError::Conflict("extension credentials are limited to 64 entries".into())); }
+        if credentials.revision != observed {
+            return Err(HostError::Conflict(
+                "extension credentials changed after they were read".into(),
+            ));
+        }
+        if let Some((_, current)) = credentials.entries.iter_mut().find(|(current, _)| current == key) {
+            current.clear();
+            current.extend_from_slice(value);
+        } else if credentials.entries.len() < MAX_CREDENTIALS {
+            credentials.entries.push((key.to_owned(), value.to_vec()));
+        } else {
+            return Err(HostError::Conflict(
+                "extension credentials are limited to 64 entries".into(),
+            ));
+        }
         credentials.entries.sort_by(|left, right| left.0.cmp(&right.0));
-        credentials.revision = credentials.revision.checked_add(1).ok_or_else(|| HostError::Conflict("extension credential revision is exhausted".into()))?;
-        self.publish_credentials_unlocked(&credentials)?; Ok(credentials.revision)
+        credentials.revision = credentials
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| HostError::Conflict("extension credential revision is exhausted".into()))?;
+        self.publish_credentials_unlocked(&credentials)?;
+        Ok(credentials.revision)
     }
 
     fn credential_remove(&self, observed: u64, key: &str) -> Result<u64, HostError> {
-        let lock = self.lock()?; fs2::FileExt::lock_exclusive(&lock).map_err(Self::failure)?;
+        let lock = self.lock()?;
+        fs2::FileExt::lock_exclusive(&lock).map_err(Self::failure)?;
         let mut credentials = self.read_credentials_unlocked()?;
-        if credentials.revision != observed { return Err(HostError::Conflict("extension credentials changed after they were read".into())); }
+        if credentials.revision != observed {
+            return Err(HostError::Conflict(
+                "extension credentials changed after they were read".into(),
+            ));
+        }
         credentials.entries.retain(|(current, _)| current != key);
-        credentials.revision = credentials.revision.checked_add(1).ok_or_else(|| HostError::Conflict("extension credential revision is exhausted".into()))?;
-        self.publish_credentials_unlocked(&credentials)?; Ok(credentials.revision)
+        credentials.revision = credentials
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| HostError::Conflict("extension credential revision is exhausted".into()))?;
+        self.publish_credentials_unlocked(&credentials)?;
+        Ok(credentials.revision)
     }
 }
 
@@ -442,15 +664,117 @@ fn identity(contents: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::os::unix::fs::{symlink, PermissionsExt};
     use std::path::Path;
 
-    use hl_extension::port::ExtensionStateStore as _;
+    use hl_extension::port::{ContainerCreateSpec, ContainerCreationReservation, ExtensionStateStore as _, HostError};
 
-    use super::{MAX_STATE_BYTES, StateBlob};
+    use super::{ContainerCreationRecord, CreationFile, StateBlob, MAX_CREATIONS, MAX_STATE_BYTES};
 
     fn blob(root: &Path, name: &str) -> StateBlob {
         StateBlob::new(root, &hl_extension::ExtensionName::new(name).unwrap()).unwrap()
+    }
+
+    fn spec(name: &str) -> ContainerCreateSpec {
+        ContainerCreateSpec {
+            image: "docker.io/library/postgres:17".into(),
+            name: name.into(),
+            hostname: None,
+            entrypoint: None,
+            command: Vec::new(),
+            environment: Vec::new(),
+            working_directory: None,
+            user: None,
+            labels: Vec::new(),
+            mounts: Vec::new(),
+            network: None,
+            ports: Vec::new(),
+            memory_mb: None,
+            cpus: None,
+            pids_limit: None,
+        }
+    }
+
+    #[test]
+    fn create_reservations_survive_reopen_bind_spec_and_retire_by_incarnation() {
+        let root = tempfile::tempdir().unwrap();
+        let state = blob(root.path(), "postgres");
+        let wanted = spec("database");
+        assert_eq!(
+            state.reserve_container_creation("a", "01", &wanted).unwrap(),
+            ContainerCreationReservation::New
+        );
+        drop(state);
+
+        let reopened = blob(root.path(), "postgres");
+        let pending = reopened.reserve_container_creation("a", "01", &wanted).unwrap();
+        assert!(
+            matches!(pending, ContainerCreationReservation::Existing(record) if record.id.is_none() && record.spec == wanted)
+        );
+        reopened
+            .commit_container_creation("a", "01", &wanted, "immutable-id")
+            .unwrap();
+        let committed = reopened.reserve_container_creation("a", "01", &wanted).unwrap();
+        assert!(
+            matches!(committed, ContainerCreationReservation::Existing(record) if record.id.as_deref() == Some("immutable-id"))
+        );
+        assert!(reopened
+            .commit_container_creation("a", "01", &spec("replacement"), "other")
+            .is_err());
+
+        // A lifecycle replacement permanently retires the old incarnation and is the only
+        // capacity-reclamation boundary.
+        assert_eq!(
+            reopened.reserve_container_creation("b", "01", &wanted).unwrap(),
+            ContainerCreationReservation::New
+        );
+    }
+
+    #[test]
+    fn corrupt_create_ledger_fails_closed_instead_of_reusing_a_token() {
+        let root = tempfile::tempdir().unwrap();
+        let state = blob(root.path(), "postgres");
+        let path = root.path().join("extensions/state/postgres.create-once");
+        std::fs::write(&path, b"{torn").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(matches!(
+            state.reserve_container_creation("a", "01", &spec("database")),
+            Err(HostError::Failed(detail)) if detail.contains("corrupt")
+        ));
+    }
+
+    #[test]
+    fn create_ledger_cap_never_evicts_a_replay_tombstone() {
+        let root = tempfile::tempdir().unwrap();
+        let state = blob(root.path(), "postgres");
+        let wanted = spec("database");
+        let entries = (0..MAX_CREATIONS)
+            .map(|index| {
+                (
+                    format!("{index:032x}"),
+                    ContainerCreationRecord {
+                        spec: wanted.clone(),
+                        id: Some(format!("id-{index}")),
+                    },
+                )
+            })
+            .collect();
+        state
+            .write_creations_unlocked(&CreationFile {
+                incarnation: "a".into(),
+                entries,
+            })
+            .unwrap();
+        assert!(matches!(
+            state.reserve_container_creation("a", "ffffffffffffffffffffffffffffffff", &wanted),
+            Err(HostError::Conflict(_))
+        ));
+        let first = state
+            .reserve_container_creation("a", "00000000000000000000000000000000", &wanted)
+            .unwrap();
+        assert!(
+            matches!(first, ContainerCreationReservation::Existing(record) if record.id.as_deref() == Some("id-0"))
+        );
     }
 
     #[test]
@@ -477,18 +801,29 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let postgres = blob(root.path(), "postgres");
         let initial = postgres.credential("password").unwrap();
-        assert_eq!(initial.revision, 0); assert_eq!(initial.value, None);
+        assert_eq!(initial.revision, 0);
+        assert_eq!(initial.value, None);
         let revision = postgres.credential_set(0, "password", b"s3cret\0bytes").unwrap();
         assert!(postgres.credential_set(0, "password", b"stale").is_err());
         drop(postgres);
 
         let reopened = blob(root.path(), "postgres");
-        assert_eq!(reopened.credential("password").unwrap().value.as_deref(), Some(b"s3cret\0bytes".as_slice()));
+        assert_eq!(
+            reopened.credential("password").unwrap().value.as_deref(),
+            Some(b"s3cret\0bytes".as_slice())
+        );
         assert_eq!(blob(root.path(), "other").credential("password").unwrap().value, None);
         let path = root.path().join("extensions/state/postgres.credentials");
         assert_eq!(std::fs::metadata(path).unwrap().permissions().mode() & 0o077, 0);
         let removed = reopened.credential_remove(revision, "password").unwrap();
-        assert_eq!(reopened.credential("password").unwrap(), hl_extension::port::ExtensionCredential { key: "password".into(), revision: removed, value: None });
+        assert_eq!(
+            reopened.credential("password").unwrap(),
+            hl_extension::port::ExtensionCredential {
+                key: "password".into(),
+                revision: removed,
+                value: None
+            }
+        );
     }
 
     #[test]

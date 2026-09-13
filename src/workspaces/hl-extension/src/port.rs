@@ -1185,6 +1185,28 @@ pub trait ContainerControl {
         }
     }
 
+    /// Creates with host-private provenance used only to reconcile a lost reply.
+    fn create_spec_once(
+        &self,
+        spec: &ContainerCreateSpec,
+        _incarnation: &str,
+        _token: &str,
+    ) -> Result<String, HostError> {
+        self.create_spec(spec)
+    }
+
+    /// Finds immutable IDs carrying exactly this host-private provenance.
+    fn reconcile_spec_once(
+        &self,
+        _spec: &ContainerCreateSpec,
+        _incarnation: &str,
+        _token: &str,
+    ) -> Result<Vec<String>, HostError> {
+        Err(HostError::Unsupported(
+            "durable container creation reconciliation is unavailable".into(),
+        ))
+    }
+
     /// # Errors
     /// Returns a host failure.
     fn start(&self, reference: &str, expected_id: &str, generation: u64) -> Result<(), HostError>;
@@ -1591,10 +1613,45 @@ pub struct ExtensionCredential {
     pub value: Option<Vec<u8>>,
 }
 
+/// Host-private durable state for one idempotent container creation.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct ContainerCreationRecord {
+    pub spec: ContainerCreateSpec,
+    pub id: Option<String>,
+}
+
+/// Result of durably reserving a create token.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ContainerCreationReservation {
+    New,
+    Existing(ContainerCreationRecord),
+}
+
 pub trait ExtensionStateStore {
     fn read(&self) -> Result<ExtensionState, HostError>;
     fn write(&self, observed: &str, contents: &[u8]) -> Result<String, HostError>;
     fn clear(&self, observed: &str) -> Result<(), HostError>;
+    fn reserve_container_creation(
+        &self,
+        _incarnation: &str,
+        _token: &str,
+        _spec: &ContainerCreateSpec,
+    ) -> Result<ContainerCreationReservation, HostError> {
+        Err(HostError::Unsupported(
+            "durable container creation is unavailable".into(),
+        ))
+    }
+    fn commit_container_creation(
+        &self,
+        _incarnation: &str,
+        _token: &str,
+        _spec: &ContainerCreateSpec,
+        _id: &str,
+    ) -> Result<(), HostError> {
+        Err(HostError::Unsupported(
+            "durable container creation is unavailable".into(),
+        ))
+    }
     fn preferences(&self) -> Result<ExtensionPreferences, HostError> {
         Err(HostError::Unsupported("extension preferences are unavailable".into()))
     }
@@ -1732,8 +1789,8 @@ pub trait WorkspaceFiles {
 #[cfg(test)]
 mod tests {
     use super::{
-        Division, LayoutNode, NetworkStore, Occupant, PANE_LINES, PANE_TEXT_BYTES, PaneSummary, PaneText,
-        bounded_pane_text, pane_lines,
+        bounded_pane_text, pane_lines, Division, LayoutNode, NetworkStore, Occupant, PaneSummary, PaneText, PANE_LINES,
+        PANE_TEXT_BYTES,
     };
 
     #[test]
@@ -1866,71 +1923,59 @@ mod tests {
             protocol: crate::PROTOCOL,
             architectures: vec!["amd64".into()],
         };
-        assert!(
-            super::ExtensionCatalogue {
-                entries: vec![entry.clone()],
-                complete: true,
-            }
-            .validate()
-            .is_ok()
-        );
-        assert!(
-            super::ExtensionCatalogue {
-                entries: vec![entry.clone(), entry.clone()],
-                complete: true,
-            }
-            .validate()
-            .is_err()
-        );
-        assert!(
-            super::ExtensionCatalogue {
-                entries: vec![super::ExtensionCatalogueEntry {
-                    architectures: vec!["amd64".into(), "amd64".into()],
-                    ..entry.clone()
-                }],
-                complete: true,
-            }
-            .validate()
-            .is_err()
-        );
-        assert!(
-            super::ExtensionCatalogue {
-                entries: vec![super::ExtensionCatalogueEntry {
-                    version: String::new(),
-                    ..entry.clone()
-                }],
-                complete: true,
-            }
-            .validate()
-            .is_err()
-        );
+        assert!(super::ExtensionCatalogue {
+            entries: vec![entry.clone()],
+            complete: true,
+        }
+        .validate()
+        .is_ok());
+        assert!(super::ExtensionCatalogue {
+            entries: vec![entry.clone(), entry.clone()],
+            complete: true,
+        }
+        .validate()
+        .is_err());
+        assert!(super::ExtensionCatalogue {
+            entries: vec![super::ExtensionCatalogueEntry {
+                architectures: vec!["amd64".into(), "amd64".into()],
+                ..entry.clone()
+            }],
+            complete: true,
+        }
+        .validate()
+        .is_err());
+        assert!(super::ExtensionCatalogue {
+            entries: vec![super::ExtensionCatalogueEntry {
+                version: String::new(),
+                ..entry.clone()
+            }],
+            complete: true,
+        }
+        .validate()
+        .is_err());
         for categories in [
             Vec::new(),
             vec!["Data".into(), "Data".into()],
             vec!["unsafe\ncategory".into()],
         ] {
-            assert!(
-                super::ExtensionCatalogue {
-                    entries: vec![super::ExtensionCatalogueEntry {
-                        categories,
-                        ..entry.clone()
-                    }],
-                    complete: true,
-                }
-                .validate()
-                .is_err()
-            );
-        }
-        assert!(
-            super::ExtensionCatalogue {
+            assert!(super::ExtensionCatalogue {
                 entries: vec![super::ExtensionCatalogueEntry {
-                    description: "unsafe\nmetadata".into(),
-                    ..entry
+                    categories,
+                    ..entry.clone()
                 }],
                 complete: true,
             }
             .validate()
-            .is_err()
-        );
+            .is_err());
+        }
+        assert!(super::ExtensionCatalogue {
+            entries: vec![super::ExtensionCatalogueEntry {
+                description: "unsafe\nmetadata".into(),
+                ..entry
+            }],
+            complete: true,
+        }
+        .validate()
+        .is_err());
     }
 }

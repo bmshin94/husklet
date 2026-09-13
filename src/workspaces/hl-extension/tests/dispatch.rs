@@ -50,6 +50,7 @@ struct Host {
     fail_notification: Cell<bool>,
     execution_container: RefCell<String>,
     leak_filesystem_paths: Cell<bool>,
+    reconciled_creations: RefCell<Vec<String>>,
 }
 
 impl hl_extension::NotificationSink for Host {
@@ -159,6 +160,7 @@ impl Host {
             fail_notification: Cell::new(false),
             execution_container: RefCell::new("c1".into()),
             leak_filesystem_paths: Cell::new(false),
+            reconciled_creations: RefCell::new(Vec::new()),
         }
     }
 
@@ -305,6 +307,25 @@ impl ContainerControl for Host {
     fn create_spec(&self, spec: &hl_extension::port::ContainerCreateSpec) -> Result<String, HostError> {
         self.ledger.note("containers.create_spec");
         Ok(format!("id-{}", spec.name))
+    }
+
+    fn create_spec_once(
+        &self,
+        spec: &hl_extension::port::ContainerCreateSpec,
+        _: &str,
+        _: &str,
+    ) -> Result<String, HostError> {
+        self.create_spec(spec)
+    }
+
+    fn reconcile_spec_once(
+        &self,
+        _: &hl_extension::port::ContainerCreateSpec,
+        _: &str,
+        _: &str,
+    ) -> Result<Vec<String>, HostError> {
+        self.ledger.note("containers.reconcile_create_once");
+        Ok(self.reconciled_creations.borrow().clone())
     }
 
     fn start(&self, _id: &str, _expected_id: &str, _generation: u64) -> Result<(), HostError> {
@@ -1831,10 +1852,20 @@ fn calls() -> Vec<(Request, Capability)> {
                 token: "0123456789abcdef0123456789abcdef".into(),
                 spec: hl_extension::port::ContainerCreateSpec {
                     image: "docker.io/library/alpine:latest".into(),
-                    name: "x".into(), hostname: None, entrypoint: None, command: Vec::new(),
-                    environment: Vec::new(), working_directory: None, user: None, labels: Vec::new(),
-                    mounts: Vec::new(), network: None, ports: Vec::new(), memory_mb: None,
-                    cpus: None, pids_limit: None,
+                    name: "x".into(),
+                    hostname: None,
+                    entrypoint: None,
+                    command: Vec::new(),
+                    environment: Vec::new(),
+                    working_directory: None,
+                    user: None,
+                    labels: Vec::new(),
+                    mounts: Vec::new(),
+                    network: None,
+                    ports: Vec::new(),
+                    memory_mb: None,
+                    cpus: None,
+                    pids_limit: None,
                 },
             },
             Capability::ContainerCreate,
@@ -2560,8 +2591,48 @@ fn every_authoritative_request_has_one_explicit_capability_and_is_denied_before_
 
 #[test]
 fn every_call_succeeds_with_its_capability_and_fails_without_it() {
+    struct CreateState(RefCell<Option<hl_extension::port::ContainerCreationRecord>>);
+    impl ExtensionStateStore for CreateState {
+        fn read(&self) -> Result<hl_extension::port::ExtensionState, HostError> {
+            Err(HostError::Unsupported("unused".into()))
+        }
+        fn write(&self, _: &str, _: &[u8]) -> Result<String, HostError> {
+            Err(HostError::Unsupported("unused".into()))
+        }
+        fn clear(&self, _: &str) -> Result<(), HostError> {
+            Err(HostError::Unsupported("unused".into()))
+        }
+        fn reserve_container_creation(
+            &self,
+            _: &str,
+            _: &str,
+            spec: &hl_extension::port::ContainerCreateSpec,
+        ) -> Result<hl_extension::port::ContainerCreationReservation, HostError> {
+            let existing = self.0.borrow().clone();
+            if let Some(record) = existing {
+                Ok(hl_extension::port::ContainerCreationReservation::Existing(record))
+            } else {
+                *self.0.borrow_mut() = Some(hl_extension::port::ContainerCreationRecord {
+                    spec: spec.clone(),
+                    id: None,
+                });
+                Ok(hl_extension::port::ContainerCreationReservation::New)
+            }
+        }
+        fn commit_container_creation(
+            &self,
+            _: &str,
+            _: &str,
+            _: &hl_extension::port::ContainerCreateSpec,
+            id: &str,
+        ) -> Result<(), HostError> {
+            self.0.borrow_mut().as_mut().unwrap().id = Some(id.into());
+            Ok(())
+        }
+    }
     for (request, capability) in calls() {
         let host = Host::new();
+        let create_state = CreateState(RefCell::new(None));
 
         let mut capabilities = vec![capability];
         if matches!(
@@ -2612,7 +2683,9 @@ fn every_call_succeeds_with_its_capability_and_fails_without_it() {
                 .unwrap();
         }
         assert!(
-            granted.dispatch(&request, &services(&host)).is_ok(),
+            granted
+                .dispatch(&request, &services_with_state(&host, &create_state))
+                .is_ok(),
             "{request:?} must be permitted by {capability:?}"
         );
 
@@ -3867,7 +3940,50 @@ fn exact_name_scope_filters_inventory_and_create_is_independent() {
 
 #[test]
 fn create_once_is_shared_across_reconnect_and_binds_token_to_specification() {
+    struct CreationState(RefCell<std::collections::BTreeMap<String, hl_extension::port::ContainerCreationRecord>>);
+    impl ExtensionStateStore for CreationState {
+        fn read(&self) -> Result<hl_extension::port::ExtensionState, HostError> {
+            unreachable!()
+        }
+        fn write(&self, _: &str, _: &[u8]) -> Result<String, HostError> {
+            unreachable!()
+        }
+        fn clear(&self, _: &str) -> Result<(), HostError> {
+            unreachable!()
+        }
+        fn reserve_container_creation(
+            &self,
+            _: &str,
+            token: &str,
+            spec: &hl_extension::port::ContainerCreateSpec,
+        ) -> Result<hl_extension::port::ContainerCreationReservation, HostError> {
+            if let Some(record) = self.0.borrow().get(token) {
+                return Ok(hl_extension::port::ContainerCreationReservation::Existing(
+                    record.clone(),
+                ));
+            }
+            self.0.borrow_mut().insert(
+                token.into(),
+                hl_extension::port::ContainerCreationRecord {
+                    spec: spec.clone(),
+                    id: None,
+                },
+            );
+            Ok(hl_extension::port::ContainerCreationReservation::New)
+        }
+        fn commit_container_creation(
+            &self,
+            _: &str,
+            token: &str,
+            _: &hl_extension::port::ContainerCreateSpec,
+            id: &str,
+        ) -> Result<(), HostError> {
+            self.0.borrow_mut().get_mut(token).unwrap().id = Some(id.into());
+            Ok(())
+        }
+    }
     let host = Host::new();
+    let state = CreationState(RefCell::new(Default::default()));
     let ownership = hl_extension::ExecutionOwnership::default();
     let make_session = || {
         Session::new(Authority::new(
@@ -3888,24 +4004,101 @@ fn create_once_is_shared_across_reconnect_and_binds_token_to_specification() {
         .with_execution_ownership(ownership.clone())
     };
     let spec = hl_extension::port::ContainerCreateSpec {
-        image: "docker.io/library/alpine:3.20".into(), name: "database".into(), hostname: None, entrypoint: None,
-        command: vec!["postgres".into()], environment: Vec::new(), working_directory: None,
-        user: None, labels: Vec::new(), mounts: Vec::new(), network: None, ports: Vec::new(),
-        memory_mb: None, cpus: None, pids_limit: None,
+        image: "docker.io/library/alpine:3.20".into(),
+        name: "database".into(),
+        hostname: None,
+        entrypoint: None,
+        command: vec!["postgres".into()],
+        environment: Vec::new(),
+        working_directory: None,
+        user: None,
+        labels: Vec::new(),
+        mounts: Vec::new(),
+        network: None,
+        ports: Vec::new(),
+        memory_mb: None,
+        cpus: None,
+        pids_limit: None,
     };
     let token = "0123456789abcdef0123456789abcdef".to_owned();
-    let request = Request::ContainerCreateOnce { token: token.clone(), spec: spec.clone() };
-    let first = make_session().dispatch(&request, &services(&host)).unwrap();
-    let second = make_session().dispatch(&request, &services(&host)).unwrap();
+    let request = Request::ContainerCreateOnce {
+        token: token.clone(),
+        spec: spec.clone(),
+    };
+    let first = make_session()
+        .dispatch(&request, &services_with_state(&host, &state))
+        .unwrap();
+    let second = make_session()
+        .dispatch(&request, &services_with_state(&host, &state))
+        .unwrap();
     assert_eq!(first, second);
-    assert_eq!(host.ledger.reached().iter().filter(|call| **call == "containers.create_spec").count(), 1);
+    assert_eq!(
+        host.ledger
+            .reached()
+            .iter()
+            .filter(|call| **call == "containers.create_spec")
+            .count(),
+        1
+    );
 
-    let mut replacement = spec;
+    let mut replacement = spec.clone();
     replacement.name = "replacement".into();
     assert!(matches!(
-        make_session().dispatch(&Request::ContainerCreateOnce { token, spec: replacement }, &services(&host)),
+        make_session().dispatch(
+            &Request::ContainerCreateOnce {
+                token,
+                spec: replacement
+            },
+            &services_with_state(&host, &state)
+        ),
         Err(Failure::Conflict { .. })
     ));
+
+    // Simulate a host dying after the daemon committed but before the durable ID/reply.
+    let recovered_token = "11111111111111111111111111111111".to_owned();
+    state.0.borrow_mut().insert(
+        recovered_token.clone(),
+        hl_extension::port::ContainerCreationRecord {
+            spec: spec.clone(),
+            id: None,
+        },
+    );
+    *host.reconciled_creations.borrow_mut() = vec!["lost-reply-id".into()];
+    let recovered = make_session()
+        .dispatch(
+            &Request::ContainerCreateOnce {
+                token: recovered_token.clone(),
+                spec: spec.clone(),
+            },
+            &services_with_state(&host, &state),
+        )
+        .unwrap();
+    assert_eq!(recovered, Reply::Identity("lost-reply-id".into()));
+
+    for (token, matches) in [
+        ("22222222222222222222222222222222", Vec::new()),
+        ("33333333333333333333333333333333", vec!["one".into(), "two".into()]),
+    ] {
+        let pending_spec = spec.clone();
+        state.0.borrow_mut().insert(
+            token.into(),
+            hl_extension::port::ContainerCreationRecord {
+                spec: pending_spec.clone(),
+                id: None,
+            },
+        );
+        *host.reconciled_creations.borrow_mut() = matches;
+        assert!(matches!(
+            make_session().dispatch(
+                &Request::ContainerCreateOnce {
+                    token: token.into(),
+                    spec: pending_spec
+                },
+                &services_with_state(&host, &state)
+            ),
+            Err(Failure::Conflict { .. })
+        ));
+    }
 }
 
 #[test]
@@ -4775,7 +4968,11 @@ fn exact_credential_grant_never_authorizes_a_sibling_key() {
     let host = Host::new();
     let state = CredentialPort { read: Cell::new(false) };
     let mut client = session(
-        &[Capability::ContainerExecute, Capability::CredentialInject, Capability::CredentialRead],
+        &[
+            Capability::ContainerExecute,
+            Capability::CredentialInject,
+            Capability::CredentialRead,
+        ],
         &[],
     );
     let request = Request::ContainerExecCredential {

@@ -9,9 +9,9 @@ use hl_rpc::Authority;
 
 use crate::capability::Capability;
 use crate::port::{
-    ContainerControl, ContainerInventory, Division, ExtensionStateStore, ExtensionStore, GridSize, ImageStore,
-    NetworkStore, NotificationSink, PANE_GRID_EDGE, PANE_INPUT_BYTES, TerminalSurface, VolumeStore,
-    WorkspaceConfiguration, WorkspaceControl, WorkspaceFiles, WorkspaceInventory, pane_lines,
+    pane_lines, ContainerControl, ContainerInventory, Division, ExtensionStateStore, ExtensionStore, GridSize,
+    ImageStore, NetworkStore, NotificationSink, TerminalSurface, VolumeStore, WorkspaceConfiguration, WorkspaceControl,
+    WorkspaceFiles, WorkspaceInventory, PANE_GRID_EDGE, PANE_INPUT_BYTES,
 };
 use crate::request::{Failure, Reply, Request, Topic, WorkspaceInfo};
 use crate::{ContainerGrant, ContainerSelector, FilesystemGrant};
@@ -60,16 +60,10 @@ pub struct Session {
     owned_executions: ExecutionOwnership,
 }
 
-/// Bounded operation ownership shared by reconnecting sockets of one extension incarnation.
-///
-/// Creation records intentionally live only for the current workspace-host lifetime. They are
-/// never evicted while that host is alive, because forgetting one could let a reused token create
-/// a replacement container. Durable host-restart reconciliation needs a persistent tombstone
-/// store and is not provided by this ledger.
+/// Execution ownership shared by reconnecting sockets of one extension incarnation.
 #[derive(Default)]
 pub struct OwnedOperations {
     executions: std::collections::BTreeSet<String>,
-    creations: std::collections::BTreeMap<String, (crate::port::ContainerCreateSpec, String)>,
 }
 
 impl OwnedOperations {
@@ -1092,25 +1086,43 @@ impl Session {
                     });
                 }
                 validate_container_create(spec)?;
-                let mut ownership = self
+                // Serialize one incarnation's create transaction across reconnecting sockets. The
+                // durable reservation is the crash boundary; this mutex only prevents a healthy
+                // concurrent retry from observing its peer between reserve, create, and commit.
+                let _operation_guard = self
                     .owned_executions
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if let Some((recorded, id)) = ownership.creations.get(token) {
-                    if recorded != spec {
-                        return Err(Failure::Conflict {
-                            detail: "container create token was already bound to another specification".into(),
-                        });
+                use crate::port::ContainerCreationReservation::{Existing, New};
+                let reservation = services
+                    .state
+                    .reserve_container_creation(&self.extension_identity, token, spec)?;
+                let id = match reservation {
+                    Existing(record) => {
+                        if record.spec != *spec {
+                            return Err(Failure::Conflict {
+                                detail: "container create token was already bound to another specification".into(),
+                            });
+                        }
+                        if let Some(id) = record.id {
+                            return Ok(Reply::Identity(id));
+                        }
+                        let matches = port.reconcile_spec_once(spec, &self.extension_identity, token)?;
+                        if matches.len() != 1 {
+                            return Err(Failure::Conflict {
+                                detail: format!(
+                                    "container create token is pending and reconciled {} matching containers; refusing an ambiguous retry",
+                                    matches.len()
+                                ),
+                            });
+                        }
+                        matches.into_iter().next().expect("one reconciled identity")
                     }
-                    return Ok(Reply::Identity(id.clone()));
-                }
-                if ownership.creations.len() >= 4_096 {
-                    return Err(Failure::Conflict {
-                        detail: "container create token ledger reached its bounded capacity".into(),
-                    });
-                }
-                let id = port.create_spec(spec)?;
-                ownership.creations.insert(token.clone(), (spec.clone(), id.clone()));
+                    New => port.create_spec_once(spec, &self.extension_identity, token)?,
+                };
+                services
+                    .state
+                    .commit_container_creation(&self.extension_identity, token, spec, &id)?;
                 Ok(Reply::Identity(id))
             }
             Request::ContainerStart { id, generation } => {
