@@ -28,7 +28,6 @@ mod management;
 mod management_events;
 mod postgres;
 mod postgres_dial;
-#[cfg(test)]
 mod postgres_worker;
 mod registration;
 mod resource;
@@ -262,6 +261,14 @@ impl Extensions {
     #[must_use]
     pub fn networks(&self) -> &dyn NetworkStore {
         &self.resources
+    }
+
+    pub(crate) fn resources(&self) -> &Resources {
+        &self.resources
+    }
+
+    pub(crate) fn container_catalog(&self) -> &ContainerCatalog {
+        &self.containers
     }
 
     /// The workspace file port.

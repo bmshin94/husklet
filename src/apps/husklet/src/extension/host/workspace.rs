@@ -12,7 +12,7 @@ use hl_extension::port::{
     Division, HostError, PaneText, TabSummary, TerminalSurface, WorkspaceConfiguration, WorkspaceControl,
     WorkspaceInventory, WorkspaceMount, WorkspaceState, WorkspaceTerminal,
 };
-use hl_extension::{ExtensionName, Record, Services, WorkspaceInfo};
+use hl_extension::{ExtensionName, PostgresBroker, Record, Services, WorkspaceInfo};
 
 use super::super::conversation::Conversation;
 use super::super::roster::described;
@@ -442,6 +442,31 @@ impl Supply for Workspace {
             current: self.config.name.clone(),
         };
         let notifications = conversation.notifications();
+        let resolver = super::super::resource::PostgresResolver::configured(extensions.resources())
+            .map_err(|error| error.to_string())?;
+        let installation = resolver
+            .as_ref()
+            .map(|_| super::super::postgres::WorkspaceInstallation::new(self.root(), plan.record.name.clone()));
+        let postgres = match (resolver.as_ref(), installation.as_ref()) {
+            (Some(resolver), Some(installation)) => {
+                let identity = hl_rpc::InstallationIdentity::new(plan.record.incarnation.clone())
+                    .map_err(|error| error.to_string())?;
+                let authority = super::super::postgres::ServiceAuthority::new(
+                    identity.clone(),
+                    installation,
+                    extensions.container_catalog(),
+                    extensions.resources(),
+                    &state,
+                    resolver,
+                );
+                Some(super::super::postgres::HostPostgres::new(
+                    identity,
+                    authority,
+                    super::super::postgres_worker::QueryWorker::new().map_err(|error| error.to_string())?,
+                ))
+            }
+            _ => None,
+        };
         let services = Services {
             workspace: self.describe(),
             workspaces: &store,
@@ -456,7 +481,7 @@ impl Supply for Workspace {
             files: extensions.files(),
             state: &state,
             notifications: &notifications,
-            postgres: None,
+            postgres: postgres.as_ref().map(|service| service as &dyn PostgresBroker),
         };
         conversation.serve(&services).map_err(|fault| fault.to_string())
     }

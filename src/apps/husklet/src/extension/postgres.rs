@@ -2,9 +2,9 @@
 //!
 //! The wire-facing request contains only credential names. This boundary asks
 //! the host authority for one atomic authentication snapshot and hands secret
-//! bytes directly to an injected transport. No production PostgreSQL transport
-//! is claimed here; the peer trait is the seam a TLS/PostgreSQL implementation
-//! must satisfy.
+//! bytes directly to an injected transport. The production peer is composed
+//! only for an explicit host TLS profile and never exposes its resolved route
+//! or authentication material to the extension protocol.
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
@@ -273,7 +273,7 @@ impl InstallationAuthority for WorkspaceInstallation {
 /// It never returns credential bytes to the extension protocol. Values move from
 /// the private state store into [`Authentication`] and from there directly into
 /// [`Peer::open`]. Every later operation re-reads all four authorities.
-pub(crate) struct ServiceAuthority<'a, C, N, S, R> {
+pub(crate) struct ServiceAuthority<'a, C: ?Sized, N: ?Sized, S: ?Sized, R: ?Sized> {
     installation: InstallationIdentity,
     installations: &'a dyn InstallationAuthority,
     containers: &'a C,
@@ -284,10 +284,10 @@ pub(crate) struct ServiceAuthority<'a, C, N, S, R> {
 
 impl<'a, C, N, S, R> ServiceAuthority<'a, C, N, S, R>
 where
-    C: ContainerInventory + Sync,
-    N: NetworkStore + Sync,
-    S: ExtensionStateStore + Sync,
-    R: DatabaseResolver + Sync,
+    C: ContainerInventory + Sync + ?Sized,
+    N: NetworkStore + Sync + ?Sized,
+    S: ExtensionStateStore + Sync + ?Sized,
+    R: DatabaseResolver + Sync + ?Sized,
 {
     pub(crate) fn new(
         installation: InstallationIdentity,
@@ -358,10 +358,10 @@ pub(crate) fn network_revision(network: &hl_extension::port::NetworkSummary) -> 
 
 impl<C, N, S, R> Authority for ServiceAuthority<'_, C, N, S, R>
 where
-    C: ContainerInventory + Sync,
-    N: NetworkStore + Sync,
-    S: ExtensionStateStore + Sync,
-    R: DatabaseResolver + Sync,
+    C: ContainerInventory + Sync + ?Sized,
+    N: NetworkStore + Sync + ?Sized,
+    S: ExtensionStateStore + Sync + ?Sized,
+    R: DatabaseResolver + Sync + ?Sized,
 {
     fn authenticate(&self, installation: &str, connection: &PostgresConnection) -> Result<Authentication, HostError> {
         if !self.installation_current(installation)? {

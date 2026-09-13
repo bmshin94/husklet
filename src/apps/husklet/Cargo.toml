@@ -53,6 +53,8 @@ vte4 = { version = "0.8", features = ["v0_72"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 notify = { version = "8", optional = true }
 tokio-postgres = { version = "=0.7.18", optional = true }
+tokio-postgres-rustls = { version = "=0.14.0", features = ["aws-lc-rs", "native-certs"], optional = true }
+rustls = { version = "=0.23.43", features = ["aws_lc_rs"], optional = true }
 futures-util = { version = "=0.3.33", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -93,6 +95,8 @@ runtime = [
     "dep:tar",
     "dep:notify",
     "dep:tokio-postgres",
+    "dep:tokio-postgres-rustls",
+    "dep:rustls",
     "dep:futures-util",
 ]
 gui = [

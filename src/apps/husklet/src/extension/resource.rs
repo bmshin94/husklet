@@ -8,12 +8,63 @@ use hl_extension::port::{
 };
 use hl_extension::PostgresConnection;
 
-use super::postgres::network_revision;
+use super::postgres::{network_revision, CredentialRole, DatabaseEndpoint, DatabaseResolver, DatabaseTls};
 use super::postgres_dial::{DialAuthority, DialTarget};
 use super::{failure, Bridge};
 
 pub struct Resources {
     bridge: Arc<Bridge>,
+}
+
+/// Explicit host-only PostgreSQL profile for the currently served workspace.
+/// The endpoint itself is still resolved from the authorized container/network
+/// inspection on every open and authority recheck.
+pub(crate) struct PostgresResolver<'a> {
+    resources: &'a Resources,
+    server_name: String,
+    password_key: String,
+}
+
+impl<'a> PostgresResolver<'a> {
+    pub(crate) fn configured(resources: &'a Resources) -> Result<Option<Self>, HostError> {
+        let server_name = std::env::var("HUSKLET_POSTGRES_TLS_SERVER_NAME").ok();
+        let password_key = std::env::var("HUSKLET_POSTGRES_PASSWORD_KEY").ok();
+        match (server_name, password_key) {
+            (None, None) => Ok(None),
+            (Some(server_name), Some(password_key)) => {
+                DatabaseTls::verify_full(server_name.clone())?;
+                if password_key.is_empty() || password_key.len() > 128 || password_key.contains('\0') {
+                    return Err(HostError::Conflict("postgres password key profile is invalid".into()));
+                }
+                Ok(Some(Self {
+                    resources,
+                    server_name,
+                    password_key,
+                }))
+            }
+            _ => Err(HostError::Conflict(
+                "postgres TLS server name and password key must be configured together".into(),
+            )),
+        }
+    }
+}
+
+impl DatabaseResolver for PostgresResolver<'_> {
+    fn endpoint(&self, connection: &PostgresConnection) -> Result<DatabaseEndpoint, HostError> {
+        let target = self.resources.database_dial_target(connection)?;
+        DatabaseEndpoint::new(
+            target.address(),
+            DatabaseTls::verify_full(self.server_name.clone())?,
+            3_000,
+            10_000,
+        )
+    }
+
+    fn role(&self, key: &str) -> Result<CredentialRole, HostError> {
+        (key == self.password_key)
+            .then_some(CredentialRole::Password)
+            .ok_or_else(|| HostError::Conflict("postgres credential key has no configured authentication role".into()))
+    }
 }
 
 impl Resources {
