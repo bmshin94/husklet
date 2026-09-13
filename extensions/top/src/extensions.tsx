@@ -2563,7 +2563,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
       ) : null}
       {content}
       {acquisition?.candidate ? (
-        <Column gap={0} grow={false} height={{ step: 16 }}>
+        <Column gap={0} grow={false} height={{ step: 17 }}>
           <Spacer height={1} />
           <Separator orientation="horizontal" />
           <Row
