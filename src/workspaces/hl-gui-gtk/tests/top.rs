@@ -3754,6 +3754,20 @@ mod unix {
                 let cancel_bounds = cancel
                     .compute_bounds(root)
                     .expect("cancel decision belongs to review footer");
+                let footer = update
+                    .parent()
+                    .and_then(|actions| actions.parent())
+                    .and_then(|row| row.parent())
+                    .expect("decision row belongs to its fixed footer");
+                let footer_bounds = footer.compute_bounds(root).expect("fixed footer belongs to root");
+                assert!(
+                    (64.0..=80.0).contains(&footer_bounds.height()),
+                    "{width_name} {state} footer is not compact: {footer_bounds:?}"
+                );
+                assert!(
+                    (footer_bounds.y() + footer_bounds.height() - 800.0).abs() <= 1.0,
+                    "{width_name} {state} footer is not bottom anchored: {footer_bounds:?}"
+                );
                 assert_filled_button_state_pixels(
                     &capture_window,
                     root,
@@ -3925,6 +3939,7 @@ mod unix {
                 capture(&capture_window, &format!("extensions-{state}-{width_name}"), width, 800);
                 let footer = update
                     .parent()
+                    .and_then(|actions| actions.parent())
                     .and_then(|row| row.parent())
                     .expect("review decision row belongs to its footer");
                 let footer_bounds = footer.compute_bounds(root).expect("review footer belongs to root");
@@ -4000,6 +4015,7 @@ mod unix {
                 let cancel = find_button(root, "Cancel review");
                 let footer = update
                     .parent()
+                    .and_then(|actions| actions.parent())
                     .and_then(|row| row.parent())
                     .expect("required review decision row belongs to its footer");
                 let footer_before = footer.compute_bounds(root).expect("review footer belongs to root");
@@ -4055,8 +4071,8 @@ mod unix {
                 );
                 assert!(has_label(&footer, "No access selected · 19 requested"));
                 assert!(
-                    (52.0..=72.0).contains(&footer_after.height()),
-                    "{width_name} review footer is {}px instead of its compact 52–72px range",
+                    (64.0..=80.0).contains(&footer_after.height()),
+                    "{width_name} review footer is {}px instead of its compact 64–80px range",
                     footer_after.height()
                 );
                 assert!(
