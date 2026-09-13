@@ -45,7 +45,7 @@ fn install_defaults_with(
     workspace: &WorkspaceConfig,
     mut read: impl FnMut(&WorkspaceConfig, &str) -> Result<Candidate, String>,
 ) -> Result<(), String> {
-    let mut roster = Roster::workspace(workspace).map_err(|error| error.to_string())?;
+    let mut roster = Roster::workspace_recovering_top(workspace).map_err(|error| error.to_string())?;
     for (expected, reference) in DEFAULT_EXTENSIONS {
         let name = ExtensionName::new(expected).map_err(|error| error.to_string())?;
         let candidate = read(workspace, reference).map_err(|reason| {
@@ -323,6 +323,48 @@ mod tests {
         let entry = &roster.entries()[0];
         assert_eq!(entry.image_digest, "sha256:fresh-top");
         assert_eq!(entry.stage, Stage::Duty);
+    }
+
+    #[test]
+    fn corrupt_required_top_is_discarded_and_reprovisioned_from_current_image() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut workspace = WorkspaceConfig::new("demo", "alpine:3.20", hl_ws::Arch::Amd64);
+        let root = temporary.path().join("workspace");
+        workspace.storage = Some(root.clone());
+        let storage = hl_ws::storage::Directory::open(&root).unwrap();
+        storage
+            .put(&Key::parse("state/extensions/top").unwrap(), b"{corrupt")
+            .unwrap();
+
+        install_defaults_with(&workspace, |_, reference| {
+            Ok(Candidate {
+                reference: reference.into(),
+                digest: "sha256:current-top".into(),
+                manifest: top_manifest(),
+            })
+        })
+        .expect("trusted Top recovery");
+
+        let entry = &Roster::workspace(&workspace).unwrap().entries()[0];
+        assert_eq!(entry.image_digest, "sha256:current-top");
+        assert_eq!(entry.stage, Stage::Duty);
+    }
+
+    #[test]
+    fn corrupt_third_party_record_remains_fatal_and_untouched() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut workspace = WorkspaceConfig::new("demo", "alpine:3.20", hl_ws::Arch::Amd64);
+        let root = temporary.path().join("workspace");
+        workspace.storage = Some(root.clone());
+        let storage = hl_ws::storage::Directory::open(&root).unwrap();
+        let key = Key::parse("state/extensions/database").unwrap();
+        storage.put(&key, b"{corrupt").unwrap();
+
+        let error = install_defaults_with(&workspace, |_, _| panic!("image must not be trusted before roster"))
+            .expect_err("third-party corruption stays fatal");
+
+        assert!(error.contains("state/extensions/database"));
+        assert_eq!(storage.get(&key).unwrap(), b"{corrupt");
     }
 
     #[test]

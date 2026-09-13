@@ -123,6 +123,21 @@ impl Roster<Directory> {
         let storage = Directory::open(root).map_err(|error| Fault::Storage(Box::new(error)))?;
         Self::open(storage)
     }
+
+    /// Opens a workspace roster, discarding only an unreadable required Top
+    /// record so trusted default provisioning can replace it from scratch.
+    pub(crate) fn workspace_recovering_top(workspace: &WorkspaceConfig) -> Result<Self, Refusal> {
+        match Self::workspace(workspace) {
+            Ok(roster) => Ok(roster),
+            Err(Refusal::Record(Fault::Format { key, .. })) if key == "state/extensions/top" => {
+                let root = workspace.storage_dir(&crate::paths::hl_root());
+                let storage = Directory::open(root).map_err(|error| Fault::Storage(Box::new(error)))?;
+                Records::open(storage)?.forget(&ExtensionName::new("top").expect("fixed Top identity"))?;
+                Self::workspace(workspace)
+            }
+            Err(error) => Err(error),
+        }
+    }
 }
 
 impl<S: Storage> Roster<S> {
