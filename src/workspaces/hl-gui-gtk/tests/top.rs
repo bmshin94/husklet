@@ -171,6 +171,7 @@ mod unix {
                 networks: hl_extension::NetworkGrant::default(),
                 volumes: hl_extension::VolumeGrant::default(),
                 workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+                credentials: hl_extension::CredentialGrant::default(),
                 limits: hl_extension::Limits::default(),
             })
             .expect("welcome encodes"),
@@ -2957,6 +2958,7 @@ mod unix {
                                 }],
                                 write: Vec::new(),
                             },
+                            requested_credentials: Default::default(),
                             installed_image_digest: Some(old_digest.clone()),
                         }),
                         error: None,
@@ -3310,6 +3312,7 @@ mod unix {
                                 }],
                                 write: Vec::new(),
                             },
+                            requested_credentials: Default::default(),
                             installed_image_digest: Some(old_digest.clone()),
                         }),
                         error: None,
@@ -3423,6 +3426,7 @@ mod unix {
             volumes: Default::default(),
             filesystem: Default::default(),
             workspace_environment: Default::default(),
+            credentials: Default::default(),
         }
     }
 
@@ -3758,6 +3762,7 @@ mod unix {
                 volumes: Default::default(),
                 filesystem: Default::default(),
                 workspace_environment: Default::default(),
+                credentials: Default::default(),
             })
             .collect()
     }

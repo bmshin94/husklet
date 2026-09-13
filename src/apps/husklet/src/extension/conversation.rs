@@ -281,6 +281,7 @@ impl Conversation {
                 rename: roots,
             },
             hl_extension::WorkspaceEnvironmentGrant::default(),
+            hl_extension::CredentialGrant::default(),
         )
     }
 
@@ -298,6 +299,7 @@ impl Conversation {
         volumes: hl_extension::VolumeGrant,
         filesystem: hl_extension::FilesystemGrant,
         workspace_environment: hl_extension::WorkspaceEnvironmentGrant,
+        credentials: hl_extension::CredentialGrant,
     ) -> io::Result<Self> {
         let control = stream.try_clone()?;
         Ok(Self {
@@ -315,6 +317,7 @@ impl Conversation {
                 .with_volumes(volumes)
                 .with_filesystem(filesystem)
                 .with_workspace_environment(workspace_environment)
+                .with_credentials(credentials)
                 .with_surface(""),
             subscriptions: Subscriptions::new(),
             streams: Streams::new(),
@@ -361,6 +364,7 @@ impl Conversation {
             volumes,
             filesystem,
             workspace_environment,
+            hl_extension::CredentialGrant::default(),
         )
     }
 
@@ -810,6 +814,7 @@ impl Conversation {
             networks: self.session.network_grant().clone(),
             volumes: self.session.volume_grant().clone(),
             workspace_environment: self.session.workspace_environment_grant().clone(),
+            credentials: self.session.credential_grant().clone(),
             limits: Limits::default(),
         };
         let frame = codec::welcome(&welcome).map_err(|coding| Fault::Malformed(coding.to_string()))?;
@@ -1794,6 +1799,7 @@ mod tests {
                 volumes: hl_extension::VolumeGrant::default(),
                 filesystem: hl_extension::FilesystemGrant::default(),
                 workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+                credentials: hl_extension::CredentialGrant::default(),
             }])
         }
 
@@ -2362,6 +2368,7 @@ mod tests {
             volumes: hl_extension::VolumeGrant::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         }]);
         conversation.with_extension_events(events);
 

@@ -216,6 +216,7 @@ mod tests {
             resources: hl_extension::Resources::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         }
     }
 
@@ -235,6 +236,7 @@ mod tests {
             volumes: hl_extension::VolumeGrant::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
             name: ExtensionName::new("sample").expect("name"),
             image_digest: "sha256:aaaa".to_owned(),
             version: "1.0.0".to_owned(),
@@ -264,6 +266,7 @@ mod tests {
                 volumes: hl_extension::VolumeGrant::default(),
                 filesystem: hl_extension::FilesystemGrant::default(),
                 workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+                credentials: hl_extension::CredentialGrant::default(),
                 name: name.clone(),
                 image_digest: "sha256:aaaa".to_owned(),
                 version: "1.0.0".to_owned(),

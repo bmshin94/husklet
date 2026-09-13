@@ -557,6 +557,7 @@ function extensionAuthority(extension) {
         volumes: extension.volumes ?? null,
         filesystem: extension.filesystem ?? null,
         workspace_environment: extension.workspace_environment ?? null,
+        credentials: extension.credentials ?? null,
         pane_providers: extension.pane_providers ?? null,
     });
 }
@@ -1189,6 +1190,9 @@ export function workspace(session, { signal } = {}) {
         get grantedWorkspaceEnvironment() {
             return session.grantedWorkspaceEnvironment;
         },
+        get grantedCredentials() {
+            return session.grantedCredentials;
+        },
         info: async () => expect(await session.call('workspace_info'), 'workspace'),
         list: async () => {
             const workspaces = expect(await session.call('workspace_list'), 'workspaces');
@@ -1297,7 +1301,7 @@ export function workspace(session, { signal } = {}) {
                 return exactAcquisitionStatus(exactJob, expect(await session.call('extension_acquisition_status', { job: exactJob }), 'extension_acquisition'));
             },
             cancelAcquisition: (job, revision) => done('extension_acquisition_cancel', { job: exactAcquisitionJob(job), revision }),
-            install: async (job, revision, imageDigest, granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }) => expect(await session.call('extension_install', {
+            install: async (job, revision, imageDigest, granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }, credentials = { read: [], write: [], inject: [] }) => expect(await session.call('extension_install', {
                 job,
                 revision,
                 image_digest: immutableDigest(imageDigest, 'extension candidate image'),
@@ -1308,8 +1312,9 @@ export function workspace(session, { signal } = {}) {
                 volumes,
                 filesystem,
                 workspace_environment: workspaceEnvironment,
+                credentials,
             }), 'extension'),
-            update: async (job, revision, imageDigest, granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }) => expect(await session.call('extension_update', {
+            update: async (job, revision, imageDigest, granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }, credentials = { read: [], write: [], inject: [] }) => expect(await session.call('extension_update', {
                 job,
                 revision,
                 image_digest: immutableDigest(imageDigest, 'extension candidate image'),
@@ -1320,6 +1325,7 @@ export function workspace(session, { signal } = {}) {
                 volumes,
                 filesystem,
                 workspace_environment: workspaceEnvironment,
+                credentials,
             }), 'extension'),
         },
         containers: {
@@ -3193,6 +3199,10 @@ export function workspace(session, { signal } = {}) {
             remove: async (observed, key) => expect(await session.call('preference_remove', { observed, key }), 'revision'),
         },
         credentials: {
+            keyGrant: (operation, key) => {
+                const exactKey = exactCredentialKey(key);
+                return session.grantedCredentials[operation].includes(exactKey);
+            },
             read: async (key) => {
                 const exactKey = exactCredentialKey(key);
                 const credential = expect(await session.call('credential_read', { key: exactKey }), 'credential');
@@ -5024,7 +5034,7 @@ export function workspace(session, { signal } = {}) {
     };
     api.watchExtensionAcquisitions = (listener) => watch('extension-acquisitions', 'extension_acquisitions', listener, 'extension acquisition');
     const commitAcquisitionAndWait = async (operation, job, revision, review, { timeoutMs = 30_000 } = {}) => {
-        const { capabilities: granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }, } = review;
+        const { capabilities: granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }, credentials = { read: [], write: [], inject: [] }, } = review;
         if (!Number.isSafeInteger(revision) || revision < 0) {
             throw new TypeError(`extension ${operation} wait requires a nonnegative safe integer revision`);
         }
@@ -5065,7 +5075,7 @@ export function workspace(session, { signal } = {}) {
         const stop = await api.watchExtensions(observed);
         let timer;
         try {
-            committed = await api.extensions[operation](job, revision, digest, granted, containers, images, networks, volumes, filesystem, workspaceEnvironment);
+            committed = await api.extensions[operation](job, revision, digest, granted, containers, images, networks, volumes, filesystem, workspaceEnvironment, credentials);
             if (committed.name !== candidate.name ||
                 committed.image_digest !== digest ||
                 committed.version !== candidate.version) {

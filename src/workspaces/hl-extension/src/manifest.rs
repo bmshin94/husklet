@@ -4,6 +4,64 @@ use hl_rpc::{Rejection, RelativePath};
 
 use crate::capability::{Capability, Grant};
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialGrant {
+    #[serde(default)]
+    pub read: Vec<String>,
+    #[serde(default)]
+    pub write: Vec<String>,
+    #[serde(default)]
+    pub inject: Vec<String>,
+}
+
+impl CredentialGrant {
+    pub const LIMIT: usize = 128;
+    #[must_use]
+    pub fn permits_read(&self, key: &str) -> bool {
+        self.read.iter().any(|value| value == key)
+    }
+    #[must_use]
+    pub fn permits_write(&self, key: &str) -> bool {
+        self.write.iter().any(|value| value == key)
+    }
+    #[must_use]
+    pub fn permits_inject(&self, key: &str) -> bool {
+        self.inject.iter().any(|value| value == key)
+    }
+    #[must_use]
+    pub fn intersect(&self, consented: &Self) -> Self {
+        let overlap = |requested: &[String], allowed: &[String]| {
+            requested.iter().filter(|key| allowed.contains(key)).cloned().collect()
+        };
+        Self {
+            read: overlap(&self.read, &consented.read),
+            write: overlap(&self.write, &consented.write),
+            inject: overlap(&self.inject, &consented.inject),
+        }
+    }
+    fn validate(&self) -> Result<(), Invalid> {
+        let groups = [&self.read, &self.write, &self.inject];
+        if groups.iter().map(|group| group.len()).sum::<usize>() > Self::LIMIT
+            || groups
+                .iter()
+                .any(|group| group.iter().collect::<std::collections::BTreeSet<_>>().len() != group.len())
+            || groups.into_iter().flatten().any(|key| !valid_credential_key(key))
+        {
+            return Err(Invalid::CredentialKeys);
+        }
+        Ok(())
+    }
+}
+
+fn valid_credential_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= 128
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 /// Workspace paths an extension may read or change.
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -639,11 +697,7 @@ impl Resources {
         if value == 0 {
             return ceiling;
         }
-        if value > ceiling {
-            ceiling
-        } else {
-            value
-        }
+        if value > ceiling { ceiling } else { value }
     }
 }
 
@@ -734,6 +788,8 @@ pub struct Manifest {
     pub filesystem: FilesystemGrant,
     #[serde(default)]
     pub workspace_environment: WorkspaceEnvironmentGrant,
+    #[serde(default)]
+    pub credentials: CredentialGrant,
 }
 
 impl Manifest {
@@ -824,6 +880,16 @@ impl Manifest {
         manifest
             .workspace_environment
             .validate(manifest.name.to_string() == "top")?;
+        if !manifest.credentials.read.is_empty() && !manifest.capabilities.holds(Capability::CredentialRead) {
+            return Err(Invalid::Undeclared(Capability::CredentialRead));
+        }
+        if !manifest.credentials.write.is_empty() && !manifest.capabilities.holds(Capability::CredentialWrite) {
+            return Err(Invalid::Undeclared(Capability::CredentialWrite));
+        }
+        if !manifest.credentials.inject.is_empty() && !manifest.capabilities.holds(Capability::CredentialInject) {
+            return Err(Invalid::Undeclared(Capability::CredentialInject));
+        }
+        manifest.credentials.validate()?;
         manifest.containers.validate()?;
         manifest.images.validate()?;
         if !manifest.images.read.is_empty() && !manifest.capabilities.holds(Capability::ImageRead) {
@@ -910,6 +976,7 @@ pub enum Invalid {
     ImageSelectors,
     FilesystemRoots,
     WorkspaceEnvironment,
+    CredentialKeys,
 }
 
 impl std::fmt::Display for Invalid {
@@ -944,6 +1011,8 @@ impl std::fmt::Display for Invalid {
             Self::ImageSelectors => formatter.write_str("image selectors must contain at most 128 unique canonical references, or one explicit `{ all = true }`"),
             Self::FilesystemRoots => formatter.write_str("filesystem scopes must contain at most 128 unique read or write roots"),
             Self::WorkspaceEnvironment => formatter.write_str("workspace environment scopes must be bounded unique exact pairs; all is reserved for top"),
+            Self::CredentialKeys => formatter
+                .write_str("credential scopes must contain at most 128 exact keys, unique per operation"),
         }
     }
 }
@@ -956,7 +1025,7 @@ mod tests {
         ContainerGrant, ContainerSelector, FilesystemGrant, FilesystemSelector, ImageGrant, ImageSelector, Manifest,
         NetworkGrant, NetworkSelector, VolumeGrant, VolumeSelector,
     };
-    use crate::{Capability, Grant, RelativePath, PROTOCOL};
+    use crate::{Capability, Grant, PROTOCOL, RelativePath};
 
     fn document(extra: &str) -> String {
         format!(

@@ -24,6 +24,7 @@ import type {
   ReadonlyNetworkGrant,
   ReadonlyVolumeGrant,
   ReadonlyWorkspaceEnvironmentGrant,
+  ReadonlyCredentialGrant,
 } from './api.js';
 
 /** The protocol this package speaks. The host refuses anything else. */
@@ -51,6 +52,11 @@ const freezeGrant = (value) => {
       Object.freeze(entry);
     }
   }
+  return Object.freeze(value);
+};
+const freezeCredentialGrant = (value) => {
+  requiredObject(value, 'host greeting credential grant');
+  for (const keys of Object.values(value)) Object.freeze(keys);
   return Object.freeze(value);
 };
 const SNAPSHOT_TOPICS = new Map(PROTOCOL_TOPICS.map(({ wire, snapshot }) => [snapshot, wire]));
@@ -393,6 +399,11 @@ export class Session {
   #networks = freezeGrant({ selectors: [], create: false }) as ReadonlyNetworkGrant;
   #volumes = freezeGrant({ selectors: [], create: false }) as ReadonlyVolumeGrant;
   #workspaceEnvironment = freezeGrant({ read: [], write: [] }) as ReadonlyWorkspaceEnvironmentGrant;
+  #credentials = freezeCredentialGrant({
+    read: [],
+    write: [],
+    inject: [],
+  }) as ReadonlyCredentialGrant;
   #greeted;
   #ready;
   #rejectReady;
@@ -500,6 +511,9 @@ export class Session {
   }
   get grantedWorkspaceEnvironment() {
     return this.#workspaceEnvironment;
+  }
+  get grantedCredentials() {
+    return this.#credentials;
   }
 
   /** Resolves when the handshake is complete and calls may be sent. */
@@ -1072,6 +1086,7 @@ export class Session {
       volumes: welcome.volumes ?? { selectors: [], create: false },
     };
     const environment = welcome.workspace_environment ?? { read: [], write: [] };
+    const credentials = welcome.credentials ?? { read: [], write: [], inject: [] };
     encodeRequest('extension_install', {
       job: 'grant-validation',
       revision: 0,
@@ -1080,6 +1095,7 @@ export class Session {
       ...resources,
       filesystem: {},
       workspace_environment: environment,
+      credentials,
     });
     for (const operation of ['read', 'write']) {
       for (const selector of environment[operation]) {
@@ -1156,6 +1172,17 @@ export class Session {
     this.#networks = freezeGrant(resources.networks) as ReadonlyNetworkGrant;
     this.#volumes = freezeGrant(resources.volumes) as ReadonlyVolumeGrant;
     this.#workspaceEnvironment = freezeGrant(environment) as ReadonlyWorkspaceEnvironmentGrant;
+    for (const [operation, capability] of [
+      ['read', 'credentials:read'],
+      ['write', 'credentials:write'],
+      ['inject', 'credentials:inject'],
+    ]) {
+      if (credentials[operation].length > 0 && !this.#granted.includes(capability))
+        throw new TypeError(
+          `host greeting discloses credential ${operation} keys without ${capability}`,
+        );
+    }
+    this.#credentials = freezeCredentialGrant(credentials) as ReadonlyCredentialGrant;
     this.#write({
       channel: CONTROL,
       kind: KIND.response,

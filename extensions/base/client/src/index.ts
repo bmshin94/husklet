@@ -739,6 +739,7 @@ function extensionAuthority(extension: ExtensionSummary): string {
     volumes: extension.volumes ?? null,
     filesystem: extension.filesystem ?? null,
     workspace_environment: extension.workspace_environment ?? null,
+    credentials: extension.credentials ?? null,
     pane_providers: extension.pane_providers ?? null,
   });
 }
@@ -1493,6 +1494,9 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     get grantedWorkspaceEnvironment() {
       return session.grantedWorkspaceEnvironment;
     },
+    get grantedCredentials() {
+      return session.grantedCredentials;
+    },
     info: async () => expect(await session.call('workspace_info'), 'workspace'),
     list: async () => {
       const workspaces = expect(await session.call('workspace_list'), 'workspaces');
@@ -1666,6 +1670,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         volumes = { selectors: [], create: false },
         filesystem = { read: [], write: [], create: [], delete: [], rename: [] },
         workspaceEnvironment = { read: [], write: [] },
+        credentials = { read: [], write: [], inject: [] },
       ) =>
         expect(
           await session.call('extension_install', {
@@ -1679,6 +1684,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
             volumes,
             filesystem,
             workspace_environment: workspaceEnvironment,
+            credentials,
           }),
           'extension',
         ),
@@ -1693,6 +1699,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         volumes = { selectors: [], create: false },
         filesystem = { read: [], write: [], create: [], delete: [], rename: [] },
         workspaceEnvironment = { read: [], write: [] },
+        credentials = { read: [], write: [], inject: [] },
       ) =>
         expect(
           await session.call('extension_update', {
@@ -1706,6 +1713,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
             volumes,
             filesystem,
             workspace_environment: workspaceEnvironment,
+            credentials,
           }),
           'extension',
         ),
@@ -4115,6 +4123,10 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         expect(await session.call('preference_remove', { observed, key }), 'revision'),
     },
     credentials: {
+      keyGrant: (operation, key) => {
+        const exactKey = exactCredentialKey(key);
+        return session.grantedCredentials[operation].includes(exactKey);
+      },
       read: async (key) => {
         const exactKey = exactCredentialKey(key);
         const credential = expect(
@@ -6104,6 +6116,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       volumes = { selectors: [], create: false },
       filesystem = { read: [], write: [], create: [], delete: [], rename: [] },
       workspaceEnvironment = { read: [], write: [] },
+      credentials = { read: [], write: [], inject: [] },
     } = review;
     if (!Number.isSafeInteger(revision) || revision < 0) {
       throw new TypeError(
@@ -6164,6 +6177,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         volumes,
         filesystem,
         workspaceEnvironment,
+        credentials,
       );
       if (
         committed.name !== candidate.name ||

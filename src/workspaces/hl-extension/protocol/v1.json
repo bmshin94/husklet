@@ -1354,6 +1354,44 @@
         }
       ]
     },
+    "CredentialGrant": {
+      "fields": [
+        {
+          "name": "read",
+          "optional": true,
+          "schema": {
+            "kind": "array",
+            "of": {
+              "kind": "string"
+            }
+          }
+        },
+        {
+          "name": "write",
+          "optional": true,
+          "schema": {
+            "kind": "array",
+            "of": {
+              "kind": "string"
+            }
+          }
+        },
+        {
+          "name": "inject",
+          "optional": true,
+          "schema": {
+            "kind": "array",
+            "of": {
+              "kind": "string"
+            }
+          }
+        }
+      ],
+      "kind": "struct",
+      "serde": {
+        "deny_unknown_fields": true
+      }
+    },
     "CredentialValue": {
       "kind": "newtype",
       "of": {
@@ -2170,6 +2208,14 @@
           }
         },
         {
+          "name": "requested_credentials",
+          "optional": true,
+          "schema": {
+            "kind": "ref",
+            "name": "CredentialGrant"
+          }
+        },
+        {
           "name": "installed_image_digest",
           "optional": true,
           "schema": {
@@ -2510,6 +2556,14 @@
           "schema": {
             "kind": "ref",
             "name": "WorkspaceEnvironmentGrant"
+          }
+        },
+        {
+          "name": "credentials",
+          "optional": true,
+          "schema": {
+            "kind": "ref",
+            "name": "CredentialGrant"
           }
         }
       ],
@@ -10662,6 +10716,14 @@
                   "kind": "ref",
                   "name": "WorkspaceEnvironmentGrant"
                 }
+              },
+              {
+                "name": "credentials",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "CredentialGrant"
+                }
               }
             ],
             "kind": "struct"
@@ -10750,6 +10812,14 @@
                 "schema": {
                   "kind": "ref",
                   "name": "WorkspaceEnvironmentGrant"
+                }
+              },
+              {
+                "name": "credentials",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "CredentialGrant"
                 }
               }
             ],
@@ -14800,7 +14870,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:a2f344e8a6c133ed",
+  "source_fingerprint": "fnv1a64:a4cc5ff64f23ff45",
   "specification_version": 1,
   "topics": [
     {

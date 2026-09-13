@@ -25,6 +25,12 @@ const freezeGrant = (value) => {
     }
     return Object.freeze(value);
 };
+const freezeCredentialGrant = (value) => {
+    requiredObject(value, 'host greeting credential grant');
+    for (const keys of Object.values(value))
+        Object.freeze(keys);
+    return Object.freeze(value);
+};
 const SNAPSHOT_TOPICS = new Map(PROTOCOL_TOPICS.map(({ wire, snapshot }) => [snapshot, wire]));
 const TOPIC_CAPABILITIES = new Map(PROTOCOL_TOPICS.map(({ wire, capability }) => [wire, capability]));
 const CAPABILITIES = new Set(PROTOCOL_CAPABILITIES.map(({ wire }) => wire));
@@ -325,6 +331,11 @@ export class Session {
     #networks = freezeGrant({ selectors: [], create: false });
     #volumes = freezeGrant({ selectors: [], create: false });
     #workspaceEnvironment = freezeGrant({ read: [], write: [] });
+    #credentials = freezeCredentialGrant({
+        read: [],
+        write: [],
+        inject: [],
+    });
     #greeted;
     #ready;
     #rejectReady;
@@ -419,6 +430,9 @@ export class Session {
     }
     get grantedWorkspaceEnvironment() {
         return this.#workspaceEnvironment;
+    }
+    get grantedCredentials() {
+        return this.#credentials;
     }
     /** Resolves when the handshake is complete and calls may be sent. */
     get ready() {
@@ -985,6 +999,7 @@ export class Session {
             volumes: welcome.volumes ?? { selectors: [], create: false },
         };
         const environment = welcome.workspace_environment ?? { read: [], write: [] };
+        const credentials = welcome.credentials ?? { read: [], write: [], inject: [] };
         encodeRequest('extension_install', {
             job: 'grant-validation',
             revision: 0,
@@ -993,6 +1008,7 @@ export class Session {
             ...resources,
             filesystem: {},
             workspace_environment: environment,
+            credentials,
         });
         for (const operation of ['read', 'write']) {
             for (const selector of environment[operation]) {
@@ -1054,6 +1070,15 @@ export class Session {
         this.#networks = freezeGrant(resources.networks);
         this.#volumes = freezeGrant(resources.volumes);
         this.#workspaceEnvironment = freezeGrant(environment);
+        for (const [operation, capability] of [
+            ['read', 'credentials:read'],
+            ['write', 'credentials:write'],
+            ['inject', 'credentials:inject'],
+        ]) {
+            if (credentials[operation].length > 0 && !this.#granted.includes(capability))
+                throw new TypeError(`host greeting discloses credential ${operation} keys without ${capability}`);
+        }
+        this.#credentials = freezeCredentialGrant(credentials);
         this.#write({
             channel: CONTROL,
             kind: KIND.response,

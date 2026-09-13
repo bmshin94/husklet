@@ -9,9 +9,9 @@ use hl_rpc::Authority;
 
 use crate::capability::Capability;
 use crate::port::{
-    pane_lines, ContainerControl, ContainerInventory, Division, ExtensionStateStore, ExtensionStore, GridSize,
-    ImageStore, NetworkStore, NotificationSink, TerminalSurface, VolumeStore, WorkspaceConfiguration, WorkspaceControl,
-    WorkspaceFiles, WorkspaceInventory, PANE_GRID_EDGE, PANE_INPUT_BYTES,
+    ContainerControl, ContainerInventory, Division, ExtensionStateStore, ExtensionStore, GridSize, ImageStore,
+    NetworkStore, NotificationSink, PANE_GRID_EDGE, PANE_INPUT_BYTES, TerminalSurface, VolumeStore,
+    WorkspaceConfiguration, WorkspaceControl, WorkspaceFiles, WorkspaceInventory, pane_lines,
 };
 use crate::request::{Failure, Reply, Request, Topic, WorkspaceInfo};
 use crate::{ContainerGrant, ContainerSelector, FilesystemGrant};
@@ -50,6 +50,7 @@ pub struct Session {
     extension_identity: String,
     filesystem: FilesystemGrant,
     workspace_environment: crate::WorkspaceEnvironmentGrant,
+    credentials: crate::CredentialGrant,
     notification_ids: std::collections::BTreeSet<String>,
     /// Detached executions created by this authenticated extension incarnation.
     ///
@@ -293,6 +294,7 @@ impl Session {
             extension_identity: String::new(),
             filesystem: FilesystemGrant::default(),
             workspace_environment: crate::WorkspaceEnvironmentGrant::default(),
+            credentials: crate::CredentialGrant::default(),
             notification_ids: std::collections::BTreeSet::new(),
             owned_executions: ExecutionOwnership::default(),
         }
@@ -420,6 +422,12 @@ impl Session {
     }
 
     #[must_use]
+    pub fn with_credentials(mut self, grant: crate::CredentialGrant) -> Self {
+        self.credentials = grant;
+        self
+    }
+
+    #[must_use]
     pub fn filesystem_read_selectors(&self) -> &[crate::FilesystemSelector] {
         &self.filesystem.read
     }
@@ -481,6 +489,10 @@ impl Session {
     #[must_use]
     pub const fn workspace_environment_grant(&self) -> &crate::WorkspaceEnvironmentGrant {
         &self.workspace_environment
+    }
+    #[must_use]
+    pub const fn credential_grant(&self) -> &crate::CredentialGrant {
+        &self.credentials
     }
 
     #[must_use]
@@ -1211,14 +1223,22 @@ impl Session {
                         detail: "credential environment is limited to 64 entries".into(),
                     });
                 }
+                for (_, key) in credentials {
+                    validate_credential_key(key)?;
+                    if !self.credentials.permits_inject(key) {
+                        return Err(Failure::Denied {
+                            capability: Capability::CredentialInject.as_str().into(),
+                            detail: format!("credential {key} is outside the consented inject scope"),
+                        });
+                    }
+                }
                 let credentials_port = self
                     .peer
                     .authority()
                     .port(Capability::CredentialInject, services.state)?;
                 let target = self.resolve_mutation_container(id, services.containers)?;
                 let mut shape = environment.clone();
-                for (variable, key) in credentials {
-                    validate_credential_key(key)?;
+                for (variable, _) in credentials {
                     shape.push((variable.clone(), crate::ExecEnvironmentValue::new("")));
                 }
                 validate_exec_environment(&shape)?;
@@ -1616,6 +1636,7 @@ impl Session {
                 volumes,
                 filesystem,
                 workspace_environment,
+                credentials,
             } => {
                 acquisition_job(job)?;
                 immutable_digest(image_digest, "extension candidate image")?;
@@ -1630,6 +1651,7 @@ impl Session {
                     volumes,
                     filesystem,
                     workspace_environment,
+                    credentials,
                 )?))
             }
             Request::ExtensionUpdate {
@@ -1643,6 +1665,7 @@ impl Session {
                 volumes,
                 filesystem,
                 workspace_environment,
+                credentials,
             } => {
                 acquisition_job(job)?;
                 immutable_digest(image_digest, "extension candidate image")?;
@@ -1657,6 +1680,7 @@ impl Session {
                     volumes,
                     filesystem,
                     workspace_environment,
+                    credentials,
                 )?))
             }
             _ => Err(Failure::Unsupported {
@@ -2301,6 +2325,12 @@ impl Session {
             }
             Request::CredentialRead { key } => {
                 validate_credential_key(key)?;
+                if !self.credentials.permits_read(key) {
+                    return Err(Failure::Denied {
+                        capability: Capability::CredentialRead.as_str().into(),
+                        detail: format!("credential {key} is outside the consented read scope"),
+                    });
+                }
                 let credential = port.credential(key)?;
                 if credential.key != *key {
                     return Err(Failure::Failed {
@@ -2320,6 +2350,12 @@ impl Session {
             }
             Request::CredentialSet { observed, key, value } => {
                 validate_credential_key(key)?;
+                if !self.credentials.permits_write(key) {
+                    return Err(Failure::Denied {
+                        capability: Capability::CredentialWrite.as_str().into(),
+                        detail: format!("credential {key} is outside the consented write scope"),
+                    });
+                }
                 if value.as_bytes().len() > CREDENTIAL_VALUE_BYTES {
                     return Err(Failure::Conflict {
                         detail: "credentials are limited to 64 KiB".into(),
@@ -2331,6 +2367,12 @@ impl Session {
             }
             Request::CredentialRemove { observed, key } => {
                 validate_credential_key(key)?;
+                if !self.credentials.permits_write(key) {
+                    return Err(Failure::Denied {
+                        capability: Capability::CredentialWrite.as_str().into(),
+                        detail: format!("credential {key} is outside the consented write scope"),
+                    });
+                }
                 port.credential_remove(*observed, key)
                     .map(Reply::Revision)
                     .map_err(Failure::from)

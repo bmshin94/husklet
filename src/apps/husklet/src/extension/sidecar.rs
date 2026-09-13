@@ -699,6 +699,7 @@ mod tests {
             resources,
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         }
     }
 

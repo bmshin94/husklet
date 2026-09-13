@@ -89,6 +89,7 @@ fn install_defaults_with(
                         &candidate.manifest.volumes,
                         &candidate.manifest.filesystem,
                         &candidate.manifest.workspace_environment,
+                        &candidate.manifest.credentials,
                         moment(),
                     )
                     .map_err(|error| error.to_string())?;
@@ -111,6 +112,7 @@ fn install_defaults_with(
                     &candidate.manifest.volumes,
                     &candidate.manifest.filesystem,
                     &candidate.manifest.workspace_environment,
+                    &candidate.manifest.credentials,
                     moment(),
                 )
                 .map_err(|error| error.to_string())?;
@@ -471,6 +473,7 @@ mod tests {
                 &stale.volumes,
                 &stale.filesystem,
                 &stale.workspace_environment,
+                &stale.credentials,
                 1,
             )
             .unwrap();
@@ -489,9 +492,11 @@ mod tests {
         assert_eq!(repaired[0].image_digest, "sha256:same-top");
         assert_eq!(repaired[0].granted, trusted.capabilities);
         assert!(!repaired[0].granted.holds(Capability::FilesystemWrite));
-        assert!(Roster::workspace(&workspace)
-            .unwrap()
-            .matches_manifest(&trusted.name, &trusted));
+        assert!(
+            Roster::workspace(&workspace)
+                .unwrap()
+                .matches_manifest(&trusted.name, &trusted)
+        );
         assert_eq!(repaired[0].stage, Stage::Duty);
     }
 
@@ -515,6 +520,7 @@ mod tests {
                 &stale.volumes,
                 &stale.filesystem,
                 &stale.workspace_environment,
+                &stale.credentials,
                 1,
             )
             .unwrap();

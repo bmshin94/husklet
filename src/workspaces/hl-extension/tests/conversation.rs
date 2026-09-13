@@ -19,8 +19,8 @@ use hl_extension::port::{
     WorkspaceState,
 };
 use hl_extension::{
-    codec, Authority, Capability, Coding, ExtensionName, Failure, Grant, Hello, RelativePath, Reply, Request, Services,
-    Session, Transit, Welcome, WorkspaceInfo, PROTOCOL,
+    Authority, Capability, Coding, ExtensionName, Failure, Grant, Hello, PROTOCOL, RelativePath, Reply, Request,
+    Services, Session, Transit, Welcome, WorkspaceInfo, codec,
 };
 use hl_gui::{
     Align, Choice, Column as TableColumn, EventId, Length, NodeId, Patch, Prop, PropValue, RowWindow, Scale, SourceId,
@@ -1227,6 +1227,7 @@ fn a_whole_interface_is_rendered_from_a_socket() {
             networks: hl_extension::NetworkGrant::default(),
             volumes: hl_extension::VolumeGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
             limits: hl_extension::Limits::default(),
         })
         .expect("the welcome encodes"),
@@ -1484,7 +1485,10 @@ fn network_connect_authority_cannot_detach_an_endpoint_over_a_real_socket() {
         codec::read_failure(&sender.receive().unwrap()),
         Ok(Failure::Denied { capability, .. }) if capability == Capability::NetworkDisconnect.as_str()
     ));
-    assert!(host.network_aliases.borrow().is_empty(), "network adapter was not reached");
+    assert!(
+        host.network_aliases.borrow().is_empty(),
+        "network adapter was not reached"
+    );
 }
 
 #[test]

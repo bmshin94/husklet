@@ -40,9 +40,9 @@ pub use hl_rpc::{
 };
 pub use installation::{Disposition, Installation, Objection, Record, Stage, Summary, Update, UpdateFailure};
 pub use manifest::{
-    Activation, ContainerGrant, ContainerSelector, ExtensionName, FilesystemGrant, FilesystemSelector, ImageGrant,
-    ImageSelector, Invalid, Manifest, NetworkGrant, NetworkSelector, PaneProvider, PaneSelection, Presentation,
-    Resources, VolumeGrant, VolumeSelector, WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector,
+    Activation, ContainerGrant, ContainerSelector, CredentialGrant, ExtensionName, FilesystemGrant, FilesystemSelector,
+    ImageGrant, ImageSelector, Invalid, Manifest, NetworkGrant, NetworkSelector, PaneProvider, PaneSelection,
+    Presentation, Resources, VolumeGrant, VolumeSelector, WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector,
 };
 pub use port::{
     ExtensionAcquisitionJob, ExtensionAcquisitionProgress, ExtensionAcquisitionStatus, ExtensionCandidate,
@@ -103,6 +103,8 @@ pub struct Welcome {
     pub volumes: VolumeGrant,
     #[serde(default)]
     pub workspace_environment: WorkspaceEnvironmentGrant,
+    #[serde(default)]
+    pub credentials: CredentialGrant,
     pub limits: Limits,
 }
 

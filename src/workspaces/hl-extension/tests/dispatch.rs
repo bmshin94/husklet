@@ -1228,6 +1228,7 @@ impl ExtensionStore for Host {
             volumes: hl_extension::VolumeGrant::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         }])
     }
     fn inspect(&self, name: &str) -> Result<ExtensionSummary, HostError> {
@@ -1246,6 +1247,7 @@ impl ExtensionStore for Host {
             volumes: hl_extension::VolumeGrant::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         })
     }
     fn enable(&self, _name: &str, _image_digest: &str) -> Result<(), HostError> {
@@ -1297,6 +1299,7 @@ impl ExtensionStore for Host {
         _volumes: &hl_extension::VolumeGrant,
         _filesystem: &hl_extension::FilesystemGrant,
         _workspace_environment: &hl_extension::WorkspaceEnvironmentGrant,
+        _credentials: &hl_extension::CredentialGrant,
     ) -> Result<ExtensionSummary, HostError> {
         self.ledger.note("extensions.install");
         ExtensionStore::inspect(self, job)
@@ -1313,6 +1316,7 @@ impl ExtensionStore for Host {
         _volumes: &hl_extension::VolumeGrant,
         _filesystem: &hl_extension::FilesystemGrant,
         _workspace_environment: &hl_extension::WorkspaceEnvironmentGrant,
+        _credentials: &hl_extension::CredentialGrant,
     ) -> Result<ExtensionSummary, HostError> {
         self.ledger.note("extensions.update");
         ExtensionStore::inspect(self, job)
@@ -1434,6 +1438,11 @@ fn session(capabilities: &[Capability], roots: &[&str]) -> Session {
         create: selectors.clone(),
         delete: selectors.clone(),
         rename: selectors,
+    })
+    .with_credentials(hl_extension::CredentialGrant {
+        read: vec!["postgres.password".into()],
+        write: vec!["postgres.password".into()],
+        inject: vec!["postgres.password".into()],
     })
 }
 
@@ -1721,6 +1730,7 @@ fn calls() -> Vec<(Request, Capability)> {
                 volumes: hl_extension::VolumeGrant::default(),
                 filesystem: hl_extension::FilesystemGrant::default(),
                 workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+                credentials: hl_extension::CredentialGrant::default(),
             },
             Capability::ExtensionInstall,
         ),
@@ -1736,6 +1746,7 @@ fn calls() -> Vec<(Request, Capability)> {
                 containers: hl_extension::ContainerGrant::default(),
                 filesystem: hl_extension::FilesystemGrant::default(),
                 workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+                credentials: hl_extension::CredentialGrant::default(),
             },
             Capability::ExtensionInstall,
         ),
@@ -2711,6 +2722,7 @@ fn extension_acquisition_identifiers_are_bounded_before_the_host() {
                 volumes: hl_extension::VolumeGrant::default(),
                 filesystem: hl_extension::FilesystemGrant::default(),
                 workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+                credentials: hl_extension::CredentialGrant::default(),
             },
             &services(&host),
         ),
@@ -4700,6 +4712,41 @@ fn credential_execution_requires_both_grants_and_resolves_only_inside_the_host()
     );
     assert!(state.read.get());
     assert_eq!(host.ledger.reached(), vec!["containers.list", "containers.exec"]);
+}
+
+#[test]
+fn exact_credential_grant_never_authorizes_a_sibling_key() {
+    let host = Host::new();
+    let state = CredentialPort { read: Cell::new(false) };
+    let mut client = session(
+        &[Capability::ContainerExecute, Capability::CredentialInject, Capability::CredentialRead],
+        &[],
+    );
+    let request = Request::ContainerExecCredential {
+        id: "a".repeat(64),
+        generation: 0,
+        command: vec!["psql".into()],
+        environment: Vec::new(),
+        credentials: vec![("PGPASSWORD".into(), "postgres.password.backup".into())],
+        user: None,
+        working_directory: None,
+        stdin: false,
+    };
+    assert!(matches!(
+        client.dispatch(&request, &services_with_state(&host, &state)),
+        Err(Failure::Denied { capability, detail })
+            if capability == "credentials:inject" && detail.contains("postgres.password.backup")
+    ));
+    assert!(!state.read.get(), "denial precedes secret lookup");
+    assert!(host.ledger.reached().is_empty(), "denial precedes container lookup");
+    assert!(matches!(
+        client.dispatch(
+            &Request::CredentialRead { key: "postgres.password.backup".into() },
+            &services_with_state(&host, &state),
+        ),
+        Err(Failure::Denied { capability, .. }) if capability == "credentials:read"
+    ));
+    assert!(!state.read.get());
 }
 
 #[test]

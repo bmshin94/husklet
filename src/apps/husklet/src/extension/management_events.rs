@@ -122,6 +122,7 @@ mod tests {
             volumes: hl_extension::VolumeGrant::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         }]);
         events.inventory(vec![ExtensionSummary {
             name: "new".into(),
@@ -137,6 +138,7 @@ mod tests {
             volumes: hl_extension::VolumeGrant::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         }]);
         let job = AcquisitionJob::test(7);
         events.acquisition(job, snapshot("first", 1));

@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:661fe30574bba2c0
+// Protocol artifact fnv1a64:78d90a40c64cc70d
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -1703,6 +1703,44 @@ const definitions = {
       }
     ]
   },
+  "CredentialGrant": {
+    "fields": [
+      {
+        "name": "read",
+        "optional": true,
+        "schema": {
+          "kind": "array",
+          "of": {
+            "kind": "string"
+          }
+        }
+      },
+      {
+        "name": "write",
+        "optional": true,
+        "schema": {
+          "kind": "array",
+          "of": {
+            "kind": "string"
+          }
+        }
+      },
+      {
+        "name": "inject",
+        "optional": true,
+        "schema": {
+          "kind": "array",
+          "of": {
+            "kind": "string"
+          }
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {
+      "deny_unknown_fields": true
+    }
+  },
   "CredentialValue": {
     "kind": "newtype",
     "of": {
@@ -2519,6 +2557,14 @@ const definitions = {
         }
       },
       {
+        "name": "requested_credentials",
+        "optional": true,
+        "schema": {
+          "kind": "ref",
+          "name": "CredentialGrant"
+        }
+      },
+      {
         "name": "installed_image_digest",
         "optional": true,
         "schema": {
@@ -2859,6 +2905,14 @@ const definitions = {
         "schema": {
           "kind": "ref",
           "name": "WorkspaceEnvironmentGrant"
+        }
+      },
+      {
+        "name": "credentials",
+        "optional": true,
+        "schema": {
+          "kind": "ref",
+          "name": "CredentialGrant"
         }
       }
     ],
@@ -9867,6 +9921,14 @@ const roots = {
                 "kind": "ref",
                 "name": "WorkspaceEnvironmentGrant"
               }
+            },
+            {
+              "name": "credentials",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "CredentialGrant"
+              }
             }
           ],
           "kind": "struct"
@@ -9955,6 +10017,14 @@ const roots = {
               "schema": {
                 "kind": "ref",
                 "name": "WorkspaceEnvironmentGrant"
+              }
+            },
+            {
+              "name": "credentials",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "CredentialGrant"
               }
             }
           ],

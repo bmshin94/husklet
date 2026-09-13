@@ -23,6 +23,10 @@ test('fragmented credential rotation failure never echoes secret bytes and recon
         protocol: 1,
         peer: 'database',
         granted: ['credentials:read', 'credentials:write'],
+        credentials:
+          current === 1
+            ? { read: [], write: ['postgres.password', 'retired.password'], inject: [] }
+            : { read: ['postgres.password'], write: [], inject: [] },
       },
     });
     for (const byte of greeting) socket.write(Uint8Array.of(byte));
@@ -56,6 +60,7 @@ test('fragmented credential rotation failure never echoes secret bytes and recon
   await new Promise((resolve) => server.listen(socketPath, resolve));
   try {
     const first = await connect({ path: socketPath, timeout: 1_000 });
+    assert.equal(workspace(first).credentials.keyGrant('write', 'retired.password'), true);
     const failed = await workspace(first)
       .credentials.set(7, 'postgres.password', secret)
       .catch((error) => error);
@@ -63,6 +68,9 @@ test('fragmented credential rotation failure never echoes secret bytes and recon
     assert(!failed.message.includes('database-password-sentinel'));
 
     const reconnected = await connect({ path: socketPath, timeout: 1_000 });
+    assert.equal(workspace(reconnected).credentials.keyGrant('write', 'retired.password'), false);
+    assert.equal(workspace(reconnected).credentials.keyGrant('write', 'postgres.password'), false);
+    assert.equal(workspace(reconnected).credentials.keyGrant('read', 'postgres.password'), true);
     const observed = await workspace(reconnected).credentials.read('postgres.password');
     assert.equal(observed.revision, 8);
     assert.deepEqual(observed.value, [...secret]);

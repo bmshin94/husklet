@@ -612,7 +612,7 @@ mod image_tests {
 
 #[cfg(test)]
 mod halt_tests {
-    use hl_extension::{Capability, ExtensionName, Grant, Manifest, Record, Resources, PROTOCOL};
+    use hl_extension::{Capability, ExtensionName, Grant, Manifest, PROTOCOL, Record, Resources};
 
     use super::{Image, Plan, SidecarSpec, Supply as _, Workspace};
 
@@ -634,6 +634,7 @@ mod halt_tests {
             resources: Resources::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         };
         let record = Record {
             incarnation: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
@@ -643,6 +644,7 @@ mod halt_tests {
             volumes: hl_extension::VolumeGrant::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
             name: manifest.name.clone(),
             image_digest: "sha256:offline-checkpoint".to_owned(),
             version: manifest.version.clone(),
@@ -1004,8 +1006,8 @@ fn workspace_io_error(error: std::io::Error) -> HostError {
 
 #[cfg(test)]
 mod workspace_control_tests {
-    use hl_extension::port::{HostError, WorkspaceControl as _};
     use hl_extension::ExtensionName;
+    use hl_extension::port::{HostError, WorkspaceControl as _};
 
     use super::{Store, Workspace};
 
@@ -1018,7 +1020,10 @@ mod workspace_control_tests {
         Store::create_at(path.clone(), first).expect("first creation");
 
         let second = crate::config::WorkspaceConfig::new("database", "malicious:latest", hl_ws::Arch::Amd64);
-        assert!(matches!(Store::create_at(path.clone(), second), Err(HostError::Conflict(_))));
+        assert!(matches!(
+            Store::create_at(path.clone(), second),
+            Err(HostError::Conflict(_))
+        ));
         let persisted = crate::config::WorkspaceStore::load(path).expect("persisted workspace");
         let database = persisted.get("database").expect("winning workspace");
         assert_eq!(database.image, "postgres:17");

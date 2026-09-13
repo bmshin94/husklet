@@ -26,13 +26,13 @@ use hl_extension::{Authority, ChannelId, Disposition, Installation, Manifest, Re
 mod voice;
 mod workspace;
 
+use super::Listener;
 use super::conversation::{Conversation, Queue};
 use super::sidecar::SidecarSpec;
-use super::Listener;
 use crate::config::WorkspaceConfig;
+pub(crate) use voice::Voice;
 use voice::speak;
 pub(crate) use voice::speak_at;
-pub(crate) use voice::Voice;
 
 pub(crate) use workspace::ExtensionRemoval;
 pub use workspace::Workspace;
@@ -856,6 +856,7 @@ fn converse<S: Supply>(
         plan.record.volumes.clone(),
         plan.record.filesystem.clone(),
         plan.record.workspace_environment.clone(),
+        plan.record.credentials.clone(),
     );
     let Ok(mut conversation) = opened else {
         return "the extension's socket could not be duplicated".to_owned();
@@ -948,23 +949,23 @@ mod tests {
     use std::net::Shutdown;
     use std::process::{Child, Command};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::{mpsc, Arc, Mutex};
+    use std::sync::{Arc, Mutex, mpsc};
 
     use hl_extension::port::{
         ContainerControl, ContainerInventory, ContainerSummary, Division, Entry, HostError, ImageStore, ImageSummary,
         TabSummary, TerminalSurface, WorkspaceFiles,
     };
     use hl_extension::{
-        codec, Capability, ExtensionName, Grant, Hello, Installation, Manifest, Record, RelativePath, Request,
-        Resources, Services, Transit, Wire, WorkspaceInfo, PROTOCOL,
+        Capability, ExtensionName, Grant, Hello, Installation, Manifest, PROTOCOL, Record, RelativePath, Request,
+        Resources, Services, Transit, Wire, WorkspaceInfo, codec,
     };
 
     use super::super::roster::Roster;
     use super::super::sidecar::Image;
-    use super::{
-        enrol, faulted, Hall, Host, Order, Plan, Report, SidecarSpec, Standing, Supply, READY_TIMEOUT, VACANCY,
-    };
     use super::{Conversation, UnixStream};
+    use super::{
+        Hall, Host, Order, Plan, READY_TIMEOUT, Report, SidecarSpec, Standing, Supply, VACANCY, enrol, faulted,
+    };
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
@@ -1189,6 +1190,7 @@ tab_title = "Sample"
             resources: Resources::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         }
     }
 
@@ -1202,6 +1204,7 @@ tab_title = "Sample"
             volumes: hl_extension::VolumeGrant::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
             name: manifest.name.clone(),
             image_digest: "sha256:aaaa".to_owned(),
             version: "1.0.0".to_owned(),

@@ -39,6 +39,8 @@ export interface ExtensionSummary {
     filesystem?: FilesystemGrant;
     /** Effective workspace-environment authority persisted for this exact image digest. */
     workspace_environment?: WorkspaceEnvironmentGrant;
+    /** Effective exact-key credential authority persisted for this exact image digest. */
+    credentials?: CredentialGrant;
 }
 export interface ExtensionProviderDeclaration {
     extension: string;
@@ -143,6 +145,15 @@ export interface WorkspaceEnvironmentGrant {
 export type ReadonlyWorkspaceEnvironmentGrant = {
     readonly [Operation in keyof WorkspaceEnvironmentGrant]: readonly Readonly<WorkspaceEnvironmentGrant[Operation][number]>[];
 };
+export interface CredentialGrant {
+    read: string[];
+    write: string[];
+    inject: string[];
+}
+export type CredentialGrantOperation = keyof CredentialGrant;
+export type ReadonlyCredentialGrant = {
+    readonly [Operation in CredentialGrantOperation]: readonly string[];
+};
 /** The complete authority approved for one reviewed extension image. */
 export interface ExtensionReviewedGrants {
     capabilities: ExtensionCapability[];
@@ -152,6 +163,7 @@ export interface ExtensionReviewedGrants {
     volumes?: VolumeGrant;
     filesystem?: FilesystemGrant;
     workspaceEnvironment?: WorkspaceEnvironmentGrant;
+    credentials?: CredentialGrant;
 }
 export interface ExtensionCandidate {
     name: string;
@@ -166,6 +178,7 @@ export interface ExtensionCandidate {
     requested_volumes: VolumeGrant;
     requested_filesystem: FilesystemGrant;
     requested_workspace_environment: WorkspaceEnvironmentGrant;
+    requested_credentials: CredentialGrant;
     installed_image_digest: string | null;
 }
 export interface ExtensionCatalogueEntry {
@@ -987,6 +1000,7 @@ export declare class Session {
     readonly grantedNetworks: ReadonlyNetworkGrant;
     readonly grantedVolumes: ReadonlyVolumeGrant;
     readonly grantedWorkspaceEnvironment: ReadonlyWorkspaceEnvironmentGrant;
+    readonly grantedCredentials: ReadonlyCredentialGrant;
     call<C extends WireCall>(method: C, ...args: WireRequestFor<C> extends {
         with: infer P;
     } ? [params: P, options?: CallOptions] : [params?: undefined, options?: CallOptions]): Promise<WireReplyFor<C>>;
@@ -1018,6 +1032,7 @@ export interface WorkspaceApi {
     readonly grantedNetworks: ReadonlyNetworkGrant;
     readonly grantedVolumes: ReadonlyVolumeGrant;
     readonly grantedWorkspaceEnvironment: ReadonlyWorkspaceEnvironmentGrant;
+    readonly grantedCredentials: ReadonlyCredentialGrant;
     /** Returns the complete typed facade with every call bound to this signal. */
     withSignal(signal: AbortSignal): WorkspaceApi;
     info(): Promise<WorkspaceInfo>;
@@ -1137,7 +1152,7 @@ export interface WorkspaceApi {
             job: string;
             revision: number;
         }>;
-        install(job: string, revision: number, imageDigest: string, granted: ExtensionCapability[], containers?: ContainerGrant, images?: ImageGrant, networks?: NetworkGrant, volumes?: VolumeGrant, filesystem?: FilesystemGrant, workspaceEnvironment?: WorkspaceEnvironmentGrant): Promise<ExtensionSummary>;
+        install(job: string, revision: number, imageDigest: string, granted: ExtensionCapability[], containers?: ContainerGrant, images?: ImageGrant, networks?: NetworkGrant, volumes?: VolumeGrant, filesystem?: FilesystemGrant, workspaceEnvironment?: WorkspaceEnvironmentGrant, credentials?: CredentialGrant): Promise<ExtensionSummary>;
         /** Inspect the exact ready revision, arm inventory, install it, then verify its published identity. */
         installAndWait(job: string, revision: number, review: ExtensionReviewedGrants, options?: {
             timeoutMs?: number;
@@ -1150,7 +1165,7 @@ export interface WorkspaceApi {
             image_digest: string;
             revision: number;
         }>;
-        update(job: string, revision: number, imageDigest: string, granted: ExtensionCapability[], containers?: ContainerGrant, images?: ImageGrant, networks?: NetworkGrant, volumes?: VolumeGrant, filesystem?: FilesystemGrant, workspaceEnvironment?: WorkspaceEnvironmentGrant): Promise<ExtensionSummary>;
+        update(job: string, revision: number, imageDigest: string, granted: ExtensionCapability[], containers?: ContainerGrant, images?: ImageGrant, networks?: NetworkGrant, volumes?: VolumeGrant, filesystem?: FilesystemGrant, workspaceEnvironment?: WorkspaceEnvironmentGrant, credentials?: CredentialGrant): Promise<ExtensionSummary>;
         /** Inspect the exact ready revision, arm inventory, update it, then verify its published identity. */
         updateAndWait(job: string, revision: number, review: ExtensionReviewedGrants, options?: {
             timeoutMs?: number;
@@ -2118,6 +2133,8 @@ export interface WorkspaceApi {
     };
     /** Named credentials isolated to this extension; values are never enumerable. */
     credentials: {
+        /** Checks this connection's immutable exact-key grant before making a call. */
+        keyGrant(operation: CredentialGrantOperation, key: string): boolean;
         read(key: string): Promise<ExtensionCredential>;
         set(observed: number, key: string, value: Iterable<number>): Promise<number>;
         remove(observed: number, key: string): Promise<number>;

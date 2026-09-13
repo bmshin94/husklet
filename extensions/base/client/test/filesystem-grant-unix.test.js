@@ -79,6 +79,9 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
           'networks:read',
           'volumes:read',
           'workspace-environment:read',
+          'credentials:read',
+          'credentials:write',
+          'credentials:inject',
         ],
         filesystem: {
           read: [{ subtree: 'src' }, { exact: 'README.md' }],
@@ -98,6 +101,11 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
         networks: { selectors: [{ name: 'backend' }], create: false },
         volumes: { selectors: [{ name: 'pgdata' }], create: false },
         workspace_environment: { read: [{ workspace: 'dev', name: 'DATABASE_URL' }], write: [] },
+        credentials: {
+          read: ['database.password'],
+          write: ['database.password'],
+          inject: ['database.password'],
+        },
       },
     });
     for (const byte of greeting) socket.write(Uint8Array.of(byte));
@@ -116,6 +124,18 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
     assert(Object.isFrozen(session.grantedFilesystem.read));
     assert(Object.isFrozen(session.grantedFilesystem.read[0]));
     assert.throws(() => session.grantedFilesystem.read.push({ subtree: 'secret' }), TypeError);
+    assert.deepEqual(session.grantedCredentials, {
+      read: ['database.password'],
+      write: ['database.password'],
+      inject: ['database.password'],
+    });
+    assert(Object.isFrozen(session.grantedCredentials));
+    assert(Object.isFrozen(session.grantedCredentials.read));
+    assert.throws(() => session.grantedCredentials.read.push('other.password'), TypeError);
+    const credentialApi = workspace(session).credentials;
+    assert.equal(credentialApi.keyGrant('read', 'database.password'), true);
+    assert.equal(credentialApi.keyGrant('read', 'other.password'), false);
+    assert.equal(credentialApi.keyGrant('inject', 'database.password'), true);
     const files = workspace(session).files;
     assert.equal(files.pathGrant('read', 'src/index.ts'), 'subtree');
     assert.equal(files.pathGrant('read', 'src\\./nested//index.ts'), 'subtree');

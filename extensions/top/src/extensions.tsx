@@ -47,6 +47,7 @@ import {
   type FilesystemGrant,
   type FilesystemSelector,
   type WorkspaceEnvironmentGrant,
+  type CredentialGrant,
   type WorkspaceApi,
 } from '@husklet/react';
 
@@ -549,6 +550,11 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
     React.useState<FilesystemGrant>(emptyFilesystemGrant);
   const [grantedWorkspaceEnvironment, setGrantedWorkspaceEnvironment] =
     React.useState<WorkspaceEnvironmentGrant>({ read: [], write: [] });
+  const [grantedCredentials, setGrantedCredentials] = React.useState<CredentialGrant>({
+    read: [],
+    write: [],
+    inject: [],
+  });
   const [busy, setBusy] = React.useState('');
   const [error, setError] = React.useState('');
   const [pendingLifecycle, setPendingLifecycle] = React.useState<LifecycleState | null>(null);
@@ -691,6 +697,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
             setGrantedVolumes({ selectors: [], create: false });
             setGrantedFilesystem(emptyFilesystemGrant());
             setGrantedWorkspaceEnvironment({ read: [], write: [] });
+            setGrantedCredentials({ read: [], write: [], inject: [] });
             setPermissionDetailsExpanded((status.candidate.required?.length ?? 0) > 0);
           }
         }
@@ -752,6 +759,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
           volumes: grantedVolumes,
           filesystem: grantedFilesystem,
           workspaceEnvironment: grantedWorkspaceEnvironment,
+          credentials: grantedCredentials,
         },
       );
       setAcquisition(null);
@@ -839,6 +847,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
     setGrantedVolumes({ selectors: [], create: false });
     setGrantedFilesystem(emptyFilesystemGrant());
     setGrantedWorkspaceEnvironment({ read: [], write: [] });
+    setGrantedCredentials({ read: [], write: [], inject: [] });
     candidateKey.current = '';
     setError('');
   };
@@ -1047,6 +1056,11 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
     read: [],
     write: [],
   };
+  const requestedCredentials = acquisition?.candidate?.requested_credentials ?? {
+    read: [],
+    write: [],
+    inject: [],
+  };
   const requiredCapabilities = acquisition?.candidate?.required ?? [];
   const missingRequiredCapabilities = requiredCapabilities.filter(
     (capability) => !granted.includes(capability),
@@ -1067,8 +1081,15 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
       Number(requestedVolumes.create) +
       filesystemGrantCount(requestedFilesystem) +
       requestedWorkspaceEnvironment.read.length +
-      requestedWorkspaceEnvironment.write.length
+      requestedWorkspaceEnvironment.write.length +
+      requestedCredentials.read.length +
+      requestedCredentials.write.length +
+      requestedCredentials.inject.length
     : 0;
+  const grantedCredentialCount =
+    grantedCredentials.read.length +
+    grantedCredentials.write.length +
+    grantedCredentials.inject.length;
   const grantedPermissionCount =
     granted.length +
     grantedContainers.selectors.length +
@@ -1080,7 +1101,8 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
     Number(grantedVolumes.create) +
     filesystemGrantCount(grantedFilesystem) +
     grantedWorkspaceEnvironment.read.length +
-    grantedWorkspaceEnvironment.write.length;
+    grantedWorkspaceEnvironment.write.length +
+    grantedCredentialCount;
   const requestedPermissionGroups = acquisition?.candidate
     ? [
         { label: 'Product', count: acquisition.candidate.requested.length },
@@ -1102,6 +1124,13 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
           label: 'Environment',
           count:
             requestedWorkspaceEnvironment.read.length + requestedWorkspaceEnvironment.write.length,
+        },
+        {
+          label: 'Credentials',
+          count:
+            requestedCredentials.read.length +
+            requestedCredentials.write.length +
+            requestedCredentials.inject.length,
         },
       ]
     : [];
@@ -1992,6 +2021,37 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                             : 'workspace-environment:write',
                                           selected.length > 0,
                                         ),
+                                      );
+                                    }}
+                                  />
+                                </FormControlLabel>
+                              );
+                            }),
+                          )}
+                          {(['read', 'write', 'inject'] as const).flatMap((operation) =>
+                            requestedCredentials[operation].map((key) => {
+                              const checked = grantedCredentials[operation].includes(key);
+                              const capability = `credentials:${operation}` as ExtensionCapability;
+                              return (
+                                <FormControlLabel
+                                  key={`${operation}:${key}`}
+                                  label={`${operation === 'read' ? 'Read' : operation === 'write' ? 'Change' : 'Inject'} credential ${key}`}
+                                  gap={2}
+                                >
+                                  <Switch
+                                    checked={checked}
+                                    onToggle={(event: Change) => {
+                                      const selected = event.value
+                                        ? [...grantedCredentials[operation], key]
+                                        : grantedCredentials[operation].filter(
+                                            (candidate) => candidate !== key,
+                                          );
+                                      setGrantedCredentials((current) => ({
+                                        ...current,
+                                        [operation]: selected,
+                                      }));
+                                      setGranted((current) =>
+                                        withCapability(current, capability, selected.length > 0),
                                       );
                                     }}
                                   />

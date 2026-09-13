@@ -150,6 +150,7 @@ pub enum Request {
         volumes: crate::VolumeGrant,
         filesystem: crate::FilesystemGrant,
         workspace_environment: crate::WorkspaceEnvironmentGrant,
+        credentials: crate::CredentialGrant,
     },
     ExtensionUpdate {
         job: String,
@@ -162,6 +163,7 @@ pub enum Request {
         volumes: crate::VolumeGrant,
         filesystem: crate::FilesystemGrant,
         workspace_environment: crate::WorkspaceEnvironmentGrant,
+        credentials: crate::CredentialGrant,
     },
     ContainerList,
     ContainerInspect {

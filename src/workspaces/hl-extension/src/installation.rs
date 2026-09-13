@@ -53,6 +53,8 @@ pub struct Record {
     pub filesystem: FilesystemGrant,
     #[serde(default)]
     pub workspace_environment: crate::WorkspaceEnvironmentGrant,
+    #[serde(default)]
+    pub credentials: crate::CredentialGrant,
     /// Whether the sidecar should be running.
     pub enabled: bool,
     /// When the record was first written, in milliseconds since the epoch,
@@ -157,6 +159,15 @@ impl Record {
         }
         if !holds(Capability::WorkspaceEnvironmentWrite) {
             self.workspace_environment.write.clear();
+        }
+        if !holds(Capability::CredentialRead) {
+            self.credentials.read.clear();
+        }
+        if !holds(Capability::CredentialWrite) {
+            self.credentials.write.clear();
+        }
+        if !holds(Capability::CredentialInject) {
+            self.credentials.inject.clear();
         }
     }
 }
@@ -393,6 +404,7 @@ impl Installation {
             &VolumeGrant::default(),
             &FilesystemGrant::default(),
             &crate::WorkspaceEnvironmentGrant::default(),
+            &crate::CredentialGrant::default(),
             at,
         )
     }
@@ -408,6 +420,7 @@ impl Installation {
         consented_volumes: &VolumeGrant,
         consented_filesystem: &FilesystemGrant,
         consented_environment: &crate::WorkspaceEnvironmentGrant,
+        consented_credentials: &crate::CredentialGrant,
         at: i64,
     ) -> Result<&Record, Objection> {
         if digest.is_empty() {
@@ -490,6 +503,7 @@ impl Installation {
         if !granted.holds(Capability::WorkspaceEnvironmentWrite) {
             workspace_environment.write.clear();
         }
+        let credentials = manifest.credentials.intersect(consented_credentials);
         // The name is vacant, checked above, so this always inserts.
         let entry = self.entries.entry(manifest.name.clone()).or_insert_with(|| {
             let mut record = Record {
@@ -504,6 +518,7 @@ impl Installation {
                 volumes,
                 filesystem,
                 workspace_environment,
+                credentials,
                 enabled: false,
                 installed_at: at,
                 pane_providers: manifest.pane_providers.clone(),
@@ -587,6 +602,7 @@ impl Installation {
             &VolumeGrant::default(),
             &FilesystemGrant::default(),
             &crate::WorkspaceEnvironmentGrant::default(),
+            &crate::CredentialGrant::default(),
             at,
             replace,
         )
@@ -602,6 +618,7 @@ impl Installation {
         consented_volumes: &VolumeGrant,
         consented_filesystem: &FilesystemGrant,
         consented_environment: &crate::WorkspaceEnvironmentGrant,
+        consented_credentials: &crate::CredentialGrant,
         at: i64,
         replace: impl FnOnce(&Record, &Record) -> Result<(), E>,
     ) -> Result<&Record, UpdateFailure<E>> {
@@ -630,6 +647,7 @@ impl Installation {
             volumes: update.manifest.volumes.intersect(consented_volumes),
             filesystem: update.manifest.filesystem.intersect(consented_filesystem),
             workspace_environment: update.manifest.workspace_environment.intersect(consented_environment),
+            credentials: update.manifest.credentials.intersect(consented_credentials),
             enabled: entry.record.enabled,
             installed_at: at,
             pane_providers: update.manifest.pane_providers.clone(),
@@ -819,8 +837,7 @@ impl Summary {
         }
     }
 
-    pub const EXECUTION_NOTICE: &'static str =
-        "This extension can run programs inside this workspace. It is isolated from the rest of \
+    pub const EXECUTION_NOTICE: &'static str = "This extension can run programs inside this workspace. It is isolated from the rest of \
          your machine by the workspace, not from the workspace itself.";
 }
 
@@ -859,6 +876,7 @@ mod tests {
             resources: crate::manifest::Resources::default(),
             filesystem: crate::FilesystemGrant::default(),
             workspace_environment: crate::WorkspaceEnvironmentGrant::default(),
+            credentials: crate::CredentialGrant::default(),
         }
     }
 
@@ -906,6 +924,7 @@ mod tests {
                 &crate::VolumeGrant::default(),
                 &crate::FilesystemGrant::default(),
                 &crate::WorkspaceEnvironmentGrant::default(),
+                &crate::CredentialGrant::default(),
                 1,
             )
             .unwrap();
@@ -953,6 +972,7 @@ mod tests {
                 &crate::VolumeGrant::default(),
                 &filesystem,
                 &crate::WorkspaceEnvironmentGrant::default(),
+                &crate::CredentialGrant::default(),
                 1,
             )
             .unwrap();
@@ -1015,6 +1035,7 @@ mod tests {
                 &asked.volumes,
                 &asked.filesystem,
                 &asked.workspace_environment,
+                &asked.credentials,
                 1,
             )
             .unwrap();
@@ -1040,6 +1061,7 @@ mod tests {
                 &asked.volumes,
                 &asked.filesystem,
                 &asked.workspace_environment,
+                &asked.credentials,
                 2,
                 |_, _| Ok::<_, ()>(()),
             )
@@ -1087,6 +1109,7 @@ mod tests {
                 &consented,
                 &crate::FilesystemGrant::default(),
                 &crate::WorkspaceEnvironmentGrant::default(),
+                &crate::CredentialGrant::default(),
                 1,
             )
             .unwrap();
@@ -1130,18 +1153,22 @@ mod tests {
             .install(&manifest, "sha256:a", &manifest.capabilities, 10)
             .expect("installed");
 
-        assert!(installation
-            .install(&manifest, "sha256:b", &manifest.capabilities, 20)
-            .is_err());
+        assert!(
+            installation
+                .install(&manifest, "sha256:b", &manifest.capabilities, 20)
+                .is_err()
+        );
     }
 
     #[test]
     fn lifecycle_replacements_rotate_the_command_authority_incarnation() {
         fn assert_incarnation(value: &str) {
             assert_eq!(value.len(), 32);
-            assert!(value
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
+            assert!(
+                value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            );
         }
 
         let mut installation = Installation::new();
@@ -1264,5 +1291,59 @@ mod tests {
         let reading = Summary::of(&Grant::new([Capability::ContainerRead]));
         assert!(!reading.execution);
         assert!(!reading.to_string().contains("run programs"));
+    }
+
+    #[test]
+    fn credential_scope_is_exact_and_replacement_cannot_retain_an_old_key() {
+        let mut installation = Installation::new();
+        let mut initial = manifest(&[Capability::CredentialRead]);
+        initial.credentials.read = vec!["database.primary".into(), "database.retired".into()];
+        let first = installation
+            .install_resource_scoped(
+                &initial,
+                "sha256:old",
+                &initial.capabilities,
+                &crate::ContainerGrant::default(),
+                &crate::ImageGrant::default(),
+                &crate::NetworkGrant::default(),
+                &crate::VolumeGrant::default(),
+                &crate::FilesystemGrant::default(),
+                &crate::WorkspaceEnvironmentGrant::default(),
+                &crate::CredentialGrant {
+                    read: vec!["database.primary".into()],
+                    ..crate::CredentialGrant::default()
+                },
+                1,
+            )
+            .expect("installed");
+        assert_eq!(first.credentials.read, ["database.primary"]);
+
+        let mut replacement = initial.clone();
+        replacement.version = "2.0.0".into();
+        replacement.credentials.read = vec!["database.rotated".into()];
+        let update = installation
+            .prepare_update(&replacement, "sha256:new")
+            .expect("prepared");
+        let next = installation
+            .commit_update_resource_scoped(
+                update,
+                &replacement.capabilities,
+                &crate::ContainerGrant::default(),
+                &crate::ImageGrant::default(),
+                &crate::NetworkGrant::default(),
+                &crate::VolumeGrant::default(),
+                &crate::FilesystemGrant::default(),
+                &crate::WorkspaceEnvironmentGrant::default(),
+                &crate::CredentialGrant {
+                    read: vec!["database.rotated".into(), "database.retired".into()],
+                    ..crate::CredentialGrant::default()
+                },
+                2,
+                |_, _| Ok::<_, ()>(()),
+            )
+            .expect("updated");
+        assert_eq!(next.credentials.read, ["database.rotated"]);
+        assert!(!next.credentials.permits_read("database.primary"));
+        assert!(!next.credentials.permits_read("database.retired"));
     }
 }

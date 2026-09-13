@@ -1,10 +1,10 @@
 //! Bounded, asynchronous image acquisition awaiting explicit user consent.
 
 use std::collections::BTreeMap;
-use std::sync::{mpsc, Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 
-use hl_extension::port::HostError;
 use hl_extension::Grant;
+use hl_extension::port::HostError;
 
 use super::management_events::ExtensionEvents;
 use super::{Acquisition, Cancellation, Candidate, Roster};
@@ -51,6 +51,7 @@ pub(crate) struct AcquisitionCandidate {
     pub requested_volumes: hl_extension::VolumeGrant,
     pub requested_filesystem: hl_extension::FilesystemGrant,
     pub requested_workspace_environment: hl_extension::WorkspaceEnvironmentGrant,
+    pub requested_credentials: hl_extension::CredentialGrant,
     pub installed_digest: Option<String>,
 }
 
@@ -323,6 +324,7 @@ impl ExtensionAcquisitions {
             &hl_extension::VolumeGrant::default(),
             &hl_extension::FilesystemGrant::default(),
             &hl_extension::WorkspaceEnvironmentGrant::default(),
+            &hl_extension::CredentialGrant::default(),
         )
     }
 
@@ -337,6 +339,7 @@ impl ExtensionAcquisitions {
         volumes: &hl_extension::VolumeGrant,
         filesystem: &hl_extension::FilesystemGrant,
         workspace_environment: &hl_extension::WorkspaceEnvironmentGrant,
+        credentials: &hl_extension::CredentialGrant,
     ) -> Result<(), HostError> {
         let _commit = self.commits.lock().unwrap_or_else(PoisonError::into_inner);
         let (candidate, visible) = self.take_ready(job, revision)?;
@@ -354,6 +357,7 @@ impl ExtensionAcquisitions {
                         volumes,
                         filesystem,
                         workspace_environment,
+                        credentials,
                         moment(),
                     )
                     .map_err(|error| HostError::Failed(error.to_string()))
@@ -383,6 +387,7 @@ impl ExtensionAcquisitions {
             &hl_extension::VolumeGrant::default(),
             &hl_extension::FilesystemGrant::default(),
             &hl_extension::WorkspaceEnvironmentGrant::default(),
+            &hl_extension::CredentialGrant::default(),
         )
     }
 
@@ -397,6 +402,7 @@ impl ExtensionAcquisitions {
         volumes: &hl_extension::VolumeGrant,
         filesystem: &hl_extension::FilesystemGrant,
         workspace_environment: &hl_extension::WorkspaceEnvironmentGrant,
+        credentials: &hl_extension::CredentialGrant,
     ) -> Result<(), HostError> {
         let _commit = self.commits.lock().unwrap_or_else(PoisonError::into_inner);
         let (candidate, visible) = self.take_ready(job, revision)?;
@@ -419,6 +425,7 @@ impl ExtensionAcquisitions {
                     volumes,
                     filesystem,
                     workspace_environment,
+                    credentials,
                     moment(),
                 )
                 .map_err(|error| error.to_string())
@@ -532,6 +539,7 @@ fn snapshot(event: Acquisition, workspace: &WorkspaceConfig) -> (AcquisitionStat
                 requested_volumes: candidate.manifest.volumes.clone(),
                 requested_filesystem: candidate.manifest.filesystem.clone(),
                 requested_workspace_environment: candidate.manifest.workspace_environment.clone(),
+                requested_credentials: candidate.manifest.credentials.clone(),
                 installed_digest,
             };
             (AcquisitionState::Ready(visible), Some(candidate))
@@ -588,6 +596,7 @@ mod tests {
             resources: hl_extension::Resources::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         }
     }
 
@@ -956,12 +965,11 @@ mod tests {
                 }
             });
         assert!(service.start("", false).is_err());
-        assert!(service
-            .start(
-                &"x".repeat(ExtensionAcquisitions::REFERENCE_LIMIT + 1),
-                false,
-            )
-            .is_err());
+        assert!(
+            service
+                .start(&"x".repeat(ExtensionAcquisitions::REFERENCE_LIMIT + 1), false,)
+                .is_err()
+        );
         let jobs: Vec<_> = (0..ExtensionAcquisitions::ACTIVE_LIMIT)
             .map(|index| service.start(&format!("sample:{index}"), false).unwrap())
             .collect();

@@ -6,6 +6,9 @@ export async function rotateDatabaseCredential(
   key: string,
   replacement: Uint8Array,
 ) {
+  if (!host.credentials.keyGrant('read', key) || !host.credentials.keyGrant('write', key)) {
+    throw new Error(`credential ${key} is outside this extension's exact read/write grant`);
+  }
   const before = await host.credentials.read(key);
   try {
     return await host.credentials.set(before.revision, key, replacement);

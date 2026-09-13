@@ -865,6 +865,8 @@ pub struct ExtensionSummary {
     /// Effective workspace-environment consent persisted for this exact image digest.
     #[serde(default)]
     pub workspace_environment: crate::WorkspaceEnvironmentGrant,
+    #[serde(default)]
+    pub credentials: crate::CredentialGrant,
 }
 
 pub const EXTENSION_REFERENCE_BYTES: usize = 512;
@@ -906,6 +908,8 @@ pub struct ExtensionCandidate {
     pub requested_filesystem: crate::FilesystemGrant,
     #[serde(default)]
     pub requested_workspace_environment: crate::WorkspaceEnvironmentGrant,
+    #[serde(default)]
+    pub requested_credentials: crate::CredentialGrant,
     #[serde(default)]
     pub installed_image_digest: Option<String>,
 }
@@ -1057,6 +1061,7 @@ pub trait ExtensionStore {
         _volumes: &crate::VolumeGrant,
         _filesystem: &crate::FilesystemGrant,
         _workspace_environment: &crate::WorkspaceEnvironmentGrant,
+        _credentials: &crate::CredentialGrant,
     ) -> Result<ExtensionSummary, HostError> {
         Err(HostError::Unsupported("extension installation is unavailable".into()))
     }
@@ -1072,6 +1077,7 @@ pub trait ExtensionStore {
         _volumes: &crate::VolumeGrant,
         _filesystem: &crate::FilesystemGrant,
         _workspace_environment: &crate::WorkspaceEnvironmentGrant,
+        _credentials: &crate::CredentialGrant,
     ) -> Result<ExtensionSummary, HostError> {
         Err(HostError::Unsupported("extension update is unavailable".into()))
     }

@@ -1,4 +1,4 @@
-import type { CallOptions, ConnectOptions, HostEvent, RowRequest, ReadonlyFilesystemGrant, ReadonlyContainerGrant, ReadonlyImageGrant, ReadonlyNetworkGrant, ReadonlyVolumeGrant, ReadonlyWorkspaceEnvironmentGrant } from './api.js';
+import type { CallOptions, ConnectOptions, HostEvent, RowRequest, ReadonlyFilesystemGrant, ReadonlyContainerGrant, ReadonlyImageGrant, ReadonlyNetworkGrant, ReadonlyVolumeGrant, ReadonlyWorkspaceEnvironmentGrant, ReadonlyCredentialGrant } from './api.js';
 /** The protocol this package speaks. The host refuses anything else. */
 export declare const PROTOCOL: 1;
 /** Where the host mounts the socket inside an extension's container. */
@@ -47,6 +47,7 @@ export declare class Session {
     get grantedNetworks(): ReadonlyNetworkGrant;
     get grantedVolumes(): ReadonlyVolumeGrant;
     get grantedWorkspaceEnvironment(): ReadonlyWorkspaceEnvironmentGrant;
+    get grantedCredentials(): ReadonlyCredentialGrant;
     /** Resolves when the handshake is complete and calls may be sent. */
     get ready(): any;
     /** Resolves once with the reason this session ended. */

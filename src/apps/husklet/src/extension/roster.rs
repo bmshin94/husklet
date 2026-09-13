@@ -99,6 +99,7 @@ pub struct Entry {
     pub volumes: hl_extension::VolumeGrant,
     pub filesystem: hl_extension::FilesystemGrant,
     pub workspace_environment: hl_extension::WorkspaceEnvironmentGrant,
+    pub credentials: hl_extension::CredentialGrant,
     /// Where the extension stands under the lifecycle policy.
     pub stage: Stage,
     /// Named views this installed image offers to terminal panes.
@@ -189,6 +190,7 @@ impl<S: Storage> Roster<S> {
                 volumes: record.volumes.clone(),
                 filesystem: record.filesystem.clone(),
                 workspace_environment: record.workspace_environment.clone(),
+                credentials: record.credentials.clone(),
                 stage: self.installation.stage(&record.name),
                 pane_providers: record.pane_providers.clone(),
             })
@@ -248,6 +250,7 @@ impl<S: Storage> Roster<S> {
             &hl_extension::VolumeGrant::default(),
             &hl_extension::FilesystemGrant::default(),
             &hl_extension::WorkspaceEnvironmentGrant::default(),
+            &hl_extension::CredentialGrant::default(),
             at,
         )
     }
@@ -263,6 +266,7 @@ impl<S: Storage> Roster<S> {
         volumes: &hl_extension::VolumeGrant,
         filesystem: &hl_extension::FilesystemGrant,
         workspace_environment: &hl_extension::WorkspaceEnvironmentGrant,
+        credentials: &hl_extension::CredentialGrant,
         at: i64,
     ) -> Result<(), Refusal> {
         let _registration = registration_lock();
@@ -280,6 +284,7 @@ impl<S: Storage> Roster<S> {
                 volumes,
                 filesystem,
                 workspace_environment,
+                credentials,
                 at,
             )?
             .clone();
@@ -332,6 +337,7 @@ impl<S: Storage> Roster<S> {
             &hl_extension::VolumeGrant::default(),
             &hl_extension::FilesystemGrant::default(),
             &hl_extension::WorkspaceEnvironmentGrant::default(),
+            &hl_extension::CredentialGrant::default(),
             at,
         )
     }
@@ -346,6 +352,7 @@ impl<S: Storage> Roster<S> {
         volumes: &hl_extension::VolumeGrant,
         filesystem: &hl_extension::FilesystemGrant,
         workspace_environment: &hl_extension::WorkspaceEnvironmentGrant,
+        credentials: &hl_extension::CredentialGrant,
         at: i64,
     ) -> Result<(), UpdateRefusal> {
         let records = &self.records;
@@ -359,6 +366,7 @@ impl<S: Storage> Roster<S> {
                 volumes,
                 filesystem,
                 workspace_environment,
+                credentials,
                 at,
                 |_, next| records.save(next),
             )
@@ -475,12 +483,7 @@ impl<S: Storage> Roster<S> {
     }
 
     /// Records a crash only for the exact sidecar incarnation the host observed.
-    pub fn fault_if_digest(
-        &mut self,
-        name: &ExtensionName,
-        image_digest: &str,
-        restarts: u32,
-    ) -> Result<(), Refusal> {
+    pub fn fault_if_digest(&mut self, name: &ExtensionName, image_digest: &str, restarts: u32) -> Result<(), Refusal> {
         let _transition = registration_lock();
         self.reload()?;
         self.require_digest(name, image_digest)?;
@@ -519,11 +522,7 @@ impl<S: Storage> Roster<S> {
         self.take_if_digest(name, image_digest).map(|_| ())
     }
 
-    pub(crate) fn take_if_digest(
-        &mut self,
-        name: &ExtensionName,
-        image_digest: &str,
-    ) -> Result<Record, Refusal> {
+    pub(crate) fn take_if_digest(&mut self, name: &ExtensionName, image_digest: &str) -> Result<Record, Refusal> {
         let _removal = registration_lock();
         self.reload()?;
         let current = self.entries().into_iter().find(|entry| entry.name == *name);
@@ -587,6 +586,7 @@ pub fn described(record: &Record) -> Manifest {
         resources: hl_extension::Resources::default(),
         filesystem: hl_extension::FilesystemGrant::default(),
         workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+        credentials: hl_extension::CredentialGrant::default(),
     });
     // These duplicated fields are the durable consent boundary. A nested
     // declaration can describe launch and presentation, never widen authority.
@@ -600,6 +600,7 @@ pub fn described(record: &Record) -> Manifest {
     manifest.volumes.clone_from(&record.volumes);
     manifest.filesystem.clone_from(&record.filesystem);
     manifest.workspace_environment.clone_from(&record.workspace_environment);
+    manifest.credentials.clone_from(&record.credentials);
     manifest.pane_providers.clone_from(&record.pane_providers);
     manifest
 }
@@ -616,6 +617,7 @@ fn enrol(installation: &mut Installation, record: &Record) -> Result<(), Objecti
         &record.volumes,
         &record.filesystem,
         &record.workspace_environment,
+        &record.credentials,
         record.installed_at,
     )?;
     if record.enabled {
@@ -626,11 +628,11 @@ fn enrol(installation: &mut Installation, record: &Record) -> Result<(), Objecti
 
 #[cfg(test)]
 mod tests {
-    use super::{described, Refusal, Roster};
+    use super::{Refusal, Roster, described};
     use hl_extension::{Capability, ExtensionName, Grant, Manifest, Stage};
     use hl_ws::storage::{Directory, Key, Storage};
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Instant;
 
     #[derive(Clone)]
@@ -689,6 +691,7 @@ mod tests {
             resources: hl_extension::Resources::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         }
     }
 
@@ -742,6 +745,7 @@ mod tests {
                 &asked.volumes,
                 &asked.filesystem,
                 &exact,
+                &hl_extension::CredentialGrant::default(),
                 7,
             )
             .unwrap();
@@ -934,7 +938,9 @@ mod tests {
             .expect("old install");
         let mut stale = opened(temporary.path());
 
-        installer.remove_if_digest(&asked.name, "sha256:old").expect("old removal");
+        installer
+            .remove_if_digest(&asked.name, "sha256:old")
+            .expect("old removal");
         installer
             .register(&asked, "sha256:new", &asked.capabilities, 8)
             .expect("replacement install");
@@ -955,7 +961,9 @@ mod tests {
             .expect("old install");
         let mut stale = opened(temporary.path());
 
-        installer.remove_if_digest(&old.name, "sha256:old").expect("old removal");
+        installer
+            .remove_if_digest(&old.name, "sha256:old")
+            .expect("old removal");
         let replacement = manifest("sample", &[Capability::ContainerRead]);
         installer
             .register(&replacement, "sha256:new", &replacement.capabilities, 8)
@@ -980,16 +988,16 @@ mod tests {
         installer.enable(&asked.name).expect("old enabled");
         let mut old_host = opened(temporary.path());
 
-        installer.remove_if_digest(&asked.name, "sha256:old").expect("old removal");
+        installer
+            .remove_if_digest(&asked.name, "sha256:old")
+            .expect("old removal");
         let replacement = manifest("sample", &[Capability::ContainerRead]);
         installer
             .register(&replacement, "sha256:new", &replacement.capabilities, 8)
             .expect("replacement install");
         installer.enable(&replacement.name).expect("replacement enabled");
 
-        assert!(old_host
-            .fault_if_digest(&asked.name, "sha256:old", 5)
-            .is_err());
+        assert!(old_host.fault_if_digest(&asked.name, "sha256:old", 5).is_err());
         let persisted = opened(temporary.path()).entries();
         assert_eq!(persisted.len(), 1);
         assert_eq!(persisted[0].image_digest, "sha256:new");
@@ -1033,11 +1041,13 @@ mod tests {
             worker_barrier.wait();
         });
         replaced.wait();
-        assert!(roster
-            .lock()
-            .unwrap()
-            .enable_if_digest(&asked.name, "sha256:old")
-            .is_err());
+        assert!(
+            roster
+                .lock()
+                .unwrap()
+                .enable_if_digest(&asked.name, "sha256:old")
+                .is_err()
+        );
         worker.join().unwrap();
         assert_eq!(opened(temporary.path()).stage(&asked.name), Stage::Standby);
     }
@@ -1065,11 +1075,13 @@ mod tests {
             worker_barrier.wait();
         });
         replaced.wait();
-        assert!(roster
-            .lock()
-            .unwrap()
-            .remove_if_digest(&asked.name, "sha256:old")
-            .is_err());
+        assert!(
+            roster
+                .lock()
+                .unwrap()
+                .remove_if_digest(&asked.name, "sha256:old")
+                .is_err()
+        );
         worker.join().unwrap();
         assert_eq!(opened(temporary.path()).entries()[0].image_digest, "sha256:new");
     }

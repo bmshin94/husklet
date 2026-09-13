@@ -9,9 +9,9 @@ use hl_ws::storage::Directory;
 
 use crate::config::WorkspaceConfig;
 
+use super::Roster;
 use super::acquisition::{AcquisitionJob, AcquisitionSnapshot, AcquisitionState, ExtensionAcquisitions};
 use super::management_events::ExtensionEvents;
-use super::Roster;
 
 trait RemovalCleanup {
     fn retire(&self) -> Result<(), HostError>;
@@ -101,12 +101,14 @@ impl ExtensionManagement {
         let removed = roster.take_if_digest(&name, image_digest).map_err(failure)?;
         let cleanup_result = cleanup.purge().and_then(|()| {
             super::StateBlob::new(&self.workspace.storage_dir(&crate::paths::hl_root()), &name)
-            .map_err(|error| HostError::Failed(error.to_string()))?
-            .purge()
+                .map_err(|error| HostError::Failed(error.to_string()))?
+                .purge()
         });
         if let Err(error) = cleanup_result {
             roster.restore(&removed).map_err(|rollback| {
-                HostError::Failed(format!("{error}; restoring extension authority also failed: {rollback}"))
+                HostError::Failed(format!(
+                    "{error}; restoring extension authority also failed: {rollback}"
+                ))
             })?;
             return Err(error);
         }
@@ -209,6 +211,7 @@ impl ExtensionStore for ExtensionManagement {
         volumes: &hl_extension::VolumeGrant,
         filesystem: &hl_extension::FilesystemGrant,
         workspace_environment: &hl_extension::WorkspaceEnvironmentGrant,
+        credentials: &hl_extension::CredentialGrant,
     ) -> Result<ExtensionSummary, HostError> {
         let job = AcquisitionJob::parse(job)?;
         let name = ready_name(&self.acquisitions, job, revision, image_digest)?;
@@ -226,6 +229,7 @@ impl ExtensionStore for ExtensionManagement {
             volumes,
             filesystem,
             workspace_environment,
+            credentials,
         )?;
         super::revision::publish_inventory_change(&self.workspace);
         let installed = self.inspect(&name)?;
@@ -247,6 +251,7 @@ impl ExtensionStore for ExtensionManagement {
         volumes: &hl_extension::VolumeGrant,
         filesystem: &hl_extension::FilesystemGrant,
         workspace_environment: &hl_extension::WorkspaceEnvironmentGrant,
+        credentials: &hl_extension::CredentialGrant,
     ) -> Result<ExtensionSummary, HostError> {
         let job = AcquisitionJob::parse(job)?;
         let name = ready_name(&self.acquisitions, job, revision, image_digest)?;
@@ -264,6 +269,7 @@ impl ExtensionStore for ExtensionManagement {
             volumes,
             filesystem,
             workspace_environment,
+            credentials,
         )?;
         super::revision::publish_inventory_change(&self.workspace);
         let updated = self.inspect(&name)?;
@@ -352,6 +358,7 @@ fn acquisition_status(job: String, snapshot: AcquisitionSnapshot) -> ExtensionAc
                 requested_volumes: candidate.requested_volumes,
                 requested_filesystem: candidate.requested_filesystem,
                 requested_workspace_environment: candidate.requested_workspace_environment,
+                requested_credentials: candidate.requested_credentials,
                 installed_image_digest: candidate.installed_digest,
             };
             ("ready", None, Some(candidate), None)
@@ -388,6 +395,7 @@ fn summary(entry: super::roster::Entry) -> ExtensionSummary {
         volumes: entry.volumes,
         filesystem: entry.filesystem,
         workspace_environment: entry.workspace_environment,
+        credentials: entry.credentials,
         status: match entry.stage {
             Stage::Vacancy => "vacancy".into(),
             Stage::Standby => "standby".into(),
@@ -477,6 +485,7 @@ mod tests {
             resources: hl_extension::Resources::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         };
         management
             .roster()
@@ -514,7 +523,10 @@ mod tests {
         );
         release.send(()).expect("release uninstall");
         assert!(removal.join().expect("removal thread").is_err());
-        enable.join().expect("enable thread").expect("restored extension enabled");
+        enable
+            .join()
+            .expect("enable thread")
+            .expect("restored extension enabled");
         assert_eq!(management.inspect("postgres").unwrap().image_digest, digest);
     }
 
@@ -582,6 +594,7 @@ mod tests {
                     requested_volumes: hl_extension::VolumeGrant::default(),
                     requested_filesystem: hl_extension::FilesystemGrant::default(),
                     requested_workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+                    requested_credentials: hl_extension::CredentialGrant::default(),
                     reference: "registry.example/team/tool:2".into(),
                     digest: "sha256:new".into(),
                     name: "sample".into(),
@@ -611,6 +624,7 @@ mod tests {
                 requested_volumes: hl_extension::VolumeGrant::default(),
                 requested_filesystem: hl_extension::FilesystemGrant::default(),
                 requested_workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+                requested_credentials: hl_extension::CredentialGrant::default(),
                 reference: "registry.example/team/tool:latest".into(),
                 digest: digest.clone(),
                 name: "sample".into(),
@@ -634,9 +648,11 @@ mod tests {
         let events = management.events();
         assert!(events.drain().unwrap().inventory.unwrap().is_empty());
 
-        assert!(management
-            .remove("absent", &format!("sha256:{}", "a".repeat(64)))
-            .is_err());
+        assert!(
+            management
+                .remove("absent", &format!("sha256:{}", "a".repeat(64)))
+                .is_err()
+        );
         assert!(events.drain().is_none());
     }
 
@@ -652,9 +668,11 @@ mod tests {
         std::fs::create_dir_all(&data).unwrap();
         std::fs::write(data.join("index.db"), b"keep").unwrap();
 
-        assert!(management
-            .remove(name.as_str(), &format!("sha256:{}", "a".repeat(64)))
-            .is_err());
+        assert!(
+            management
+                .remove(name.as_str(), &format!("sha256:{}", "a".repeat(64)))
+                .is_err()
+        );
         assert_eq!(state.read().unwrap().contents, b"migration-checkpoint");
         assert_eq!(std::fs::read(data.join("index.db")).unwrap(), b"keep");
     }
@@ -683,6 +701,7 @@ mod tests {
             resources: hl_extension::Resources::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         };
         management
             .roster()
@@ -724,6 +743,7 @@ mod tests {
             resources: hl_extension::Resources::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         };
         management
             .roster()
@@ -808,6 +828,7 @@ mod tests {
             resources: hl_extension::Resources::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         };
         management
             .roster()
@@ -850,6 +871,7 @@ mod tests {
             resources: hl_extension::Resources::default(),
             filesystem: hl_extension::FilesystemGrant::default(),
             workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+            credentials: hl_extension::CredentialGrant::default(),
         };
         let mut roster = management.roster().unwrap();
         roster.register(&manifest, &digest, &manifest.capabilities, 1).unwrap();
@@ -906,6 +928,7 @@ mod tests {
                 }],
                 write: Vec::new(),
             },
+            credentials: hl_extension::CredentialGrant::default(),
             filesystem: hl_extension::FilesystemGrant {
                 write: vec![hl_extension::FilesystemSelector::Exact {
                     exact: hl_extension::RelativePath::new("settings.json").unwrap(),
