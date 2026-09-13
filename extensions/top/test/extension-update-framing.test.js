@@ -141,7 +141,7 @@ test('digest-pinned same-version review rejects a substituted image over real Un
         `Image changes from sha256:${'a'.repeat(12)}…${'a'.repeat(8)}; access has been reset.`,
       ),
     );
-    assert.ok(labelled(stage, 'Verified publisher · Husklet'));
+    assert.ok(labelled(stage, 'Verified publisher'));
     assert.ok(labelled(stage, 'Catalogue source · husklet:first-party/storybook'));
     assert.ok(
       labelled(

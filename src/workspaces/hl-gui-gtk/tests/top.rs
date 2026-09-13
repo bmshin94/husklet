@@ -1922,6 +1922,18 @@ mod unix {
             assert!(has_placeholder(&discover_root, "Search extensions"));
             assert!(!has_placeholder(&discover_root, "Search installed"));
             assert!(has_label(&discover_root, "19 of 20 extensions"));
+            let verified = ancestor_with_class(
+                &find_mapped_labelled(&discover_root, "Verified publisher"),
+                "hl-badge",
+            )
+            .expect("verified publisher signal is a semantic badge");
+            assert!(verified.has_css_class("tone-positive"));
+            let community = ancestor_with_class(
+                &find_mapped_labelled(&discover_root, "Community publisher"),
+                "hl-badge",
+            )
+            .expect("community publisher signal is a semantic badge");
+            assert!(community.has_css_class("tone-warning"));
             let review = find_tooltip_button(&discover_root, "Review the 1.0.0 update for Developer Tool 01");
             let review_access = find_tooltip_button(&discover_root, "Review access requested by Developer Tool 02");
             let third_review = find_tooltip_button(&discover_root, "Review access requested by Developer Tool 03");
@@ -2054,7 +2066,7 @@ mod unix {
                     "{width_name} trust details are keyboard reachable"
                 );
                 assert!(trust.grab_focus(), "{width_name} trust details accept keyboard focus");
-                assert!(has_label(&review_card, "Publisher · Community"));
+                assert!(has_label(&review_card, "Community publisher"));
                 assert!(has_label(&review_card, "Update available"));
                 let review_bounds_in_card = review
                     .compute_bounds(&review_card)
@@ -3373,7 +3385,7 @@ mod unix {
 
         let review_root = surface.widget().clone().upcast::<gtk::Widget>();
         assert!(has_label(&review_root, "No access selected · 19 requested"));
-        assert!(has_label(&review_root, "Publisher · Community"));
+        assert!(has_label(&review_root, "Community publisher"));
         assert!(has_label(
             &review_root,
             "Catalogue source · community/developer-tool-01"
@@ -4473,7 +4485,7 @@ mod unix {
             },
             publisher: if index % 2 == 0 { "Acme" } else { "Community" }.into(),
             source: format!("community/developer-tool-{index:02}"),
-            publisher_verified: false,
+            publisher_verified: index == 2,
             categories: vec![if index % 3 == 0 { "Data" } else { "Developer tools" }.into()],
             protocol: if index == 19 { PROTOCOL + 1 } else { PROTOCOL },
             architectures: vec!["amd64".into(), "arm64".into()],

@@ -161,8 +161,8 @@ function catalogueCompatibility(entry: ExtensionCatalogueEntry, architecture: st
 
 export function catalogueTrust(entry: ExtensionCatalogueEntry) {
   return entry.publisher_verified
-    ? { label: `Verified publisher · ${entry.publisher}`, tone: 'accent' as const }
-    : { label: `Publisher · ${entry.publisher}`, tone: 'neutral' as const };
+    ? { label: 'Verified publisher', tone: 'positive' as const }
+    : { label: 'Community publisher', tone: 'warning' as const };
 }
 
 export function staleCatalogueExpectation(entry: ExtensionCatalogueEntry | null) {
@@ -1427,7 +1427,7 @@ export function Extensions({
                                         : 'neutral'
                                   }
                                 />
-                                <Text label={`Publisher · ${entry.publisher}`} color="text-dim" />
+                                <Badge {...trust} />
                                 {!catalogueAuthoritative ? (
                                   <Badge label="Cached · refresh required" tone="warning" />
                                 ) : null}
@@ -1457,7 +1457,11 @@ export function Extensions({
                               ) : null}
                               <Expander label="Trust details" expanded={false}>
                                 <Column gap={1}>
-                                  <Text label={trust.label} color="text-dim" wrap />
+                                  <Text
+                                    label={`Publisher · ${entry.publisher}`}
+                                    color="text-dim"
+                                    wrap
+                                  />
                                   <Text
                                     label={`Catalogue source · ${entry.source}`}
                                     color="text-dim"

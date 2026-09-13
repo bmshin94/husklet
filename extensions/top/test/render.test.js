@@ -67,12 +67,12 @@ test('catalogue display strings cannot forge verified publisher status', () => {
     publisher_verified: false,
   };
   assert.deepEqual(catalogueTrust(forged), {
-    label: 'Publisher · Husklet',
-    tone: 'neutral',
+    label: 'Community publisher',
+    tone: 'warning',
   });
   assert.deepEqual(catalogueTrust({ ...forged, publisher_verified: true }), {
-    label: 'Verified publisher · Husklet',
-    tone: 'accent',
+    label: 'Verified publisher',
+    tone: 'positive',
   });
 });
 
@@ -982,7 +982,6 @@ test('Top owns workspace settings and extension management in the same tab', asy
     'extension sections use the full page width without separating related content',
   );
   assert.ok(labelled(stage, 'v2.0.0'));
-  assert.ok(labelled(stage, 'Publisher · Husklet'));
   assert.ok(labelled(stage, 'Category · Developer tools'));
   assert.equal(
     ancestorTags(stage, 'Category · Developer tools').includes('Expander'),
@@ -990,12 +989,11 @@ test('Top owns workspace settings and extension management in the same tab', asy
     'primary category remains visible before trust details are expanded',
   );
   assert.ok(labelled(stage, 'Trust details'));
-  assert.equal(
-    ancestorTags(stage, 'Publisher · Husklet').includes('Expander'),
-    false,
-    'publisher provenance remains visible before acquisition starts',
-  );
-  assert.ok(labelled(stage, 'Verified publisher · Husklet'));
+  assert.equal(ancestorTags(stage, 'Verified publisher').includes('Expander'), false);
+  assert.ok(labelled(stage, 'Verified publisher'));
+  assert.deepEqual(taggedProperty(stage, 'Verified publisher', 'Badge', 'Tone'), {
+    Tone: 'Positive',
+  });
   assert.ok(labelled(stage, 'Compatibility undeclared'));
   assert.equal(labelled(stage, 'Review requested access before anything is installed.'), undefined);
   assert.deepEqual(
@@ -2536,6 +2534,9 @@ test('failed catalogue refresh keeps stale rows browseable but strips install an
   await settled();
 
   assert.ok(labelled(stage, 'Cached · refresh required'));
+  assert.deepEqual(taggedProperty(stage, 'Community publisher', 'Badge', 'Tone'), {
+    Tone: 'Warning',
+  });
   assert.ok(labelled(stage, 'catalogue refresh is offline'));
   assert.equal(enabledStates(stage, 'Review access').at(-1), false);
   assert.ok(labelled(stage, 'Publisher · Husklet'));
