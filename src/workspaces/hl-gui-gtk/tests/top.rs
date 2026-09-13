@@ -88,7 +88,7 @@ mod unix {
         );
         for fixture in ["populated", "error"] {
             for (name, section) in CASES {
-                render_case(&repository, fixture, name, section, false, false, false);
+                render_case(&repository, fixture, name, section, false, false);
             }
         }
         render_case(
@@ -98,26 +98,9 @@ mod unix {
             "processes",
             false,
             false,
-            false,
         );
-        render_case(&repository, "populated", "extensions", "extensions", true, false, false);
-        render_case(
-            &repository,
-            "populated",
-            "volumes-denied",
-            "volumes",
-            false,
-            true,
-            false,
-        );
-    }
-
-    #[test]
-    fn managed_top_card_is_real_compact_and_actionable_at_both_widths() {
-        assert!(gtk::init().is_ok(), "run this test under Xvfb");
-        let repository = repository();
-        assert!(repository.join("extensions/top/dist/main.js").exists());
-        render_case(&repository, "populated", "extensions", "extensions", false, false, true);
+        render_case(&repository, "populated", "extensions", "extensions", true, false);
+        render_case(&repository, "populated", "volumes-denied", "volumes", false, true);
     }
 
     fn render_case(
@@ -127,7 +110,6 @@ mod unix {
         section: &str,
         catalogue_empty: bool,
         deny_volume_access: bool,
-        stop_after_managed_top: bool,
     ) {
         let capture_fixture = if catalogue_empty { "installed" } else { fixture };
         let socket = std::env::temp_dir().join(format!(
@@ -1529,10 +1511,6 @@ mod unix {
                 widgets_with_class(surface.widget().upcast_ref(), "hl-card").len() > 1,
                 "clearing installed search restores the extension collection"
             );
-            if stop_after_managed_top {
-                assert!(child.stop().is_empty(), "managed Top fixture wrote to stderr");
-                return;
-            }
         }
         if fixture == "populated" && name == "extensions" && !catalogue_empty {
             let search = find_search_with_placeholder(&root, "Search installed");
