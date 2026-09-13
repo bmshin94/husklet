@@ -69,6 +69,7 @@ export {
   filterCatalogueEntries,
   filterInstalledExtensions,
   installedExtensionNeedsAttention,
+  staleCatalogueExpectation,
 } from './extensions.js';
 
 const { useCallback, useEffect, useMemo, useRef, useState } = React;

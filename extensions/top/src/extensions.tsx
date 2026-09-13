@@ -165,6 +165,10 @@ export function catalogueTrust(entry: ExtensionCatalogueEntry) {
     : { label: `Publisher · ${entry.publisher}`, tone: 'neutral' as const };
 }
 
+export function staleCatalogueExpectation(entry: ExtensionCatalogueEntry | null) {
+  return entry ? { ...entry, publisher_verified: false } : entry;
+}
+
 export function catalogueCandidateMismatch(
   entry: Pick<ExtensionCatalogueEntry, 'id' | 'version' | 'reference'> | null,
   candidate: { name: string; version: string } | null | undefined,
@@ -619,6 +623,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
     const epoch = ++catalogueEpoch.current;
     setCatalogueState('loading');
     setCatalogueError('');
+    setCatalogueExpectation(staleCatalogueExpectation);
     try {
       const value = await readCatalogue();
       if (catalogueEpoch.current !== epoch) return;

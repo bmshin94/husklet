@@ -36,6 +36,7 @@ import {
   filterCatalogueEntries,
   filterInstalledExtensions,
   installedExtensionNeedsAttention,
+  staleCatalogueExpectation,
 } from '../dist/app.js';
 
 test('every host capability has explicit consent language and workspace lifecycle is not settings', () => {
@@ -60,6 +61,15 @@ test('catalogue display strings cannot forge verified publisher status', () => {
     label: 'Verified publisher · Husklet',
     tone: 'accent',
   });
+});
+
+test('a new catalogue generation revokes verification from an open review snapshot', async () => {
+  const verified = (await firstPartyCatalogue()).entries[0];
+  const stale = staleCatalogueExpectation(verified);
+  assert.equal(stale.publisher_verified, false);
+  assert.equal(stale.reference, verified.reference);
+  assert.equal(stale.source, verified.source);
+  assert.equal(staleCatalogueExpectation(null), null);
 });
 
 test('an acquired image must retain the catalogue identity the developer selected', () => {
