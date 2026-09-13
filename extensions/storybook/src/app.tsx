@@ -54,7 +54,12 @@ import { PROFILE_STORY, ProfileInspectionStory } from './profile-inspection.js';
 import { MEMORY_STORY, MemoryInspectionStory } from './memory-inspection.js';
 import { DISASSEMBLY_STORY, DisassemblyInspectionStory } from './disassembly-inspection.js';
 import { TIMELINE_VIEW_STORY, TimelineInspectionStory } from './timeline-inspection.js';
-import { TEST_REPORT_STORY, TestReportStory } from './test-report.js';
+import {
+  TEST_REPORT_STORY,
+  TestReportSource,
+  TestReportStory,
+  TestReportWorkbench,
+} from './test-report.js';
 import { COVERAGE_STORY, CoverageInspectionStory } from './coverage-inspection.js';
 import { NETWORK_WATERFALL_STORY, NetworkWaterfallStory } from './network-waterfall.js';
 import { DEPENDENCY_GRAPH_STORY, DependencyGraphStory } from './dependency-graph.js';
@@ -107,6 +112,7 @@ type StoryFamily = Family & { tags: Tag[] };
 type Change = (name: string, value: unknown) => void;
 type PlaygroundProps = {
   largeSource?: LargeRecordSource;
+  testSource?: TestReportSource;
   timelineSource?: TimelineSource;
   keyValueSource?: KeyValueSource;
   fileSource?: unknown;
@@ -124,6 +130,7 @@ type Interaction = { sequence: number; trigger: string; detail: string };
 /** The whole playground. */
 export function Playground({
   largeSource,
+  testSource,
   timelineSource,
   keyValueSource,
   fileSource,
@@ -181,7 +188,11 @@ export function Playground({
       />
       <Scroll grow width="fill" height="fill">
         {hasComponentPage ? (
-          renderComponentPage(selected)
+          selected === 'TestReportView' ? (
+            <TestReportWorkbench source={testSource} />
+          ) : (
+            renderComponentPage(selected)
+          )
         ) : (
           <Preview
             key={`preview-${selected}`}

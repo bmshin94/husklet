@@ -130,7 +130,11 @@ mod unix {
             root.root().is_some() && window.is_mapped(),
             "{story} must remain rooted and mapped until suite cleanup"
         );
-        RenderedFixture { story: story.to_owned(), root, window }
+        RenderedFixture {
+            story: story.to_owned(),
+            root,
+            window,
+        }
     }
 
     fn render_story(repository: &Path, story: &str, index: usize) -> RenderedFixture {
@@ -236,28 +240,33 @@ mod unix {
             tree.apply(&frame, &mut surface)
                 .unwrap_or_else(|error| panic!("{story} failed in GTK: {error:?}"));
         }
-        if story == "DataTable" {
+        if matches!(story, "DataTable" | "TestReportView") {
+            let expected_source = if story == "DataTable" { 100 } else { 103 };
+            let expected_rows = if story == "DataTable" { 1_000_000 } else { 10_000 };
             let length_deadline = Instant::now() + SOCKET_DEADLINE;
             loop {
-                let carried =
-                    receive_until(&mut wire, length_deadline).expect("DataTable publishes its logical length");
+                let carried = receive_until(&mut wire, length_deadline)
+                    .expect("source-backed story publishes its logical length");
                 if carried.kind == Kind::Credit {
                     continue;
                 }
                 let request = codec::read_request(&carried).expect("source length request decodes");
                 let Request::SourceResizeAt { slot, mutation } = request else {
-                    panic!("DataTable sent {request:?} before its source length")
+                    panic!("{story} sent {request:?} before its source length")
                 };
                 assert_eq!(slot, PRIMARY_SLOT);
                 let SourceMutation::Length { source, version, rows } = mutation else {
                     panic!("DataTable first source mutation was not its length")
                 };
-                assert_eq!(rows, 1_000_000);
+                wire.send(&codec::reply(&Reply::Done).expect("done encodes"))
+                    .expect("length acknowledgement sends");
+                if source != hl_gui::SourceId::new(expected_source) {
+                    continue;
+                }
+                assert_eq!(rows, expected_rows);
                 surface
                     .resize(source, version, rows)
                     .expect("GTK accepts logical source length");
-                wire.send(&codec::reply(&Reply::Done).expect("done encodes"))
-                    .expect("length acknowledgement sends");
                 break;
             }
         }
@@ -314,24 +323,17 @@ mod unix {
                     .into_iter()
                     .filter(|view| view.has_css_class("hl-testreportview"))
                     .count(),
-                5,
-                "TestReportView page must render overview, outcome states, and explicit sizing"
+                1,
+                "TestReportView page must own one focused source-backed specimen"
             );
-            for label in ["✓ passed", "× failed", "– skipped", "expected ready, received offline"] {
+            for label in ["Case", "Test", "Duration", "Outcome"] {
                 assert!(
                     descendants::<gtk::Label>(&root)
                         .iter()
-                        .any(|candidate| candidate.text() == label && candidate.is_selectable()),
-                    "TestReportView did not render selectable {label:?} content"
+                        .any(|candidate| candidate.text() == label),
+                    "TestReportView did not render {label:?} column"
                 );
             }
-            assert!(
-                descendants::<gtk::ScrolledWindow>(&root)
-                    .into_iter()
-                    .filter(|view| view.has_css_class("hl-testreportview"))
-                    .all(|view| view.hadjustment().upper() <= view.hadjustment().page_size() + 1.0),
-                "TestReportView must not require horizontal scrolling at either documented width"
-            );
             assert_test_report_geometry(&root, "narrow");
         }
         if narrow_story {
@@ -1953,6 +1955,41 @@ mod unix {
             assert!(model.is_selected(0), "wide responsive columns lost row selection");
             capture_story(&realized_window, "DataTable");
         }
+        if story == "TestReportView" {
+            settle_toolkit();
+            let request = surface
+                .requests(1)
+                .into_iter()
+                .find(|request| request.source == hl_gui::SourceId::new(103))
+                .expect("realized TestReportView requests its source window");
+            assert!(request.range.count <= 128);
+            let channel = ChannelId::new(5);
+            wire.send(&Frame::new(
+                channel,
+                Kind::Event,
+                serde_json::to_vec(&request).expect("test report row request encodes"),
+            ))
+            .expect("test report row request reaches Storybook");
+            let deadline = Instant::now() + SOCKET_DEADLINE;
+            let answer = loop {
+                let carried = receive_until(&mut wire, deadline).expect("TestReportView answers its row request");
+                if carried.kind == Kind::Credit {
+                    continue;
+                }
+                if carried.kind == Kind::Response && carried.channel == channel {
+                    break carried;
+                }
+                let follow_up = codec::read_request(&carried).expect("concurrent TestReportView call decodes");
+                apply_concurrent(&follow_up, &mut tree, &mut surface);
+                wire.send(&codec::reply(&Reply::Done).expect("follow-up reply encodes"))
+                    .expect("follow-up reply sends");
+            };
+            let window: hl_gui::RowWindow = serde_json::from_slice(&answer.payload).expect("row window decodes");
+            assert!(window.rows.len() <= 128);
+            assert_eq!(window.rows.first().map(|row| row.key), Some(request.range.start));
+            surface.rows(&window).expect("GTK accepts test report rows");
+            settle_toolkit();
+        }
         assert!(readable_heading(&root), "{story} has no readable GTK heading");
         if story == "Bounded streaming log" {
             let buffer = find::<gtk::TextView>(&root, |_| true).buffer();
@@ -3258,8 +3295,7 @@ mod unix {
                 let splitter = descendants::<gtk::Paned>(root)
                     .into_iter()
                     .find(|paned| {
-                        paned.has_css_class("hl-splitter-native")
-                            && paned.orientation() == gtk::Orientation::Horizontal
+                        paned.has_css_class("hl-splitter-native") && paned.orientation() == gtk::Orientation::Horizontal
                     })
                     .expect("Splitter story owns its public divider");
                 splitter.set_position(192);
@@ -3480,23 +3516,14 @@ mod unix {
                 .emit_clicked();
             }
             "TestReportView" => {
-                let choice = find::<gtk::ToggleButton>(root, |button| {
-                    button.tooltip_text().as_deref() == Some("Visible test outcome")
-                });
-                assert!(
-                    choice.grab_focus(),
-                    "TestReportView state selector accepts keyboard focus"
-                );
-                choice.emit_clicked();
-                let popover = find::<gtk::Popover>(&choice.clone().upcast(), |_| true);
-                settle_until("TestReportView state options map", || {
-                    popover.is_visible() && popover.is_mapped()
-                });
-                let failed = find::<gtk::Button>(popover.upcast_ref(), |button| {
-                    button.label().as_deref() == Some("Failed")
-                });
-                assert!(failed.grab_focus(), "failed report state is keyboard reachable");
-                failed.emit_clicked();
+                let view = find::<gtk::ColumnView>(root, |_| true);
+                assert!(view.grab_focus(), "TestReportView grid accepts keyboard focus");
+                let selection = view
+                    .model()
+                    .and_then(|model| model.downcast::<gtk::MultiSelection>().ok())
+                    .expect("TestReportView has a selection model");
+                selection.select_item(17, true);
+                view.emit_by_name::<()>("activate", &[&17_u32]);
             }
             _ => unreachable!(),
         }
@@ -3712,78 +3739,39 @@ mod unix {
             .into_iter()
             .filter(|view| view.has_css_class("hl-testreportview"))
             .collect::<Vec<_>>();
-        let report_with = |text: &str| {
-            reports
-                .iter()
-                .find(|view| {
-                    descendants::<gtk::Label>(view.upcast_ref())
-                        .iter()
-                        .any(|label| label.text() == text)
-                })
-                .unwrap_or_else(|| panic!("{width} TestReportView is missing {text:?}"))
-        };
-        let mixed = report_with("accepts valid token");
-        let passed = report_with("saves settings");
-        let explicit = report_with("case-31");
-        let (passed_minimum, passed_natural, _, _) = passed.measure(gtk::Orientation::Vertical, -1);
-        let passed_child = passed.child().map_or(-1, |child| child.height());
-        let passed_case = find::<gtk::Box>(passed.upcast_ref(), |row| row.has_css_class("hl-test-report-case"));
+        assert_eq!(reports.len(), 1, "{width} must render one report grid");
+        let report = &reports[0];
+        let bounds = report.compute_bounds(root).expect("report belongs to its page");
         assert!(
-            (32..=40).contains(&passed.height()),
-            "{width} intrinsic one-row report is {}px instead of 32..=40px (minimum={passed_minimum}, natural={passed_natural}, child={passed_child}, case={})",
-            passed.height(),
-            passed_case.height(),
+            bounds.x() >= 16.0 && bounds.x() + bounds.width() <= root.width() as f32 - 16.0,
+            "{width} report escapes the document: {bounds:?} in {}px",
+            root.width()
         );
-        assert!(
-            (96..=128).contains(&mixed.height()),
-            "{width} intrinsic three-row report is outside 96..=128px: {}px",
-            mixed.height()
-        );
-        let helper = find::<gtk::Label>(root, |label| {
-            label.text() == "A completed case keeps its duration visible."
+        settle_until(&format!("{width} responsive report columns"), || {
+            report.hadjustment().upper() <= report.hadjustment().page_size() + 1.0
         });
-        let passed_bounds = passed.compute_bounds(root).expect("passed report belongs to its page");
-        let helper_bounds = helper.compute_bounds(root).expect("passed helper belongs to its page");
-        let helper_gap = helper_bounds.y() - (passed_bounds.y() + passed_bounds.height());
         assert!(
-            (0.0..=12.0).contains(&helper_gap),
-            "{width} passed helper is {helper_gap}px from its report"
+            report.hadjustment().upper() <= report.hadjustment().page_size() + 1.0,
+            "{width} report requires horizontal scrolling: upper={} page={}",
+            report.hadjustment().upper(),
+            report.hadjustment().page_size()
         );
-        for (detail_text, helper_text) in [
-            (
-                "expected ready, received offline",
-                "Failure detail remains selectable and wraps in place.",
-            ),
-            (
-                "requires signing identity",
-                "A skipped reason stays distinct from failure.",
-            ),
-        ] {
-            let report = report_with(detail_text);
-            let detail = find::<gtk::Label>(report.upcast_ref(), |label| label.text() == detail_text);
-            let helper = find::<gtk::Label>(root, |label| label.text() == helper_text);
-            let report_bounds = report.compute_bounds(root).expect("detailed report belongs to its page");
-            let detail_bounds = detail.compute_bounds(root).expect("report detail belongs to its page");
-            let helper_bounds = helper.compute_bounds(root).expect("detail helper belongs to its page");
-            assert!(
-                detail_bounds.y() + detail_bounds.height() <= report_bounds.y() + report_bounds.height(),
-                "{width} {detail_text:?} escapes its report: report={report_bounds:?}, detail={detail_bounds:?}"
-            );
-            let gap = helper_bounds.y() - (report_bounds.y() + report_bounds.height());
-            assert!(
-                (4.0..=12.0).contains(&gap),
-                "{width} {detail_text:?} helper gap is {gap}px: report={report_bounds:?}, helper={helper_bounds:?}"
-            );
-        }
-        assert_eq!(
-            explicit.height(),
-            160,
-            "{width} explicit height must override intrinsic sizing"
-        );
-        assert!(
-            explicit.vadjustment().upper() > explicit.vadjustment().page_size(),
-            "{width} explicit large report must remain scrollable"
-        );
+        let view = report
+            .child()
+            .and_downcast::<gtk::ColumnView>()
+            .expect("report column view");
+        assert!(view.is_focusable(), "{width} report must remain one keyboard stop");
+        let rows = view
+            .model()
+            .and_then(|model| model.downcast::<gtk::MultiSelection>().ok())
+            .and_then(|selection| selection.model())
+            .and_then(|model| model.downcast::<hl_gui_gtk::Rows>().ok())
+            .expect("report owns windowed rows");
+        settle_until(&format!("{width} test report source length"), || {
+            rows.n_items() == 10_000
+        });
+        assert_eq!(rows.n_items(), 10_000, "{width} logical source length drifted");
+        assert!(rows.held() <= 128, "{width} materialized {} rows", rows.held());
     }
 
     fn assert_recovery_state(window: &gtk::Window, root: &gtk::Widget, receipt: &str, expected_x: f32, case: &str) {
@@ -3985,8 +3973,7 @@ mod unix {
         let paned = descendants::<gtk::Paned>(root)
             .into_iter()
             .find(|paned| {
-                paned.has_css_class("hl-splitter-native")
-                    && paned.orientation() == gtk::Orientation::Horizontal
+                paned.has_css_class("hl-splitter-native") && paned.orientation() == gtk::Orientation::Horizontal
             })
             .expect("component document owns a public Splitter");
         assert_eq!(paned.accessible_role(), gtk::AccessibleRole::Separator);
@@ -4057,9 +4044,16 @@ mod unix {
             .into_iter()
             .find(|paned| paned.orientation() == gtk::Orientation::Vertical)
             .expect("Splitter document owns a vertical example");
-        assert_eq!(paned.position(), 88, "{case} vertical Splitter lost its authored position");
+        assert_eq!(
+            paned.position(),
+            88,
+            "{case} vertical Splitter lost its authored position"
+        );
         assert_eq!(paned.accessible_role(), gtk::AccessibleRole::Separator);
-        assert!(paned.is_focusable(), "{case} vertical Splitter is not keyboard focusable");
+        assert!(
+            paned.is_focusable(),
+            "{case} vertical Splitter is not keyboard focusable"
+        );
         let start = paned.start_child().expect("vertical Splitter owns an upper pane");
         let end = paned.end_child().expect("vertical Splitter owns a lower pane");
         let start_bounds = start.compute_bounds(&paned).expect("upper pane belongs to Splitter");
@@ -4067,8 +4061,7 @@ mod unix {
         let gap = end_bounds.y() - start_bounds.y() - start_bounds.height();
         assert_eq!(gap, 8.0, "{case} vertical Splitter gutter is not exactly 8px: {gap}");
         assert!(
-            start_bounds.y() >= -2.0
-                && end_bounds.y() + end_bounds.height() <= paned.height() as f32 + 2.0,
+            start_bounds.y() >= -2.0 && end_bounds.y() + end_bounds.height() <= paned.height() as f32 + 2.0,
             "{case} vertical Splitter children escape their allocation: paned={} start={start_bounds:?} end={end_bounds:?}",
             paned.height()
         );

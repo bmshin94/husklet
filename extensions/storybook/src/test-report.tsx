@@ -1,180 +1,140 @@
 import React from 'react';
-import { Code, Column, Heading, InlineMessage, Select, TestReportView, Text } from '@husklet/react';
+import type { ActivationReport, ColumnSpec, SelectionReport } from '@husklet/react';
+import { Button, Code, Column, Heading, InlineMessage, TestReportView, Text } from '@husklet/react';
 import {
   ApiReference,
   ComponentDocument,
   DocumentationSection,
   FieldSpecimen,
-  SpecimenGrid,
 } from './component-document.js';
 import { rows } from './editors.js';
+import { LargeRecordSource, type SourceSender } from './large-table.js';
+
 export const TEST_REPORT_STORY = 'Inspect test report';
-export const CASE_LIMIT = 256;
-export const FAILURE_LIMIT = 512;
-type TestCase = {
-  suite: string;
-  name: string;
-  status: 'passed' | 'failed' | 'skipped';
-  durationMs: number;
-  failure?: unknown;
-};
-export function boundedCases(cases: readonly unknown[]): string {
-  const clean = (value: unknown): string => String(value).replace(/[\t\r\n]/g, ' ');
-  return cases
-    .filter((entry): entry is TestCase => {
-      if (entry === null || typeof entry !== 'object') return false;
-      const { suite, name, status, durationMs } = entry as Record<string, unknown>;
-      return (
-        typeof suite === 'string' &&
-        Boolean(suite.trim()) &&
-        typeof name === 'string' &&
-        Boolean(name.trim()) &&
-        (status === 'passed' || status === 'failed' || status === 'skipped') &&
-        Number.isSafeInteger(durationMs) &&
-        Number(durationMs) >= 0
-      );
-    })
-    .slice(0, CASE_LIMIT)
-    .map(
-      ({ suite, name, status, durationMs, failure = '' }) =>
-        `${clean(suite)}\t${clean(name)}\t${status}\t${durationMs}\t${[...clean(failure)].slice(0, FAILURE_LIMIT).join('')}`,
-    )
-    .join('\n');
+export const TEST_REPORT_SOURCE = 103;
+export const TEST_REPORT_ROWS = 10_000;
+export const TEST_REPORT_SCHEMA: readonly ColumnSpec[] = Object.freeze([
+  { key: 'id', title: 'Case', width: { chars: 9 }, identity: true },
+  { key: 'name', title: 'Test', width: 'fill', importance: 'optional' },
+  { key: 'suite', title: 'Suite', width: { chars: 12 }, importance: 'optional' },
+  { key: 'duration', title: 'Duration', width: { chars: 9 }, align: 'end', importance: 'optional' },
+  { key: 'state', title: 'Outcome', width: { chars: 10 } },
+  { key: 'source', title: 'Source', width: { chars: 18 }, importance: 'optional' },
+  { key: 'detail', title: 'Detail', width: { chars: 20 }, importance: 'optional' },
+]);
+
+export class TestReportSource extends LargeRecordSource {
+  constructor(send: SourceSender = async () => {}) {
+    super(send, TEST_REPORT_SOURCE, TEST_REPORT_ROWS);
+  }
+
+  override row(index: number) {
+    const status = index % 11 === 0 ? 'failed' : index % 7 === 0 ? 'skipped' : 'passed';
+    const hasSource = index % 5 !== 0;
+    return {
+      key: index,
+      cells: [
+        { Text: `case-${index}` },
+        { Text: `preserves workspace contract ${index}` },
+        { Text: index % 2 ? 'integration' : 'unit' },
+        { Number: index % 997 },
+        {
+          Badge: {
+            label: status,
+            tone: status === 'failed' ? 'Danger' : status === 'skipped' ? 'Warning' : 'Positive',
+          },
+        },
+        { Text: hasSource ? `file:///workspace/tests/case-${index}.ts:${index + 1}` : '' },
+        {
+          Text:
+            status === 'failed'
+              ? 'Expected the workspace to remain ready after reconnect.'
+              : status === 'skipped'
+                ? 'Requires an integration fixture.'
+                : '',
+        },
+      ],
+    };
+  }
 }
+
+function reportIdentity(report: ActivationReport | SelectionReport): string | null {
+  const row = report.collection?.rows[0];
+  return row ? `case-${String(row.id)}` : null;
+}
+
+function sourceFor(identity: string | null): string | null {
+  if (!identity) return null;
+  const index = Number(identity.slice('case-'.length));
+  return Number.isSafeInteger(index) && index % 5 !== 0
+    ? `file:///workspace/tests/${identity}.ts:${index + 1}`
+    : null;
+}
+
 export function TestReportStory() {
-  const value = boundedCases([
-    { suite: 'auth', name: 'accepts valid token', status: 'passed', durationMs: 14 },
-    {
-      suite: 'auth',
-      name: 'rejects expired token',
-      status: 'failed',
-      durationMs: 8,
-      failure: 'expected 401, received 200',
-    },
-    {
-      suite: 'storage',
-      name: 'recovers journal',
-      status: 'skipped',
-      durationMs: 0,
-      failure: 'requires integration fixture',
-    },
-  ]);
   return (
-    <Column gap={2} grow={true}>
-      <Heading label={'CI test report'} scale={'title'} />
+    <Column gap={2} grow>
+      <Heading label="CI test report" scale="title" />
       <Text
-        label={'Suite, case, status, duration, and bounded failure detail remain selectable.'}
+        label={`${TEST_REPORT_ROWS.toLocaleString()} source-backed cases · 128 rows per window`}
       />
-      <TestReportView value={value} tone={'warning'} grow={true} />
-      <InlineMessage label={`Showing 3 of at most ${CASE_LIMIT} cases`} />
+      <TestReportView source={TEST_REPORT_SOURCE} schema={[...TEST_REPORT_SCHEMA]} grow />
     </Column>
   );
 }
 
-const mixedReport = boundedCases([
-  { suite: 'auth', name: 'accepts valid token', status: 'passed', durationMs: 14 },
-  {
-    suite: 'auth',
-    name: 'rejects expired token',
-    status: 'failed',
-    durationMs: 8,
-    failure: 'expected 401, received 200',
-  },
-  {
-    suite: 'storage',
-    name: 'recovers journal',
-    status: 'skipped',
-    durationMs: 0,
-    failure: 'requires integration fixture',
-  },
-]);
-
-const scrollingReport = boundedCases(
-  Array.from({ length: 32 }, (_, index) => ({
-    suite: 'workspace',
-    name: `case-${index}`,
-    status: 'passed',
-    durationMs: index + 1,
-  })),
-);
-
-export function TestReportWorkbench() {
-  const [mode, setMode] = React.useState<'mixed' | 'passed' | 'failed' | 'skipped'>('mixed');
-  const selected =
-    mode === 'mixed'
-      ? mixedReport
-      : mode === 'passed'
-        ? 'unit\tsaves settings\tpassed\t12\t'
-        : mode === 'failed'
-          ? 'integration\treconnects after restart\tfailed\t83\texpected ready, received offline'
-          : 'release\tsigns macOS bundle\tskipped\t0\trequires signing identity';
+export function TestReportWorkbench({ source }: { source?: TestReportSource } = {}) {
+  const [selected, setSelected] = React.useState<string | null>(null);
+  const [activated, setActivated] = React.useState<string | null>(null);
+  const location = sourceFor(activated);
+  React.useEffect(() => {
+    void source?.publish();
+  }, [source]);
   return (
     <ComponentDocument
       name="Test Report View"
-      summary="TestReportView presents bounded test outcomes with status, duration, and failure detail that stays readable without relying on color."
+      summary="TestReportView inspects large test runs through bounded source windows while preserving each producer-owned case identity."
     >
-      <DocumentationSection title="Overview">
-        <Select
-          value={mode}
-          choices={[
-            { value: 'mixed', label: 'Mixed outcomes' },
-            { value: 'passed', label: 'Passed' },
-            { value: 'failed', label: 'Failed' },
-            { value: 'skipped', label: 'Skipped' },
-          ]}
-          tooltip="Visible test outcome"
-          onChange={({ value }) =>
-            setMode((value ?? 'mixed') as 'mixed' | 'passed' | 'failed' | 'skipped')
+      <DocumentationSection title="Interactive report">
+        <TestReportView
+          source={TEST_REPORT_SOURCE}
+          schema={[...TEST_REPORT_SCHEMA]}
+          width="fill"
+          height={{ step: 72 }}
+          onSelect={(report) => setSelected(reportIdentity(report))}
+          onActivate={(report) => setActivated(reportIdentity(report))}
+        />
+        <Text
+          label={selected ? `Selected ${selected}` : 'Select a full row with pointer or Space.'}
+          color="text-dim"
+        />
+        <InlineMessage
+          label={
+            activated
+              ? `Activated immutable case ${activated}`
+              : 'Press Enter or double-click a row to activate the same immutable case identity.'
           }
         />
-        <Text label={`Showing ${mode} outcomes`} color="text-dim" />
-        <TestReportView value={selected} width="fill" />
-        <Code value={'<TestReportView value={boundedReport} width="fill" />'} wrap />
+        {location ? (
+          <Button label={`Open ${location}`} size="small" variant="outline" />
+        ) : activated ? (
+          <Text label="This case has no source location." color="text-dim" />
+        ) : null}
       </DocumentationSection>
-
-      <DocumentationSection title="States">
-        <SpecimenGrid>
-          <FieldSpecimen label="Passed" helper="A completed case keeps its duration visible.">
-            <TestReportView value={'unit\tsaves settings\tpassed\t12\t'} width="fill" />
-          </FieldSpecimen>
-          <FieldSpecimen
-            label="Failed"
-            helper="Failure detail remains selectable and wraps in place."
-          >
-            <TestReportView
-              value={
-                'integration\treconnects after restart\tfailed\t83\texpected ready, received offline'
-              }
-              tone="danger"
-              width="fill"
-            />
-          </FieldSpecimen>
-          <FieldSpecimen label="Skipped" helper="A skipped reason stays distinct from failure.">
-            <TestReportView
-              value={'release\tsigns macOS bundle\tskipped\t0\trequires signing identity'}
-              tone="warning"
-              width="fill"
-            />
-          </FieldSpecimen>
-        </SpecimenGrid>
-      </DocumentationSection>
-
-      <DocumentationSection title="Sizing">
+      <DocumentationSection title="Windowing">
         <FieldSpecimen
-          label="Explicit review viewport"
-          helper="Authored height keeps a larger report scrollable without changing compact defaults."
+          label={`${TEST_REPORT_ROWS.toLocaleString()} logical cases`}
+          helper="The host requests and retains at most 128 rows around the visible viewport."
         >
-          <TestReportView value={scrollingReport} width="fill" height={{ step: 40 }} />
+          <Code value={`source=${TEST_REPORT_SOURCE} · row keys: case-0…case-9999`} wrap />
         </FieldSpecimen>
       </DocumentationSection>
-
-      <DocumentationSection title="Bounds and accessibility">
+      <DocumentationSection title="Keyboard and accessibility">
         <Text
-          label={`Serialize at most ${CASE_LIMIT} cases and ${FAILURE_LIMIT} characters of failure detail per case. Every outcome includes status text and a distinct symbol.`}
+          label="The grid is one Tab stop. Arrow keys move and reveal rows, Space selects the current row, and Enter activates it. Optional source and bounded detail move into the narrow Details disclosure."
           wrap
         />
       </DocumentationSection>
-
       <DocumentationSection title="API">
         <ApiReference rows={rows('TestReportView')} />
       </DocumentationSection>

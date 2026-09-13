@@ -77,6 +77,7 @@ fn cell() -> gtk::Label {
 /// as a property, so construction leaves the view empty on purpose.
 fn view() -> gtk::ScrolledWindow {
     let view = gtk::ColumnView::new(None::<gtk::SelectionModel>);
+    view.set_focusable(true);
     view.set_reorderable(false);
     view.set_show_row_separators(true);
     view.set_show_column_separators(false);

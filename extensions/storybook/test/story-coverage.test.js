@@ -34,9 +34,10 @@ import {
 import {
   TestReportStory,
   TestReportWorkbench,
-  boundedCases,
-  CASE_LIMIT,
-  FAILURE_LIMIT,
+  TestReportSource,
+  TEST_REPORT_ROWS,
+  TEST_REPORT_SCHEMA,
+  TEST_REPORT_SOURCE,
 } from '../dist/test-report.js';
 import {
   CoverageInspectionStory,
@@ -477,40 +478,35 @@ test('coverage inspection bounds rows and source independently with visible trun
   assert.equal(boundedCoverage([null, { line: -1, hits: 0 }]), '…\t\t… showing 0 of 2 lines …');
 });
 
-test('test report bounds cases and failure detail independently', () => {
-  const cases = Array.from({ length: CASE_LIMIT + 3 }, (_, index) => ({
-    suite: 'api',
-    name: `case-${index}`,
-    status: 'failed',
-    durationMs: index,
-    failure: 'x'.repeat(FAILURE_LIMIT + 20),
-  }));
-  cases.splice(1, 0, null, {
-    suite: '',
-    name: 'invalid',
-    status: 'passed',
-    durationMs: 1,
-    failure: '',
+test('test report keeps ten thousand cases behind bounded source windows', () => {
+  const source = new TestReportSource();
+  assert.equal(source.length(), TEST_REPORT_ROWS);
+  const window = source.answer({
+    id: 9,
+    source: TEST_REPORT_SOURCE,
+    version: 1,
+    range: { start: 9_900, count: 10_000 },
+    sort: null,
+    filter: null,
   });
-  const value = boundedCases(cases);
-  assert.equal(value.split('\n').length, CASE_LIMIT);
-  assert(!value.includes('invalid'));
-  assert.equal(value.split('\n')[0].split('\t')[4].length, FAILURE_LIMIT);
+  assert.equal(window.rows.length, 100);
+  assert.equal(window.rows[0].key, 9_900);
+  assert.equal(source.generated, 100);
+  assert(TEST_REPORT_SCHEMA.some((column) => column.identity));
+  assert(TEST_REPORT_SCHEMA.some((column) => column.key === 'source'));
+  assert(TEST_REPORT_SCHEMA.some((column) => column.key === 'detail'));
 });
 
-test('TestReportView owns one focused component page with distinct outcome specimens', () => {
+test('TestReportView owns one focused source-backed interactive component page', () => {
   const stage = host();
   const frame = stage.render(h(TestReportWorkbench));
-  assert.equal(frame.patches.filter((patch) => patch.Create?.tag === 'TestReportView').length, 5);
+  assert.equal(frame.patches.filter((patch) => patch.Create?.tag === 'TestReportView').length, 1);
   for (const label of [
     'Test Report View',
-    'Overview',
-    'States',
-    'Passed',
-    'Failed',
-    'Skipped',
-    'Sizing',
-    'Explicit review viewport',
+    'Interactive report',
+    'Windowing',
+    '10,000 logical cases',
+    'Keyboard and accessibility',
     'API',
   ]) {
     assert.ok(
@@ -520,25 +516,58 @@ test('TestReportView owns one focused component page with distinct outcome speci
       `missing ${label}`,
     );
   }
-  const select = frame.patches.find((patch) => patch.Create?.tag === 'Select').Create.id;
-  const before = stage.frames.length;
+  const report = frame.patches.find((patch) => patch.Create?.tag === 'TestReportView').Create.id;
+  for (const trigger of ['Select', 'Activate']) {
+    assert(
+      frame.patches.some(
+        (patch) => patch.SetHandler?.id === report && patch.SetHandler.handler?.trigger === trigger,
+      ),
+      `missing ${trigger} listener`,
+    );
+  }
+  const identity = { source: TEST_REPORT_SOURCE, version: 1, rows: [{ index: 17, id: 17 }] };
+  stage.surface.dispatch({
+    trigger: 'Select',
+    node: report,
+    id: `${report}:Select`,
+    rows: [17],
+    collection: identity,
+  });
+  let changed = stage.since(1);
   assert(
-    stage.surface.dispatch({
-      trigger: 'Change',
-      node: select,
-      id: `${select}:Change`,
-      value: 'failed',
-    }),
+    changed.some((patch) => patch.SetProp?.value?.Text === 'Selected case-17'),
+    'selection must present the stable producer identity',
   );
+  stage.surface.dispatch({
+    trigger: 'Activate',
+    node: report,
+    id: `${report}:Activate`,
+    collection: identity,
+  });
+  changed = stage.since(1);
+  assert(
+    changed.some((patch) => patch.SetProp?.value?.Text === 'Activated immutable case case-17'),
+    'activation must present the same stable producer identity',
+  );
+  assert(
+    changed.some(
+      (patch) => patch.SetProp?.value?.Text === 'Open file:///workspace/tests/case-17.ts:18',
+    ),
+    'a case with source exposes its exact optional location',
+  );
+  stage.surface.dispatch({
+    trigger: 'Activate',
+    node: report,
+    id: `${report}:Activate`,
+    collection: { ...identity, rows: [{ index: 20, id: 20 }] },
+  });
   assert(
     stage
-      .since(before)
-      .some(
-        (patch) =>
-          patch.SetProp?.prop === 'Label' &&
-          patch.SetProp.value?.Text === 'Showing failed outcomes',
-      ),
+      .since(1)
+      .some((patch) => patch.SetProp?.value?.Text === 'This case has no source location.'),
+    'a case without source must not expose a stale source action',
   );
+  assert(!stage.since(1).some((patch) => patch.SetProp?.value?.Text?.includes('case-20.ts')));
 });
 
 test('timeline view rejects blank events and enforces its hard ceiling', () => {

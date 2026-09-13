@@ -13,8 +13,8 @@
 
 use gtk::prelude::*;
 use hl_gui::{
-    Align, Choice, ControlSize, EventId, Fault, Length, NodeId, Orientation, Prop, PropValue, Scale, Tag, Tone, Tree,
-    Trigger, Variant,
+    Align, Cell, Choice, Column, ControlSize, EventId, Fault, Length, NodeId, Orientation, Prop, PropValue, Renderer,
+    Row, RowWindow, Scale, SourceId, Tag, Tone, Tree, Trigger, Variant, Version,
 };
 use hl_gui_gtk::{Failure, Surface};
 
@@ -369,27 +369,60 @@ fn test_report_is_bounded_selectable_and_columnar() {
     let mut session = Session::new();
     let report = session.producer.create(Tag::TestReportView);
     session.producer.append(NodeId::ROOT, report);
-    let value = (0..300)
-        .map(|index| format!("api\tcase-{index}\tfailed\t{index}\texpected true"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    session.producer.set(report, Prop::Value, PropValue::text(value));
+    let source = SourceId::new(7);
+    session.producer.set(
+        report,
+        Prop::Schema,
+        PropValue::Schema(vec![
+            Column::new("case", "Case").identity(),
+            Column::new("outcome", "Outcome"),
+        ]),
+    );
+    session.producer.set(report, Prop::Source, PropValue::Source(source));
     session.flush().expect("report renders");
+    session
+        .canvas
+        .resize(source, Version::new(1), 10_000)
+        .expect("report length applies");
+    let request = session
+        .canvas
+        .requests(1)
+        .pop()
+        .expect("report requests a bounded row window");
+    let rows = (0..request.range.count.min(128))
+        .map(|offset| {
+            let index = request.range.start + u64::from(offset);
+            Row::new(index, [Cell::text(format!("case-{index}")), Cell::text("failed")])
+        })
+        .collect();
+    Renderer::rows(
+        &mut session.canvas,
+        &RowWindow {
+            source,
+            version: Version::new(1),
+            request: request.id,
+            range: request.range,
+            rows,
+        },
+    )
+    .expect("bounded report rows apply");
     let widget = session.tagged(Tag::TestReportView).expect("report widget");
     let window = widget
         .downcast_ref::<gtk::ScrolledWindow>()
         .expect("report owns its dedicated scrolling viewport");
-    assert!(window.propagates_natural_height());
-    assert_eq!(window.max_content_height(), 128);
-    assert_eq!(window.min_content_height(), 128, "a large report stops growing at its compact ceiling");
-    let labels = subtree(&widget)
-        .into_iter()
-        .filter_map(|child| child.downcast::<gtk::Label>().ok())
-        .collect::<Vec<_>>();
-    assert_eq!(labels.len(), 256 * 5, "256 test cases each retain five native columns");
-    assert!(labels.iter().all(gtk::Label::is_selectable));
-    assert!(labels.iter().any(|label| label.text() == "× failed"));
-    assert!(labels.iter().any(|label| label.text() == "expected true"));
+    let view = window
+        .child()
+        .and_downcast::<gtk::ColumnView>()
+        .expect("report owns a column view");
+    let rows = view
+        .model()
+        .and_then(|model| model.downcast::<gtk::MultiSelection>().ok())
+        .and_then(|selection| selection.model())
+        .and_then(|model| model.downcast::<hl_gui_gtk::Rows>().ok())
+        .expect("report owns a windowed model");
+    assert_eq!(rows.n_items(), 10_000);
+    assert!(rows.held() <= 128);
+    assert!(view.is_focusable());
 }
 
 fn timeline_is_bounded_selectable_and_columnar() {

@@ -47,7 +47,7 @@ export const SCHEMA: readonly ColumnSpec[] = Object.freeze([
 
 type SourceState = 'ready' | 'loading' | 'empty' | 'error';
 type SourceConfiguration = { filter: string; descending: boolean; state: SourceState };
-type SourceSender = (
+export type SourceSender = (
   _call: string,
   argument: { mutation: InterfaceSourceMutation },
 ) => Promise<void>;
@@ -89,8 +89,10 @@ export class LargeRecordSource {
   state: SourceState;
   generated: number;
   readonly edits: Map<string, string>;
+  readonly source: number;
+  readonly logicalRows: number;
 
-  constructor(send: SourceSender = async () => {}) {
+  constructor(send: SourceSender = async () => {}, source = SOURCE, logicalRows = LOGICAL_ROWS) {
     this.send = send;
     this.version = 1;
     this.filter = '';
@@ -98,17 +100,19 @@ export class LargeRecordSource {
     this.state = 'ready';
     this.generated = 0;
     this.edits = new Map();
+    this.source = source;
+    this.logicalRows = logicalRows;
   }
 
   length(): number {
     if (this.state === 'empty') return 0;
     if (this.state === 'error') return 1;
-    return this.filter ? 1_000 : LOGICAL_ROWS;
+    return this.filter ? Math.min(1_000, this.logicalRows) : this.logicalRows;
   }
 
   async publish() {
     await this.send('source_resize', {
-      mutation: { Length: { source: SOURCE, version: this.version, rows: this.length() } },
+      mutation: { Length: { source: this.source, version: this.version, rows: this.length() } },
     });
   }
 
@@ -125,7 +129,7 @@ export class LargeRecordSource {
   }
 
   async sort(event: SortReport) {
-    if (event.source !== SOURCE || event.version !== this.version)
+    if (event.source !== this.source || event.version !== this.version)
       return { accepted: false, reason: 'stale version' };
     if (!SCHEMA.some((column) => column.key === event.column && column.sortable)) {
       return { accepted: false, reason: 'unsortable column' };
@@ -139,7 +143,11 @@ export class LargeRecordSource {
   answer(value: unknown) {
     const request = windowRequest(value);
     if (!request) return null;
-    if (request.source !== SOURCE || request.version !== this.version || this.state === 'loading')
+    if (
+      request.source !== this.source ||
+      request.version !== this.version ||
+      this.state === 'loading'
+    )
       return null;
     const count = Math.min(
       request.range.count,
@@ -151,7 +159,7 @@ export class LargeRecordSource {
     );
     this.generated += rows.length;
     return {
-      source: SOURCE,
+      source: this.source,
       version: this.version,
       request: request.id,
       range: request.range,
@@ -193,7 +201,7 @@ export class LargeRecordSource {
   }
 
   async edit(event: EditReport) {
-    const current = event.source === SOURCE && event.version === this.version;
+    const current = event.source === this.source && event.version === this.version;
     const value = String(event.value ?? '').trim();
     if (!current) return { accepted: false, reason: 'stale version' };
     if (

@@ -342,7 +342,7 @@ catalogue! {
     MemoryMap: leaf, props[Value, Tone], triggers[],
     DisassemblyView: leaf, props[Value, Tone], triggers[],
     TimelineView: leaf, props[Value, Tone], triggers[],
-    TestReportView: leaf, props[Value, Tone], triggers[],
+    TestReportView: leaf, props[Schema, Source, Tone], triggers[Select, Activate, Scroll, Key, Focus, Pointer],
     CoverageView: leaf, props[Value, Tone], triggers[],
     NetworkWaterfall: children, props[Label, Detail, Gap, Tone], triggers[],
     NetworkRequest: children, props[Label, Value, Tone], triggers[],
@@ -366,7 +366,7 @@ catalogue! {
 
 #[cfg(test)]
 mod tests {
-    use super::{Prop, Tag, Trigger, EVERY};
+    use super::{EVERY, Prop, Tag, Trigger};
 
     #[test]
     fn catalogue_covers_every_tag_exactly_once() {

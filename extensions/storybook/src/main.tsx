@@ -34,27 +34,28 @@ const bootstrap = await bootstrapSurface(session, {
   label: 'Loading component playground…',
   primary: true,
 });
-const [React, react, app, large, events, keyValues, files] = await Promise.all([
+const [React, react, app, large, tests, events, keyValues, files] = await Promise.all([
   import('react').then((module) => module.default),
   import('@husklet/react'),
   import('./app.js'),
   import('./large-table.js'),
+  import('./test-report.js'),
   import('./event-stream.js'),
   import('./key-value-inspector.js'),
   import('./file-browser.js'),
 ]);
 const send: SourceSender = (_call, argument) => surface.source(argument.mutation);
-sources = [
-  large.LargeRecordSource,
-  events.TimelineSource,
-  keyValues.KeyValueSource,
-  files.FileSource,
-].map((Source) => new (Source as unknown as SourceConstructor)(send));
-const [source, timeline, keyValueSource, fileSource] = sources;
+const source = new (large.LargeRecordSource as unknown as SourceConstructor)(send);
+const testSource = new (tests.TestReportSource as unknown as SourceConstructor)(send);
+const timeline = new (events.TimelineSource as unknown as SourceConstructor)(send);
+const keyValueSource = new (keyValues.KeyValueSource as unknown as SourceConstructor)(send);
+const fileSource = new (files.FileSource as unknown as SourceConstructor)(send);
+sources = [source, testSource, timeline, keyValueSource, fileSource];
 const Playground = app.Playground as unknown as React.ComponentType<Record<string, unknown>>;
 surface = react.render(
   React.createElement(Playground, {
     largeSource: source,
+    testSource,
     timelineSource: timeline,
     keyValueSource,
     fileSource,
@@ -64,4 +65,5 @@ surface = react.render(
   { title: 'Components', bootstrap },
 );
 await surface.flush();
-for (const sourceModel of sources) void sourceModel.publish();
+await Promise.all(sources.map((sourceModel) => sourceModel.publish()));
+await surface.flush();

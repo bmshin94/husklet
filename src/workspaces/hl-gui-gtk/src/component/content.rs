@@ -20,7 +20,6 @@ pub(crate) fn widget(tag: Tag) -> gtk::Widget {
         Tag::MemoryMap => memory_map().upcast(),
         Tag::DisassemblyView => memory_map().upcast(),
         Tag::TimelineView => memory_map().upcast(),
-        Tag::TestReportView => test_report_view().upcast(),
         Tag::CoverageView => memory_map().upcast(),
         Tag::NetworkWaterfall => network_waterfall().upcast(),
         Tag::NetworkRequest => network_request().upcast(),
@@ -500,20 +499,6 @@ fn memory_map() -> gtk::ScrolledWindow {
 
 /// A report follows its cases until a compact review viewport is full.
 /// Explicit `height` or `grow` properties may still allocate more space.
-fn test_report_view() -> gtk::ScrolledWindow {
-    let rows = super::axis::column(0);
-    rows.set_hexpand(true);
-    let window = gtk::ScrolledWindow::new();
-    window.set_child(Some(&rows));
-    window.set_hexpand(true);
-    window.set_valign(gtk::Align::Start);
-    window.set_policy(gtk::PolicyType::Never, gtk::PolicyType::External);
-    window.set_min_content_height(0);
-    window.set_propagate_natural_height(true);
-    window.set_max_content_height(128);
-    window
-}
-
 /// Replaces a process map while independently enforcing the adapter ceiling.
 pub(crate) fn regions(widget: &gtk::Widget, value: &str) -> bool {
     widget.set_tooltip_text(Some(value));

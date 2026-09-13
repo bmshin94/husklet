@@ -47,7 +47,7 @@ impl Session {
             self.producer
                 .set(node, Prop::Source, PropValue::Source(hl_gui::SourceId::new(1)));
         }
-        if tag == Tag::DataTable {
+        if tag.accepts(Prop::Schema) {
             self.producer.set(
                 node,
                 Prop::Schema,
@@ -147,8 +147,28 @@ fn every_declared_trigger_and_sortable_header_report_on_one_toolkit_thread() {
         return;
     }
     every_declared_trigger_reports_when_the_component_is_worked();
+    test_report_activation_reports_producer_identity();
     responsive_reports_gestures_but_not_its_controlled_position();
     sortable_header_reports_current_source_version_without_reordering_rows();
+}
+
+fn test_report_activation_reports_producer_identity() {
+    let mut session = Session::new();
+    let widget = session.bound(Tag::TestReportView, Trigger::Activate);
+    worked(&widget, Trigger::Activate);
+    let events = session.canvas.reports().drain();
+    assert!(
+        matches!(
+            events.as_slice(),
+            [Event::Activate { collection: Some(collection), .. }]
+                if collection.source == hl_gui::SourceId::new(1)
+                    && collection.version == hl_gui::Version::new(1)
+                    && collection.rows.len() == 1
+                    && collection.rows[0].index == 0
+                    && collection.rows[0].id == 41
+        ),
+        "activation must carry the same authoritative collection identity as selection: {events:?}"
+    );
 }
 
 fn responsive_reports_gestures_but_not_its_controlled_position() {
@@ -308,6 +328,16 @@ fn worked(widget: &gtk::Widget, trigger: Trigger) {
                 selection.select_item(0, true);
                 return;
             }
+        }
+    }
+    if trigger == Trigger::Activate {
+        if let Some(view) = widget
+            .downcast_ref::<gtk::ScrolledWindow>()
+            .and_then(gtk::ScrolledWindow::child)
+            .and_then(|child| child.downcast::<gtk::ColumnView>().ok())
+        {
+            view.emit_by_name::<()>("activate", &[&0_u32]);
+            return;
         }
     }
     if trigger == Trigger::Sort {

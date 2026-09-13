@@ -344,16 +344,39 @@ fn invoke(widget: &gtk::Widget, node: NodeId, slot: &Slot, reports: &Reports) {
 }
 
 fn activate(widget: &gtk::Widget, node: NodeId, slot: &Slot, reports: &Reports) {
+    if let Some(view) = crate::component::table::columns(widget) {
+        let reports = reports.clone();
+        let slot = slot.clone();
+        view.connect_activate(move |view, position| {
+            let Some(collection) = view
+                .model()
+                .and_then(|model| model.downcast::<gtk::MultiSelection>().ok())
+                .and_then(|selection| selection.model())
+                .and_then(|model| model.downcast::<crate::Rows>().ok())
+                .and_then(|rows| rows.selection(&[u64::from(position)]))
+            else {
+                return;
+            };
+            identified(&reports, &slot, |id| Event::Activate {
+                node,
+                id,
+                collection: Some(collection),
+            });
+        });
+        return;
+    }
     let Some(button) = widget.downcast_ref::<gtk::Button>() else {
         return;
     };
     let reports = reports.clone();
     let slot = slot.clone();
-        button.connect_clicked(move |_| identified(&reports, &slot, |id| Event::Activate {
+    button.connect_clicked(move |_| {
+        identified(&reports, &slot, |id| Event::Activate {
             node,
             id,
             collection: None,
-        }));
+        })
+    });
 }
 
 /// Connects whichever way this widget holds a value.
