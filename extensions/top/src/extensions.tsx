@@ -597,6 +597,7 @@ export function Extensions({
   const cancelledJob = React.useRef('');
   const candidateKey = React.useRef('');
   const inventoryEpoch = React.useRef(0);
+  const installedSnapshot = React.useRef<ExtensionSummary[]>([]);
   const catalogueEpoch = React.useRef(0);
   const lifecycleInFlight = React.useRef(false);
   const acquisitionInFlight = React.useRef(false);
@@ -632,10 +633,12 @@ export function Extensions({
     try {
       const listing = await api.extensions.list();
       if (inventoryEpoch.current !== epoch) return;
+      installedSnapshot.current = listing;
       setInstalled(listing);
       setInventoryState(listing.length === 0 ? 'empty' : 'ready');
     } catch (cause) {
       if (inventoryEpoch.current !== epoch) return;
+      installedSnapshot.current = [];
       setInstalled([]);
       setInventoryError(message(cause));
       setInventoryState('error');
@@ -677,6 +680,7 @@ export function Extensions({
     void api
       .watchExtensions((listing) => {
         ++inventoryEpoch.current;
+        installedSnapshot.current = listing;
         setInstalled(listing);
         setInventoryState(listing.length === 0 ? 'empty' : 'ready');
         setInventoryError('');
@@ -840,6 +844,7 @@ export function Extensions({
           );
           if (committed) {
             ++inventoryEpoch.current;
+            installedSnapshot.current = listing;
             setInstalled(listing);
             setInventoryState(listing.length === 0 ? 'empty' : 'ready');
             setInventoryError('');
@@ -947,10 +952,18 @@ export function Extensions({
       );
     } catch (cause) {
       try {
+        const reconciliationEpoch = ++inventoryEpoch.current;
         const listing = await api.extensions.list();
-        const current = listing.find((item) => item.name === extension.name);
-        if (lifecycleStateObserved(action, extension, current)) {
+        const authoritative =
+          inventoryEpoch.current === reconciliationEpoch ? listing : installedSnapshot.current;
+        if (inventoryEpoch.current === reconciliationEpoch) {
+          installedSnapshot.current = listing;
           setInstalled(listing);
+          setInventoryState(listing.length === 0 ? 'empty' : 'ready');
+          setInventoryError('');
+        }
+        const current = authoritative.find((item) => item.name === extension.name);
+        if (lifecycleStateObserved(action, extension, current)) {
           setLifecycleFailure(null);
           setNotice({
             label: `${extension.name} ${lifecycleResult(action)}, but the confirmation reply was lost. Current extension state was verified by refresh.`,
@@ -2472,7 +2485,33 @@ export function Extensions({
                                       </Expander>
                                     )}
                                     {hasCardAction || extension.name !== 'top' ? (
-                                      <Row gap={1} width="fill" align="center" justify="start" wrap>
+                                      <Row gap={2} width="fill" align="center" justify="start" wrap>
+                                        {!builtIn ? (
+                                          <Button
+                                            label={
+                                              removalMenu === extension.name ? 'Close' : 'More'
+                                            }
+                                            icon={
+                                              removalMenu === extension.name
+                                                ? 'pan-up-symbolic'
+                                                : 'view-more-symbolic'
+                                            }
+                                            variant="outline"
+                                            tone="neutral"
+                                            size="small"
+                                            tooltip={
+                                              removalMenu === extension.name
+                                                ? `Close actions for ${extension.name}`
+                                                : `More actions for ${extension.name}`
+                                            }
+                                            enabled={!busy}
+                                            onInvoke={() =>
+                                              setRemovalMenu((current) =>
+                                                current === extension.name ? '' : extension.name,
+                                              )
+                                            }
+                                          />
+                                        ) : null}
                                         {update && (
                                           <Button
                                             key="review-update"
@@ -2534,20 +2573,6 @@ export function Extensions({
                                             variant="ghost"
                                             enabled={!busy}
                                             onInvoke={() => lifecycle(extension, 'disable')}
-                                          />
-                                        ) : null}
-                                        {!builtIn ? (
-                                          <Button
-                                            label="More actions"
-                                            variant="ghost"
-                                            size="small"
-                                            tooltip={`Remove ${extension.name} and its private workspace data`}
-                                            enabled={!busy}
-                                            onInvoke={() =>
-                                              setRemovalMenu((current) =>
-                                                current === extension.name ? '' : extension.name,
-                                              )
-                                            }
                                           />
                                         ) : null}
                                       </Row>

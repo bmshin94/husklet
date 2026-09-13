@@ -1550,7 +1550,7 @@ mod unix {
                 let open = find_tooltip_button(&card, "Open Component playground");
                 let state = find_mapped_labelled(&card, "Running");
                 let disable = find_button(&card, "Disable");
-                let more = find_button(&card, "More actions");
+                let more = find_button(&card, "More");
                 let permissions = find_expander(&card, "View permissions");
                 let check_bounds = check
                     .compute_bounds(&card)
@@ -1591,6 +1591,23 @@ mod unix {
                 assert!(disable.is_mapped(), "{width_name} Disable is visible");
                 assert_standard_action(&disable, width_name, "Disable", 28);
                 assert!(more.is_focusable(), "{width_name} More actions is keyboard reachable");
+                assert_standard_action(&more, width_name, "More actions", 28);
+                assert_eq!(
+                    find_image(more.upcast_ref()).icon_name().as_deref(),
+                    Some("view-more-symbolic")
+                );
+                assert!(more.has_css_class("variant-outline"));
+                assert!(more.has_css_class("tone-neutral"));
+                let more_chrome = widgets_with_class(more.upcast_ref(), "hl-button-chrome")[0]
+                    .compute_bounds(&card)
+                    .expect("More actions chrome belongs to its card");
+                let open_chrome = widgets_with_class(open.upcast_ref(), "hl-button-chrome")[0]
+                    .compute_bounds(&card)
+                    .expect("Open chrome belongs to its card");
+                assert!(
+                    open_chrome.x() - more_chrome.x() - more_chrome.width() >= 8.0,
+                    "{width_name} More actions collapsed into its neighbor: more={more_chrome:?} open={open_chrome:?}"
+                );
                 assert!(
                     !has_label(&card, "Remove extension"),
                     "{width_name} card repeats no dominant removal button"
@@ -1607,7 +1624,7 @@ mod unix {
                 capture(&window, &format!("installed-image-check-{width_name}"), width, 800);
             }
             let installed_root = surface.widget().clone().upcast::<gtk::Widget>();
-            let more = find_button(&installed_root, "More actions");
+            let more = find_tooltip_button(&installed_root, "More actions for storybook");
             assert!(more.grab_focus(), "removal disclosure accepts keyboard focus");
             more.emit_clicked();
             settle_toolkit();
@@ -1618,6 +1635,12 @@ mod unix {
                 panic!("unexpected removal disclosure request: {request:?}")
             });
             let installed_root = surface.widget().clone().upcast::<gtk::Widget>();
+            let close_actions = find_button(&installed_root, "Close");
+            assert_eq!(
+                find_image(close_actions.upcast_ref()).icon_name().as_deref(),
+                Some("pan-up-symbolic")
+            );
+            assert_standard_action(&close_actions, "expanded", "Close actions", 28);
             let remove = find_button(&installed_root, "Remove extension");
             assert!(remove.grab_focus(), "removal trigger accepts keyboard focus");
             remove.emit_clicked();
@@ -1678,6 +1701,9 @@ mod unix {
                 let open_bounds = open
                     .compute_bounds(&confirmation_root)
                     .expect("primary extension action belongs to removal surface");
+                let close_bounds = close_actions
+                    .compute_bounds(&confirmation_root)
+                    .expect("disclosure belongs to removal surface");
                 let question_bounds = question
                     .compute_bounds(&confirmation_root)
                     .expect("removal warning belongs to removal surface");
@@ -1687,9 +1713,9 @@ mod unix {
                     "{width_name} confirmation must not wrap inside lifecycle controls"
                 );
                 assert!(
-                    (question_bounds.x() - open_bounds.x()).abs() <= 1.0
+                    (question_bounds.x() - close_bounds.x()).abs() <= 1.0
                         && (confirm_bounds.x() - question_bounds.x()).abs() <= 1.0,
-                    "{width_name} warning and confirmation actions do not share the card-content edge: open={open_bounds:?}, question={question_bounds:?}, confirm={confirm_bounds:?}"
+                    "{width_name} disclosure, warning and confirmation do not share the card-content edge: disclosure={close_bounds:?}, question={question_bounds:?}, confirm={confirm_bounds:?}"
                 );
                 assert!(
                     question_bounds.y() >= open_bounds.y() + open_bounds.height() + 8.0,
@@ -1747,7 +1773,7 @@ mod unix {
                 "cancellation closes destructive confirmation"
             );
             let current_root = surface.widget().clone().upcast::<gtk::Widget>();
-            find_button(&current_root, "More actions").emit_clicked();
+            find_button(&current_root, "Close").emit_clicked();
             settle_toolkit();
             send_report(&surface, &mut wire, 102, |event| {
                 matches!(event, hl_gui::Event::Invoke { .. })
@@ -5823,6 +5849,23 @@ mod unix {
             None
         }
         find(root, placeholder).unwrap_or_else(|| panic!("entry placeholder {placeholder:?} was not rendered"))
+    }
+
+    fn find_image(root: &gtk::Widget) -> gtk::Image {
+        fn optional(root: &gtk::Widget) -> Option<gtk::Image> {
+            if let Some(image) = root.downcast_ref::<gtk::Image>() {
+                return Some(image.clone());
+            }
+            let mut child = root.first_child();
+            while let Some(current) = child {
+                child = current.next_sibling();
+                if let Some(image) = optional(&current) {
+                    return Some(image);
+                }
+            }
+            None
+        }
+        optional(root).expect("image was not rendered")
     }
 
     fn find_heading(root: &gtk::Widget, wanted: &str) -> gtk::Label {

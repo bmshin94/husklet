@@ -1584,7 +1584,7 @@ test('installed extension management searches, filters, pages, and clears fifty 
   assert.ok(labelled(stage, '1 of 50 installed extensions'));
   assert.ok(labelled(stage, 'installed-07'));
   assert.ok(labelled(stage, 'Healthy extensions'));
-  const actionFooter = sharedAncestor(stage, ['Open', 'Disable', 'More actions'], 'Row');
+  const actionFooter = sharedAncestor(stage, ['Open', 'Disable', 'More'], 'Row');
   assert.notEqual(
     actionFooter,
     undefined,
@@ -3454,9 +3454,19 @@ test('installed extension removal requires final consent and a failure remains r
     }),
   );
   await settled();
-  assert.ok(labelled(stage, 'More actions'));
+  assert.ok(labelled(stage, 'More'));
+  assert.deepEqual(taggedProperty(stage, 'More', 'Button', 'Icon'), {
+    Text: 'view-more-symbolic',
+  });
+  assert.deepEqual(taggedProperty(stage, 'More', 'Button', 'Variant'), {
+    Variant: 'Outline',
+  });
   assert.equal(labelled(stage, 'Remove extension'), undefined);
-  invoke(stage, 'More actions');
+  invoke(stage, 'More');
+  assert.ok(labelled(stage, 'Close'));
+  assert.deepEqual(taggedProperty(stage, 'Close', 'Button', 'Icon'), {
+    Text: 'pan-up-symbolic',
+  });
   invoke(stage, 'Remove extension');
   assert.deepEqual(calls, [], 'opening consent carries no removal authority');
   assert.ok(
@@ -3545,6 +3555,64 @@ test('installed extension lifecycle reconciles a lost reply without masking a re
   );
 });
 
+test('a newer lifecycle event wins over a stale lost-reply reconciliation list', async () => {
+  const extension = {
+    name: 'assistant',
+    image_digest: `sha256:${'d'.repeat(64)}`,
+    version: '1.2.0',
+    enabled: false,
+    status: 'standby',
+  };
+  const enabled = { ...extension, enabled: true, status: 'starting' };
+  let lists = 0;
+  let publish;
+  let resolveStale;
+  const stage = host();
+  stage.render(
+    h(Extensions, {
+      api: {
+        extensions: {
+          list: async () => {
+            lists += 1;
+            if (lists === 1) return [extension];
+            return new Promise((resolve) => {
+              resolveStale = () => resolve([extension]);
+            });
+          },
+          enableAndWait: async () => {
+            throw new Error('connection closed before enable reply');
+          },
+        },
+        watchExtensions: async (listener) => {
+          publish = listener;
+          return () => {};
+        },
+      },
+    }),
+  );
+  await settled();
+  invoke(stage, 'Enable');
+  await settled();
+  assert.equal(lists, 2, 'lost reply starts an authoritative reconciliation read');
+
+  publish([enabled]);
+  resolveStale();
+  await settled();
+  await settled();
+
+  assert.ok(
+    labelled(
+      stage,
+      'assistant enabled, but the confirmation reply was lost. Current extension state was verified by refresh.',
+    ),
+  );
+  assert.equal(
+    labelled(stage, 'Enable extension could not be completed.'),
+    undefined,
+    'an older list response cannot replace a newer observed lifecycle transition',
+  );
+});
+
 test('Top is visibly required and offers no self-disable or self-removal trap', async () => {
   const stage = host();
   stage.render(
@@ -3591,7 +3659,7 @@ test('Top is visibly required and offers no self-disable or self-removal trap', 
   });
   assert.equal(labelled(stage, 'Disable'), undefined);
   assert.equal(labelled(stage, 'Remove'), undefined);
-  assert.equal(labelled(stage, 'More actions'), undefined);
+  assert.equal(labelled(stage, 'More'), undefined);
   assert.equal(labelled(stage, 'Review update'), undefined);
   assert.equal(labelled(stage, 'Check for changes'), undefined);
   assert.ok(labelled(stage, 'Built-in'));
@@ -3664,14 +3732,14 @@ test('installed extensions expose truthful enabled, disabled, fault and retry st
     false,
     'daily lifecycle control is visible without opening the permissions disclosure',
   );
-  assert.ok(labelled(stage, 'More actions'), 'destructive management remains discoverable');
-  invoke(stage, 'More actions');
+  assert.ok(labelled(stage, 'More'), 'destructive management remains discoverable');
+  invoke(stage, 'More');
   assert.ok(
     labelled(stage, 'Remove extension'),
     'quiet overflow reveals the destructive action on request',
   );
-  assert.deepEqual(taggedProperty(stage, 'More actions', 'Button', 'Variant'), {
-    Variant: 'Ghost',
+  assert.deepEqual(taggedProperty(stage, 'Close', 'Button', 'Variant'), {
+    Variant: 'Outline',
   });
   assert.deepEqual(taggedProperty(stage, 'Disable', 'Button', 'Size'), {
     ControlSize: 'Small',
