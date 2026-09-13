@@ -16,7 +16,7 @@ use vte4::prelude::*;
 
 use super::super::terminal::{
     Adjustment, Occupancy, Page, PaneChooser, PaneChrome, PaneView, Panes, Reading, Slots, Surface, Tabs, TermWin,
-    Window,
+    Window, WindowSession,
 };
 
 /// How often the window looks for errands.
@@ -86,7 +86,7 @@ impl Console {
             Request::Tabs => Ok(Answer::Tabs(Self::tabs(window))),
             Request::Topology => Self::topology(window).map(Answer::Topology),
             Request::PaneList => Self::pane_inventory(window).map(Answer::Panes),
-            Request::OpenTab(title) => Ok(Answer::Slot(Self::open(window, title))),
+            Request::OpenTab { title, origin } => Self::open(window, title, origin.as_ref()).map(Answer::Slot),
             Request::PinTab { tab, pinned } => Tabs::new(window).pin(tab, *pinned).map(|()| Answer::Done),
             Request::FocusTab(tab) => Tabs::new(window).focus(tab).map(|()| Answer::Done),
             Request::Split { slot, division } => Self::split(window, slot, *division).map(Answer::Slot),
@@ -494,8 +494,25 @@ impl Console {
     /// The title an extension asked for is not the tab's label: tabs in this
     /// window are shells and are labelled as such, and an extension naming
     /// someone else's tab would be drawing on a surface it does not own.
-    fn open(window: &Rc<TermWin>, _title: &str) -> String {
-        Tabs::new(window).terminal()
+    fn open(
+        window: &Rc<TermWin>,
+        _title: &str,
+        origin: Option<&hl::extension::TerminalOrigin>,
+    ) -> Result<String, HostError> {
+        let origin =
+            origin.ok_or_else(|| HostError::Conflict("terminal request has no authenticated origin".into()))?;
+        let tab = Tabs::new(window).terminal();
+        Tabs::new(window).attribute(
+            &tab,
+            hl_ws_term::TabOrigin::Extension {
+                name: origin.extension.clone(),
+                installation: origin.installation.clone(),
+            },
+        )?;
+        WindowSession::new(window)
+            .save()
+            .map_err(|error| HostError::Failed(error.to_string()))?;
+        Ok(tab)
     }
 
     /// Divides one pane and names the pane that appeared.

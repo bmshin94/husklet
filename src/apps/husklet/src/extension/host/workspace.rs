@@ -31,7 +31,7 @@ impl super::Host {
     pub fn extension(
         workspace: &WorkspaceConfig,
         name: &ExtensionName,
-        terminal: Arc<dyn TerminalSurface + Send + Sync>,
+        terminal: Arc<super::super::Relay>,
         events: super::Events,
         audience: super::Audience,
     ) -> Self {
@@ -53,7 +53,7 @@ impl super::Host {
     pub fn local_extension(
         workspace: &WorkspaceConfig,
         name: &ExtensionName,
-        terminal: Arc<dyn TerminalSurface + Send + Sync>,
+        terminal: Arc<super::super::Relay>,
         events: super::Events,
         entrypoint: impl Into<PathBuf>,
         initial_section: Option<&str>,
@@ -115,7 +115,7 @@ impl LocalWorkspace {
         }
     }
 
-    fn through(mut self, terminal: Arc<dyn TerminalSurface + Send + Sync>) -> Self {
+    fn through(mut self, terminal: Arc<super::super::Relay>) -> Self {
         self.workspace = self.workspace.through(terminal);
         self
     }
@@ -193,7 +193,7 @@ pub struct Workspace {
     wanted: Option<ExtensionName>,
     /// Where terminal calls are sent. `None` when no window offered one, in
     /// which case an extension asking is told so plainly.
-    terminal: Option<Arc<dyn TerminalSurface + Send + Sync>>,
+    terminal: Option<Arc<super::super::Relay>>,
     events: super::Events,
     /// One host speaks to one workspace daemon for its whole lifetime. Reusing
     /// this bridge keeps startup health observation to a cheap local inspect
@@ -232,7 +232,7 @@ impl Workspace {
 
     /// Points the supply's terminal calls at a surface the window owns.
     #[must_use]
-    pub fn through(mut self, terminal: Arc<dyn TerminalSurface + Send + Sync>) -> Self {
+    pub fn through(mut self, terminal: Arc<super::super::Relay>) -> Self {
         self.terminal = Some(terminal);
         self
     }
@@ -427,7 +427,17 @@ impl Supply for Workspace {
         let state = super::super::StateBlob::new(&self.root(), &plan.record.name).map_err(|error| error.to_string())?;
         conversation.with_extension_events(extensions.extension_events());
         let console = Console;
-        let terminal: &dyn TerminalSurface = self.terminal.as_deref().unwrap_or(&console);
+        let attributed = self
+            .terminal
+            .as_deref()
+            .map(|terminal| terminal.of(&plan.authority()))
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let terminal: &dyn TerminalSurface = attributed
+            .as_ref()
+            .map_or(&console as &dyn TerminalSurface, |terminal| {
+                terminal as &dyn TerminalSurface
+            });
         let store = Store {
             current: self.config.name.clone(),
         };
@@ -612,7 +622,7 @@ mod image_tests {
 
 #[cfg(test)]
 mod halt_tests {
-    use hl_extension::{Capability, ExtensionName, Grant, Manifest, PROTOCOL, Record, Resources};
+    use hl_extension::{Capability, ExtensionName, Grant, Manifest, Record, Resources, PROTOCOL};
 
     use super::{Image, Plan, SidecarSpec, Supply as _, Workspace};
 
@@ -1006,8 +1016,8 @@ fn workspace_io_error(error: std::io::Error) -> HostError {
 
 #[cfg(test)]
 mod workspace_control_tests {
-    use hl_extension::ExtensionName;
     use hl_extension::port::{HostError, WorkspaceControl as _};
+    use hl_extension::ExtensionName;
 
     use super::{Store, Workspace};
 

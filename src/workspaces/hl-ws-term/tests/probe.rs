@@ -11,6 +11,7 @@ fn nonascii_title_and_cwd_roundtrip() {
         tabs: vec![SessionTab {
             title: "café ☕".to_string(),
             pinned: false,
+            origin: hl_ws_term::TabOrigin::User,
             root: PaneNode::Leaf(Pane {
                 cwd: Some("/home/joão/prjá".to_string()),
                 history_file: None,

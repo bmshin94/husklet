@@ -5,7 +5,7 @@
 //! check is therefore a compile error rather than something review has to catch.
 
 use crate::capability::{Capability, CapabilityKey, Grant, Warrant};
-use crate::name::PeerName;
+use crate::name::{InstallationIdentity, PeerName};
 use crate::path::RelativePath;
 
 /// A refused operation.
@@ -76,6 +76,7 @@ pub struct Authority {
     peer: PeerName,
     held: Warrant,
     roots: Vec<RelativePath>,
+    installation: Option<InstallationIdentity>,
 }
 
 impl Authority {
@@ -86,7 +87,20 @@ impl Authority {
             peer,
             held: granted.into(),
             roots,
+            installation: None,
         }
+    }
+
+    /// Binds authority to the durable installation generation authenticated by the host.
+    #[must_use]
+    pub fn for_installation(mut self, installation: InstallationIdentity) -> Self {
+        self.installation = Some(installation);
+        self
+    }
+
+    #[must_use]
+    pub const fn installation(&self) -> Option<&InstallationIdentity> {
+        self.installation.as_ref()
     }
 
     /// Who is connected.

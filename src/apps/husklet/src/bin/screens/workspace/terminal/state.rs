@@ -268,15 +268,15 @@ impl<'a> WindowSession<'a> {
             .and_then(|terminal| Slots::new(tw).of(terminal));
         let mut selected_tab = None;
         // entries[0] is the non-closable overview; shells are the rest.
-        let entries: Vec<(String, String)> = {
+        let entries: Vec<(String, String, hl_ws_term::TabOrigin)> = {
             let es = tw.entries.borrow();
             es.iter()
                 .skip(1)
                 .filter(|entry| entry.persisted)
-                .map(|e| (e.name.clone(), e.title()))
+                .map(|e| (e.name.clone(), e.title(), e.origin.clone()))
                 .collect()
         };
-        for (page_name, title) in entries {
+        for (page_name, title, origin) in entries {
             let Some(child) = tw.stack.child_by_name(&page_name) else {
                 continue;
             };
@@ -284,8 +284,18 @@ impl<'a> WindowSession<'a> {
                 if visible.as_deref() == Some(page_name.as_str()) {
                     selected_tab = Some(tabs.len());
                 }
-                let pinned = tw.entries.borrow().iter().find(|entry| entry.name == page_name).is_some_and(|entry| entry.pinned);
-                tabs.push(SessionTab { title, pinned, root });
+                let pinned = tw
+                    .entries
+                    .borrow()
+                    .iter()
+                    .find(|entry| entry.name == page_name)
+                    .is_some_and(|entry| entry.pinned);
+                tabs.push(SessionTab {
+                    title,
+                    pinned,
+                    origin,
+                    root,
+                });
             }
         }
         // Selecting the overview does not clear GTK's last-terminal cache. That stale terminal is
@@ -324,7 +334,6 @@ impl TabEntry {
     pub(crate) fn retitle(&mut self, title: &str) {
         self.title.set_text(title);
     }
-
 }
 
 /// Walk a page's widget subtree into a [`PaneNode`], dumping each terminal's history to a file and
@@ -518,6 +527,7 @@ impl WindowSession<'_> {
                 tab.title.clone()
             };
             let name = Tabs::new(tw).add_persisted(&title, None, &paneroot, true, tab.pinned);
+            let _ = Tabs::new(tw).attribute(&name, tab.origin.clone());
             tw.pids.borrow_mut().entry(name.clone()).or_default().extend(pids);
             restored.push((name, first));
         }

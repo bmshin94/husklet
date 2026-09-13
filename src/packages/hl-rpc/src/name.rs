@@ -7,6 +7,39 @@
 #[serde(transparent)]
 pub struct PeerName(String);
 
+/// Opaque identity of one installed peer generation.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize)]
+#[serde(transparent)]
+pub struct InstallationIdentity(String);
+
+impl InstallationIdentity {
+    pub const LENGTH: usize = 32;
+
+    pub fn new(value: impl Into<String>) -> Result<Self, InstallationRejection> {
+        let value = value.into();
+        if value.len() != Self::LENGTH
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(InstallationRejection);
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for InstallationIdentity {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
 impl PeerName {
     /// Longest name accepted.
     pub const LIMIT: usize = 64;
@@ -52,6 +85,17 @@ impl<'de> serde::Deserialize<'de> for PeerName {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Rejection;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InstallationRejection;
+
+impl std::fmt::Display for InstallationRejection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("installation identity must be exactly 32 lowercase hexadecimal characters")
+    }
+}
+
+impl std::error::Error for InstallationRejection {}
+
 impl std::fmt::Display for Rejection {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -66,7 +110,7 @@ impl std::error::Error for Rejection {}
 
 #[cfg(test)]
 mod tests {
-    use super::PeerName;
+    use super::{InstallationIdentity, PeerName};
 
     #[test]
     fn a_name_outside_the_alphabet_is_refused_at_construction() {
@@ -84,5 +128,17 @@ mod tests {
         assert!(refused.is_err(), "a wire name must not bypass construction");
         let accepted: PeerName = serde_json::from_str("\"containers\"").expect("valid");
         assert_eq!(accepted.as_str(), "containers");
+    }
+
+    #[test]
+    fn installation_identity_is_fixed_width_lowercase_hex() {
+        assert!(InstallationIdentity::new("0123456789abcdef0123456789abcdef").is_ok());
+        for refused in [
+            "0123456789abcdef0123456789abcde",
+            "0123456789abcdef0123456789abcdef0",
+            "0123456789abcdef0123456789abcdeG",
+        ] {
+            assert!(InstallationIdentity::new(refused).is_err());
+        }
     }
 }

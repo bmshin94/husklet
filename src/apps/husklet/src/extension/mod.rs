@@ -60,7 +60,7 @@ pub use revision::inventory_revision;
 pub use roster::{described, Entry, Refusal, Roster, UpdateRefusal};
 pub use sidecar::{Image, Outcome, Sidecar, SidecarSpec};
 pub use state::{Fault, Records};
-pub use terminal::{Answer, Errand, Errands, Relay, Request};
+pub use terminal::{Answer, Errand, Errands, Relay, Request, TerminalOrigin};
 
 use crate::config::WorkspaceConfig;
 
@@ -308,10 +308,7 @@ mod tests {
 
     #[test]
     fn unavailable_transport_is_distinct_from_broken_protocol() {
-        assert!(matches!(
-            failure(&hl_client::Error::Timeout),
-            HostError::Unavailable(_)
-        ));
+        assert!(matches!(failure(&hl_client::Error::Timeout), HostError::Unavailable(_)));
         assert!(matches!(
             failure(&hl_client::Error::Connection("driver stopped".into())),
             HostError::Unavailable(_)

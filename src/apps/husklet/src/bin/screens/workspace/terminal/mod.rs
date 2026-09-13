@@ -99,6 +99,7 @@ pub(crate) struct TabEntry {
     title: gtk::Label,
     persisted: bool,
     pinned: bool,
+    origin: hl_ws_term::TabOrigin,
     close: Option<gtk::Button>,
     pin: Option<gtk::ToggleButton>,
 }
@@ -949,7 +950,7 @@ pub(crate) use surface::*;
 
 #[cfg(test)]
 mod shortcut_tests {
-    use super::{Shortcut, editable_captures};
+    use super::{editable_captures, Shortcut};
     use gtk::gdk;
 
     #[cfg(target_os = "macos")]

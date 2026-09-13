@@ -26,13 +26,13 @@ use hl_extension::{Authority, ChannelId, Disposition, Installation, Manifest, Re
 mod voice;
 mod workspace;
 
-use super::Listener;
 use super::conversation::{Conversation, Queue};
 use super::sidecar::SidecarSpec;
+use super::Listener;
 use crate::config::WorkspaceConfig;
-pub(crate) use voice::Voice;
 use voice::speak;
 pub(crate) use voice::speak_at;
+pub(crate) use voice::Voice;
 
 pub(crate) use workspace::ExtensionRemoval;
 pub use workspace::Workspace;
@@ -356,7 +356,10 @@ impl Plan {
                 hl_extension::FilesystemSelector::Subtree { subtree } => subtree.clone(),
             })
             .collect();
-        Authority::new(self.record.name.clone(), self.record.granted.clone(), roots)
+        Authority::new(self.record.name.clone(), self.record.granted.clone(), roots).for_installation(
+            hl_rpc::InstallationIdentity::new(self.record.incarnation.clone())
+                .expect("persisted extension incarnations are validated when records are opened"),
+        )
     }
 }
 
@@ -949,23 +952,23 @@ mod tests {
     use std::net::Shutdown;
     use std::process::{Child, Command};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex, mpsc};
+    use std::sync::{mpsc, Arc, Mutex};
 
     use hl_extension::port::{
         ContainerControl, ContainerInventory, ContainerSummary, Division, Entry, HostError, ImageStore, ImageSummary,
         TabSummary, TerminalSurface, WorkspaceFiles,
     };
     use hl_extension::{
-        Capability, ExtensionName, Grant, Hello, Installation, Manifest, PROTOCOL, Record, RelativePath, Request,
-        Resources, Services, Transit, Wire, WorkspaceInfo, codec,
+        codec, Capability, ExtensionName, Grant, Hello, Installation, Manifest, Record, RelativePath, Request,
+        Resources, Services, Transit, Wire, WorkspaceInfo, PROTOCOL,
     };
 
     use super::super::roster::Roster;
     use super::super::sidecar::Image;
-    use super::{Conversation, UnixStream};
     use super::{
-        Hall, Host, Order, Plan, READY_TIMEOUT, Report, SidecarSpec, Standing, Supply, VACANCY, enrol, faulted,
+        enrol, faulted, Hall, Host, Order, Plan, Report, SidecarSpec, Standing, Supply, READY_TIMEOUT, VACANCY,
     };
+    use super::{Conversation, UnixStream};
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
@@ -1233,6 +1236,25 @@ tab_title = "Sample"
             spec,
             workspace: "dev".to_owned(),
         }
+    }
+
+    #[test]
+    fn plan_authority_is_bound_to_the_exact_persisted_installation() {
+        let plan = plan(Path::new("/tmp/extension.sock"));
+        let authority = plan.authority();
+        assert_eq!(authority.peer(), &plan.record.name);
+        assert_eq!(
+            authority.installation().map(hl_rpc::InstallationIdentity::as_str),
+            Some(plan.record.incarnation.as_str())
+        );
+
+        let mut replacement = plan;
+        replacement.record.incarnation = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into();
+        assert_ne!(
+            authority.installation(),
+            replacement.authority().installation(),
+            "same-name reinstallations must never share terminal provenance authority"
+        );
     }
 
     /// What a fake extension does once it is connected.

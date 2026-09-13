@@ -692,6 +692,7 @@ impl<'a> Tabs<'a> {
             title: lbl,
             persisted,
             pinned,
+            origin: hl_ws_term::TabOrigin::User,
             close,
             pin,
         });
@@ -737,6 +738,16 @@ impl<'a> Tabs<'a> {
         tw.pids.borrow_mut().entry(name.clone()).or_default().push(pid);
         term.grab_focus();
         name
+    }
+
+    pub(crate) fn attribute(&self, tab: &str, origin: hl_ws_term::TabOrigin) -> Result<(), hl_extension::HostError> {
+        let mut entries = self.window.entries.borrow_mut();
+        let entry = entries
+            .iter_mut()
+            .find(|entry| entry.name == tab)
+            .ok_or_else(|| hl_extension::HostError::Absent(tab.to_owned()))?;
+        entry.origin = origin;
+        Ok(())
     }
 
     pub(crate) fn container_terminal(&self, container: &str, generation: u64, command: &[String]) -> String {

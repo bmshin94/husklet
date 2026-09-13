@@ -34,6 +34,7 @@ uuid.workspace = true
 
 hl-ws-term = { path = "../../workspaces/hl-ws-term", optional = true }
 hl-extension = { path = "../../workspaces/hl-extension", optional = true }
+hl-rpc = { path = "../../packages/hl-rpc", optional = true }
 hl-container = { path = "../../containers/hl-container", default-features = false, optional = true }
 hl-daemon = { path = "../../containers/hl-daemon", optional = true }
 hl-client = { path = "../../containers/hl-client", optional = true }
@@ -75,6 +76,7 @@ runtime = [
     # conversation needs the toolkit-neutral model even with no window open.
     "dep:hl-gui",
     "dep:hl-extension",
+    "dep:hl-rpc",
     "dep:hl-container",
     "dep:hl-daemon",
     "dep:hl-client",

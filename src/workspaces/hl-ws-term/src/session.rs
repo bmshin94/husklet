@@ -142,7 +142,19 @@ pub struct SessionTab {
     pub title: String,
     /// Whether the tab is protected from closing until explicitly unpinned.
     pub pinned: bool,
+    /// Host-private creator authority. It is deliberately absent from public terminal inventory.
+    pub origin: TabOrigin,
     pub root: PaneNode,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub enum TabOrigin {
+    #[default]
+    User,
+    Extension {
+        name: hl_rpc::PeerName,
+        installation: hl_rpc::InstallationIdentity,
+    },
 }
 
 /// Last allocated terminal-window size in host pixels.
@@ -177,7 +189,7 @@ impl Session {
     /// Serialize to the prefix-notation text format.
     #[must_use]
     pub fn serialize(&self) -> String {
-        let mut out = String::from("# hl session layout\nversion 4\nview ");
+        let mut out = String::from("# hl session layout\nversion 5\nview ");
         let selected = self
             .selected_tab
             .map_or_else(|| "-".to_owned(), |index| index.to_string());
@@ -193,6 +205,16 @@ impl Session {
         out.push('\n');
         for tab in &self.tabs {
             out.push_str("tab ");
+            match &tab.origin {
+                TabOrigin::User => out.push_str("user "),
+                TabOrigin::Extension { name, installation } => {
+                    out.push_str("extension ");
+                    out.push_str(&Layout::escape(name.as_str()));
+                    out.push(' ');
+                    out.push_str(installation.as_str());
+                    out.push(' ');
+                }
+            }
             out.push_str(if tab.pinned { "pinned " } else { "loose " });
             out.push_str(&Layout::escape(&tab.title));
             out.push(' ');
@@ -227,7 +249,7 @@ impl Session {
         let (selected_tab, focused_pane, window_size) = match version {
             "1" => (None, None, None),
             "2" if pinned_v2 => (None, None, None),
-            "2" | "3" | "4" => {
+            "2" | "3" | "4" | "5" => {
                 if layout.next() != Some("view") {
                     return Err(Layout::invalid("layout is missing its view state"));
                 }
@@ -248,7 +270,7 @@ impl Session {
                         .next()
                         .ok_or_else(|| Layout::invalid("view state is missing its focused pane"))?,
                 );
-                let window_size = if version == "3" || version == "4" {
+                let window_size = if matches!(version, "3" | "4" | "5") {
                     if layout.next() != Some("window") {
                         return Err(Layout::invalid("version 3 layout is missing its window size"));
                     }
@@ -288,7 +310,30 @@ impl Session {
             if layout.next() != Some("tab") {
                 return Err(Layout::invalid("expected `tab`"));
             }
-            let pinned = if version == "4" || pinned_v2 {
+            let origin = if version == "5" {
+                match layout.next() {
+                    Some("user") => TabOrigin::User,
+                    Some("extension") => {
+                        let name = layout
+                            .next()
+                            .map(Layout::unescape)
+                            .ok_or_else(|| Layout::invalid("extension tab is missing its creator name"))?;
+                        let installation = layout
+                            .next()
+                            .ok_or_else(|| Layout::invalid("extension tab is missing its installation identity"))?;
+                        TabOrigin::Extension {
+                            name: hl_rpc::PeerName::new(name)
+                                .map_err(|_| Layout::invalid("extension tab has an invalid creator name"))?,
+                            installation: hl_rpc::InstallationIdentity::new(installation)
+                                .map_err(|_| Layout::invalid("extension tab has an invalid installation identity"))?,
+                        }
+                    }
+                    _ => return Err(Layout::invalid("tab is missing its creator origin")),
+                }
+            } else {
+                TabOrigin::User
+            };
+            let pinned = if matches!(version, "4" | "5") || pinned_v2 {
                 match layout.next() {
                     Some("pinned") => true,
                     Some("loose") => false,
@@ -302,7 +347,12 @@ impl Session {
                 .map(Layout::unescape)
                 .ok_or_else(|| Layout::invalid("tab is missing its title"))?;
             let root = layout.node()?;
-            tabs.push(SessionTab { title, pinned, root });
+            tabs.push(SessionTab {
+                title,
+                pinned,
+                origin,
+                root,
+            });
         }
         if selected_tab.is_some_and(|index| index >= tabs.len()) {
             return Err(Layout::invalid("selected tab is outside the persisted tab list"));

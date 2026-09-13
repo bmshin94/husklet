@@ -42,7 +42,7 @@ impl<'a> Overview<'a> {
         workspace: &WorkspaceConfig,
         name: &hl_extension::ExtensionName,
         providers: &[hl_extension::PaneProvider],
-        terminal: &std::sync::Arc<dyn hl_extension::port::TerminalSurface + Send + Sync>,
+        terminal: &std::sync::Arc<hl::extension::Relay>,
         events: hl::extension::Events,
         gallery: &Gallery,
         faulted: Rc<dyn Fn(u32)>,
@@ -191,7 +191,7 @@ impl<'a> Overview<'a> {
     fn shelf(
         workspace: &WorkspaceConfig,
         view: &Rc<screens::workspace::View>,
-        relay: &Rc<hl::extension::Relay>,
+        relay: &std::sync::Arc<hl::extension::Relay>,
         gallery: &Gallery,
         window: Option<&Rc<screens::workspace::terminal::TermWin>>,
     ) -> Option<Rc<Shelf>> {
@@ -203,7 +203,7 @@ impl<'a> Overview<'a> {
             }
         };
         let held = workspace.clone();
-        let carried = Rc::clone(relay);
+        let carried = std::sync::Arc::clone(relay);
         let shown = gallery.clone();
         // Filled after the shelf is constructed. The surfaces it owns keep
         // only a weak route back, so lifecycle callbacks cannot form a cycle.
@@ -214,8 +214,7 @@ impl<'a> Overview<'a> {
         // interface has to name whose interface it draws and one shared port
         // could not say.
         let surfaces: Surfaces = Rc::new(move |entry| {
-            let port: std::sync::Arc<dyn hl_extension::port::TerminalSurface + Send + Sync> =
-                std::sync::Arc::new(carried.of(entry.name.as_str()));
+            let port = std::sync::Arc::clone(&carried);
             let providers = if entry.stage == hl_extension::Stage::Duty {
                 entry.pane_providers.as_slice()
             } else {
@@ -261,7 +260,7 @@ impl<'a> Overview<'a> {
         // drawing; the window answers it on its own tick, which is where the
         // widgets are.
         let (relay, errands) = hl::extension::Relay::open();
-        let relay = Rc::new(relay);
+        let relay = std::sync::Arc::new(relay);
         let gallery = Gallery::new();
         gallery.enrol_native(view.semantic_registry());
         // The window looks its panes' interfaces up here, so it must be told
@@ -298,7 +297,7 @@ impl<'a> Overview<'a> {
 
             let workspace = ws.clone();
             let held_view = Rc::clone(&view);
-            let held_relay = Rc::clone(&relay);
+            let held_relay = std::sync::Arc::clone(&relay);
             let held_gallery = gallery.clone();
             let held_window = self.window.map(Rc::downgrade);
             let held_shelf = Rc::clone(&shelf);

@@ -6,6 +6,7 @@ fn sample_session() -> Session {
             SessionTab {
                 title: "shell 1".to_string(),
                 pinned: true,
+                origin: TabOrigin::User,
                 root: PaneNode::Leaf(Pane {
                     cwd: Some("/root/my project".to_string()),
                     history_file: Some("hist-0.txt".to_string()),
@@ -15,6 +16,7 @@ fn sample_session() -> Session {
             SessionTab {
                 title: "build".to_string(),
                 pinned: false,
+                origin: TabOrigin::User,
                 root: PaneNode::Split {
                     dir: SplitDir::Horizontal,
                     ratio: 0.5,
@@ -52,7 +54,13 @@ fn layout_roundtrips() {
     let back = Session::parse(&text).unwrap();
     assert_eq!(back.selected_tab, Some(1));
     assert_eq!(back.focused_pane.as_deref(), Some("2"));
-    assert_eq!(back.window_size, Some(WindowSize { width: 913, height: 617 }));
+    assert_eq!(
+        back.window_size,
+        Some(WindowSize {
+            width: 913,
+            height: 617
+        })
+    );
     assert_eq!(back.tabs.len(), 2);
     assert_eq!(back.tabs[0].title, "shell 1");
     assert!(back.tabs[0].pinned);
@@ -67,11 +75,29 @@ fn layout_roundtrips() {
 }
 
 #[test]
+fn extension_origin_roundtrips_as_bounded_private_authority() {
+    let mut session = sample_session();
+    session.tabs[0].origin = TabOrigin::Extension {
+        name: hl_rpc::PeerName::new("database.viewer").unwrap(),
+        installation: hl_rpc::InstallationIdentity::new("0123456789abcdef0123456789abcdef").unwrap(),
+    };
+    let text = session.serialize();
+    assert!(text.contains("tab extension database.viewer 0123456789abcdef0123456789abcdef pinned"));
+    assert_eq!(Session::parse(&text).unwrap(), session);
+
+    let malformed = text.replace("0123456789abcdef0123456789abcdef", "0123456789abcdef0123456789abcdeg");
+    assert!(Session::parse(&malformed).is_err());
+    let overlong = text.replace("database.viewer", &"a".repeat(hl_rpc::PeerName::LIMIT + 1));
+    assert!(Session::parse(&overlong).is_err());
+}
+
+#[test]
 fn escaping_survives_spaces_and_specials() {
     let s = Session {
         tabs: vec![SessionTab {
             title: "a b%c".to_string(),
             pinned: false,
+            origin: TabOrigin::User,
             root: PaneNode::Leaf(Pane {
                 cwd: Some("/p a/th".to_string()),
                 history_file: None,
@@ -149,6 +175,7 @@ fn successful_layout_commit_prunes_only_unreferenced_histories() {
         tabs: vec![SessionTab {
             title: "shell".into(),
             pinned: false,
+            origin: TabOrigin::User,
             root: PaneNode::Leaf(Pane {
                 history_file: Some("hist-current.txt".into()),
                 ..Pane::default()
@@ -248,6 +275,7 @@ fn a_surface_pane_survives_the_layout_round_trip_beside_a_shell() {
         tabs: vec![SessionTab {
             title: "shell 1".to_string(),
             pinned: true,
+            origin: TabOrigin::User,
             root: PaneNode::Split {
                 dir: SplitDir::Horizontal,
                 ratio: 0.5,

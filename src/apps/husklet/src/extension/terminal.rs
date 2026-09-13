@@ -33,6 +33,13 @@ pub const PATIENCE: Duration = Duration::from_secs(5);
 /// asking at once.
 pub const CAPACITY: usize = 16;
 
+/// Host-private creator identity attached to terminal state, never returned in topology.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalOrigin {
+    pub extension: hl_rpc::PeerName,
+    pub installation: hl_rpc::InstallationIdentity,
+}
+
 /// What an extension asked the terminal for.
 ///
 /// Not `Eq`: a split ratio is a measurement, and a measurement has no total
@@ -50,7 +57,10 @@ pub enum Request {
     Topology,
     PaneList,
     /// A new tab under this title.
-    OpenTab(String),
+    OpenTab {
+        title: String,
+        origin: Option<TerminalOrigin>,
+    },
     PinTab {
         tab: String,
         pinned: bool,
@@ -205,7 +215,7 @@ pub struct Relay {
     /// Which extension holds this port, when it was attributed to one. A pane
     /// that draws an interface has to name whose interface it draws, and the
     /// window cannot infer that from a request alone.
-    origin: Option<String>,
+    origin: Option<TerminalOrigin>,
 }
 
 impl Relay {
@@ -218,11 +228,18 @@ impl Relay {
 
     /// The same port, held by one named extension.
     #[must_use]
-    pub fn of(&self, extension: &str) -> Self {
-        Self {
+    pub fn of(&self, authority: &hl_extension::Authority) -> Result<Self, HostError> {
+        let installation = authority
+            .installation()
+            .cloned()
+            .ok_or_else(|| HostError::Failed("terminal authority has no authenticated installation identity".into()))?;
+        Ok(Self {
             errands: self.errands.clone(),
-            origin: Some(extension.to_owned()),
-        }
+            origin: Some(TerminalOrigin {
+                extension: authority.peer().clone(),
+                installation,
+            }),
+        })
     }
 
     /// Sends one request and waits out [`PATIENCE`] for the answer.
@@ -299,7 +316,14 @@ impl TerminalSurface for Relay {
     /// # Errors
     /// Returns a host failure when no window is drawing this workspace.
     fn open_tab(&self, title: &str) -> Result<String, HostError> {
-        self.slot(Request::OpenTab(title.to_owned()))
+        let origin = self
+            .origin
+            .clone()
+            .ok_or_else(|| HostError::Failed("terminal port has no authenticated installation identity".into()))?;
+        self.slot(Request::OpenTab {
+            title: title.to_owned(),
+            origin: Some(origin),
+        })
     }
 
     fn pin_tab(&self, tab: &str, pinned: bool) -> Result<(), HostError> {
@@ -416,7 +440,7 @@ impl TerminalSurface for Relay {
     /// conflict when this port was not attributed to an extension.
     fn surface(&self, slot: &str, division: Division) -> Result<String, HostError> {
         self.slot(Request::Surface {
-            origin: self.origin.clone(),
+            origin: self.origin.as_ref().map(|origin| origin.extension.to_string()),
             slot: slot.to_owned(),
             division,
         })
@@ -431,7 +455,7 @@ fn unreachable() -> HostError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, Relay, Request};
+    use super::{Answer, Relay, Request, TerminalOrigin};
     use hl_extension::port::{Division, GridSize, PaneOccupantTarget, TerminalSurface as _};
 
     #[test]
@@ -482,10 +506,68 @@ mod tests {
         });
 
         drop(relay.surface("shell-1", Division::Beside).expect("a pane"));
-        let named = relay.of("sample").surface("shell-1", Division::Beside).expect("a pane");
+        let authority = hl_extension::Authority::new(
+            hl_rpc::PeerName::new("sample").unwrap(),
+            hl_rpc::Warrant::default(),
+            vec![],
+        )
+        .for_installation(hl_rpc::InstallationIdentity::new("0123456789abcdef0123456789abcdef").unwrap());
+        let named = relay
+            .of(&authority)
+            .expect("authenticated relay")
+            .surface("shell-1", Division::Beside)
+            .expect("a pane");
 
         assert_eq!(named, "pane-3");
         window.join().expect("the window thread");
+    }
+
+    #[test]
+    fn an_open_tab_carries_the_authenticated_installation_not_only_its_name() {
+        let (relay, errands) = Relay::open();
+        assert!(
+            relay.open_tab("query").is_err(),
+            "an unattributed relay must fail closed"
+        );
+        let installation = hl_rpc::InstallationIdentity::new("fedcba9876543210fedcba9876543210").unwrap();
+        let authority = hl_extension::Authority::new(
+            hl_rpc::PeerName::new("database").unwrap(),
+            hl_rpc::Warrant::default(),
+            vec![],
+        )
+        .for_installation(installation.clone());
+        let attributed = relay.of(&authority).unwrap();
+        let window = std::thread::spawn(move || {
+            let errand = errands.recv().unwrap();
+            assert_eq!(
+                errand.request(),
+                &Request::OpenTab {
+                    title: "query".into(),
+                    origin: Some(TerminalOrigin {
+                        extension: hl_rpc::PeerName::new("database").unwrap(),
+                        installation,
+                    }),
+                }
+            );
+            errand.answer(Ok(Answer::Slot("p7".into())));
+        });
+        assert_eq!(attributed.open_tab("query").unwrap(), "p7");
+        window.join().unwrap();
+    }
+
+    #[test]
+    fn public_tab_inventory_has_no_private_creator_provenance() {
+        let value = serde_json::to_value(hl_extension::port::TabSummary {
+            id: "p7".into(),
+            title: "query".into(),
+            pinned: false,
+            panes: vec![],
+        })
+        .unwrap();
+        let object = value.as_object().unwrap();
+        assert_eq!(object.len(), 4);
+        assert!(!object.contains_key("origin"));
+        assert!(!object.contains_key("installation"));
     }
 
     #[test]
@@ -567,7 +649,7 @@ mod tests {
         let (relay, errands) = Relay::open();
         drop(errands);
 
-        let refused = relay.open_tab("Logs").expect_err("no window");
+        let refused = relay.split("shell-1", Division::Below).expect_err("no window");
 
         assert!(refused.to_string().contains("no window"), "got {refused}");
     }
@@ -580,7 +662,7 @@ mod tests {
             errand.answer(Ok(Answer::Done));
         });
 
-        let refused = relay.open_tab("Logs").expect_err("the wrong answer");
+        let refused = relay.split("shell-1", Division::Below).expect_err("the wrong answer");
 
         assert!(refused.to_string().contains("not asked for"), "got {refused}");
         window.join().expect("the window thread");

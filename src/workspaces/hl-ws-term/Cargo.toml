@@ -19,6 +19,7 @@ path = "src/lib.rs"
 # model. The edge points UP to the std-only leaf `hl-ws` (this crate implements those traits).
 hl-ws = { path = "../hl-ws" }
 hl-fs = { path = "../../packages/hl-fs", default-features = false }
+hl-rpc = { path = "../../packages/hl-rpc" }
 bitflags = "2"
 
 # `libc` is here and not in plain `[dependencies]` because this crate's ONLY use of it is

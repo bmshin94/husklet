@@ -30,6 +30,7 @@ fn selected_tab_and_focused_pane_survive_a_real_widget_round_trip() {
                     SessionTab {
                         title: "source".into(),
                         pinned: false,
+                        origin: hl_ws_term::TabOrigin::User,
                         root: PaneNode::Leaf(Pane {
                             slot: Some("source".into()),
                             ..Pane::default()
@@ -38,6 +39,7 @@ fn selected_tab_and_focused_pane_survive_a_real_widget_round_trip() {
                     SessionTab {
                         title: "build".into(),
                         pinned: false,
+                        origin: hl_ws_term::TabOrigin::User,
                         root: PaneNode::Split {
                             dir: SplitDir::Horizontal,
                             ratio: 0.35,
@@ -54,6 +56,7 @@ fn selected_tab_and_focused_pane_survive_a_real_widget_round_trip() {
                     SessionTab {
                         title: "tests".into(),
                         pinned: false,
+                        origin: hl_ws_term::TabOrigin::User,
                         root: PaneNode::Leaf(Pane {
                             slot: Some("tests".into()),
                             ..Pane::default()
@@ -73,7 +76,13 @@ fn selected_tab_and_focused_pane_survive_a_real_widget_round_trip() {
             let reopened = Session::open(&workspace.storage_dir(&Home::current().root())).unwrap();
             assert_eq!(reopened.selected_tab, Some(1));
             assert_eq!(reopened.focused_pane.as_deref(), Some("build-shell"));
-            assert_eq!(reopened.window_size, Some(WindowSize { width: 913, height: 617 }));
+            assert_eq!(
+                reopened.window_size,
+                Some(WindowSize {
+                    width: 913,
+                    height: 617
+                })
+            );
             assert_eq!(
                 reopened.tabs.iter().map(|tab| tab.title.as_str()).collect::<Vec<_>>(),
                 ["source", "build", "tests"]
@@ -225,6 +234,7 @@ fn characterize(panes: usize) {
         tabs: vec![SessionTab {
             title: format!("{panes} panes"),
             pinned: false,
+            origin: hl_ws_term::TabOrigin::User,
             root: layout(panes, 0),
         }],
         selected_tab: Some(0),
