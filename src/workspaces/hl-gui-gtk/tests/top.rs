@@ -1646,7 +1646,7 @@ mod unix {
                 let open = find_tooltip_button(&card, "Open Component playground");
                 let state = find_mapped_labelled(&card, "Running");
                 let disable = find_button(&card, "Disable");
-                let more = find_button(&card, "More");
+                let removal = find_expander(&card, "Remove extension…");
                 let permissions = find_expander(&card, "View permissions");
                 let check_bounds = check
                     .compute_bounds(&card)
@@ -1686,23 +1686,21 @@ mod unix {
                 );
                 assert!(disable.is_mapped(), "{width_name} Disable is visible");
                 assert_standard_action(&disable, width_name, "Disable", 28);
-                assert!(more.is_focusable(), "{width_name} More actions is keyboard reachable");
-                assert_standard_action(&more, width_name, "More actions", 28);
-                assert_eq!(
-                    find_image(more.upcast_ref()).icon_name().as_deref(),
-                    Some("view-more-symbolic")
-                );
-                assert!(more.has_css_class("variant-outline"));
-                assert!(more.has_css_class("tone-neutral"));
-                let more_chrome = widgets_with_class(more.upcast_ref(), "hl-button-chrome")[0]
+                assert!(removal.is_focusable(), "{width_name} removal disclosure is keyboard reachable");
+                assert!(!removal.is_expanded(), "{width_name} removal disclosure starts collapsed");
+                assert!(removal.has_css_class("variant-outline"));
+                assert!(removal.height() >= 44, "{width_name} removal disclosure lost its target");
+                let removal_bounds = removal
                     .compute_bounds(&card)
-                    .expect("More actions chrome belongs to its card");
+                    .expect("removal disclosure belongs to its card");
                 let open_chrome = widgets_with_class(open.upcast_ref(), "hl-button-chrome")[0]
                     .compute_bounds(&card)
                     .expect("Open chrome belongs to its card");
                 assert!(
-                    open_chrome.x() - more_chrome.x() - more_chrome.width() >= 8.0,
-                    "{width_name} More actions collapsed into its neighbor: more={more_chrome:?} open={open_chrome:?}"
+                    (8.0..=12.0).contains(
+                        &(removal_bounds.y() - open_chrome.y() - open_chrome.height())
+                    ),
+                    "{width_name} removal disclosure collapsed into its neighbor: removal={removal_bounds:?} open={open_chrome:?}"
                 );
                 assert!(
                     !has_label(&card, "Remove extension"),
@@ -1720,23 +1718,19 @@ mod unix {
                 capture(&window, &format!("installed-image-check-{width_name}"), width, 800);
             }
             let installed_root = surface.widget().clone().upcast::<gtk::Widget>();
-            let more = find_tooltip_button(&installed_root, "More actions for storybook");
-            assert!(more.grab_focus(), "removal disclosure accepts keyboard focus");
-            more.emit_clicked();
+            let removal_disclosure = find_expander(&installed_root, "Remove extension…");
+            assert!(removal_disclosure.grab_focus(), "removal disclosure accepts keyboard focus");
+            removal_disclosure.emit_by_name::<()>("activate", &[]);
             settle_toolkit();
             send_report(&surface, &mut wire, 98, |event| {
-                matches!(event, hl_gui::Event::Invoke { .. })
+                matches!(event, hl_gui::Event::Expand { .. })
             });
             apply_until(&mut wire, &mut tree, &mut surface, "Remove extension", |request| {
                 panic!("unexpected removal disclosure request: {request:?}")
             });
             let installed_root = surface.widget().clone().upcast::<gtk::Widget>();
-            let close_actions = find_button(&installed_root, "Close");
-            assert_eq!(
-                find_image(close_actions.upcast_ref()).icon_name().as_deref(),
-                Some("pan-up-symbolic")
-            );
-            assert_standard_action(&close_actions, "expanded", "Close actions", 28);
+            let removal_disclosure = find_expander(&installed_root, "Remove extension…");
+            assert!(removal_disclosure.is_expanded(), "removal disclosure exposes expanded state");
             let remove = find_button(&installed_root, "Remove extension");
             assert!(remove.grab_focus(), "removal trigger accepts keyboard focus");
             remove.emit_clicked();
@@ -1797,7 +1791,7 @@ mod unix {
                 let open_bounds = open
                     .compute_bounds(&confirmation_root)
                     .expect("primary extension action belongs to removal surface");
-                let close_bounds = close_actions
+                let disclosure_bounds = removal_disclosure
                     .compute_bounds(&confirmation_root)
                     .expect("disclosure belongs to removal surface");
                 let question_bounds = question
@@ -1809,9 +1803,9 @@ mod unix {
                     "{width_name} confirmation must not wrap inside lifecycle controls"
                 );
                 assert!(
-                    (question_bounds.x() - close_bounds.x()).abs() <= 1.0
+                    (question_bounds.x() - disclosure_bounds.x()).abs() <= 1.0
                         && (confirm_bounds.x() - question_bounds.x()).abs() <= 1.0,
-                    "{width_name} disclosure, warning and confirmation do not share the card-content edge: disclosure={close_bounds:?}, question={question_bounds:?}, confirm={confirm_bounds:?}"
+                    "{width_name} disclosure, warning and confirmation do not share the card-content edge: disclosure={disclosure_bounds:?}, question={question_bounds:?}, confirm={confirm_bounds:?}"
                 );
                 assert!(
                     question_bounds.y() >= open_bounds.y() + open_bounds.height() + 8.0,
@@ -5222,22 +5216,19 @@ mod unix {
             }
         }
         let retry = find_button(&first, "Retry");
-        let more = find_button(&first, "More");
+        let removal = find_expander(&first, "Remove extension…");
         assert!(retry.has_css_class("variant-filled"), "{case} Retry is the fault card primary");
         assert!(retry.has_css_class("tone-accent"), "{case} Retry uses accent emphasis");
-        assert!(more.has_css_class("variant-outline"), "{case} More remains neutral secondary chrome");
-        assert!(more.has_css_class("tone-neutral"), "{case} More remains neutral");
+        assert!(removal.has_css_class("variant-outline"), "{case} removal remains neutral secondary chrome");
         let retry_bounds = retry.compute_bounds(&first).expect("Retry belongs to its fault card");
-        let more_bounds = more.compute_bounds(&first).expect("More belongs to its fault card");
-        assert_eq!(
-            more_bounds.x() - retry_bounds.x() - retry_bounds.width(),
-            8.0,
-            "{case} fault actions keep one 8px gap"
+        let removal_bounds = removal.compute_bounds(&first).expect("removal belongs to its fault card");
+        assert!(
+            (8.0..=12.0).contains(&(removal_bounds.y() - retry_bounds.y() - retry_bounds.height())),
+            "{case} removal disclosure is not a distinct compact block after Retry: retry={retry_bounds:?} removal={removal_bounds:?}"
         );
         assert!(retry.grab_focus(), "{case} Retry is the first keyboard action");
         assert!(retry.has_focus(), "{case} Retry owns keyboard focus");
-        assert!(root.child_focus(gtk::DirectionType::TabForward), "{case} focus advances after Retry");
-        assert!(more.has_focus(), "{case} More follows Retry in native tab order");
+        assert!(removal.grab_focus(), "{case} removal disclosure accepts keyboard focus");
         if width > 600 {
             assert!(
                 healthy.height() < first.height(),

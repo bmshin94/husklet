@@ -1738,13 +1738,7 @@ test('installed extension management searches, filters, pages, and clears fifty 
   assert.ok(labelled(stage, '1 of 50 installed extensions'));
   assert.ok(labelled(stage, 'installed-07'));
   assert.ok(labelled(stage, 'Healthy extensions'));
-  const actionFooter = sharedAncestor(stage, ['Open', 'Disable', 'More'], 'Row');
-  assert.notEqual(
-    actionFooter,
-    undefined,
-    'launch, lifecycle, and the quiet overflow affordance share one predictable footer',
-  );
-  assert.equal(labelled(stage, 'Remove extension'), undefined);
+  assert.equal(taggedProperty(stage, 'Remove extension…', 'Expander', 'Expanded')?.Flag, false);
 });
 
 test('extension discovery keeps unknown compatibility reviewable and blocks known mismatches', async () => {
@@ -3608,19 +3602,15 @@ test('installed extension removal requires final consent and a failure remains r
     }),
   );
   await settled();
-  assert.ok(labelled(stage, 'More'));
-  assert.deepEqual(taggedProperty(stage, 'More', 'Button', 'Icon'), {
-    Text: 'view-more-symbolic',
-  });
-  assert.deepEqual(taggedProperty(stage, 'More', 'Button', 'Variant'), {
+  assert.equal(labelled(stage, 'More'), undefined);
+  assert.equal(labelled(stage, 'Close'), undefined);
+  assert.deepEqual(taggedProperty(stage, 'Remove extension…', 'Expander', 'Variant'), {
     Variant: 'Outline',
   });
-  assert.equal(labelled(stage, 'Remove extension'), undefined);
-  invoke(stage, 'More');
-  assert.ok(labelled(stage, 'Close'));
-  assert.deepEqual(taggedProperty(stage, 'Close', 'Button', 'Icon'), {
-    Text: 'pan-up-symbolic',
-  });
+  assert.equal(taggedProperty(stage, 'Remove extension…', 'Expander', 'Expanded')?.Flag, false);
+  assert.equal(taggedProperty(stage, 'Remove extension…', 'Expander', 'Expanded')?.Flag, false);
+  expand(stage, 'Remove extension…');
+  assert.equal(taggedProperty(stage, 'Remove extension…', 'Expander', 'Expanded')?.Flag, true);
   invoke(stage, 'Remove extension');
   assert.deepEqual(calls, [], 'opening consent carries no removal authority');
   assert.ok(
@@ -3737,18 +3727,9 @@ test('fault retry keeps its primary slot while the lifecycle request is pending'
   assert.deepEqual(taggedProperty(stage, 'Retry', 'Button', 'Variant'), { Variant: 'Filled' });
   assert.deepEqual(taggedProperty(stage, 'Retry', 'Button', 'Tone'), { Tone: 'Accent' });
   assert.deepEqual(taggedProperty(stage, 'Retry', 'Button', 'Size'), { ControlSize: 'Small' });
-  assert.deepEqual(taggedProperty(stage, 'More', 'Button', 'Variant'), { Variant: 'Outline' });
-  const faultFooter = sharedAncestor(stage, ['Retry', 'More'], 'Row');
-  assert.notEqual(faultFooter, undefined);
-  const faultChildren = stage.frames
-    .flatMap((frame) => frame.patches)
-    .filter((patch) => patch.Insert && patch.Insert.parent === faultFooter)
-    .map((patch) => patch.Insert.child);
-  assert(
-    faultChildren.indexOf(labelled(stage, 'Retry').SetProp.id) <
-      faultChildren.indexOf(labelled(stage, 'More').SetProp.id),
-    'fault recovery primary precedes the secondary overflow action',
-  );
+  assert.deepEqual(taggedProperty(stage, 'Remove extension…', 'Expander', 'Variant'), {
+    Variant: 'Outline',
+  });
   invoke(stage, 'Retry');
   await settled();
   assert.deepEqual(taggedProperty(stage, 'Retrying…', 'Button', 'Variant'), {
@@ -3756,8 +3737,7 @@ test('fault retry keeps its primary slot while the lifecycle request is pending'
   });
   assert.deepEqual(taggedProperty(stage, 'Retrying…', 'Button', 'Tone'), { Tone: 'Neutral' });
   assert.deepEqual(taggedProperty(stage, 'Retrying…', 'Button', 'Enabled'), { Flag: false });
-  assert.deepEqual(taggedProperty(stage, 'More', 'Button', 'Enabled'), { Flag: false });
-  assert.notEqual(sharedAncestor(stage, ['Retrying…', 'More'], 'Row'), undefined);
+  assert.equal(taggedProperty(stage, 'Remove extension…', 'Expander', 'Expanded')?.Flag, false);
   finish({ changed: false });
   await settled();
 });
@@ -3939,15 +3919,12 @@ test('installed extensions expose truthful enabled, disabled, fault and retry st
     false,
     'daily lifecycle control is visible without opening the permissions disclosure',
   );
-  assert.ok(labelled(stage, 'More'), 'destructive management remains discoverable');
-  invoke(stage, 'More');
+  assert.ok(labelled(stage, 'Remove extension…'), 'destructive management remains discoverable');
+  expand(stage, 'Remove extension…');
   assert.ok(
     labelled(stage, 'Remove extension'),
     'quiet overflow reveals the destructive action on request',
   );
-  assert.deepEqual(taggedProperty(stage, 'Close', 'Button', 'Variant'), {
-    Variant: 'Outline',
-  });
   assert.deepEqual(taggedProperty(stage, 'Disable', 'Button', 'Size'), {
     ControlSize: 'Small',
   });

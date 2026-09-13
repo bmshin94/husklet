@@ -51,7 +51,7 @@ import {
   type WorkspaceApi,
 } from '@husklet/react';
 
-type Change = { value?: unknown };
+type Change = { value?: unknown; expanded?: unknown };
 type ExtensionMode = 'installed' | 'discover';
 type LifecycleAction = 'enable' | 'disable' | 'retry' | 'remove';
 type LifecycleState = { action: LifecycleAction; name: string };
@@ -2485,32 +2485,6 @@ export function Extensions({
                                     )}
                                     {hasCardAction || extension.name !== 'top' ? (
                                       <Row gap={2} width="fill" align="center" justify="start" wrap>
-                                        {!builtIn && !faulted ? (
-                                          <Button
-                                            label={
-                                              removalMenu === extension.name ? 'Close' : 'More'
-                                            }
-                                            icon={
-                                              removalMenu === extension.name
-                                                ? 'pan-up-symbolic'
-                                                : 'view-more-symbolic'
-                                            }
-                                            variant="outline"
-                                            tone="neutral"
-                                            size="small"
-                                            tooltip={
-                                              removalMenu === extension.name
-                                                ? `Close actions for ${extension.name}`
-                                                : `More actions for ${extension.name}`
-                                            }
-                                            enabled={!busy}
-                                            onInvoke={() =>
-                                              setRemovalMenu((current) =>
-                                                current === extension.name ? '' : extension.name,
-                                              )
-                                            }
-                                          />
-                                        ) : null}
                                         {update && (
                                           <Button
                                             key="review-update"
@@ -2548,32 +2522,6 @@ export function Extensions({
                                         ) : !update && provider ? (
                                           providerAction(extension, provider)
                                         ) : null}
-                                        {!builtIn && faulted ? (
-                                          <Button
-                                            label={
-                                              removalMenu === extension.name ? 'Close' : 'More'
-                                            }
-                                            icon={
-                                              removalMenu === extension.name
-                                                ? 'pan-up-symbolic'
-                                                : 'view-more-symbolic'
-                                            }
-                                            variant="outline"
-                                            tone="neutral"
-                                            size="small"
-                                            tooltip={
-                                              removalMenu === extension.name
-                                                ? `Close actions for ${extension.name}`
-                                                : `More actions for ${extension.name}`
-                                            }
-                                            enabled={!busy}
-                                            onInvoke={() =>
-                                              setRemovalMenu((current) =>
-                                                current === extension.name ? '' : extension.name,
-                                              )
-                                            }
-                                          />
-                                        ) : null}
                                         {!builtIn && !update && catalogueEntry ? (
                                           <Button
                                             label="Check for changes"
@@ -2601,17 +2549,40 @@ export function Extensions({
                                         ) : null}
                                       </Row>
                                     ) : null}
-                                    {removalMenu === extension.name ? (
-                                      <Column gap={1} width="fill" align="start" pad={{ top: 2 }}>
-                                        <ConfirmAction
-                                          label="Remove extension"
-                                          confirmLabel={`Remove ${extension.name}`}
-                                          question={`Remove ${extension.name}? Its private workspace data will be permanently deleted.`}
-                                          authorityKey={extension.image_digest}
-                                          enabled={!busy}
-                                          size="small"
-                                          onConfirm={() => lifecycle(extension, 'remove')}
-                                        />
+                                    {!builtIn ? (
+                                      <Column width="fill" align="start" pad={{ top: 1 }}>
+                                        <Expander
+                                          label="Remove extension…"
+                                          expanded={removalMenu === extension.name}
+                                          variant="outline"
+                                          width="content"
+                                          height={{ step: 11 }}
+                                          align="start"
+                                          justify="center"
+                                          tooltip={`Remove ${extension.name}`}
+                                          onExpand={(event: Change) =>
+                                            setRemovalMenu(
+                                              (event.expanded ?? event.value) ? extension.name : '',
+                                            )
+                                          }
+                                        >
+                                          <Column
+                                            gap={1}
+                                            width="fill"
+                                            align="start"
+                                            pad={{ top: 2 }}
+                                          >
+                                            <ConfirmAction
+                                              label="Remove extension"
+                                              confirmLabel={`Remove ${extension.name}`}
+                                              question={`Remove ${extension.name}? Its private workspace data will be permanently deleted.`}
+                                              authorityKey={extension.image_digest}
+                                              enabled={!busy}
+                                              size="small"
+                                              onConfirm={() => lifecycle(extension, 'remove')}
+                                            />
+                                          </Column>
+                                        </Expander>
                                       </Column>
                                     ) : null}
                                   </CardContent>
