@@ -1468,6 +1468,8 @@ export function workspace(session, { signal } = {}) {
                     phase = 'inspect';
                     requireOutputActive(signal);
                     const execution = await api.containers.execution(executionId);
+                    if (execution.running)
+                        throw new ExecutionOutputEndedEarlyError(executionId);
                     return { executionId, execution, next: cursor, pages, complete: true };
                 }
                 catch (cause) {

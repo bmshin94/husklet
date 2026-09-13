@@ -289,3 +289,140 @@ test('test runner failure preserves only its acknowledged output cursor over fra
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('resumed test output cannot report completion before the exact execution exits', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-test-runner-resume-exit-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const executionId = 'f'.repeat(32);
+  const containerId = 'a'.repeat(64);
+  const connections = new Set();
+  const calls = [];
+  let accepted = 0;
+  const server = net.createServer((socket) => {
+    const connection = ++accepted;
+    connections.add(socket);
+    socket.on('close', () => connections.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.kind !== KIND.request) continue;
+        calls.push({ connection, ...frame.payload });
+        const after = frame.payload.with?.after;
+        let payload;
+        if (frame.payload.call === 'execution_output') {
+          payload = {
+            reply: 'execution_output',
+            with:
+              connection === 1
+                ? {
+                    entries: [
+                      {
+                        sequence: 18,
+                        timestamp_ms: 18,
+                        stream: 'stdout',
+                        bytes: [...Buffer.from('ok 1000000\n')],
+                      },
+                      {
+                        sequence: 19,
+                        timestamp_ms: 19,
+                        stream: 'stderr',
+                        bytes: [...Buffer.from('finishing workers\n')],
+                      },
+                    ],
+                    next: 19,
+                    more: false,
+                    eof: true,
+                    gap: false,
+                  }
+                : {
+                    entries: [],
+                    next: after,
+                    more: false,
+                    eof: true,
+                    gap: false,
+                  },
+          };
+        } else if (frame.payload.call === 'execution_inspect') {
+          payload = {
+            reply: 'execution',
+            with: {
+              id: executionId,
+              container_id: containerId,
+              running: connection === 1,
+              exit_code: 0,
+              pid: connection === 1 ? 73 : 0,
+              command: ['tests', '--all'],
+              user: '',
+              created_at_ms: 1,
+              started_at_ms: 2,
+              finished_at_ms: connection === 1 ? null : 3,
+              result: connection === 1 ? null : { kind: 'code', value: 0 },
+            },
+          };
+        }
+        const reply = encode({ channel: frame.channel, kind: KIND.response, payload });
+        for (const byte of reply) socket.write(Buffer.of(byte));
+      }
+    });
+    const greeting = encode({
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: {
+        protocol: 1,
+        peer: `test-runner-resume-${connection}`,
+        granted: ['containers:read'],
+      },
+    });
+    socket.write(greeting.subarray(0, 2));
+    socket.write(greeting.subarray(2));
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const first = await connect({ path: socketPath });
+    const committed = [];
+    let failure;
+    try {
+      await workspace(first).containers.resumeExecutionStreaming(
+        executionId,
+        { after: 17, pageLimit: 2 },
+        (page) => committed.push(page.next),
+      );
+    } catch (error) {
+      failure = error;
+    }
+    assert(failure instanceof ExecutionOperationError);
+    assert.equal(failure.phase, 'inspect');
+    assert.equal(failure.after, 19);
+    assert.equal(failure.cause?.name, 'ExecutionOutputEndedEarlyError');
+    assert.deepEqual(committed, [19], 'mixed output page is acknowledged exactly once');
+    await first.close();
+
+    const resumed = await connect({ path: socketPath });
+    const replayed = [];
+    const finished = await workspace(resumed).containers.resumeExecutionStreaming(
+      failure.executionId,
+      { after: failure.after, pageLimit: 2 },
+      (page) => replayed.push(...page.entries),
+    );
+    assert.deepEqual(replayed, [], 'the acknowledged million-row transcript must not be replayed');
+    assert.equal(finished.complete, true);
+    assert.equal(finished.next, 19);
+    assert.equal(finished.execution.id, executionId);
+    assert.equal(finished.execution.running, false);
+    assert.equal(finished.execution.exit_code, 0);
+    await resumed.close();
+    assert.deepEqual(
+      calls.map(({ connection, call, with: value }) => [connection, call, value?.after]),
+      [
+        [1, 'execution_output', 17],
+        [1, 'execution_inspect', undefined],
+        [2, 'execution_output', 19],
+        [2, 'execution_inspect', undefined],
+      ],
+    );
+  } finally {
+    for (const connection of connections) connection.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});

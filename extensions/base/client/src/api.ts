@@ -1226,7 +1226,8 @@ export interface WorkspaceApi {
     ): AsyncGenerator<ExecutionOutputPage, void, void>;
     /**
      * Resume a persisted execution from an acknowledged output cursor. The cursor advances only
-     * after callback completion. This observer never signals or removes the existing execution.
+     * after callback completion. EOF is complete only when exact execution inspection is terminal.
+     * This observer never signals or removes the existing execution.
      */
     resumeExecutionStreaming(
       id: string,

@@ -13,6 +13,47 @@ export type TestRunEvent =
     };
 
 /**
+ * Resume a test execution after transport loss. Each raw output page is one callback transaction,
+ * so a durable UI advances `next` only after it has stored every stdout/stderr entry in that page.
+ */
+export async function resumeTestRun(
+  host: WorkspaceApi,
+  failure: ExecutionOperationError,
+  options: {
+    signal: AbortSignal;
+    reportPage(page: {
+      executionId: string;
+      after: number;
+      next: number;
+      entries: readonly {
+        sequence: number;
+        timestamp_ms: number;
+        stream: 'stdout' | 'stderr';
+        bytes: number[];
+      }[];
+    }): void | Promise<void>;
+  },
+) {
+  if (failure.after === undefined) {
+    throw new Error('test execution failed before exposing an acknowledged output cursor');
+  }
+  let after = failure.after;
+  return host.containers.resumeExecutionStreaming(
+    failure.executionId,
+    { after, pageLimit: 8, signal: options.signal },
+    async (page) => {
+      await options.reportPage({
+        executionId: failure.executionId,
+        after,
+        next: page.next,
+        entries: page.entries,
+      });
+      after = page.next;
+    },
+  );
+}
+
+/**
  * Watch a source tree and keep exactly one test execution current. Slow output consumers apply
  * backpressure; a newer filesystem revision aborts and host-cancels the stale execution.
  */
