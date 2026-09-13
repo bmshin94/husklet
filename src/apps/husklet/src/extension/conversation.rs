@@ -19,9 +19,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use hl_extension::{
-    codec, Authority, ChannelId, Channels, Compatibility, Emission, Failure, Frame, Hello, Kind, Limits, Outbox,
+    Authority, ChannelId, Channels, Compatibility, Emission, Failure, Frame, Hello, Kind, Limits, Outbox, PROTOCOL,
     PaneChange, PaneChangeKind, Permission, Reply, Services, Session, Snapshot, Streams, Subscriptions, SurfaceFrame,
-    SurfaceMutation, Topic, Transit, Welcome, Wire, PROTOCOL,
+    SurfaceMutation, Topic, Transit, Welcome, Wire, codec,
 };
 
 /// Interface work an extension has produced and the GUI has not collected yet.
@@ -1001,6 +1001,12 @@ impl Conversation {
             generation,
             revision,
             ..
+        }
+        | hl_extension::Request::TerminalReadHistory {
+            slot,
+            generation,
+            revision,
+            ..
         } = &mut request
         {
             let topology = services.terminal.topology().ok().map(|topology| {
@@ -1056,9 +1062,9 @@ impl Conversation {
         // semantic action. Bracket it with canonical pane observations so a
         // changing UI cannot be returned with a newer cursor.
         let pane_read_generation = match &request {
-            hl_extension::Request::TerminalReadPane { slot, .. } | hl_extension::Request::PaneSemanticRead { slot } => {
-                Some(self.observe_pane_generation(services, slot)?)
-            }
+            hl_extension::Request::TerminalReadPane { slot, .. }
+            | hl_extension::Request::TerminalReadHistory { slot, .. }
+            | hl_extension::Request::PaneSemanticRead { slot } => Some(self.observe_pane_generation(services, slot)?),
             _ => None,
         };
         let mut answer = self.session.dispatch(&request, services);
@@ -1067,6 +1073,7 @@ impl Conversation {
             if let Some(before) = pane_read_generation {
                 let changed_slot = match reply {
                     Reply::Text(text) if text.generation != before => Some(&text.slot),
+                    Reply::TerminalHistory(page) if page.generation != before => Some(&page.slot),
                     Reply::Semantics(tree) if tree.generation != before => Some(&tree.slot),
                     _ => None,
                 };
@@ -1122,7 +1129,10 @@ impl Conversation {
     }
 
     fn attach_pane_cursors(&mut self, reply: &mut Reply, services: &Services<'_>) {
-        if !matches!(reply, Reply::Text(_) | Reply::Panes(_) | Reply::Semantics(_)) {
+        if !matches!(
+            reply,
+            Reply::Text(_) | Reply::TerminalHistory(_) | Reply::Panes(_) | Reply::Semantics(_)
+        ) {
             return;
         }
         let topology = services.terminal.topology().ok().map(|topology| {
@@ -1139,6 +1149,13 @@ impl Conversation {
                     let (_, revision, generation, _) = self.pane_state(services, pane, topology);
                     text.generation = generation;
                     text.revision = revision;
+                }
+            }
+            Reply::TerminalHistory(page) => {
+                if let Some(pane) = inventory.panes.iter().find(|pane| pane.slot == page.slot) {
+                    let (_, revision, generation, _) = self.pane_state(services, pane, topology);
+                    page.generation = generation;
+                    page.revision = revision;
                 }
             }
             Reply::Semantics(tree) => {
@@ -1252,10 +1269,10 @@ mod tests {
         PaneSummary, TabSummary, TerminalSurface, WorkspaceFiles,
     };
     use hl_extension::{
-        codec, Authority, Capability, Channels, ExtensionName, Failure, Flags, Frame, Grant, Hello, Kind,
+        Authority, Capability, Channels, ExtensionName, Failure, Flags, Frame, Grant, Hello, Kind, PROTOCOL,
         PostgresBroker, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage,
         PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, PreferenceValue, QueryOperationToken,
-        RelativePath, Reply, Request, Services, Transit, Wire, WorkspaceInfo, PROTOCOL,
+        RelativePath, Reply, Request, Services, Transit, Wire, WorkspaceInfo, codec,
     };
     use hl_rpc::InstallationIdentity;
 
@@ -3623,10 +3640,12 @@ mod tests {
             if capability == Capability::WorkspaceEnvironmentWrite.as_str())
         );
         assert!(ledger.reached().is_empty(), "the host create callback was reached");
-        assert!(!answer
-            .payload
-            .windows(b"must-not-cross".len())
-            .any(|part| part == b"must-not-cross"));
+        assert!(
+            !answer
+                .payload
+                .windows(b"must-not-cross".len())
+                .any(|part| part == b"must-not-cross")
+        );
         drop(wire);
         assert_eq!(served.join().unwrap(), Ok(()));
     }

@@ -7458,6 +7458,69 @@
       "kind": "struct",
       "serde": {}
     },
+    "TerminalHistoryCursor": {
+      "kind": "newtype",
+      "of": {
+        "kind": "string"
+      },
+      "serde": {}
+    },
+    "TerminalHistoryPage": {
+      "fields": [
+        {
+          "name": "slot",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "generation",
+          "optional": false,
+          "schema": {
+            "bits": 64,
+            "kind": "integer",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "signed": false
+          }
+        },
+        {
+          "name": "revision",
+          "optional": false,
+          "schema": {
+            "bits": 64,
+            "kind": "integer",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "signed": false
+          }
+        },
+        {
+          "name": "lines",
+          "optional": false,
+          "schema": {
+            "kind": "array",
+            "of": {
+              "kind": "string"
+            }
+          }
+        },
+        {
+          "name": "next",
+          "optional": true,
+          "schema": {
+            "kind": "optional",
+            "of": {
+              "kind": "ref",
+              "name": "TerminalHistoryCursor"
+            }
+          }
+        }
+      ],
+      "kind": "struct",
+      "serde": {}
+    },
     "TerminalLifecycle": {
       "kind": "enum",
       "serde": {
@@ -9317,6 +9380,10 @@
       "request": "terminal_read_pane"
     },
     {
+      "capability": "terminals:output",
+      "request": "terminal_read_history"
+    },
+    {
       "capability": "panes:semantic-read",
       "request": "pane_semantic_read"
     },
@@ -9893,6 +9960,10 @@
     {
       "reply": "text",
       "request": "terminal_read_pane"
+    },
+    {
+      "reply": "terminal_history",
+      "request": "terminal_read_history"
     },
     {
       "reply": "semantics",
@@ -10577,6 +10648,16 @@
             "of": {
               "kind": "ref",
               "name": "PaneText"
+            }
+          }
+        },
+        {
+          "name": "terminal_history",
+          "payload": {
+            "kind": "newtype",
+            "of": {
+              "kind": "ref",
+              "name": "TerminalHistoryPage"
             }
           }
         },
@@ -13138,6 +13219,68 @@
           }
         },
         {
+          "name": "terminal_read_history",
+          "payload": {
+            "fields": [
+              {
+                "name": "slot",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              },
+              {
+                "name": "generation",
+                "optional": false,
+                "schema": {
+                  "bits": 64,
+                  "kind": "integer",
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "signed": false
+                }
+              },
+              {
+                "name": "revision",
+                "optional": false,
+                "schema": {
+                  "bits": 64,
+                  "kind": "integer",
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "signed": false
+                }
+              },
+              {
+                "name": "cursor",
+                "optional": true,
+                "schema": {
+                  "kind": "optional",
+                  "of": {
+                    "kind": "ref",
+                    "name": "TerminalHistoryCursor"
+                  }
+                }
+              },
+              {
+                "name": "lines",
+                "optional": true,
+                "schema": {
+                  "kind": "optional",
+                  "of": {
+                    "bits": 64,
+                    "kind": "integer",
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "signed": false
+                  }
+                }
+              }
+            ],
+            "kind": "struct"
+          }
+        },
+        {
           "name": "pane_semantic_read",
           "payload": {
             "fields": [
@@ -15644,7 +15787,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:761ab21fc71a33ed",
+  "source_fingerprint": "fnv1a64:7f24cbd97b448092",
   "specification_version": 1,
   "topics": [
     {

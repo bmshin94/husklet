@@ -440,6 +440,13 @@ pub enum Request {
         slot: String,
         lines: Option<usize>,
     },
+    TerminalReadHistory {
+        slot: String,
+        generation: u64,
+        revision: u64,
+        cursor: Option<crate::port::TerminalHistoryCursor>,
+        lines: Option<usize>,
+    },
     PaneSemanticRead {
         slot: String,
     },
@@ -613,13 +620,34 @@ pub enum Request {
         observed: u64,
         key: String,
     },
-    PostgresOpenOnce { operation: crate::QueryOperationToken, connection: crate::PostgresConnection },
-    PostgresQueryStartOnce { lease: crate::PostgresLeaseId, query: crate::PostgresQuery },
-    PostgresQueryStatus { lease: crate::PostgresLeaseId, query: crate::PostgresQueryId },
-    PostgresQueryPage { lease: crate::PostgresLeaseId, query: crate::PostgresQueryId, cursor: Option<crate::PostgresCursor> },
-    PostgresQueryCancel { lease: crate::PostgresLeaseId, query: crate::PostgresQueryId },
-    PostgresQueryClose { lease: crate::PostgresLeaseId, query: crate::PostgresQueryId },
-    PostgresLeaseClose { lease: crate::PostgresLeaseId },
+    PostgresOpenOnce {
+        operation: crate::QueryOperationToken,
+        connection: crate::PostgresConnection,
+    },
+    PostgresQueryStartOnce {
+        lease: crate::PostgresLeaseId,
+        query: crate::PostgresQuery,
+    },
+    PostgresQueryStatus {
+        lease: crate::PostgresLeaseId,
+        query: crate::PostgresQueryId,
+    },
+    PostgresQueryPage {
+        lease: crate::PostgresLeaseId,
+        query: crate::PostgresQueryId,
+        cursor: Option<crate::PostgresCursor>,
+    },
+    PostgresQueryCancel {
+        lease: crate::PostgresLeaseId,
+        query: crate::PostgresQueryId,
+    },
+    PostgresQueryClose {
+        lease: crate::PostgresLeaseId,
+        query: crate::PostgresQueryId,
+    },
+    PostgresLeaseClose {
+        lease: crate::PostgresLeaseId,
+    },
     InterfaceOpenTab {
         title: String,
     },
@@ -747,6 +775,7 @@ impl Request {
             // out for: listing panes says a pane exists, this says what was typed
             // into it and what came back.
             Self::TerminalReadPane { .. }
+            | Self::TerminalReadHistory { .. }
             | Self::TerminalCommandInspect { .. }
             | Self::TerminalCommandOutput { .. }
             | Self::TerminalCommandWait { .. } => Capability::TerminalOutput,
@@ -932,6 +961,7 @@ pub enum Reply {
     Topology(TerminalTopology),
     Panes(PaneInventory),
     Text(PaneText),
+    TerminalHistory(crate::port::TerminalHistoryPage),
     Semantics(crate::port::PaneSemanticTree),
     FileInventory(crate::port::FileInventory),
     FileChanges(crate::port::FileChangePage),
@@ -1106,6 +1136,17 @@ mod tests {
             Request::TerminalReadPane {
                 slot: "1".into(),
                 lines: None,
+            }
+            .capability(),
+            Capability::TerminalOutput
+        );
+        assert_eq!(
+            Request::TerminalReadHistory {
+                slot: "1".into(),
+                generation: 2,
+                revision: 3,
+                cursor: Some(crate::port::TerminalHistoryCursor("v1:0:40:20".into())),
+                lines: Some(20),
             }
             .capability(),
             Capability::TerminalOutput

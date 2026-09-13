@@ -3722,6 +3722,21 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           slot,
           'terminal text',
         ),
+      readHistory: async (observed, options: { cursor?: string; lines?: number } = {}) =>
+        exactPane(
+          expect(
+            await session.call('terminal_read_history', {
+              slot: observed.slot,
+              generation: observed.generation,
+              revision: observed.revision,
+              cursor: options.cursor,
+              lines: exactTerminalReadLines(options.lines),
+            }),
+            'terminal_history',
+          ),
+          observed.slot,
+          'terminal history',
+        ),
       semantics: async (slot) =>
         exactPane(
           expect(await session.call('pane_semantic_read', { slot }), 'semantics'),
@@ -4214,9 +4229,11 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
               await listener(page);
             }
           } catch (error) {
-            if (
-              !(stopped.signal.aborted && error instanceof Error && error.name === 'AbortError')
-            ) {
+            if (!(
+              stopped.signal.aborted &&
+              error instanceof Error &&
+              error.name === 'AbortError'
+            )) {
               throw error;
             }
           } finally {
@@ -4321,9 +4338,11 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
               pending.set(task, generation);
             }
           } catch (error) {
-            if (
-              !(stopped.signal.aborted && error instanceof Error && error.name === 'AbortError')
-            ) {
+            if (!(
+              stopped.signal.aborted &&
+              error instanceof Error &&
+              error.name === 'AbortError'
+            )) {
               failure ??= error;
             }
           } finally {
@@ -6158,8 +6177,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     let primaryFailure: unknown;
     let cleanupFailure: unknown;
     let outcome:
-      | { changed: true; tab: TabSummary }
-      | { changed: false; tab: string; pinned: boolean };
+      { changed: true; tab: TabSummary } | { changed: false; tab: string; pinned: boolean };
     try {
       authorityIssued = true;
       try {

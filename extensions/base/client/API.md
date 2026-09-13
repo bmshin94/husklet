@@ -153,6 +153,7 @@ order; the JavaScript client's checks are never treated as a security boundary.
 - `host.terminal.commandWrite(...)` — `terminal_command_write`, requires `terminals:input`.
 - `host.terminal.commandCloseInput(...)` — `terminal_command_close_input`, requires `terminals:input`.
 - `host.terminal.read(...)` — `terminal_read_pane`, requires `terminals:output`.
+- `host.terminal.readHistory(...)` — `terminal_read_history`, requires `terminals:output`.
 - `host.terminal.writeInput(...)` — `terminal_write_pane`, requires `terminals:input`.
 - `host.terminal.resizeGrid(...)` — `terminal_resize_grid`, requires `terminals:layout-control`.
 - `host.terminal.resizeGridObserved(...)` — `terminal_resize_grid_observed`, requires `terminals:layout-control`.

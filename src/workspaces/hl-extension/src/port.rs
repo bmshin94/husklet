@@ -505,6 +505,20 @@ pub struct PaneText {
     pub truncated: bool,
 }
 
+/// Opaque continuation for an older terminal-history page.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct TerminalHistoryCursor(pub String);
+
+/// One bounded, newest-to-oldest traversal page. Lines remain oldest first.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct TerminalHistoryPage {
+    pub slot: String,
+    pub generation: u64,
+    pub revision: u64,
+    pub lines: Vec<String>,
+    pub next: Option<TerminalHistoryCursor>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TerminalLifecycle {
@@ -680,6 +694,23 @@ pub fn bounded_pane_text(mut text: PaneText) -> PaneText {
     kept.reverse();
     text.lines = kept;
     text
+}
+
+#[must_use]
+pub fn bounded_terminal_history(mut page: TerminalHistoryPage) -> TerminalHistoryPage {
+    let mut used = 0usize;
+    let mut kept = Vec::new();
+    for line in page.lines.into_iter().rev() {
+        let needed = line.len().saturating_add(1);
+        if used.saturating_add(needed) > PANE_TEXT_BYTES {
+            break;
+        }
+        used += needed;
+        kept.push(line);
+    }
+    kept.reverse();
+    page.lines = kept;
+    page
 }
 
 /// A workspace as an extension sees it from the outside.
@@ -1485,6 +1516,15 @@ pub trait TerminalSurface {
     /// Returns `HostError::Absent` when no pane is open under the slot.
     fn read(&self, slot: &str, lines: usize) -> Result<PaneText, HostError>;
 
+    fn read_history(
+        &self,
+        _slot: &str,
+        _cursor: Option<&TerminalHistoryCursor>,
+        _lines: usize,
+    ) -> Result<TerminalHistoryPage, HostError> {
+        Err(HostError::Unsupported("terminal history paging is unavailable".into()))
+    }
+
     fn semantics(&self, _slot: &str) -> Result<PaneSemanticTree, HostError> {
         Err(HostError::Unsupported("pane semantics are unavailable".into()))
     }
@@ -1821,8 +1861,9 @@ pub trait WorkspaceFiles {
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_pane_text, pane_lines, Division, LayoutNode, NetworkStore, Occupant, PaneSummary, PaneText,
-        TerminalLifecycle, PANE_LINES, PANE_TEXT_BYTES,
+        Division, LayoutNode, NetworkStore, Occupant, PANE_LINES, PANE_TEXT_BYTES, PaneSummary, PaneText,
+        TerminalHistoryCursor, TerminalHistoryPage, TerminalLifecycle, bounded_pane_text, bounded_terminal_history,
+        pane_lines,
     };
 
     #[test]
@@ -1857,6 +1898,19 @@ mod tests {
         assert_eq!((bounded.cursor_column, bounded.cursor_row), (4, 2));
         assert_eq!((bounded.columns, bounded.rows), (80, 24));
         assert!(bounded.lines.iter().map(|line| line.len() + 1).sum::<usize>() <= PANE_TEXT_BYTES);
+    }
+
+    #[test]
+    fn terminal_history_pages_retain_only_complete_lines_within_the_wire_budget() {
+        let page = bounded_terminal_history(TerminalHistoryPage {
+            slot: "pane".into(),
+            generation: 4,
+            revision: 9,
+            lines: vec!["old".repeat(PANE_TEXT_BYTES), "new".into()],
+            next: Some(TerminalHistoryCursor("cursor".into())),
+        });
+        assert_eq!(page.lines, ["new"]);
+        assert_eq!(page.next, Some(TerminalHistoryCursor("cursor".into())));
     }
 
     #[test]
@@ -1956,59 +2010,71 @@ mod tests {
             protocol: crate::PROTOCOL,
             architectures: vec!["amd64".into()],
         };
-        assert!(super::ExtensionCatalogue {
-            entries: vec![entry.clone()],
-            complete: true,
-        }
-        .validate()
-        .is_ok());
-        assert!(super::ExtensionCatalogue {
-            entries: vec![entry.clone(), entry.clone()],
-            complete: true,
-        }
-        .validate()
-        .is_err());
-        assert!(super::ExtensionCatalogue {
-            entries: vec![super::ExtensionCatalogueEntry {
-                architectures: vec!["amd64".into(), "amd64".into()],
-                ..entry.clone()
-            }],
-            complete: true,
-        }
-        .validate()
-        .is_err());
-        assert!(super::ExtensionCatalogue {
-            entries: vec![super::ExtensionCatalogueEntry {
-                version: String::new(),
-                ..entry.clone()
-            }],
-            complete: true,
-        }
-        .validate()
-        .is_err());
-        for categories in [
-            Vec::new(),
-            vec!["Data".into(), "Data".into()],
-            vec!["unsafe\ncategory".into()],
-        ] {
-            assert!(super::ExtensionCatalogue {
+        assert!(
+            super::ExtensionCatalogue {
+                entries: vec![entry.clone()],
+                complete: true,
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            super::ExtensionCatalogue {
+                entries: vec![entry.clone(), entry.clone()],
+                complete: true,
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            super::ExtensionCatalogue {
                 entries: vec![super::ExtensionCatalogueEntry {
-                    categories,
+                    architectures: vec!["amd64".into(), "amd64".into()],
                     ..entry.clone()
                 }],
                 complete: true,
             }
             .validate()
-            .is_err());
+            .is_err()
+        );
+        assert!(
+            super::ExtensionCatalogue {
+                entries: vec![super::ExtensionCatalogueEntry {
+                    version: String::new(),
+                    ..entry.clone()
+                }],
+                complete: true,
+            }
+            .validate()
+            .is_err()
+        );
+        for categories in [
+            Vec::new(),
+            vec!["Data".into(), "Data".into()],
+            vec!["unsafe\ncategory".into()],
+        ] {
+            assert!(
+                super::ExtensionCatalogue {
+                    entries: vec![super::ExtensionCatalogueEntry {
+                        categories,
+                        ..entry.clone()
+                    }],
+                    complete: true,
+                }
+                .validate()
+                .is_err()
+            );
         }
-        assert!(super::ExtensionCatalogue {
-            entries: vec![super::ExtensionCatalogueEntry {
-                description: "unsafe\nmetadata".into(),
-                ..entry
-            }],
-            complete: true,
-        }
-        .validate()
-        .is_err());
+        assert!(
+            super::ExtensionCatalogue {
+                entries: vec![super::ExtensionCatalogueEntry {
+                    description: "unsafe\nmetadata".into(),
+                    ..entry
+                }],
+                complete: true,
+            }
+            .validate()
+            .is_err()
+        );
     }
 }

@@ -1,5 +1,5 @@
-import type { Capability as GeneratedCapability, FilesystemSelector, ExtensionPreferences, PreferenceValue, Row as WireRow, WireCall, WireReplyFor, WireRequestFor, WireUiEvent, TerminalCommand, TerminalCommandInput, TerminalCommandOutput, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken } from './generated-protocol.js';
-export type { ExtensionPreferences, FilesystemSelector, PreferenceValue, TerminalCommand, TerminalCommandInput, TerminalCommandOutput, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken, } from './generated-protocol.js';
+import type { Capability as GeneratedCapability, FilesystemSelector, ExtensionPreferences, PreferenceValue, Row as WireRow, WireCall, WireReplyFor, WireRequestFor, WireUiEvent, TerminalCommand, TerminalCommandInput, TerminalCommandOutput, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken, TerminalHistoryCursor, TerminalHistoryPage } from './generated-protocol.js';
+export type { ExtensionPreferences, FilesystemSelector, PreferenceValue, TerminalCommand, TerminalCommandInput, TerminalCommandOutput, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken, TerminalHistoryCursor, TerminalHistoryPage, } from './generated-protocol.js';
 /** One row delivered to a virtualized interface data source. */
 export type DataRow = WireRow;
 /** Environment variable naming the extension's authenticated Unix socket. */
@@ -1933,6 +1933,11 @@ export interface WorkspaceApi {
             before: PaneText;
         }>;
         read(slot: string, lines?: number): Promise<PaneText>;
+        /** Read an older bounded page, bound to the exact pane observation and scrollback snapshot. */
+        readHistory(observed: Pick<PaneText, 'slot' | 'generation' | 'revision'>, options?: {
+            cursor?: TerminalHistoryCursor;
+            lines?: number;
+        }): Promise<TerminalHistoryPage>;
         semantics(slot: string): Promise<PaneSemanticTree>;
         /** Discover the pane kind and return terminal screen text or bounded semantic XML. */
         toText(slot: string, options?: {

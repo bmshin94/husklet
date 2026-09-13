@@ -9,9 +9,9 @@ use hl_rpc::Authority;
 
 use crate::capability::Capability;
 use crate::port::{
-    pane_lines, ContainerControl, ContainerInventory, Division, ExtensionStateStore, ExtensionStore, GridSize,
-    ImageStore, NetworkStore, NotificationSink, TerminalSurface, VolumeStore, WorkspaceConfiguration, WorkspaceControl,
-    WorkspaceFiles, WorkspaceInventory, PANE_GRID_EDGE, PANE_INPUT_BYTES,
+    ContainerControl, ContainerInventory, Division, ExtensionStateStore, ExtensionStore, GridSize, ImageStore,
+    NetworkStore, NotificationSink, PANE_GRID_EDGE, PANE_INPUT_BYTES, TerminalSurface, VolumeStore,
+    WorkspaceConfiguration, WorkspaceControl, WorkspaceFiles, WorkspaceInventory, pane_lines,
 };
 use crate::request::{Failure, Reply, Request, Topic, WorkspaceInfo};
 use crate::{ContainerGrant, ContainerSelector, FilesystemGrant};
@@ -840,6 +840,7 @@ impl Session {
             | Request::TerminalCommandWrite { .. }
             | Request::TerminalCommandCloseInput { .. }
             | Request::TerminalReadPane { .. }
+            | Request::TerminalReadHistory { .. }
             | Request::TerminalWritePane { .. }
             | Request::TerminalResizeGrid { .. }
             | Request::TerminalResizeGridObserved { .. }
@@ -1790,6 +1791,26 @@ impl Session {
         }
         if let Request::TerminalReadPane { slot, lines } = request {
             return self.text(slot, *lines, services);
+        }
+        if let Request::TerminalReadHistory {
+            slot, cursor, lines, ..
+        } = request
+        {
+            if cursor
+                .as_ref()
+                .is_some_and(|cursor| cursor.0.is_empty() || cursor.0.len() > 128 || cursor.0.contains('\0'))
+            {
+                return Err(Failure::Failed {
+                    detail: "terminal history cursor must be 1 through 128 NUL-free bytes".into(),
+                });
+            }
+            let port = self
+                .peer
+                .authority()
+                .port(Capability::TerminalOutput, services.terminal)?;
+            return Ok(Reply::TerminalHistory(crate::port::bounded_terminal_history(
+                port.read_history(slot, cursor.as_ref(), pane_lines(*lines))?,
+            )));
         }
         // Compound operations must pass every check before the host port is
         // obtained: opening/closing changes layout and process lifetime, while

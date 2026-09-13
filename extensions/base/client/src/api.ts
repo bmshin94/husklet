@@ -21,6 +21,8 @@ import type {
   PostgresQueryState,
   PostgresStartOutcome,
   QueryOperationToken,
+  TerminalHistoryCursor,
+  TerminalHistoryPage,
 } from './generated-protocol.js';
 export type {
   ExtensionPreferences,
@@ -39,6 +41,8 @@ export type {
   PostgresQueryState,
   PostgresStartOutcome,
   QueryOperationToken,
+  TerminalHistoryCursor,
+  TerminalHistoryPage,
 } from './generated-protocol.js';
 /** One row delivered to a virtualized interface data source. */
 export type DataRow = WireRow;
@@ -1975,6 +1979,11 @@ export interface WorkspaceApi {
       | { changed: false; command: string[]; before: PaneText }
     >;
     read(slot: string, lines?: number): Promise<PaneText>;
+    /** Read an older bounded page, bound to the exact pane observation and scrollback snapshot. */
+    readHistory(
+      observed: Pick<PaneText, 'slot' | 'generation' | 'revision'>,
+      options?: { cursor?: TerminalHistoryCursor; lines?: number },
+    ): Promise<TerminalHistoryPage>;
     semantics(slot: string): Promise<PaneSemanticTree>;
     /** Discover the pane kind and return terminal screen text or bounded semantic XML. */
     toText(slot: string, options?: { lines?: number }): Promise<ReadablePane>;

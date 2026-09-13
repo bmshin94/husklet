@@ -132,6 +132,7 @@ const REQUEST_TO_REPLY: &[(&str, &str)] = &[
     ("terminal_command_write", "terminal_command_input"),
     ("terminal_command_close_input", "done"),
     ("terminal_read_pane", "text"),
+    ("terminal_read_history", "terminal_history"),
     ("pane_semantic_read", "semantics"),
     ("pane_semantic_action", "done"),
     ("terminal_write_pane", "done"),
@@ -241,7 +242,7 @@ fn request_capability(request: &str) -> Capability {
         "network_disconnect" => Capability::NetworkDisconnect,
         "terminal_tabs" | "terminal_topology" => Capability::TerminalRead,
         "pane_list" => Capability::PaneObserve,
-        "terminal_read_pane" | "terminal_command_inspect" | "terminal_command_output" | "terminal_command_wait" => {
+        "terminal_read_pane" | "terminal_read_history" | "terminal_command_inspect" | "terminal_command_output" | "terminal_command_wait" => {
             Capability::TerminalOutput
         }
         "pane_semantic_read" => Capability::PaneSemanticRead,

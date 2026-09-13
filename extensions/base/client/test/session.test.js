@@ -52,7 +52,11 @@ test('fragmented Unix file write recovery accepts only the exact committed revie
         if (frame.kind !== KIND.request) continue;
         const input = frame.payload.with;
         if (frame.payload.call === 'filesystem_write_observed') {
-          assert.deepEqual(input, { path: 'src/review.ts', observed: 'source-v1', contents: reviewed });
+          assert.deepEqual(input, {
+            path: 'src/review.ts',
+            observed: 'source-v1',
+            contents: reviewed,
+          });
           identity = thisConnection === 1 ? 'reviewed-v2' : 'retried-v2';
           contents = [...reviewed];
           const reply = encode({
@@ -1868,7 +1872,11 @@ test('credential lease expiry cancels a stalled fragmented Unix read before secr
     );
     assert.equal(consumed, false, 'late secret bytes must never reach the embedding consumer');
     assert.equal(reads, 1);
-    assert.equal(session.signal.aborted, true, 'ordered read cancellation closes correlation state');
+    assert.equal(
+      session.signal.aborted,
+      true,
+      'ordered read cancellation closes correlation state',
+    );
     assert.ok(Date.now() - started < 500, 'lease expiry must beat the one-second call timeout');
   } finally {
     await session?.close();
@@ -9308,13 +9316,14 @@ test('fragmented Unix input reply loss preserves exact no-replay authority acros
   try {
     first = await connect({ path: socketPath, timeout: 1_000 });
     await assert.rejects(
-      workspace(first).terminal.writeObservedAndWait(
-        { ...screen(), lines: ['$ '] },
-        input,
-        { timeoutMs: 1_000 },
-      ),
+      workspace(first).terminal.writeObservedAndWait({ ...screen(), lines: ['$ '] }, input, {
+        timeoutMs: 1_000,
+      }),
       (error) => {
-        assert(error instanceof TerminalOperationError, `${error?.constructor?.name}: ${error?.message}`);
+        assert(
+          error instanceof TerminalOperationError,
+          `${error?.constructor?.name}: ${error?.message}`,
+        );
         assert.deepEqual(error.result, {
           slot: 'agent-pane',
           generation: 4,
@@ -10573,6 +10582,47 @@ async function withPaneIdentityHost(granted, respond, exercise) {
     await rm(directory, { recursive: true, force: true });
   }
 }
+
+test('real Unix terminal history pages preserve exact pane authority over fragmented frames', async () => {
+  let pages = 0;
+  await withPaneIdentityHost(
+    ['terminals:output'],
+    (request, socket) => {
+      pages += 1;
+      assert.equal(request.call, 'terminal_read_history');
+      assert.equal(request.with.slot, 'agent-pane');
+      assert.equal(request.with.generation, 7);
+      assert.equal(request.with.revision, 11);
+      if (pages === 2) assert.equal(request.with.cursor, 'opaque-page-2');
+      const payload = {
+        reply: 'terminal_history',
+        with: {
+          slot: pages === 3 ? 'replacement-pane' : 'agent-pane',
+          generation: 7,
+          revision: 11,
+          lines: pages === 1 ? ['older-3', 'older-2'] : ['older-1'],
+          next: pages === 1 ? 'opaque-page-2' : null,
+        },
+      };
+      const bytes = encode({ channel: 2, kind: KIND.response, payload });
+      for (let index = 0; index < bytes.length; index += 1)
+        socket.write(bytes.subarray(index, index + 1));
+    },
+    async (session) => {
+      const terminal = workspace(session).terminal;
+      const observed = { slot: 'agent-pane', generation: 7, revision: 11 };
+      const first = await terminal.readHistory(observed, { lines: 2 });
+      assert.deepEqual(first.lines, ['older-3', 'older-2']);
+      const second = await terminal.readHistory(observed, { cursor: first.next, lines: 2 });
+      assert.deepEqual(second.lines, ['older-1']);
+      assert.equal(second.next, null);
+      await assert.rejects(
+        terminal.readHistory(observed),
+        /replacement-pane.*agent-pane|agent-pane.*replacement-pane/,
+      );
+    },
+  );
+});
 
 test('real Unix inspectAndAct rejects wrong pre-action pane identity before mutation', async () => {
   await withPaneIdentityHost(

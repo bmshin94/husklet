@@ -2905,6 +2905,13 @@ export function workspace(session, { signal } = {}) {
                 slot,
                 lines: exactTerminalReadLines(lines),
             }), 'text'), slot, 'terminal text'),
+            readHistory: async (observed, options = {}) => exactPane(expect(await session.call('terminal_read_history', {
+                slot: observed.slot,
+                generation: observed.generation,
+                revision: observed.revision,
+                cursor: options.cursor,
+                lines: exactTerminalReadLines(options.lines),
+            }), 'terminal_history'), observed.slot, 'terminal history'),
             semantics: async (slot) => exactPane(expect(await session.call('pane_semantic_read', { slot }), 'semantics'), slot, 'pane semantics'),
             /** Converts either a terminal or a native UI pane into bounded agent-readable text. */
             toText: async (slot, { lines } = {}) => {
@@ -3285,7 +3292,9 @@ export function workspace(session, { signal } = {}) {
                         }
                     }
                     catch (error) {
-                        if (!(stopped.signal.aborted && error instanceof Error && error.name === 'AbortError')) {
+                        if (!(stopped.signal.aborted &&
+                            error instanceof Error &&
+                            error.name === 'AbortError')) {
                             throw error;
                         }
                     }
@@ -3368,7 +3377,9 @@ export function workspace(session, { signal } = {}) {
                         }
                     }
                     catch (error) {
-                        if (!(stopped.signal.aborted && error instanceof Error && error.name === 'AbortError')) {
+                        if (!(stopped.signal.aborted &&
+                            error instanceof Error &&
+                            error.name === 'AbortError')) {
                             failure ??= error;
                         }
                     }

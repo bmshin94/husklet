@@ -9,8 +9,9 @@ use std::rc::Rc;
 
 use hl::extension::{Answer, Errand, Errands, Request};
 use hl_extension::port::{
-    Division, GridSize, HostError, InspectablePane, LayoutNode, Occupant, PaneInventory, PaneKind, PaneOccupantTarget,
-    PaneProviderIdentity, PaneSummary, PaneText, TabSummary, TabTopology, TerminalTopology, PANE_INVENTORY_LIMIT,
+    Division, GridSize, HostError, InspectablePane, LayoutNode, Occupant, PANE_INVENTORY_LIMIT, PaneInventory,
+    PaneKind, PaneOccupantTarget, PaneProviderIdentity, PaneSummary, PaneText, TabSummary, TabTopology,
+    TerminalTopology,
 };
 use vte4::prelude::*;
 
@@ -97,6 +98,9 @@ impl Console {
             Request::Split { slot, division } => Self::split(window, slot, *division).map(Answer::Slot),
             Request::Spawn { slot, command } => Self::spawn(window, slot, command).map(|()| Answer::Done),
             Request::Read { slot, lines } => Self::read(window, slot, *lines).map(Answer::Text),
+            Request::ReadHistory { slot, cursor, lines } => {
+                Self::read_history(window, slot, cursor.as_ref(), *lines).map(Answer::History)
+            }
             Request::Semantics { slot } => Self::semantics(window, slot).map(Answer::Semantics),
             Request::SemanticRequirement { slot, node } => {
                 Self::semantic_requirement(window, slot, *node).map(Answer::Capability)
@@ -283,6 +287,15 @@ impl Console {
             ))),
             Reading::Absent => Err(absent(slot)),
         }
+    }
+
+    fn read_history(
+        window: &Rc<TermWin>,
+        slot: &str,
+        cursor: Option<&hl_extension::port::TerminalHistoryCursor>,
+        lines: usize,
+    ) -> Result<hl_extension::port::TerminalHistoryPage, HostError> {
+        Panes::read_history(window, slot, cursor, lines)
     }
 
     fn surface_owner(window: &Rc<TermWin>, slot: &str) -> Result<String, HostError> {
@@ -540,7 +553,7 @@ impl Console {
                     } else {
                         TerminalTabState::Closed
                     },
-                })
+                });
             }
             Ok(None) => {}
             Err(error) => return Err(HostError::Conflict(error.to_string())),

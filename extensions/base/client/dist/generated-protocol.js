@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:2e2c1c5a7493fbab
+// Protocol artifact fnv1a64:7f4a292d9840d9ef
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -428,6 +428,7 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "terminal_command_write": "terminal_command_input",
   "terminal_command_close_input": "done",
   "terminal_read_pane": "text",
+  "terminal_read_history": "terminal_history",
   "pane_semantic_read": "semantics",
   "pane_semantic_action": "done",
   "terminal_write_pane": "done",
@@ -574,6 +575,7 @@ export const PROTOCOL_REQUEST_CAPABILITIES = Object.freeze({
   "terminal_command_write": "terminals:input",
   "terminal_command_close_input": "terminals:input",
   "terminal_read_pane": "terminals:output",
+  "terminal_read_history": "terminals:output",
   "pane_semantic_read": "panes:semantic-read",
   "pane_semantic_action": "panes:semantic-control",
   "terminal_write_pane": "terminals:input",
@@ -7825,6 +7827,69 @@ const definitions = {
     "kind": "struct",
     "serde": {}
   },
+  "TerminalHistoryCursor": {
+    "kind": "newtype",
+    "of": {
+      "kind": "string"
+    },
+    "serde": {}
+  },
+  "TerminalHistoryPage": {
+    "fields": [
+      {
+        "name": "slot",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "generation",
+        "optional": false,
+        "schema": {
+          "bits": 64,
+          "kind": "integer",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "signed": false
+        }
+      },
+      {
+        "name": "revision",
+        "optional": false,
+        "schema": {
+          "bits": 64,
+          "kind": "integer",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "signed": false
+        }
+      },
+      {
+        "name": "lines",
+        "optional": false,
+        "schema": {
+          "kind": "array",
+          "of": {
+            "kind": "string"
+          }
+        }
+      },
+      {
+        "name": "next",
+        "optional": true,
+        "schema": {
+          "kind": "optional",
+          "of": {
+            "kind": "ref",
+            "name": "TerminalHistoryCursor"
+          }
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {}
+  },
   "TerminalLifecycle": {
     "kind": "enum",
     "serde": {
@@ -9728,6 +9793,16 @@ const roots = {
           "of": {
             "kind": "ref",
             "name": "PaneText"
+          }
+        }
+      },
+      {
+        "name": "terminal_history",
+        "payload": {
+          "kind": "newtype",
+          "of": {
+            "kind": "ref",
+            "name": "TerminalHistoryPage"
           }
         }
       },
@@ -12268,6 +12343,68 @@ const roots = {
               "optional": false,
               "schema": {
                 "kind": "string"
+              }
+            },
+            {
+              "name": "lines",
+              "optional": true,
+              "schema": {
+                "kind": "optional",
+                "of": {
+                  "bits": 64,
+                  "kind": "integer",
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "signed": false
+                }
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "terminal_read_history",
+        "payload": {
+          "fields": [
+            {
+              "name": "slot",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            },
+            {
+              "name": "generation",
+              "optional": false,
+              "schema": {
+                "bits": 64,
+                "kind": "integer",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "signed": false
+              }
+            },
+            {
+              "name": "revision",
+              "optional": false,
+              "schema": {
+                "bits": 64,
+                "kind": "integer",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "signed": false
+              }
+            },
+            {
+              "name": "cursor",
+              "optional": true,
+              "schema": {
+                "kind": "optional",
+                "of": {
+                  "kind": "ref",
+                  "name": "TerminalHistoryCursor"
+                }
               }
             },
             {

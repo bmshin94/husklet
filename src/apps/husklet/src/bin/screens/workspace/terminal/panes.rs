@@ -90,6 +90,28 @@ impl Panes {
         })
     }
 
+    pub(crate) fn read_history(
+        window: &Rc<TermWin>,
+        slot: &str,
+        cursor: Option<&hl_extension::port::TerminalHistoryCursor>,
+        lines: usize,
+    ) -> Result<hl_extension::port::TerminalHistoryPage, hl_extension::HostError> {
+        let pane =
+            Self::at(window, slot).ok_or_else(|| hl_extension::HostError::Absent(format!("pane {slot} is absent")))?;
+        let terminal = pane
+            .content
+            .downcast::<vte4::Terminal>()
+            .map_err(|_| hl_extension::HostError::Conflict(format!("{slot} is not a terminal pane")))?;
+        let (lines, next) = Terminal::new(&terminal).history_page(cursor, lines)?;
+        Ok(hl_extension::port::TerminalHistoryPage {
+            slot: slot.to_owned(),
+            generation: 0,
+            revision: 0,
+            lines,
+            next,
+        })
+    }
+
     /// Closes one pane, which is what closing it by hand does.
     pub(crate) fn close(window: &Rc<TermWin>, slot: &str) -> bool {
         let Some(pane) = Self::at(window, slot) else {

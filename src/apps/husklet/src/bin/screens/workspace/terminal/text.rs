@@ -16,6 +16,45 @@ fn history_row_range(first: i64, last: i64, maximum: usize) -> (i64, i64) {
 }
 
 impl Terminal<'_> {
+    pub(crate) fn history_page(
+        &self,
+        cursor: Option<&hl_extension::port::TerminalHistoryCursor>,
+        lines: usize,
+    ) -> Result<(Vec<String>, Option<hl_extension::port::TerminalHistoryCursor>), hl_extension::HostError> {
+        use hl_extension::port::TerminalHistoryCursor;
+        let terminal = self.0;
+        let first = terminal.vadjustment().map_or(0, |adjustment| adjustment.lower() as i64);
+        let (_, cursor_row) = terminal.cursor_position();
+        let last = cursor_row.max(0).saturating_add(1);
+        let before = if let Some(cursor) = cursor {
+            let parts: Vec<_> = cursor.0.split(':').collect();
+            if parts.len() != 4 || parts[0] != "v1" {
+                return Err(hl_extension::HostError::Conflict(
+                    "invalid terminal history cursor".into(),
+                ));
+            }
+            let saved_first = parts[1].parse::<i64>().ok();
+            let saved_last = parts[2].parse::<i64>().ok();
+            let before = parts[3].parse::<i64>().ok();
+            if saved_first != Some(first)
+                || saved_last != Some(last)
+                || before.is_none_or(|row| row < first || row > last)
+            {
+                return Err(hl_extension::HostError::Conflict(
+                    "terminal history changed since this cursor was issued".into(),
+                ));
+            }
+            before.unwrap_or(last)
+        } else {
+            last
+        };
+        let (start, end) = history_row_range(first, before, lines);
+        let (text, _) = terminal.text_range_format(vte4::Format::Text, start, 0, end, -1);
+        let raw = text.map(|value| value.to_string()).unwrap_or_default();
+        let next = (start > first).then(|| TerminalHistoryCursor(format!("v1:{first}:{last}:{start}")));
+        Ok((Self::rows(&raw, lines), next))
+    }
+
     /// A bounded tail of what the pane is showing, oldest line first.
     ///
     /// The bound is applied to the rows *before* the text is extracted, so a

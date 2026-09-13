@@ -93,6 +93,11 @@ pub enum Request {
         /// How many lines at most, already bounded by the protocol layer.
         lines: usize,
     },
+    ReadHistory {
+        slot: String,
+        cursor: Option<hl_extension::port::TerminalHistoryCursor>,
+        lines: usize,
+    },
     Semantics {
         slot: String,
     },
@@ -168,6 +173,7 @@ pub enum Answer {
     OpenTabOnce(hl_extension::port::TerminalOpenTabOnce),
     /// The text one pane is showing, for [`Request::Read`].
     Text(PaneText),
+    History(hl_extension::port::TerminalHistoryPage),
     Semantics(PaneSemanticTree),
     Capability(hl_extension::Capability),
     /// The work was done and names nothing.
@@ -390,6 +396,22 @@ impl TerminalSurface for Relay {
             lines,
         })? {
             Answer::Text(text) => Ok(text),
+            other => Err(other.mismatch()),
+        }
+    }
+
+    fn read_history(
+        &self,
+        slot: &str,
+        cursor: Option<&hl_extension::port::TerminalHistoryCursor>,
+        lines: usize,
+    ) -> Result<hl_extension::port::TerminalHistoryPage, HostError> {
+        match self.ask(Request::ReadHistory {
+            slot: slot.to_owned(),
+            cursor: cursor.cloned(),
+            lines,
+        })? {
+            Answer::History(page) => Ok(page),
             other => Err(other.mismatch()),
         }
     }

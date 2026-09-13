@@ -12,11 +12,12 @@
 //! checked for the absence of an error would pass on an empty tree.
 
 use std::cell::{Cell, RefCell};
+use std::io::Write as _;
 
 use hl_extension::port::{
     ContainerControl, ContainerCreateSpec, ContainerInventory, ContainerSummary, ContainerVolumeMount, Division, Entry,
-    HostError, ImageStore, ImageSummary, PaneText, TabSummary, TerminalSurface, WorkspaceFiles, WorkspaceInventory,
-    WorkspaceState,
+    HostError, ImageStore, ImageSummary, PaneText, TabSummary, TerminalHistoryCursor, TerminalHistoryPage,
+    TerminalSurface, WorkspaceFiles, WorkspaceInventory, WorkspaceState,
 };
 use hl_extension::{
     Authority, Capability, Coding, ExtensionName, Failure, Grant, Hello, PROTOCOL, RelativePath, Reply, Request,
@@ -227,6 +228,21 @@ impl TerminalSurface for Host {
             cursor_column: 12,
             cursor_row: 3,
             truncated: true,
+        })
+    }
+
+    fn read_history(
+        &self,
+        slot: &str,
+        cursor: Option<&TerminalHistoryCursor>,
+        lines: usize,
+    ) -> Result<TerminalHistoryPage, HostError> {
+        Ok(TerminalHistoryPage {
+            slot: slot.into(),
+            generation: 0,
+            revision: 0,
+            lines: vec![format!("{cursor:?}:at most {lines}")],
+            next: Some(TerminalHistoryCursor("opaque-next".into())),
         })
     }
 
@@ -1378,6 +1394,39 @@ fn terminal_screen_grid_and_cursor_cross_the_real_socket_together() {
         .expect("reply crosses socket");
     let reply = codec::read_reply(&sender.receive().expect("reply arrives")).expect("reply decodes");
     assert_eq!(reply, Reply::Text(screen));
+}
+
+#[test]
+fn terminal_history_cursor_crosses_a_fragmented_real_socket() {
+    let (host_end, mut extension_end) = connected_pair();
+    let host = Host::new();
+    let mut session = Session::new(Authority::new(
+        ExtensionName::new("history-reader").expect("name"),
+        Grant::new([Capability::TerminalOutput]),
+        Vec::new(),
+    ));
+    let request = Request::TerminalReadHistory {
+        slot: "pane-7".into(),
+        generation: 4,
+        revision: 8,
+        cursor: Some(TerminalHistoryCursor("opaque-current".into())),
+        lines: Some(20),
+    };
+    let mut encoded = Vec::new();
+    hl_extension::Wire::new(&mut encoded)
+        .send(&codec::request(&request).expect("request encodes"))
+        .expect("frame encodes");
+    for byte in encoded {
+        extension_end.write_all(&[byte]).expect("fragment crosses socket");
+    }
+    let mut receiver = hl_extension::Wire::new(host_end);
+    let decoded = codec::read_request(&receiver.receive().expect("request arrives")).expect("request decodes");
+    let Reply::TerminalHistory(page) = session.dispatch(&decoded, &services(&host)).expect("history read") else {
+        panic!("wrong history reply")
+    };
+    assert_eq!(page.slot, "pane-7");
+    assert_eq!(page.lines, ["Some(TerminalHistoryCursor(\"opaque-current\")):at most 20"]);
+    assert_eq!(page.next, Some(TerminalHistoryCursor("opaque-next".into())));
 }
 
 #[test]
