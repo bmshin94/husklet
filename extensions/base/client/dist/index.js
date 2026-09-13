@@ -5208,11 +5208,14 @@ export function workspace(session, { signal } = {}) {
                     latest = current ?? null;
                     return;
                 }
-                if (current?.image_digest === digest &&
+                const sameAuthority = current?.image_digest === digest &&
                     current.version === committed?.version &&
-                    extensionAuthority(current) === extensionAuthority(committed) &&
-                    (operation !== 'install' || (current.enabled === true && current.status === 'duty')))
-                    resolve(current);
+                    extensionAuthority(current) === extensionAuthority(committed);
+                if (sameAuthority) {
+                    if (current.enabled === committed?.enabled &&
+                        (committed.enabled ? current.status === 'duty' : current.status === 'standby'))
+                        resolve(current);
+                }
                 else
                     reject(new Error(`extension ${candidate.name} was replaced, disappeared, or did not activate after ${operation}`));
             };

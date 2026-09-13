@@ -7525,6 +7525,65 @@ test('real Unix install wait inspects revision, arms inventory, then commits exa
   }
 });
 
+test('real Unix update wait preserves enabled and disabled lifecycle through fragmented transitions', async () => {
+  for (const enabled of [true, false]) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-update-lifecycle-'));
+    const socketPath = path.join(directory, 'host.sock');
+    const digest = `sha256:${(enabled ? 'c' : 'd').repeat(64)}`;
+    const summary = {
+      name: 'sample', image_digest: digest, version: '2',
+      status: enabled ? 'duty' : 'standby', enabled, pane_providers: [],
+    };
+    const candidate = {
+      name: 'sample', version: '2', image_digest: digest,
+      requested: [], required: [], installed_image_digest: `sha256:${'a'.repeat(64)}`,
+    };
+    const connections = new Set();
+    const server = net.createServer((socket) => {
+      connections.add(socket);
+      socket.on('close', () => connections.delete(socket));
+      const reader = new Reader();
+      socket.on('data', (chunk) => {
+        for (const frame of reader.take(chunk)) {
+          if (frame.channel !== 2) continue;
+          if (frame.payload.call === 'extension_acquisition_status') {
+            socket.write(encode({ channel: 2, kind: KIND.response, payload: {
+              reply: 'extension_acquisition', with: {
+                job: 'job-update', reference: 'sample:2', revision: 3,
+                state: 'ready', progress: null, candidate, error: null,
+              },
+            } }));
+          } else if (frame.payload.call === 'extension_update') {
+            socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'extension', with: summary } }));
+            socket.write(encode({ channel: 31, kind: KIND.event, payload: {
+              snapshot: 'extensions', of: [{ ...summary, enabled: !enabled, status: enabled ? 'fault' : 'duty' }],
+            } }));
+            setImmediate(() => {
+              const final = encode({ channel: 31, kind: KIND.event, payload: { snapshot: 'extensions', of: [summary] } });
+              for (const byte of final) socket.write(Uint8Array.of(byte));
+            });
+          } else socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
+        }
+      });
+      socket.write(encode({ channel: CONTROL, kind: KIND.open, payload: {
+        protocol: 1, peer: 'update-lifecycle', granted: ['extensions:read', 'extensions:install'],
+      } }));
+    });
+    await new Promise((resolve) => server.listen(socketPath, resolve));
+    try {
+      const session = await connect({ path: socketPath });
+      const result = await workspace(session).extensions.updateAndWait('job-update', 3, { capabilities: [] });
+      assert.equal(result.extension.enabled, enabled);
+      assert.equal(result.extension.status, enabled ? 'duty' : 'standby');
+      await session.close();
+    } finally {
+      for (const connection of connections) connection.destroy();
+      await new Promise((resolve) => server.close(resolve));
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
 test('real Unix install wait rejects broader published authority and preserves the session', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-install-authority-'));
   const socketPath = path.join(directory, 'host.sock');
