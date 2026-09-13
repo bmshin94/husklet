@@ -60,6 +60,12 @@ mod unix {
 
     struct StorybookChild(Child);
 
+    struct RenderedFixture {
+        story: String,
+        root: gtk::Widget,
+        window: gtk::Window,
+    }
+
     impl StorybookChild {
         fn stop(&mut self) -> (std::process::ExitStatus, String) {
             if self.0.try_wait().expect("Storybook process status reads").is_none() {
@@ -94,12 +100,40 @@ mod unix {
             repository.join("extensions/node_modules/@husklet/react").exists(),
             "run `npm --prefix extensions ci` before the GTK Storybook E2E"
         );
+        let mut fixtures = Vec::with_capacity(STORIES.len());
         for (index, story) in STORIES.iter().enumerate() {
-            render_story(&repository, story, index);
+            fixtures.push(render_story(&repository, story, index));
+            for fixture in &fixtures {
+                assert!(
+                    fixture.root.root().is_some() && fixture.window.is_mapped(),
+                    "{} stopped being rooted and mapped while retained",
+                    fixture.story
+                );
+            }
+        }
+        for fixture in &fixtures {
+            fixture.window.set_child(None::<&gtk::Widget>);
+            fixture.window.close();
+        }
+        settle_toolkit();
+        for fixture in &fixtures {
+            assert!(
+                fixture.root.root().is_none() && fixture.window.child().is_none(),
+                "{} remained rooted after suite cleanup",
+                fixture.story
+            );
         }
     }
 
-    fn render_story(repository: &Path, story: &str, index: usize) {
+    fn retained_fixture(story: &str, root: gtk::Widget, window: gtk::Window) -> RenderedFixture {
+        assert!(
+            root.root().is_some() && window.is_mapped(),
+            "{story} must remain rooted and mapped until suite cleanup"
+        );
+        RenderedFixture { story: story.to_owned(), root, window }
+    }
+
+    fn render_story(repository: &Path, story: &str, index: usize) -> RenderedFixture {
         let socket = std::env::temp_dir().join(format!("husklet-storybook-{}-{index}.sock", std::process::id()));
         let _ = std::fs::remove_file(&socket);
         let listener = UnixListener::bind(&socket).expect("the Storybook test socket binds");
@@ -2070,7 +2104,7 @@ mod unix {
                 "the long-running entrypoint should only end when killed"
             );
             std::fs::remove_file(socket).expect("test socket is removed");
-            return;
+            return retained_fixture(story, root, realized_window);
         }
         if story == "CardActions" {
             let rows = descendants::<gtk::Box>(&root)
@@ -2112,7 +2146,7 @@ mod unix {
                 "the long-running entrypoint should only end when killed"
             );
             std::fs::remove_file(socket).expect("test socket is removed");
-            return;
+            return retained_fixture(story, root, realized_window);
         }
         if story == "InlineMessage" {
             for (tone, label, icon) in [
@@ -2193,7 +2227,7 @@ mod unix {
                 "the long-running entrypoint should only end when killed"
             );
             std::fs::remove_file(socket).expect("test socket is removed");
-            return;
+            return retained_fixture(story, root, realized_window);
         }
 
         let event = emit_representative(story, &root, &surface, &tree);
@@ -2749,14 +2783,6 @@ mod unix {
                 "appending a batch exceeded fixed retention"
             );
         }
-        realized_window.set_child(None::<&gtk::Widget>);
-        realized_window.close();
-        settle_toolkit();
-        assert!(
-            root.root().is_none() && realized_window.child().is_none(),
-            "{story} retained a rooted widget after its window closed"
-        );
-
         let (status, stderr) = child.stop();
         assert!(stderr.is_empty(), "{story} wrote warnings/errors: {stderr}");
         assert!(
@@ -2764,6 +2790,7 @@ mod unix {
             "the long-running entrypoint should only end when killed"
         );
         std::fs::remove_file(socket).expect("test socket is removed");
+        retained_fixture(story, root, realized_window)
     }
 
     fn accept_before(listener: &UnixListener, deadline: Instant) -> io::Result<UnixStream> {
