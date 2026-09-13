@@ -2681,7 +2681,7 @@ mod unix {
                     refresh,
                 } => {
                     assert_eq!(actual, reference);
-                    assert!(!refresh, "manual image inspection remains cache-friendly");
+                    assert!(refresh, "catalogue updates must resolve a mutable tag again");
                     Reply::ExtensionAcquisitionJob(ExtensionAcquisitionJob {
                         job: "gtk-update".into(),
                     })
