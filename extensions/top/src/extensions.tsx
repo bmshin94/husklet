@@ -2483,20 +2483,20 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                             )
                                           }
                                         />
-                                        {removalMenu === extension.name ? (
-                                          <Column gap={1} align="start">
-                                            <ConfirmAction
-                                              label="Remove extension"
-                                              confirmLabel={`Remove ${extension.name}`}
-                                              question={`Remove ${extension.name}? Its private workspace data will be permanently deleted.`}
-                                              authorityKey={extension.image_digest}
-                                              enabled={!busy}
-                                              size="small"
-                                              onConfirm={() => lifecycle(extension, 'remove')}
-                                            />
-                                          </Column>
-                                        ) : null}
                                       </Row>
+                                    ) : null}
+                                    {removalMenu === extension.name ? (
+                                      <Column gap={1} width="fill" align="start" pad={{ top: 2 }}>
+                                        <ConfirmAction
+                                          label="Remove extension"
+                                          confirmLabel={`Remove ${extension.name}`}
+                                          question={`Remove ${extension.name}? Its private workspace data will be permanently deleted.`}
+                                          authorityKey={extension.image_digest}
+                                          enabled={!busy}
+                                          size="small"
+                                          onConfirm={() => lifecycle(extension, 'remove')}
+                                        />
+                                      </Column>
                                     ) : null}
                                   </CardContent>
                                 </Card>

@@ -119,7 +119,7 @@ export function ConfirmAction({
     }),
     React.createElement(
       Row,
-      { gap: 1, align: 'center' },
+      { gap: 1, width: 'fill', align: 'center', justify: 'start' },
       pending ? React.createElement(Spinner, { busy: true }) : null,
       React.createElement(Button, {
         label: pending

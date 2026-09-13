@@ -1530,6 +1530,11 @@ mod unix {
             let confirmation_root = surface.widget().clone().upcast::<gtk::Widget>();
             let confirm = find_button(&confirmation_root, "Remove storybook");
             let cancel = find_button(&confirmation_root, "Cancel");
+            let open = find_button(&confirmation_root, "Open");
+            let question = find_label(
+                &confirmation_root,
+                "Remove storybook? Its private workspace data will be permanently deleted.",
+            );
             for (width_name, width) in [("wide", 1_200), ("narrow", 600)] {
                 window.set_default_size(width, 800);
                 window.set_size_request(width, 800);
@@ -1565,6 +1570,30 @@ mod unix {
                 let cancel_bounds = cancel
                     .compute_bounds(&confirmation_root)
                     .expect("cancel belongs to removal surface");
+                let open_bounds = open
+                    .compute_bounds(&confirmation_root)
+                    .expect("primary extension action belongs to removal surface");
+                let question_bounds = question
+                    .compute_bounds(&confirmation_root)
+                    .expect("removal warning belongs to removal surface");
+                assert_ne!(
+                    ancestor_with_class(open.upcast_ref(), "hl-row"),
+                    ancestor_with_class(question.upcast_ref(), "hl-row"),
+                    "{width_name} confirmation must not wrap inside lifecycle controls"
+                );
+                assert!(
+                    (question_bounds.x() - open_bounds.x()).abs() <= 1.0
+                        && (confirm_bounds.x() - question_bounds.x()).abs() <= 1.0,
+                    "{width_name} warning and confirmation actions do not share the card-content edge: open={open_bounds:?}, question={question_bounds:?}, confirm={confirm_bounds:?}"
+                );
+                assert!(
+                    question_bounds.y() >= open_bounds.y() + open_bounds.height() + 8.0,
+                    "{width_name} confirmation is not a distinct block below lifecycle controls: open={open_bounds:?}, question={question_bounds:?}"
+                );
+                assert!(
+                    confirm_bounds.y() >= question_bounds.y() + question_bounds.height() + 4.0,
+                    "{width_name} confirmation action does not follow its warning compactly: question={question_bounds:?}, confirm={confirm_bounds:?}"
+                );
                 assert!(
                     confirm_bounds.x() + confirm_bounds.width() <= cancel_bounds.x()
                         || confirm_bounds.y() + confirm_bounds.height() <= cancel_bounds.y(),
