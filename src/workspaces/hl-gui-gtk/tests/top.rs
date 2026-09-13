@@ -3858,6 +3858,7 @@ mod unix {
             }
             if state == "update-review" {
                 let update = find_button(root, "Update with selected access");
+                let cancel = find_button(root, "Cancel review");
                 assert!(
                     vertical_end(root, update.upcast_ref()) <= 800,
                     "{width_name} update confirmation fell below the first viewport"
@@ -3926,9 +3927,6 @@ mod unix {
                     .ancestor(gtk::ScrolledWindow::static_type())
                     .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
                     .expect("permission review retains its scrolling viewport");
-                let adjustment = scroll.vadjustment();
-                adjustment.set_value(0.0);
-                settle_toolkit();
                 let initial = credential
                     .compute_bounds(root)
                     .expect("final credential belongs to permission review");
@@ -3947,41 +3945,52 @@ mod unix {
                     );
                 }
                 capture(&capture_window, &format!("extensions-{state}-{width_name}"), width, 800);
-                let before = adjustment.value();
-                adjustment.set_value(adjustment.upper() - adjustment.page_size());
-                settle_toolkit();
-                let scrolled = credential
-                    .compute_bounds(root)
-                    .expect("scrolled final credential remains rooted");
-                if width == 600 {
-                    assert!(
-                        adjustment.value() > before && scrolled.y() < initial.y(),
-                        "narrow capture did not drive the allocated permission viewport: adjustment={before}->{}, credential={initial:?}->{scrolled:?}",
-                        adjustment.value()
-                    );
-                } else {
-                    assert!(
-                        adjustment.value() > before
-                            && (adjustment.value() - (adjustment.upper() - adjustment.page_size())).abs() <= 1.0,
-                        "wide capture did not reach the allocated viewport end: adjustment={before}->{}/{}/{}",
-                        adjustment.value(),
-                        adjustment.upper(),
-                        adjustment.page_size()
-                    );
-                }
                 let footer = update
                     .parent()
                     .and_then(|row| row.parent())
                     .expect("review decision row belongs to its footer");
                 let footer_bounds = footer.compute_bounds(root).expect("review footer belongs to root");
                 let separator_top = footer_bounds.y() + 8.0;
+                let control = credential
+                    .mnemonic_widget()
+                    .expect("final credential label names its permission switch");
                 assert!(
-                    width != 600 || scrolled.y() + scrolled.height() <= separator_top - 8.0,
-                    "{width_name} final credential lacks 8px footer clearance: credential={scrolled:?}, separator={separator_top}, viewport={viewport:?}, adjustment={}/{}/{}",
-                    adjustment.value(),
-                    adjustment.upper(),
-                    adjustment.page_size()
+                    control.grab_focus(),
+                    "{width_name} final credential accepts keyboard focus"
                 );
+                for _ in 0..8 {
+                    settle_frame();
+                }
+                let mut scrolled = credential
+                    .compute_bounds(root)
+                    .expect("focus-revealed final credential remains rooted");
+                if scrolled.y() + scrolled.height() > separator_top - 8.0 {
+                    assert!(
+                        scroll.emit_scroll_child(gtk::ScrollType::End, false),
+                        "{width_name} permission viewport accepts the keyboard End action"
+                    );
+                    for _ in 0..8 {
+                        settle_frame();
+                    }
+                    scrolled = credential
+                        .compute_bounds(root)
+                        .expect("keyboard-scrolled final credential remains rooted");
+                }
+                assert!(
+                    scrolled.y() + scrolled.height() <= separator_top - 8.0,
+                    "{width_name} final credential lacks 8px footer clearance: credential={scrolled:?}, separator={separator_top}, viewport={viewport:?}"
+                );
+                assert_eq!(footer.compute_bounds(root).unwrap(), footer_bounds);
+                assert!(capture_window.child_focus(gtk::DirectionType::TabForward));
+                settle_frame();
+                assert!(
+                    update.has_focus(),
+                    "{width_name} Tab reaches the primary review decision"
+                );
+                assert!(capture_window.child_focus(gtk::DirectionType::TabForward));
+                settle_frame();
+                assert!(cancel.has_focus(), "{width_name} next Tab reaches Cancel review");
+                assert_eq!(footer.compute_bounds(root).unwrap(), footer_bounds);
                 capture(
                     &capture_window,
                     &format!("extensions-{state}-last-credential-{width_name}"),
@@ -3996,34 +4005,98 @@ mod unix {
                     .ancestor(gtk::ScrolledWindow::static_type())
                     .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
                     .expect("required review retains its scrolling viewport");
-                let adjustment = scroll.vadjustment();
+                let viewport = scroll
+                    .compute_bounds(root)
+                    .expect("required review viewport belongs to root");
                 let initial = credential
                     .compute_bounds(root)
                     .expect("required review final credential is rooted");
-                let before = adjustment.value();
-                adjustment.set_value(adjustment.upper() - adjustment.page_size());
-                settle_toolkit();
-                let scrolled = credential
-                    .compute_bounds(root)
-                    .expect("required review scrolled credential remains rooted");
-                assert!(
-                    adjustment.value() > before && scrolled.y() < initial.y(),
-                    "{width_name} required review did not reveal its final credential: adjustment={before}->{}, credential={initial:?}->{scrolled:?}",
-                    adjustment.value()
-                );
+                let initially_below = initial.y() + initial.height() > viewport.y() + viewport.height();
+                if width == 600 {
+                    assert!(
+                        initially_below,
+                        "narrow required review must begin with its final credential below the viewport"
+                    );
+                }
                 let update = find_button(root, "Update with selected access");
+                let cancel = find_button(root, "Cancel review");
                 let footer = update
                     .parent()
                     .and_then(|row| row.parent())
                     .expect("required review decision row belongs to its footer");
-                let separator_top = footer
+                let footer_before = footer.compute_bounds(root).expect("review footer belongs to root");
+                let separator_top = footer_before.y() + 8.0;
+                let header = find_label(root, "Review developer-tool-01");
+                let header_before = header.compute_bounds(root).expect("review identity belongs to root");
+                let control = credential
+                    .mnemonic_widget()
+                    .expect("required credential label names its permission switch");
+                assert!(
+                    control.is_focusable(),
+                    "required credential switch is keyboard reachable"
+                );
+                assert!(
+                    control.grab_focus(),
+                    "{width_name} keyboard focus reaches the final required credential"
+                );
+                for _ in 0..8 {
+                    settle_frame();
+                }
+                let mut scrolled = credential
                     .compute_bounds(root)
-                    .expect("required review footer belongs to root")
-                    .y()
-                    + 8.0;
+                    .expect("focus-revealed required credential remains rooted");
+                if scrolled.y() + scrolled.height() > separator_top - 8.0 {
+                    assert!(
+                        scroll.emit_scroll_child(gtk::ScrollType::End, false),
+                        "{width_name} permission viewport accepts the keyboard End action"
+                    );
+                    for _ in 0..8 {
+                        settle_frame();
+                    }
+                    scrolled = credential
+                        .compute_bounds(root)
+                        .expect("keyboard-scrolled required credential remains rooted");
+                }
+                assert!(
+                    !initially_below || scrolled.y() < initial.y(),
+                    "{width_name} keyboard focus did not reveal the final required credential: viewport={viewport:?}, credential={initial:?}->{scrolled:?}"
+                );
+                let footer_after = footer
+                    .compute_bounds(root)
+                    .expect("focused review footer belongs to root");
+                let header_after = header
+                    .compute_bounds(root)
+                    .expect("focused review identity belongs to root");
+                assert_eq!(
+                    footer_before, footer_after,
+                    "{width_name} focus moved the fixed decision footer"
+                );
+                assert_eq!(
+                    header_before, header_after,
+                    "{width_name} focus moved the fixed review identity"
+                );
+                assert!(has_label(&footer, "No access selected · 19 requested"));
+                assert!(
+                    (52.0..=72.0).contains(&footer_after.height()),
+                    "{width_name} review footer is {}px instead of its compact 52–72px range",
+                    footer_after.height()
+                );
                 assert!(
                     scrolled.y() + scrolled.height() <= separator_top - 8.0,
                     "{width_name} required review final credential lacks footer clearance: credential={scrolled:?}, separator={separator_top}"
+                );
+                assert!(capture_window.child_focus(gtk::DirectionType::TabForward));
+                settle_frame();
+                assert!(
+                    cancel.has_focus(),
+                    "{width_name} Tab skips the unavailable primary decision and reaches Cancel review"
+                );
+                assert_eq!(
+                    footer
+                        .compute_bounds(root)
+                        .expect("tabbed review footer belongs to root"),
+                    footer_before,
+                    "{width_name} keyboard traversal moved the fixed decision footer"
                 );
                 capture(
                     &capture_window,

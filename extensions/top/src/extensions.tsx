@@ -1182,24 +1182,28 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
         gap={3}
         width={PAGE_WIDTH}
       >
-        <Heading label="Extensions" scale="display" />
-        <Text
-          label="Discover tools, review their access, and manage what runs in this workspace."
-          color="text-dim"
-          wrap
-        />
-        <ToggleButtonGroup gap={0} width="content">
-          <ToggleButton
-            label="Installed"
-            selected={mode === 'installed'}
-            onToggle={() => selectMode('installed')}
-          />
-          <ToggleButton
-            label="Discover"
-            selected={mode === 'discover'}
-            onToggle={() => selectMode('discover')}
-          />
-        </ToggleButtonGroup>
+        {!acquisition ? (
+          <>
+            <Heading label="Extensions" scale="display" />
+            <Text
+              label="Discover tools, review their access, and manage what runs in this workspace."
+              color="text-dim"
+              wrap
+            />
+            <ToggleButtonGroup gap={0} width="content">
+              <ToggleButton
+                label="Installed"
+                selected={mode === 'installed'}
+                onToggle={() => selectMode('installed')}
+              />
+              <ToggleButton
+                label="Discover"
+                selected={mode === 'discover'}
+                onToggle={() => selectMode('discover')}
+              />
+            </ToggleButtonGroup>
+          </>
+        ) : null}
         {error && <RecoveryState operation="Extension change" error={error} />}
         {notice && (
           <InlineMessage label={notice.label} tone={notice.uncertain ? 'warning' : 'positive'} />
@@ -1562,26 +1566,20 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                 </Expander>
               ) : (
                 <Card grow={false} width="fill" variant="outline">
-                  <CardHeader
-                    label={
-                      acquisition.candidate
-                        ? `Review ${acquisition.candidate.name}`
-                        : acquisition.state === 'failed'
+                  {!acquisition.candidate ? (
+                    <CardHeader
+                      label={
+                        acquisition.state === 'failed'
                           ? 'Couldn’t inspect extension'
                           : acquisition.state === 'cancelled'
                             ? 'Inspection cancelled'
                             : 'Inspecting extension'
-                    }
-                    detail={
-                      acquisition.candidate?.installed_image_digest
-                        ? `Update extension · version ${acquisition.candidate.version}`
-                        : acquisition.candidate
-                          ? `Install extension · version ${acquisition.candidate.version}`
-                          : 'Image inspection'
-                    }
-                    align="start"
-                    width="fill"
-                  />
+                      }
+                      detail="Image inspection"
+                      align="start"
+                      width="fill"
+                    />
+                  ) : null}
                   {acquisition?.candidate && (
                     <CardContent gap={1}>
                       <Column gap={0} width="fill" align="start">
@@ -2553,6 +2551,16 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
   );
   return (
     <Column grow gap={0}>
+      {acquisition?.candidate ? (
+        <Container pad={{ top: 2, end: 4, bottom: 1, start: 4 }} width={PAGE_WIDTH}>
+          <CardHeader
+            label={`Review ${acquisition.candidate.name}`}
+            detail={`${acquisition.candidate.installed_image_digest ? 'Update' : 'Install'} extension · version ${acquisition.candidate.version}`}
+            align="start"
+            width="fill"
+          />
+        </Container>
+      ) : null}
       {content}
       {acquisition?.candidate ? (
         <Column gap={0}>
@@ -2574,13 +2582,14 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
               }
               color="text-dim"
               wrap={false}
-              width={{ minimum: { chars: 40 }, maximum: { chars: 50 } }}
+              grow
+              width={{ minimum: { chars: 22 }, maximum: { chars: 50 } }}
             />
             <Row
               gap={1}
               align="center"
               justify="end"
-              width={{ minimum: { chars: 80 }, maximum: 'fill' }}
+              width={{ minimum: { chars: 69 }, maximum: 'fill' }}
             >
               <Spacer />
               <Button
