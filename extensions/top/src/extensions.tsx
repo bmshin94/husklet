@@ -1307,7 +1307,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                 tooltip={entry.description}
                                 wrap
                               />
-                              <Row gap={1} width="fill" wrap align="center" justify="start">
+                              <Row gap={2} width="fill" wrap align="center" justify="start">
                                 <Badge
                                   label={
                                     installedExtension
@@ -1325,6 +1325,10 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                   }
                                 />
                                 <Text label={`Publisher · ${entry.publisher}`} color="text-dim" />
+                                <Text
+                                  label={`Category · ${entry.categories?.[0] ?? 'Other'}`}
+                                  color="text-dim"
+                                />
                                 {compatibility.compatible !== true ? (
                                   <Badge
                                     label={

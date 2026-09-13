@@ -1691,6 +1691,15 @@ mod unix {
                 let review_bounds_in_card = review
                     .compute_bounds(&review_card)
                     .expect("Discover action belongs to its card");
+                let category = find_mapped_labelled(&review_card, "Category · Developer tools");
+                let category_bounds = category
+                    .compute_bounds(&review_card)
+                    .expect("visible category belongs to its catalogue card");
+                assert_eq!(category.accessible_role(), gtk::AccessibleRole::Label);
+                assert!(
+                    category_bounds.y() + category_bounds.height() <= review_bounds_in_card.y(),
+                    "{width_name} catalogue category fell below its card action: category={category_bounds:?} action={review_bounds_in_card:?}"
+                );
                 assert!(
                     review_bounds_in_card.y() >= description_bounds.y() + description_bounds.height(),
                     "{width_name} Discover action remained embedded in identity/content: description={description_bounds:?} action={review_bounds_in_card:?}"
