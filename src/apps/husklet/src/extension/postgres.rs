@@ -723,12 +723,14 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
             .state
             .lock()
             .map_err(|_| HostError::Failed("postgres broker lock poisoned".into()))?;
-        if state.leases.remove(lease.as_str()).is_none() {
+        if !state.leases.contains_key(lease.as_str()) {
             return Err(HostError::Absent(
                 "postgres lease is not owned by this installation".into(),
             ));
         }
-        self.peer.close_lease(lease)
+        self.peer.close_lease(lease)?;
+        state.leases.remove(lease.as_str());
+        Ok(())
     }
 }
 
@@ -788,6 +790,7 @@ mod tests {
         authenticated: Arc<AtomicBool>,
         opened: Arc<AtomicUsize>,
         closed: Arc<AtomicUsize>,
+        fail_close: Arc<AtomicBool>,
     }
 
     impl Peer for FakePeer {
@@ -833,6 +836,9 @@ mod tests {
             Ok(())
         }
         fn close_lease(&self, _: &PostgresLeaseId) -> Result<(), HostError> {
+            if self.fail_close.load(Ordering::SeqCst) {
+                return Err(HostError::Unavailable("peer close failed".into()));
+            }
             self.closed.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -1248,6 +1254,39 @@ mod tests {
         ));
         broker.close_query(&owner, &lease, &query).unwrap();
         broker.close_lease(&owner, &lease).unwrap();
+    }
+
+    #[test]
+    fn failed_peer_close_preserves_lease_ownership_for_an_exact_retry() {
+        let authority = FakeAuthority {
+            live: Arc::new(AtomicBool::new(true)),
+            revision: Arc::new(AtomicUsize::new(7)),
+            network_revision: Arc::new(AtomicUsize::new(3)),
+        };
+        let peer = FakePeer::default();
+        let owner = installation('a');
+        let broker = HostPostgres::new(owner.clone(), authority, peer.clone());
+        let PostgresOpenOutcome::Opened { lease } = broker
+            .open_once(&owner, &QueryOperationToken::new("retry-close").unwrap(), &connection())
+            .unwrap()
+        else {
+            panic!("first open must publish one lease")
+        };
+
+        peer.fail_close.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            broker.close_lease(&owner, &lease),
+            Err(HostError::Unavailable(message)) if message == "peer close failed"
+        ));
+        assert!(matches!(
+            broker.start_once(&owner, &lease, &query("after-failed-close", "select 1")),
+            Ok(PostgresStartOutcome::Started { .. })
+        ));
+
+        peer.fail_close.store(false, Ordering::SeqCst);
+        broker.close_lease(&owner, &lease).unwrap();
+        assert_eq!(peer.closed.load(Ordering::SeqCst), 1);
+        assert!(matches!(broker.close_lease(&owner, &lease), Err(HostError::Absent(_))));
     }
 
     #[test]
