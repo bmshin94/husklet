@@ -1337,8 +1337,7 @@ mod unix {
                 // disappear when Responsive temporarily selects its compact
                 // branch. Exercise the actual reparenting path before trusting
                 // either mapped geometry or a screenshot of it.
-                window.set_default_size(600, 800);
-                window.set_size_request(600, 800);
+                resize_window(&window, 600, 800);
                 window.present();
                 root.measure(gtk::Orientation::Horizontal, -1);
                 root.measure(gtk::Orientation::Vertical, 600);
@@ -1352,8 +1351,7 @@ mod unix {
                     paned.end_child().is_none(),
                     "compact Top moves its one authoritative body out of the hidden desktop divider"
                 );
-                window.set_default_size(1_200, 800);
-                window.set_size_request(1_200, 800);
+                resize_window(&window, 1_200, 800);
                 window.present();
                 root.measure(gtk::Orientation::Horizontal, -1);
                 root.measure(gtk::Orientation::Vertical, 1_200);
@@ -1502,8 +1500,7 @@ mod unix {
         if fixture == "populated" && name == "extensions" {
             // Re-expanding from the compact selector must not leave the installed
             // collection carrying its narrow allocation or unused vertical space.
-            window.set_default_size(1_200, 800);
-            window.set_size_request(1_200, 800);
+            resize_window(&window, 1_200, 800);
             settle_toolkit();
             root.measure(gtk::Orientation::Horizontal, -1);
             root.measure(gtk::Orientation::Vertical, 1_200);
@@ -1539,8 +1536,7 @@ mod unix {
             let managed_root = surface.widget().clone().upcast::<gtk::Widget>();
             assert!(search.grab_focus(), "installed search is keyboard reachable");
             for (width_name, width) in [("wide", 1_200), ("narrow", 600)] {
-                window.set_default_size(width, 800);
-                window.set_size_request(width, 800);
+                resize_window(&window, width, 800);
                 settle_toolkit();
                 managed_root.measure(gtk::Orientation::Horizontal, -1);
                 managed_root.measure(gtk::Orientation::Vertical, width);
@@ -1624,8 +1620,7 @@ mod unix {
             });
             let filtered_root = surface.widget().clone().upcast::<gtk::Widget>();
             for (width_name, width) in [("wide", 1_200), ("narrow", 600)] {
-                window.set_default_size(width, 800);
-                window.set_size_request(width, 800);
+                resize_window(&window, width, 800);
                 settle_toolkit();
                 filtered_root.measure(gtk::Orientation::Horizontal, -1);
                 filtered_root.measure(gtk::Orientation::Vertical, width);
@@ -1754,8 +1749,7 @@ mod unix {
                 "Remove storybook? Its private workspace data will be permanently deleted.",
             );
             for (width_name, width) in [("wide", 1_200), ("narrow", 600)] {
-                window.set_default_size(width, 800);
-                window.set_size_request(width, 800);
+                resize_window(&window, width, 800);
                 settle_toolkit();
                 confirmation_root.measure(gtk::Orientation::Horizontal, -1);
                 confirmation_root.measure(gtk::Orientation::Vertical, width);
@@ -1941,8 +1935,7 @@ mod unix {
                 );
             }
             for (width_name, width) in [("wide", 1_200), ("narrow", 600)] {
-                window.set_default_size(width, 800);
-                window.set_size_request(width, 800);
+                resize_window(&window, width, 800);
                 settle_toolkit();
                 discover_root.measure(gtk::Orientation::Horizontal, -1);
                 discover_root.measure(gtk::Orientation::Vertical, width);
@@ -2263,8 +2256,7 @@ mod unix {
             let expanded_root = surface.widget().clone().upcast::<gtk::Widget>();
             window.set_child(Some(&expanded_root));
             for (width_name, width) in [("narrow", 600), ("wide", 1_200)] {
-                window.set_default_size(width, 800);
-                window.set_size_request(width, 800);
+                resize_window(&window, width, 800);
                 window.present();
                 settle_toolkit();
                 expanded_root.measure(gtk::Orientation::Horizontal, -1);
@@ -2408,8 +2400,7 @@ mod unix {
             let success_root = surface.widget().clone().upcast::<gtk::Widget>();
             window.set_child(Some(&success_root));
             for (width_name, width) in [("narrow", 600), ("wide", 1_200)] {
-                window.set_default_size(width, 800);
-                window.set_size_request(width, 800);
+                resize_window(&window, width, 800);
                 window.present();
                 settle_toolkit();
                 success_root.measure(gtk::Orientation::Horizontal, -1);
@@ -2483,8 +2474,7 @@ mod unix {
             );
             let collapsed_root = surface.widget().clone().upcast::<gtk::Widget>();
             window.set_child(Some(&collapsed_root));
-            window.set_default_size(600, 800);
-            window.set_size_request(600, 800);
+            resize_window(&window, 600, 800);
             window.present();
             settle_toolkit();
             assert!(!has_label(&collapsed_root, "Network details"));
@@ -2575,8 +2565,7 @@ mod unix {
             assert!(!technical.is_expanded(), "raw property table starts disclosed");
             assert!(technical.grab_focus(), "technical disclosure is keyboard reachable");
             for (width_name, width) in [("narrow", 600), ("wide", 1_200)] {
-                window.set_default_size(width, 800);
-                window.set_size_request(width, 800);
+                resize_window(&window, width, 800);
                 window.present();
                 settle_toolkit();
                 detail_root.measure(gtk::Orientation::Horizontal, -1);
@@ -2692,8 +2681,7 @@ mod unix {
             assert!(!technical.is_expanded());
             assert!(technical.grab_focus(), "image technical details are keyboard reachable");
             for (width_name, width) in [("wide", 1_200), ("narrow", 600)] {
-                window.set_default_size(width, 800);
-                window.set_size_request(width, 800);
+                resize_window(&window, width, 800);
                 window.present();
                 settle_toolkit();
                 assert_contained(&image_root, &format!("image-detail/{width_name}"));
@@ -2723,8 +2711,7 @@ mod unix {
             );
             let collapsed_root = surface.widget().clone().upcast::<gtk::Widget>();
             window.set_child(Some(&collapsed_root));
-            window.set_default_size(600, 800);
-            window.set_size_request(600, 800);
+            resize_window(&window, 600, 800);
             window.present();
             settle_toolkit();
             assert!(!has_label(&collapsed_root, "Image summary"));
@@ -2786,8 +2773,7 @@ mod unix {
             assert!(has_label(&detail_root, "Driver · local"));
             assert!(has_label(&detail_root, "Immutable generation · volume-generation-7"));
             for (width_name, width) in [("wide", 1_200), ("narrow", 600)] {
-                window.set_default_size(width, 800);
-                window.set_size_request(width, 800);
+                resize_window(&window, width, 800);
                 window.present();
                 settle_toolkit();
                 detail_root.measure(gtk::Orientation::Horizontal, -1);
@@ -2814,8 +2800,7 @@ mod unix {
             );
             let collapsed_root = surface.widget().clone().upcast::<gtk::Widget>();
             window.set_child(Some(&collapsed_root));
-            window.set_default_size(600, 800);
-            window.set_size_request(600, 800);
+            resize_window(&window, 600, 800);
             window.present();
             settle_toolkit();
             assert!(!has_label(&collapsed_root, "Volume details"));
@@ -2879,8 +2864,7 @@ mod unix {
             recovery_window.set_child(Some(&recovery_root));
             let open = find_button(&recovery_root, "Review access");
             for (width_name, width) in [("narrow", 600), ("wide", 1_200)] {
-                recovery_window.set_default_size(width, 820);
-                recovery_window.set_size_request(width, 820);
+                resize_window(&recovery_window, width, 820);
                 recovery_window.present();
                 settle_toolkit();
                 assert_contained(&recovery_root, &format!("volume-recovery/{width_name}"));
@@ -3093,8 +3077,7 @@ mod unix {
             "Retry becomes actionable after failed inspection settles"
         );
         for (width_name, width) in [("wide", 1_200), ("narrow", 600)] {
-            window.set_default_size(width, 800);
-            window.set_size_request(width, 800);
+                resize_window(&window, width, 800);
             window.set_child(Some(&failure_root));
             window.present();
             settle_toolkit();
@@ -5663,6 +5646,17 @@ mod unix {
         }
     }
 
+    fn resize_window(window: &gtk::Window, width: i32, height: i32) {
+        // A mapped window retains its previous minimum request. Clear it before
+        // asking GTK to measure a narrower layout, or a preceding 1200px arm
+        // can make the following 600px arm an invalid size negotiation.
+        window.set_size_request(-1, -1);
+        settle_toolkit();
+        window.set_default_size(width, height);
+        window.set_size_request(width, height);
+        settle_toolkit();
+    }
+
     fn present_in_fresh_window(window: &mut gtk::Window, root: &gtk::Widget, width: i32, height: i32) {
         gtk::prelude::RootExt::set_focus(window, None::<&gtk::Widget>);
         settle_toolkit();
@@ -5671,8 +5665,7 @@ mod unix {
         settle_toolkit();
         let replacement = gtk::Window::new();
         replacement.set_child(Some(root));
-        replacement.set_default_size(width, height);
-        replacement.set_size_request(width, height);
+        resize_window(&replacement, width, height);
         replacement.present();
         settle_toolkit();
         *window = replacement;
