@@ -891,7 +891,7 @@ const PROPS: &[Entry] = &[
         group: "layout",
         editor: "number",
         values: &["Number", "Integer"],
-        note: "allocated width below which a Responsive splitter collapses its first child",
+        note: "allocated width selecting the second of two alternate layouts; three children retain the navigation splitter contract",
     },
     Entry {
         prop: Prop::Minimum,

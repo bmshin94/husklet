@@ -16,10 +16,10 @@ mod unix {
         NetworkEndpointInventory, NetworkInventory, NetworkKind, NetworkSummary,
     };
     use hl_extension::{
-        codec, Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
-        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PaneProvider, PreferenceValue,
+        Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
+        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PROTOCOL, PaneProvider, PreferenceValue,
         RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire, WorkspaceConfiguration,
-        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, PROTOCOL,
+        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, codec,
     };
     use hl_gui::{Renderer as _, SourceMutation, Theme, Tree};
     use hl_gui_gtk::Surface;
@@ -1718,9 +1718,7 @@ mod unix {
                     .compute_bounds(&card)
                     .expect("Open chrome belongs to its card");
                 assert!(
-                    (8.0..=12.0).contains(
-                        &(removal_bounds.y() - open_chrome.y() - open_chrome.height())
-                    ),
+                    (8.0..=12.0).contains(&(removal_bounds.y() - open_chrome.y() - open_chrome.height())),
                     "{width_name} removal disclosure collapsed into its neighbor: removal={removal_bounds:?} open={open_chrome:?}"
                 );
                 assert!(
@@ -2032,9 +2030,14 @@ mod unix {
                         search_bounds.width() >= 300.0,
                         "narrow Discover search did not consume the available row width: {search_bounds:?}"
                     );
+                    let secondary = ancestor_with_class(&result_count, "hl-row")
+                        .expect("result count belongs to the compact secondary row");
+                    let secondary_bounds = secondary
+                        .compute_bounds(&discover_root)
+                        .expect("compact secondary row belongs to Discover");
                     assert!(
-                        (count_bounds.x() - 16.0).abs() <= 1.0,
-                        "narrow Discover secondary row lost the shared 16px content edge: {count_bounds:?}"
+                        (secondary_bounds.x() - 16.0).abs() <= 1.0,
+                        "narrow Discover secondary row lost the shared 16px content edge: {secondary_bounds:?}"
                     );
                 }
                 assert_contained(&discover_root, &format!("discover/extensions/{width_name}"));
@@ -2237,7 +2240,7 @@ mod unix {
                     vertical_end(&discover_root, review.upcast_ref()) <= 800,
                     "{width_name} Discover update action fell below the first viewport"
                 );
-                let category = find_label(&discover_root, "Category");
+                let category = find_mapped_labelled(&discover_root, "Category");
                 let category_control = category.parent().expect("Category belongs to its form control");
                 assert!(
                     has_label(&category_control, "All categories"),

@@ -22,6 +22,7 @@ import { InlineButtonWorkbench } from './inline-button.js';
 import { JsonTreeStory } from './json-tree.js';
 import { RadioWorkbench } from './radio.js';
 import { RadioGroupWorkbench } from './radio-group.js';
+import { ResponsiveWorkbench } from './responsive.js';
 import { NumberEntryWorkbench } from './number-entry.js';
 import { PasswordEntryWorkbench } from './password-entry.js';
 import { SearchWorkbench } from './search.js';
@@ -56,6 +57,7 @@ type NativeWorkbenchName =
   | 'PasswordEntry'
   | 'Radio'
   | 'RadioGroup'
+  | 'Responsive'
   | 'Search'
   | 'Select'
   | 'Slider'
@@ -118,6 +120,7 @@ const nativeWorkbenchPages = {
   PasswordEntry: PasswordEntryWorkbench,
   Radio: RadioWorkbench,
   RadioGroup: RadioGroupWorkbench,
+  Responsive: ResponsiveWorkbench,
   Search: SearchWorkbench,
   Select: SelectWorkbench,
   Slider: SliderWorkbench,

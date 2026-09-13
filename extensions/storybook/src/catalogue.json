@@ -224,7 +224,7 @@
     {"name": "RowSpan", "group": "layout", "editor": "number", "values": ["Integer", "Number"], "default": null, "note": "grid rows this child occupies; never below one"},
     {"name": "Orientation", "group": "layout", "editor": "enum", "values": ["Orientation"], "default": null, "note": "axis of a container, a splitter or a divider"},
     {"name": "Position", "group": "layout", "editor": "number", "values": ["Number", "Integer"], "default": null, "note": "the divider position of a splitter, in pixels"},
-    {"name": "Breakpoint", "group": "layout", "editor": "number", "values": ["Number", "Integer"], "default": null, "note": "allocated width below which a Responsive splitter collapses its first child"},
+    {"name": "Breakpoint", "group": "layout", "editor": "number", "values": ["Number", "Integer"], "default": null, "note": "allocated width selecting the second of two alternate layouts; three children retain the navigation splitter contract"},
     {"name": "Minimum", "group": "range", "editor": "number", "values": ["Number", "Integer"], "default": null, "note": "lower bound of a slider or a number entry"},
     {"name": "Maximum", "group": "range", "editor": "number", "values": ["Number", "Integer"], "default": null, "note": "upper bound of a slider or a number entry"},
     {"name": "Step", "group": "range", "editor": "number", "values": ["Number", "Integer"], "default": null, "note": "increment of a slider or a number entry"},

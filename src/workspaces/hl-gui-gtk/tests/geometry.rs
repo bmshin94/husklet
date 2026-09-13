@@ -325,6 +325,33 @@ fn a_responsive_container_presents_only_its_allocated_branch() {
     assert!(stage.surface.is_presented(wide));
     assert!(stage.surface.is_presented(body));
     assert!(stage.surface.allocated_size(body).is_some_and(|size| size.0 < 600));
+
+    let mut alternatives = Stage::new();
+    let responsive = alternatives.producer.create(Tag::Responsive);
+    alternatives
+        .producer
+        .set(responsive, Prop::Breakpoint, PropValue::Integer(400));
+    let compact = alternatives.producer.create(Tag::Button);
+    alternatives
+        .producer
+        .set(compact, Prop::Label, PropValue::text("compact action"));
+    let wide = alternatives.producer.create(Tag::Button);
+    alternatives
+        .producer
+        .set(wide, Prop::Label, PropValue::text("wide action"));
+    alternatives.producer.append(responsive, compact);
+    alternatives.producer.append(responsive, wide);
+    alternatives.producer.append(NodeId::ROOT, responsive);
+    alternatives.draw();
+    alternatives.allocate(320, 100);
+    assert!(alternatives.surface.is_presented(compact));
+    assert!(!alternatives.surface.is_presented(wide));
+    alternatives.allocate(600, 100);
+    assert!(!alternatives.surface.is_presented(compact));
+    assert!(alternatives.surface.is_presented(wide));
+    alternatives.allocate(320, 100);
+    assert!(alternatives.surface.is_presented(compact));
+    assert!(!alternatives.surface.is_presented(wide));
 }
 
 fn a_character_width_applies_to_a_scrolling_container() {
