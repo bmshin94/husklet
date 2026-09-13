@@ -3749,6 +3749,32 @@ mod unix {
             (0.0..=12.0).contains(&helper_gap),
             "{width} passed helper is {helper_gap}px from its report"
         );
+        for (detail_text, helper_text) in [
+            (
+                "expected ready, received offline",
+                "Failure detail remains selectable and wraps in place.",
+            ),
+            (
+                "requires signing identity",
+                "A skipped reason stays distinct from failure.",
+            ),
+        ] {
+            let report = report_with(detail_text);
+            let detail = find::<gtk::Label>(report.upcast_ref(), |label| label.text() == detail_text);
+            let helper = find::<gtk::Label>(root, |label| label.text() == helper_text);
+            let report_bounds = report.compute_bounds(root).expect("detailed report belongs to its page");
+            let detail_bounds = detail.compute_bounds(root).expect("report detail belongs to its page");
+            let helper_bounds = helper.compute_bounds(root).expect("detail helper belongs to its page");
+            assert!(
+                detail_bounds.y() + detail_bounds.height() <= report_bounds.y() + report_bounds.height(),
+                "{width} {detail_text:?} escapes its report: report={report_bounds:?}, detail={detail_bounds:?}"
+            );
+            let gap = helper_bounds.y() - (report_bounds.y() + report_bounds.height());
+            assert!(
+                (4.0..=12.0).contains(&gap),
+                "{width} {detail_text:?} helper gap is {gap}px: report={report_bounds:?}, helper={helper_bounds:?}"
+            );
+        }
         assert_eq!(
             explicit.height(),
             160,

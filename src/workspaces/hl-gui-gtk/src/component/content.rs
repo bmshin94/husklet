@@ -661,13 +661,11 @@ pub(crate) fn test_report(widget: &gtk::Widget, value: &str) -> bool {
     while let Some(child) = rows.first_child() {
         rows.remove(&child);
     }
-    let mut accepted = 0_i32;
     for line in value.lines().take(hl_gui::TEST_REPORT_CASE_LIMIT) {
         let columns = line.splitn(5, '\t').collect::<Vec<_>>();
         if columns.len() != 5 {
             continue;
         }
-        accepted += 1;
         let case = super::axis::column(2);
         case.add_css_class("hl-test-report-case");
         let summary = super::axis::row(8);
@@ -721,7 +719,8 @@ pub(crate) fn test_report(widget: &gtk::Widget, value: &str) -> bool {
         }
         rows.append(&case);
     }
-    window.set_min_content_height((accepted * 32).min(128));
+    let (_, natural, _, _) = rows.measure(gtk::Orientation::Vertical, -1);
+    window.set_min_content_height(natural.min(128));
     true
 }
 
