@@ -89,6 +89,15 @@ const mixedReport = boundedCases([
   },
 ]);
 
+const scrollingReport = boundedCases(
+  Array.from({ length: 32 }, (_, index) => ({
+    suite: 'workspace',
+    name: `case-${index}`,
+    status: 'passed',
+    durationMs: index + 1,
+  })),
+);
+
 export function TestReportWorkbench() {
   const [mode, setMode] = React.useState<'mixed' | 'passed' | 'failed' | 'skipped'>('mixed');
   const selected =
@@ -148,6 +157,15 @@ export function TestReportWorkbench() {
             />
           </FieldSpecimen>
         </SpecimenGrid>
+      </DocumentationSection>
+
+      <DocumentationSection title="Sizing">
+        <FieldSpecimen
+          label="Explicit review viewport"
+          helper="Authored height keeps a larger report scrollable without changing compact defaults."
+        >
+          <TestReportView value={scrollingReport} width="fill" height={{ step: 40 }} />
+        </FieldSpecimen>
       </DocumentationSection>
 
       <DocumentationSection title="Bounds and accessibility">

@@ -20,7 +20,7 @@ pub(crate) fn widget(tag: Tag) -> gtk::Widget {
         Tag::MemoryMap => memory_map().upcast(),
         Tag::DisassemblyView => memory_map().upcast(),
         Tag::TimelineView => memory_map().upcast(),
-        Tag::TestReportView => memory_map().upcast(),
+        Tag::TestReportView => test_report_view().upcast(),
         Tag::CoverageView => memory_map().upcast(),
         Tag::NetworkWaterfall => network_waterfall().upcast(),
         Tag::NetworkRequest => network_request().upcast(),
@@ -498,6 +498,22 @@ fn memory_map() -> gtk::ScrolledWindow {
     window
 }
 
+/// A report follows its cases until a compact review viewport is full.
+/// Explicit `height` or `grow` properties may still allocate more space.
+fn test_report_view() -> gtk::ScrolledWindow {
+    let rows = super::axis::column(0);
+    rows.set_hexpand(true);
+    let window = gtk::ScrolledWindow::new();
+    window.set_child(Some(&rows));
+    window.set_hexpand(true);
+    window.set_valign(gtk::Align::Start);
+    window.set_policy(gtk::PolicyType::Never, gtk::PolicyType::External);
+    window.set_min_content_height(0);
+    window.set_propagate_natural_height(true);
+    window.set_max_content_height(128);
+    window
+}
+
 /// Replaces a process map while independently enforcing the adapter ceiling.
 pub(crate) fn regions(widget: &gtk::Widget, value: &str) -> bool {
     widget.set_tooltip_text(Some(value));
@@ -645,11 +661,13 @@ pub(crate) fn test_report(widget: &gtk::Widget, value: &str) -> bool {
     while let Some(child) = rows.first_child() {
         rows.remove(&child);
     }
+    let mut accepted = 0_i32;
     for line in value.lines().take(hl_gui::TEST_REPORT_CASE_LIMIT) {
         let columns = line.splitn(5, '\t').collect::<Vec<_>>();
         if columns.len() != 5 {
             continue;
         }
+        accepted += 1;
         let case = super::axis::column(2);
         case.add_css_class("hl-test-report-case");
         let summary = super::axis::row(8);
@@ -703,6 +721,7 @@ pub(crate) fn test_report(widget: &gtk::Widget, value: &str) -> bool {
         }
         rows.append(&case);
     }
+    window.set_min_content_height((accepted * 32).min(128));
     true
 }
 

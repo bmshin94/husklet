@@ -384,8 +384,9 @@ fn components(css: &mut String, theme: &Theme) {
          .hl-chip {{ min-height: 24px; padding: 1px 8px; border-radius: {pill}px; background: {raised}; border-color: {line}; }}\n\
          .hl-separator {{ background: {line}; min-height: 1px; min-width: 1px; }}\n\
          .hl-datatable, .hl-list {{ background: {surface}; border: 1px solid {line}; border-radius: {radius}px; }}\n\
-         .hl-test-report-case {{ min-height: 32px; padding: 6px 8px; border-bottom: 1px solid {line}; }}\n\
+         .hl-test-report-case {{ min-height: 32px; padding: 3px 8px; border-bottom: 1px solid {line}; }}\n\
          .hl-test-report-case:last-child {{ border-bottom: none; }}\n\
+         .hl-testreportview, .hl-testreportview scrollbar.vertical {{ min-height: 0; }}\n\
          .test-status-passed {{ color: {positive}; }}\n\
          .test-status-failed {{ color: {danger}; }}\n\
          .test-status-skipped {{ color: {warning}; }}\n\

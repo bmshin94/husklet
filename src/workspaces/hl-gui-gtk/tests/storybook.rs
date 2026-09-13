@@ -280,8 +280,8 @@ mod unix {
                     .into_iter()
                     .filter(|view| view.has_css_class("hl-testreportview"))
                     .count(),
-                4,
-                "TestReportView page must render overview plus passed, failed, and skipped specimens"
+                5,
+                "TestReportView page must render overview, outcome states, and explicit sizing"
             );
             for label in ["✓ passed", "× failed", "– skipped", "expected ready, received offline"] {
                 assert!(
@@ -298,6 +298,7 @@ mod unix {
                     .all(|view| view.hadjustment().upper() <= view.hadjustment().page_size() + 1.0),
                 "TestReportView must not require horizontal scrolling at either documented width"
             );
+            assert_test_report_geometry(&root, "narrow");
         }
         if narrow_story {
             assert!(realized_window.width() <= 600, "{story} narrow capture remained wide");
@@ -1300,6 +1301,13 @@ mod unix {
             settle_window_width(&realized_window, 1_200);
             assert_form_primary(&root, "default wide");
             capture_story(&realized_window, "Validated settings form wide");
+        }
+        if story == "TestReportView" {
+            realized_window.set_size_request(1_200, 800);
+            realized_window.set_default_size(1_200, 800);
+            settle_window_width(&realized_window, 1_200);
+            assert_test_report_geometry(&root, "wide");
+            capture_story(&realized_window, "TestReportView wide");
         }
         if story == "Heading" {
             let specimens = descendants::<gtk::Label>(&root)
@@ -3624,13 +3632,19 @@ mod unix {
         let save = find::<gtk::Button>(root, |button| {
             button_caption(button).as_deref() == Some("Save defaults")
         });
-        let name = find::<gtk::Entry>(root, |entry| {
-            entry.placeholder_text().as_deref() == Some("api")
-        });
+        let name = find::<gtk::Entry>(root, |entry| entry.placeholder_text().as_deref() == Some("api"));
         let save_bounds = save.compute_bounds(root).expect("Save belongs to the form document");
-        let name_bounds = name.compute_bounds(root).expect("workspace name belongs to the form document");
-        assert!(save.has_css_class("variant-filled"), "{state} Save is a filled primary action");
-        assert!(save.has_css_class("tone-accent"), "{state} Save uses the accent hierarchy");
+        let name_bounds = name
+            .compute_bounds(root)
+            .expect("workspace name belongs to the form document");
+        assert!(
+            save.has_css_class("variant-filled"),
+            "{state} Save is a filled primary action"
+        );
+        assert!(
+            save.has_css_class("tone-accent"),
+            "{state} Save uses the accent hierarchy"
+        );
         assert!(save.has_css_class("size-small"), "{state} Save keeps compact chrome");
         assert!(save.is_focusable(), "{state} Save remains keyboard reachable");
         assert_eq!(save.height(), 44, "{state} Save keeps a 44px interaction target");
@@ -3648,6 +3662,59 @@ mod unix {
         assert!(
             save_bounds.x() + save_bounds.width() < name_bounds.x() + name_bounds.width(),
             "{state} Save expanded to the field's far edge"
+        );
+    }
+
+    fn assert_test_report_geometry(root: &gtk::Widget, width: &str) {
+        let reports = descendants::<gtk::ScrolledWindow>(root)
+            .into_iter()
+            .filter(|view| view.has_css_class("hl-testreportview"))
+            .collect::<Vec<_>>();
+        let report_with = |text: &str| {
+            reports
+                .iter()
+                .find(|view| {
+                    descendants::<gtk::Label>(view.upcast_ref())
+                        .iter()
+                        .any(|label| label.text() == text)
+                })
+                .unwrap_or_else(|| panic!("{width} TestReportView is missing {text:?}"))
+        };
+        let mixed = report_with("accepts valid token");
+        let passed = report_with("saves settings");
+        let explicit = report_with("case-31");
+        let (passed_minimum, passed_natural, _, _) = passed.measure(gtk::Orientation::Vertical, -1);
+        let passed_child = passed.child().map_or(-1, |child| child.height());
+        let passed_case = find::<gtk::Box>(passed.upcast_ref(), |row| row.has_css_class("hl-test-report-case"));
+        assert!(
+            (32..=40).contains(&passed.height()),
+            "{width} intrinsic one-row report is {}px instead of 32..=40px (minimum={passed_minimum}, natural={passed_natural}, child={passed_child}, case={})",
+            passed.height(),
+            passed_case.height(),
+        );
+        assert!(
+            (96..=128).contains(&mixed.height()),
+            "{width} intrinsic three-row report is outside 96..=128px: {}px",
+            mixed.height()
+        );
+        let helper = find::<gtk::Label>(root, |label| {
+            label.text() == "A completed case keeps its duration visible."
+        });
+        let passed_bounds = passed.compute_bounds(root).expect("passed report belongs to its page");
+        let helper_bounds = helper.compute_bounds(root).expect("passed helper belongs to its page");
+        let helper_gap = helper_bounds.y() - (passed_bounds.y() + passed_bounds.height());
+        assert!(
+            (0.0..=12.0).contains(&helper_gap),
+            "{width} passed helper is {helper_gap}px from its report"
+        );
+        assert_eq!(
+            explicit.height(),
+            160,
+            "{width} explicit height must override intrinsic sizing"
+        );
+        assert!(
+            explicit.vadjustment().upper() > explicit.vadjustment().page_size(),
+            "{width} explicit large report must remain scrollable"
         );
     }
 

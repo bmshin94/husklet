@@ -501,7 +501,7 @@ test('test report bounds cases and failure detail independently', () => {
 test('TestReportView owns one focused component page with distinct outcome specimens', () => {
   const stage = host();
   const frame = stage.render(h(TestReportWorkbench));
-  assert.equal(frame.patches.filter((patch) => patch.Create?.tag === 'TestReportView').length, 4);
+  assert.equal(frame.patches.filter((patch) => patch.Create?.tag === 'TestReportView').length, 5);
   for (const label of [
     'Test Report View',
     'Overview',
@@ -509,6 +509,8 @@ test('TestReportView owns one focused component page with distinct outcome speci
     'Passed',
     'Failed',
     'Skipped',
+    'Sizing',
+    'Explicit review viewport',
     'API',
   ]) {
     assert.ok(

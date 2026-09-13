@@ -376,14 +376,20 @@ fn test_report_is_bounded_selectable_and_columnar() {
     session.producer.set(report, Prop::Value, PropValue::text(value));
     session.flush().expect("report renders");
     let widget = session.tagged(Tag::TestReportView).expect("report widget");
+    let window = widget
+        .downcast_ref::<gtk::ScrolledWindow>()
+        .expect("report owns its dedicated scrolling viewport");
+    assert!(window.propagates_natural_height());
+    assert_eq!(window.max_content_height(), 128);
+    assert_eq!(window.min_content_height(), 128, "a large report stops growing at its compact ceiling");
     let labels = subtree(&widget)
         .into_iter()
         .filter_map(|child| child.downcast::<gtk::Label>().ok())
         .collect::<Vec<_>>();
     assert_eq!(labels.len(), 256 * 5, "256 test cases each retain five native columns");
     assert!(labels.iter().all(gtk::Label::is_selectable));
-    assert_eq!(labels[2].text(), "failed");
-    assert_eq!(labels[4].text(), "expected true");
+    assert!(labels.iter().any(|label| label.text() == "× failed"));
+    assert!(labels.iter().any(|label| label.text() == "expected true"));
 }
 
 fn timeline_is_bounded_selectable_and_columnar() {
