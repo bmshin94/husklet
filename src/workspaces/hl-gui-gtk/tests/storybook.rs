@@ -249,6 +249,7 @@ mod unix {
                 | "InlineMessage"
                 | "RecoveryState"
                 | "ConfirmAction"
+                | "Validated settings form"
                 | "Switch"
                 | "DataTable"
                 | "TestReportView"
@@ -306,6 +307,9 @@ mod unix {
             }
             if story == "RecoveryState" {
                 assert_recovery_state(&realized_window, &root, "Retry attempts · 1", 16.0, "narrow");
+            }
+            if story == "Validated settings form" {
+                assert_form_primary(&root, "default narrow");
             }
             if matches!(story, "Splitter" | "Workspace layout control") {
                 assert_public_splitter(
@@ -1290,6 +1294,13 @@ mod unix {
             settle_window_width(&realized_window, 1_200);
         }
         capture_story(&realized_window, story);
+        if story == "Validated settings form" {
+            realized_window.set_size_request(1_200, 800);
+            realized_window.set_default_size(1_200, 800);
+            settle_window_width(&realized_window, 1_200);
+            assert_form_primary(&root, "default wide");
+            capture_story(&realized_window, "Validated settings form wide");
+        }
         if story == "Heading" {
             let specimens = descendants::<gtk::Label>(&root)
                 .into_iter()
@@ -2592,11 +2603,13 @@ mod unix {
         }
         if story == "Validated settings form" {
             assert!(
-                descendants::<gtk::ToggleButton>(&root)
+                descendants::<gtk::Label>(&root)
                     .iter()
-                    .all(|button| button.label().as_deref() != Some("backend")),
-                "the controlled form did not acknowledge removal of the activated tag"
+                    .any(|label| label.text() == "Fix workspace name."),
+                "the controlled form did not place validation feedback before its primary action"
             );
+            assert_form_primary(&root, "invalid");
+            capture_story(&realized_window, "Validated settings form invalid");
         }
         if story == "Navigation and transient UI" {
             assert!(
@@ -3390,7 +3403,12 @@ mod unix {
                 .emit_clicked();
             }
             "Validated settings form" => {
-                find::<gtk::ToggleButton>(root, |button| button.label().as_deref() == Some("backend")).emit_clicked();
+                let save = find::<gtk::Button>(root, |button| {
+                    button_caption(button).as_deref() == Some("Save defaults")
+                });
+                assert!(save.grab_focus(), "Save accepts keyboard focus");
+                assert!(save.has_focus(), "Save exposes a singular native focus target");
+                save.emit_clicked();
             }
             "Navigation and transient UI" => {
                 find::<gtk::Expander>(root, |_| true).set_expanded(false);
@@ -3533,18 +3551,13 @@ mod unix {
             );
         }
         if story == "Validated settings form" {
-            let hl_gui::Event::Toggle { node, id, value } = &event else {
-                panic!("native ToggleButton did not emit its typed Toggle interaction: {event:?}")
+            let hl_gui::Event::Invoke { node, id } = &event else {
+                panic!("native Save did not emit its typed Invoke interaction: {event:?}")
             };
             assert_eq!(
-                tree.handler(*node, hl_gui::Trigger::Toggle),
+                tree.handler(*node, hl_gui::Trigger::Invoke),
                 Some(id),
-                "native ToggleButton must preserve the producer-owned handler identity"
-            );
-            assert_eq!(
-                value,
-                &hl_gui::PropValue::Flag(false),
-                "native ToggleButton must report its released state"
+                "native Save must preserve the producer-owned handler identity"
             );
         }
         if story == "Navigation and transient UI" {
@@ -3605,6 +3618,37 @@ mod unix {
             .mnemonic_widget()
             .and_then(|widget| widget.downcast::<gtk::Switch>().ok())
             .expect("FormControlLabel caption names its Switch")
+    }
+
+    fn assert_form_primary(root: &gtk::Widget, state: &str) {
+        let save = find::<gtk::Button>(root, |button| {
+            button_caption(button).as_deref() == Some("Save defaults")
+        });
+        let name = find::<gtk::Entry>(root, |entry| {
+            entry.placeholder_text().as_deref() == Some("api")
+        });
+        let save_bounds = save.compute_bounds(root).expect("Save belongs to the form document");
+        let name_bounds = name.compute_bounds(root).expect("workspace name belongs to the form document");
+        assert!(save.has_css_class("variant-filled"), "{state} Save is a filled primary action");
+        assert!(save.has_css_class("tone-accent"), "{state} Save uses the accent hierarchy");
+        assert!(save.has_css_class("size-small"), "{state} Save keeps compact chrome");
+        assert!(save.is_focusable(), "{state} Save remains keyboard reachable");
+        assert_eq!(save.height(), 44, "{state} Save keeps a 44px interaction target");
+        assert_eq!(
+            save.child().expect("Save owns visible chrome").height(),
+            28,
+            "{state} Save keeps 28px visible chrome"
+        );
+        assert!(
+            (save_bounds.x() - name_bounds.x()).abs() <= 1.0,
+            "{state} Save begins at x={}, detached from the form's x={}",
+            save_bounds.x(),
+            name_bounds.x()
+        );
+        assert!(
+            save_bounds.x() + save_bounds.width() < name_bounds.x() + name_bounds.width(),
+            "{state} Save expanded to the field's far edge"
+        );
     }
 
     fn assert_recovery_state(window: &gtk::Window, root: &gtk::Widget, receipt: &str, expected_x: f32, case: &str) {

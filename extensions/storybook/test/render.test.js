@@ -391,6 +391,14 @@ test('the form story validates submit, recovers on change, and confirms success'
   const entry = created(first.patches).find((created) => created.tag === 'Entry')?.id;
   const save = node(first.patches, 'Button', 'Save defaults');
   assert.ok(entry && save, 'the form has no editable field or save action');
+  const saveProps = Object.fromEntries(
+    first.patches
+      .filter((patch) => patch.SetProp?.id === save)
+      .map((patch) => [patch.SetProp.prop, patch.SetProp.value]),
+  );
+  assert.deepEqual(saveProps.Variant, { Variant: 'Filled' });
+  assert.deepEqual(saveProps.Tone, { Tone: 'Accent' });
+  assert.deepEqual(saveProps.Size, { ControlSize: 'Small' });
 
   let before = stage.frames.length;
   assert.ok(

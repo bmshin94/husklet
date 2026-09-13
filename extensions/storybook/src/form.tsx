@@ -140,8 +140,14 @@ export function ValidatedSettingsFormStory() {
       {saved
         ? [<Banner key={'saved'} label={`Defaults saved for ${name.trim()}.`} tone={'positive'} />]
         : []}
-      <Row key={'actions'} gap={2} justify={'end'}>
-        <Button label={'Save defaults'} tone={'accent'} onInvoke={submit} />
+      <Row key={'actions'} gap={2} justify={'start'}>
+        <Button
+          label={'Save defaults'}
+          tone={'accent'}
+          variant={'filled'}
+          size={'small'}
+          onInvoke={submit}
+        />
       </Row>
     </Column>
   );
