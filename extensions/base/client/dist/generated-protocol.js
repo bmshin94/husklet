@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:78d90a40c64cc70d
+// Protocol artifact fnv1a64:2aca55506aca43e6
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -375,6 +375,7 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "execution_write": "done",
   "execution_close_input": "done",
   "container_create": "identity",
+  "container_create_once": "identity",
   "container_start": "done",
   "container_stop": "done",
   "container_remove": "done",
@@ -512,6 +513,7 @@ export const PROTOCOL_REQUEST_CAPABILITIES = Object.freeze({
   "execution_write": "containers:input",
   "execution_close_input": "containers:input",
   "container_create": "containers:create",
+  "container_create_once": "containers:create",
   "container_start": "containers:lifecycle",
   "container_stop": "containers:lifecycle",
   "container_remove": "containers:remove",
@@ -10385,6 +10387,29 @@ const roots = {
         "name": "container_create",
         "payload": {
           "fields": [
+            {
+              "name": "spec",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "ContainerCreateSpec"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "container_create_once",
+        "payload": {
+          "fields": [
+            {
+              "name": "token",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            },
             {
               "name": "spec",
               "optional": false,

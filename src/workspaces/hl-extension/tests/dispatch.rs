@@ -1827,6 +1827,19 @@ fn calls() -> Vec<(Request, Capability)> {
             Capability::ContainerCreate,
         ),
         (
+            Request::ContainerCreateOnce {
+                token: "0123456789abcdef0123456789abcdef".into(),
+                spec: hl_extension::port::ContainerCreateSpec {
+                    image: "docker.io/library/alpine:latest".into(),
+                    name: "x".into(), hostname: None, entrypoint: None, command: Vec::new(),
+                    environment: Vec::new(), working_directory: None, user: None, labels: Vec::new(),
+                    mounts: Vec::new(), network: None, ports: Vec::new(), memory_mb: None,
+                    cpus: None, pids_limit: None,
+                },
+            },
+            Capability::ContainerCreate,
+        ),
+        (
             Request::ContainerStart {
                 id: "c".repeat(64),
                 generation: 4,
@@ -3850,6 +3863,49 @@ fn exact_name_scope_filters_inventory_and_create_is_independent() {
         Err(Failure::Denied { .. })
     ));
     assert!(!host.ledger.reached().contains(&"containers.stop"));
+}
+
+#[test]
+fn create_once_is_shared_across_reconnect_and_binds_token_to_specification() {
+    let host = Host::new();
+    let ownership = hl_extension::ExecutionOwnership::default();
+    let make_session = || {
+        Session::new(Authority::new(
+            ExtensionName::new("creator").unwrap(),
+            Grant::new([Capability::ContainerCreate]),
+            Vec::new(),
+        ))
+        .with_containers(hl_extension::ContainerGrant {
+            selectors: Vec::new(),
+            create: true,
+        })
+        .with_images(hl_extension::ImageGrant {
+            r#use: vec![hl_extension::ImageSelector::Reference {
+                reference: "docker.io/library/alpine:3.20".into(),
+            }],
+            ..hl_extension::ImageGrant::default()
+        })
+        .with_execution_ownership(ownership.clone())
+    };
+    let spec = hl_extension::port::ContainerCreateSpec {
+        image: "docker.io/library/alpine:3.20".into(), name: "database".into(), hostname: None, entrypoint: None,
+        command: vec!["postgres".into()], environment: Vec::new(), working_directory: None,
+        user: None, labels: Vec::new(), mounts: Vec::new(), network: None, ports: Vec::new(),
+        memory_mb: None, cpus: None, pids_limit: None,
+    };
+    let token = "0123456789abcdef0123456789abcdef".to_owned();
+    let request = Request::ContainerCreateOnce { token: token.clone(), spec: spec.clone() };
+    let first = make_session().dispatch(&request, &services(&host)).unwrap();
+    let second = make_session().dispatch(&request, &services(&host)).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(host.ledger.reached().iter().filter(|call| **call == "containers.create_spec").count(), 1);
+
+    let mut replacement = spec;
+    replacement.name = "replacement".into();
+    assert!(matches!(
+        make_session().dispatch(&Request::ContainerCreateOnce { token, spec: replacement }, &services(&host)),
+        Err(Failure::Conflict { .. })
+    ));
 }
 
 #[test]

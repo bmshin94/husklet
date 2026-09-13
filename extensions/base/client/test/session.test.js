@@ -10999,3 +10999,83 @@ test('real Unix execAndWait preserves the completed execution when bounded log r
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('fragmented Unix create-once reconnects to one immutable identity and rejects token mismatch', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-create-once-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const connections = new Set();
+  const token = '0123456789abcdef0123456789abcdef';
+  const id = 'a'.repeat(64);
+  let committed;
+  let creates = 0;
+  let accepted = 0;
+  const server = net.createServer((socket) => {
+    accepted += 1;
+    const connection = accepted;
+    connections.add(socket);
+    socket.on('close', () => connections.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.payload.call !== 'container_create_once') continue;
+        const request = frame.payload.with;
+        if (committed && JSON.stringify(committed) !== JSON.stringify(request.spec)) {
+          socket.write(
+            encode({
+              channel: 2,
+              kind: KIND.response,
+              flags: 3,
+              payload: { error: 'conflict', detail: 'token is bound to another specification' },
+            }),
+          );
+        } else {
+          if (!committed) {
+            committed = request.spec;
+            creates += 1;
+          }
+          if (connection === 1) socket.destroy();
+          else {
+            const reply = encode({
+              channel: 2,
+              kind: KIND.response,
+              payload: { reply: 'identity', with: id },
+            });
+            for (const byte of reply) socket.write(Uint8Array.of(byte));
+          }
+        }
+      }
+    });
+    socket.write(
+      encode({
+        channel: CONTROL,
+        kind: KIND.open,
+        payload: { protocol: 1, peer: `create-once-${connection}`, granted: ['containers:create'] },
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  const spec = { image: 'postgres:17', name: 'database', command: ['postgres'] };
+  try {
+    const first = await connect({ path: socketPath });
+    await assert.rejects(workspace(first).containers.createOnce(token, spec), /closed/);
+    const second = await connect({ path: socketPath });
+    const third = await connect({ path: socketPath });
+    assert.deepEqual(
+      await Promise.all([
+        workspace(second).containers.createOnce(token, spec),
+        workspace(third).containers.createOnce(token, spec),
+      ]),
+      [id, id],
+    );
+    assert.equal(creates, 1);
+    await assert.rejects(
+      workspace(second).containers.createOnce(token, { ...spec, name: 'replacement' }),
+      /another specification/,
+    );
+    await Promise.all([second.close(), third.close()]);
+  } finally {
+    for (const connection of connections) connection.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});

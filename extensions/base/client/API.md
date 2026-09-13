@@ -91,6 +91,7 @@ order; the JavaScript client's checks are never treated as a security boundary.
 - `host.containers.writeExecutionStdin(...)` — `execution_write`, requires `containers:input`.
 - `host.containers.closeExecutionStdin(...)` — `execution_close_input`, requires `containers:input`.
 - `host.containers.create(...)` — `container_create`, requires `containers:create`.
+- `host.containers.createOnce(...)` — `container_create_once`, requires `containers:create`.
 - `host.containers.start(...)` — `container_start`, requires `containers:lifecycle`.
 - `host.containers.stop(...)` — `container_stop`, requires `containers:lifecycle`.
 - `host.containers.remove(...)` — `container_remove`, requires `containers:remove`.

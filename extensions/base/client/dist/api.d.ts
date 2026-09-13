@@ -1483,6 +1483,8 @@ export interface WorkspaceApi {
         create(configuration: ContainerCreateSpec): Promise<string>;
         /** Backwards-compatible shorthand for an image and optional container name. */
         create(image: string, name?: string): Promise<string>;
+        /** Create exactly once per authenticated extension incarnation; reuse the token after reconnect. */
+        createOnce(token: string, configuration: ContainerCreateSpec): Promise<string>;
         start(id: string, generation: number): Promise<void>;
         /**
          * Arm bounded inventory, start an immutable ID, then accept only a later running snapshot.

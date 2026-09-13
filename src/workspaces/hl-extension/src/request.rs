@@ -224,6 +224,10 @@ pub enum Request {
     ContainerCreate {
         spec: crate::port::ContainerCreateSpec,
     },
+    ContainerCreateOnce {
+        token: String,
+        spec: crate::port::ContainerCreateSpec,
+    },
     ContainerStart {
         id: String,
         generation: u64,
@@ -671,7 +675,7 @@ impl Request {
             | Self::ExecutionLogs { .. }
             | Self::ExecutionOutput { .. }
             | Self::ExecutionWait { .. } => Capability::ContainerRead,
-            Self::ContainerCreate { .. } => Capability::ContainerCreate,
+            Self::ContainerCreate { .. } | Self::ContainerCreateOnce { .. } => Capability::ContainerCreate,
             Self::ContainerStart { .. }
             | Self::ContainerStop { .. }
             | Self::ContainerPause { .. }

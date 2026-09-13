@@ -1670,6 +1670,33 @@ export function workspace(session, { signal } = {}) {
                 };
                 return expect(await session.call('container_create', { spec: normalized }), 'identity');
             },
+            createOnce: async (token, configuration) => {
+                if (!/^[0-9a-f]{32}$/.test(token))
+                    throw new TypeError('container create token must be 32 lowercase hexadecimal characters');
+                if (!configuration || typeof configuration !== 'object' || Array.isArray(configuration))
+                    throw new TypeError('container creation requires a configuration object');
+                const spec = {
+                    hostname: null,
+                    entrypoint: null,
+                    command: [],
+                    environment: [],
+                    working_directory: null,
+                    user: null,
+                    labels: [],
+                    mounts: [],
+                    network: null,
+                    ports: [],
+                    memory_mb: null,
+                    cpus: null,
+                    pids_limit: null,
+                    ...configuration,
+                };
+                const normalized = {
+                    ...spec,
+                    mounts: spec.mounts.map((mount) => ({ read_only: false, ...mount })),
+                };
+                return expect(await session.call('container_create_once', { token, spec: normalized }), 'identity');
+            },
             start: (id, generation) => done('container_start', containerMutation(id, generation)),
             stop: (id, generation) => done('container_stop', containerMutation(id, generation)),
             remove: (id, generation) => done('container_remove', containerMutation(id, generation)),

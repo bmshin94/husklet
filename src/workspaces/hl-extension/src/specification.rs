@@ -83,6 +83,7 @@ const REQUEST_TO_REPLY: &[(&str, &str)] = &[
     ("execution_write", "done"),
     ("execution_close_input", "done"),
     ("container_create", "identity"),
+    ("container_create_once", "identity"),
     ("container_start", "done"),
     ("container_stop", "done"),
     ("container_remove", "done"),
@@ -209,7 +210,7 @@ fn request_capability(request: &str) -> Capability {
         | "execution_logs"
         | "execution_output"
         | "execution_wait" => Capability::ContainerRead,
-        "container_create" => Capability::ContainerCreate,
+        "container_create" | "container_create_once" => Capability::ContainerCreate,
         "container_start" | "container_stop" | "container_pause" | "container_unpause" | "container_restart"
         | "container_rename" | "container_kill" => Capability::ContainerLifecycle,
         "container_remove" => Capability::ContainerRemove,

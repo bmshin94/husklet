@@ -60,8 +60,25 @@ pub struct Session {
     owned_executions: ExecutionOwnership,
 }
 
-/// Execution-control ownership shared by reconnecting sockets of one extension incarnation.
-pub type ExecutionOwnership = std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>;
+/// Bounded operation ownership shared by reconnecting sockets of one extension incarnation.
+///
+/// Creation records intentionally live only for the current workspace-host lifetime. They are
+/// never evicted while that host is alive, because forgetting one could let a reused token create
+/// a replacement container. Durable host-restart reconciliation needs a persistent tombstone
+/// store and is not provided by this ledger.
+#[derive(Default)]
+pub struct OwnedOperations {
+    executions: std::collections::BTreeSet<String>,
+    creations: std::collections::BTreeMap<String, (crate::port::ContainerCreateSpec, String)>,
+}
+
+impl OwnedOperations {
+    pub fn insert(&mut self, execution: String) -> bool {
+        self.executions.insert(execution)
+    }
+}
+
+pub type ExecutionOwnership = std::sync::Arc<std::sync::Mutex<OwnedOperations>>;
 
 /// One reconciliation frame and the surface that owns its sequence.
 #[derive(Clone, Debug, PartialEq)]
@@ -661,6 +678,7 @@ impl Session {
             .owned_executions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .executions
             .contains(id)
         {
             return Ok(());
@@ -776,6 +794,7 @@ impl Session {
                 )?))
             }
             Request::ContainerCreate { .. }
+            | Request::ContainerCreateOnce { .. }
             | Request::ContainerStart { .. }
             | Request::ContainerStop { .. }
             | Request::ContainerRemove { .. }
@@ -1021,7 +1040,7 @@ impl Session {
     }
 
     fn control(&mut self, request: &Request, services: &Services<'_>) -> Result<Reply, Failure> {
-        if let Request::ContainerCreate { spec } = request {
+        if let Request::ContainerCreate { spec } | Request::ContainerCreateOnce { spec, .. } = request {
             validate_container_create(spec)?;
             if !self.containers.create {
                 return Err(Failure::Denied {
@@ -1061,6 +1080,38 @@ impl Session {
             Request::ContainerCreate { spec } => {
                 validate_container_create(spec)?;
                 Ok(Reply::Identity(port.create_spec(spec)?))
+            }
+            Request::ContainerCreateOnce { token, spec } => {
+                if token.len() != 32
+                    || !token
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                {
+                    return Err(Failure::Conflict {
+                        detail: "container create token must be 32 lowercase hexadecimal characters".into(),
+                    });
+                }
+                validate_container_create(spec)?;
+                let mut ownership = self
+                    .owned_executions
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some((recorded, id)) = ownership.creations.get(token) {
+                    if recorded != spec {
+                        return Err(Failure::Conflict {
+                            detail: "container create token was already bound to another specification".into(),
+                        });
+                    }
+                    return Ok(Reply::Identity(id.clone()));
+                }
+                if ownership.creations.len() >= 4_096 {
+                    return Err(Failure::Conflict {
+                        detail: "container create token ledger reached its bounded capacity".into(),
+                    });
+                }
+                let id = port.create_spec(spec)?;
+                ownership.creations.insert(token.clone(), (spec.clone(), id.clone()));
+                Ok(Reply::Identity(id))
             }
             Request::ContainerStart { id, generation } => {
                 let target = self.resolve_mutation_container(id, services.containers)?;
@@ -1140,6 +1191,7 @@ impl Session {
                 self.owned_executions
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .executions
                     .remove(id);
                 Ok(Reply::Done)
             }
@@ -1202,6 +1254,7 @@ impl Session {
                 self.owned_executions
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .executions
                     .insert(execution.clone());
                 Ok(Reply::Identity(execution))
             }
@@ -1267,6 +1320,7 @@ impl Session {
                 self.owned_executions
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .executions
                     .insert(execution.clone());
                 Ok(Reply::Identity(execution))
             }
@@ -1796,6 +1850,7 @@ impl Session {
             self.owned_executions
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .executions
                 .insert(id.clone());
             return Ok(Reply::TerminalCommand(terminal_command_summary(
                 execution,

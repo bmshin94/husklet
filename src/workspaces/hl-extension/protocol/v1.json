@@ -8700,6 +8700,10 @@
       "request": "container_create"
     },
     {
+      "capability": "containers:create",
+      "request": "container_create_once"
+    },
+    {
       "capability": "containers:lifecycle",
       "request": "container_start"
     },
@@ -9240,6 +9244,10 @@
     {
       "reply": "identity",
       "request": "container_create"
+    },
+    {
+      "reply": "identity",
+      "request": "container_create_once"
     },
     {
       "reply": "done",
@@ -11180,6 +11188,29 @@
           "name": "container_create",
           "payload": {
             "fields": [
+              {
+                "name": "spec",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "ContainerCreateSpec"
+                }
+              }
+            ],
+            "kind": "struct"
+          }
+        },
+        {
+          "name": "container_create_once",
+          "payload": {
+            "fields": [
+              {
+                "name": "token",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              },
               {
                 "name": "spec",
                 "optional": false,
@@ -14870,7 +14901,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:a4cc5ff64f23ff45",
+  "source_fingerprint": "fnv1a64:48d1cb7b30eb74e0",
   "specification_version": 1,
   "topics": [
     {
