@@ -14,6 +14,7 @@ import {
   FormControlLabel,
   Heading,
   IconButton,
+  InlineButton,
   InlineMessage,
   Progress,
   RecoveryState,
@@ -1402,7 +1403,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                     tooltip={`Review access requested by ${entry.title}`}
                                     size="small"
                                     variant="outline"
-                                    tone="accent"
+                                    tone="neutral"
                                     enabled={!busy && compatibility.compatible !== false}
                                     onInvoke={() => inspect(entry.reference, entry)}
                                   />
@@ -1566,7 +1567,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                             tooltip="Enable only the permissions required for this extension to remain available"
                             size="small"
                             variant="outline"
-                            tone="accent"
+                            tone="neutral"
                             enabled={!busy}
                             onInvoke={() =>
                               setGranted((current) => [
@@ -2322,24 +2323,22 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                         {!update &&
                                         extension.name !== 'top' &&
                                         extension.status.startsWith('fault:') ? (
-                                          <Button
+                                          <InlineButton
                                             key="lifecycle"
                                             label="Retry"
-                                            size="small"
                                             variant="outline"
-                                            tone="accent"
+                                            tone="neutral"
                                             enabled={!busy}
                                             onInvoke={() => lifecycle(extension, 'retry')}
                                           />
                                         ) : !update &&
                                           extension.name !== 'top' &&
                                           !extension.enabled ? (
-                                          <Button
+                                          <InlineButton
                                             key="lifecycle"
                                             label="Enable"
-                                            size="small"
                                             variant="outline"
-                                            tone="accent"
+                                            tone="neutral"
                                             enabled={!busy}
                                             onInvoke={() => lifecycle(extension, 'enable')}
                                           />

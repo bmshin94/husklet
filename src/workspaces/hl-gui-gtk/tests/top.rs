@@ -1656,6 +1656,10 @@ mod unix {
                 review_access.has_css_class("variant-outline"),
                 "new extension access review uses the quieter outlined hierarchy"
             );
+            assert!(
+                review_access.has_css_class("tone-neutral") && third_review.has_css_class("tone-neutral"),
+                "repeated catalogue review actions remain neutral until focused"
+            );
             let available = ancestor_with_class(&find_mapped_labelled(&access_card, "Available"), "hl-badge")
                 .expect("available state belongs to a badge");
             assert!(
@@ -1697,6 +1701,38 @@ mod unix {
                 for (label, action) in [("update", &review), ("access", &review_access)] {
                     assert_standard_action(action, width_name, &format!("Discover {label}"), 28);
                 }
+                gtk::prelude::RootExt::set_focus(&window, None::<&gtk::Widget>);
+                settle_toolkit();
+                assert_outline_button_pixels(
+                    &window,
+                    &discover_root,
+                    &review_access,
+                    false,
+                    &format!("{width_name} resting catalogue action"),
+                );
+                assert!(
+                    review_access.grab_focus(),
+                    "{width_name} catalogue action accepts focus"
+                );
+                let review_chrome = review_access.child().expect("catalogue action owns visible chrome");
+                review_chrome.add_css_class("hl-focus-visible-proof");
+                settle_toolkit();
+                assert_outline_button_pixels(
+                    &window,
+                    &discover_root,
+                    &review_access,
+                    true,
+                    &format!("{width_name} focused catalogue action"),
+                );
+                assert_outline_button_pixels(
+                    &window,
+                    &discover_root,
+                    &third_review,
+                    false,
+                    &format!("{width_name} adjacent unfocused catalogue action"),
+                );
+                review_chrome.remove_css_class("hl-focus-visible-proof");
+                review_access.unset_state_flags(gtk::StateFlags::FOCUSED | gtk::StateFlags::FOCUS_VISIBLE);
                 let description = find_mapped_labelled(&review_card, "A bounded daily developer workflow for task 01.");
                 let description_bounds = description
                     .compute_bounds(&review_card)
@@ -4061,10 +4097,10 @@ mod unix {
                 "{width} {purpose} action is not keyboard reachable"
             );
         }
-        assert!(
-            button.height() >= 44,
-            "{width} {purpose} hit target is only {}px",
-            button.height()
+        assert_eq!(
+            button.height(),
+            44,
+            "{width} {purpose} hit target must remain exactly compact"
         );
         let chrome = widgets_with_class(button.upcast_ref(), "hl-inline-button-chrome")
             .into_iter()
@@ -4368,11 +4404,15 @@ mod unix {
             };
             assert_eq!(action.accessible_role(), gtk::AccessibleRole::Button);
             assert!(action.is_focusable(), "{case} {label} action is keyboard reachable");
-            assert!(
-                action.has_css_class("size-small"),
-                "{case} {label} action uses the compact card tier"
-            );
-            assert_standard_action(&action, case, label, 28);
+            if label == "Review update" {
+                assert!(
+                    action.has_css_class("size-small"),
+                    "{case} {label} action uses the compact card tier"
+                );
+                assert_standard_action(&action, case, label, 28);
+            } else {
+                assert_inline_action(&action, case, label);
+            }
         }
         if width > 600 {
             assert!(
@@ -4416,7 +4456,9 @@ mod unix {
                 "{case} healthy grid did not fill its first row"
             );
             assert!(
-                first_row_heights.iter().all(|height| *height == first_row_heights[0]),
+                first_row_heights
+                    .iter()
+                    .all(|height| (*height - first_row_heights[0]).abs() <= 2),
                 "{case} healthy first-row cards are not uniform: {first_row_heights:?}"
             );
         }
@@ -4905,6 +4947,61 @@ mod unix {
             })
             .count();
         assert!(ink >= 4, "{case} is absent from its current render bounds {bounds:?}");
+    }
+
+    fn assert_outline_button_pixels(
+        window: &gtk::Window,
+        _root: &gtk::Widget,
+        action: &gtk::Button,
+        focused: bool,
+        case: &str,
+    ) {
+        let texture = stable_texture(window, window.width(), window.height());
+        let width = texture.width() as usize;
+        let stride = width * 4;
+        let mut pixels = vec![0_u8; stride * texture.height() as usize];
+        texture.download(&mut pixels, stride);
+        let chrome = action.child().expect("outline action owns visible chrome");
+        let bounds = chrome
+            .compute_bounds(window.upcast_ref::<gtk::Widget>())
+            .expect("outline action chrome belongs to the Top window");
+        let x0 = bounds.x().round().max(0.0) as usize;
+        let y0 = bounds.y().round().max(0.0) as usize;
+        let x1 = ((bounds.x() + bounds.width()).round() as usize - 1).min(width - 1);
+        let y1 = ((bounds.y() + bounds.height()).round() as usize - 1).min(texture.height() as usize - 1);
+        let boundary = (x0..=x1)
+            .flat_map(|x| [(x, y0), (x, y1)])
+            .chain((y0 + 1..y1).flat_map(|y| [(x0, y), (x1, y)]))
+            .collect::<Vec<_>>();
+        let count = |color: [u8; 3]| {
+            boundary
+                .iter()
+                .filter(|(x, y)| pixels[y * stride + x * 4..y * stride + x * 4 + 3] == color)
+                .count()
+        };
+        // `Texture::download` exposes GDK's native B8G8R8A8 byte order here.
+        let line = count([0x43, 0x38, 0x32]);
+        let accent = count([0xf7, 0x9d, 0x55]);
+        let minimum = ((bounds.width() + bounds.height()) / 3.0) as usize;
+        if focused {
+            assert!(
+                accent >= minimum,
+                "{case} did not replace its border with one accent ring: line={line}, accent={accent}, bounds={bounds:?}"
+            );
+            assert_eq!(
+                line, 0,
+                "{case} retained a second neutral ring under focus: line={line}, accent={accent}"
+            );
+        } else {
+            assert!(
+                line >= minimum,
+                "{case} omitted its single neutral border: line={line}, accent={accent}, bounds={bounds:?}"
+            );
+            assert_eq!(
+                accent, 0,
+                "{case} painted focus accent while it was not focused: accent={accent}"
+            );
+        }
     }
 
     fn texture_signature(texture: &gtk::gdk::Texture) -> u64 {

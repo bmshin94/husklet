@@ -1264,6 +1264,11 @@ test('extension discovery reviews the first-party Storybook without requiring a 
     'available extensions use a quiet review action until access is explicitly approved',
   );
   assert.deepEqual(
+    taggedProperty(stage, 'Review access', 'Button', 'Tone'),
+    { Tone: 'Neutral' },
+    'repeated catalogue actions stay neutral until selected or focused',
+  );
+  assert.deepEqual(
     taggedProperty(stage, 'Available', 'Badge', 'Tone'),
     { Tone: 'Neutral' },
     'availability does not compete with updates or consent for accent emphasis',
@@ -3428,9 +3433,9 @@ test('installed extension lifecycle reconciles a lost reply without masking a re
   await settled();
 
   assert.deepEqual(
-    taggedProperty(stage, 'Enable', 'Button', 'Size'),
-    { ControlSize: 'Small' },
-    'the installed lifecycle action keeps its card compact',
+    taggedProperty(stage, 'Enable', 'InlineButton', 'Variant'),
+    { Variant: 'Outline' },
+    'the installed lifecycle action uses compact secondary chrome',
   );
   invoke(stage, 'Enable');
   await settled();
@@ -3586,9 +3591,9 @@ test('installed extensions expose truthful enabled, disabled, fault and retry st
   );
   assert.ok(labelled(stage, 'Retry'));
   assert.deepEqual(
-    taggedProperty(stage, 'Retry', 'Button', 'Size'),
-    { ControlSize: 'Small' },
-    'fault recovery keeps the installed card compact',
+    taggedProperty(stage, 'Retry', 'InlineButton', 'Variant'),
+    { Variant: 'Outline' },
+    'fault recovery uses compact secondary chrome',
   );
   invoke(stage, 'Retry');
   await settled();
