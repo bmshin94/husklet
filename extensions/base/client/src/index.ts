@@ -6114,7 +6114,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         const current = extensions.find((extension) => extension.name === name);
         if (current && current.image_digest !== digest) {
           reject(new Error(`extension ${name} was replaced while enabling`));
-        } else if (current?.enabled) {
+        } else if (current?.enabled && current.status === 'duty') {
           resolve(current);
         }
       };

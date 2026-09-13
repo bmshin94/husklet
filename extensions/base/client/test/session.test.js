@@ -5513,9 +5513,28 @@ test('real Unix extension enable arms inventory before digest-bound authority', 
         if (frame.channel !== 2) continue;
         calls.push(frame.payload.call);
         socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
-        if (frame.payload.call === 'extension_enable')
+        if (frame.payload.call === 'extension_enable') {
           socket.write(
             encode({
+              channel: 14,
+              kind: KIND.event,
+              payload: {
+                snapshot: 'extensions',
+                of: [
+                  {
+                    name: 'manager',
+                    image_digest: digest,
+                    version: '1',
+                    status: 'fault: sidecar exited before activation',
+                    enabled: true,
+                    pane_providers: [],
+                  },
+                ],
+              },
+            }),
+          );
+          setImmediate(() => {
+            const duty = encode({
               channel: 14,
               kind: KIND.event,
               payload: {
@@ -5531,8 +5550,10 @@ test('real Unix extension enable arms inventory before digest-bound authority', 
                   },
                 ],
               },
-            }),
-          );
+            });
+            for (const byte of duty) socket.write(Uint8Array.of(byte));
+          });
+        }
       }
     });
     socket.write(
@@ -5552,6 +5573,7 @@ test('real Unix extension enable arms inventory before digest-bound authority', 
     const session = await connect({ path: socketPath });
     const result = await workspace(session).extensions.enableAndWait('manager', digest);
     assert.equal(result.changed, true);
+    assert.equal(result.extension.status, 'duty');
     assert.deepEqual(calls, ['event_subscribe', 'extension_enable', 'event_unsubscribe']);
     await session.close();
   } finally {

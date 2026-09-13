@@ -5017,7 +5017,7 @@ export function workspace(session, { signal } = {}) {
                 if (current && current.image_digest !== digest) {
                     reject(new Error(`extension ${name} was replaced while enabling`));
                 }
-                else if (current?.enabled) {
+                else if (current?.enabled && current.status === 'duty') {
                     resolve(current);
                 }
             };
