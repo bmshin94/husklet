@@ -2039,6 +2039,15 @@ mod unix {
                         (secondary_bounds.x() - 16.0).abs() <= 1.0,
                         "narrow Discover secondary row lost the shared 16px content edge: {secondary_bounds:?}"
                     );
+                } else {
+                    assert!(
+                        (search_bounds.x() - 192.0).abs() <= 1.0,
+                        "wide Discover toolbar did not begin at the shared content edge: {search_bounds:?}"
+                    );
+                    assert!(
+                        search_bounds.width() >= 200.0 && search_bounds.width() <= 360.0,
+                        "wide Discover search lost its deliberate compact width: {search_bounds:?}"
+                    );
                 }
                 assert_contained(&discover_root, &format!("discover/extensions/{width_name}"));
                 for (label, action) in [("update", &review), ("access", &review_access)] {

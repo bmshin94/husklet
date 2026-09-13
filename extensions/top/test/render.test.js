@@ -1616,7 +1616,7 @@ test('extension discovery searches, filters, reports result counts, and clears a
   await settled();
   assert.equal(labelled(stage, 'Showing 19 of 19 matching extensions'), undefined);
   assert.deepEqual(placeholderProperty(stage, 'Search extensions', 'Width'), {
-    Bounds: { minimum: { Chars: 14 }, maximum: null },
+    Bounds: { minimum: { Chars: 24 }, maximum: { Chars: 34 } },
   });
 
   change(stage, 'Search extensions', 'postgres');
