@@ -28,6 +28,8 @@ mod management;
 mod management_events;
 mod postgres;
 mod postgres_dial;
+#[cfg(test)]
+mod postgres_worker;
 mod registration;
 mod resource;
 mod revision;
