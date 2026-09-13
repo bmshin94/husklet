@@ -52,33 +52,12 @@ try {
         });
         try {
           const resumedTerminal = workspace(resumedSession).terminal;
-          const stdout = [...(cause.stdout ?? [])];
-          const stderr = [...(cause.stderr ?? [])];
-          let after = cause.after;
-          let complete = false;
-          for (let pageNumber = 0; pageNumber < 4_096; pageNumber += 1) {
-            const page = await resumedTerminal.commandOutput(cause.command, {
-              after,
-              limit: 16,
-            });
-            for (const entry of page.output.entries) {
-              const destination = entry.stream === 'stdout' ? stdout : stderr;
-              destination.push(...entry.bytes);
-              if (stdout.length + stderr.length > 1024 * 1024) {
-                throw new RangeError('resumed terminal command output exceeded 1048576 bytes');
-              }
-            }
-            after = page.output.next;
-            if (page.output.eof) {
-              complete = true;
-              break;
-            }
-          }
-          if (!complete) throw new Error('resumed terminal command exceeded 4096 output pages');
-          const command = await resumedTerminal.commandWait(cause.command);
-          const decode = (bytes: number[]) =>
-            new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(bytes));
-          result = { command, stdout: decode(stdout), stderr: decode(stderr) };
+          result = await resumedTerminal.resumeCommandText(cause.command, {
+            after: cause.after,
+            stdout: cause.stdout,
+            stderr: cause.stderr,
+            maxBytes: 1024 * 1024,
+          });
         } finally {
           await resumedSession.close();
         }

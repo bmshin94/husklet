@@ -501,6 +501,15 @@ test('large Git review output exposes an exact reconnect cursor after fragmented
               },
             },
           });
+        } else if (frame.payload.call === 'terminal_command_wait' && connection === 2) {
+          fragmented(socket, {
+            channel: frame.channel,
+            kind: KIND.response,
+            payload: {
+              reply: 'terminal_command',
+              with: { ...running, command: gitCommand, running: false, exit_code: 0, pid: 0 },
+            },
+          });
         }
       }
     });
@@ -544,15 +553,19 @@ test('large Git review output exposes an exact reconnect cursor after fragmented
     assert(Object.isFrozen(failure.command.command));
 
     const resumed = await connect({ path: socketPath });
-    const remainder = await workspace(resumed).terminal.commandOutput(failure.command, {
+    const remainder = await workspace(resumed).terminal.resumeCommandText(failure.command, {
       after: failure.after,
-      limit: 1,
+      stdout: failure.stdout,
+      stderr: failure.stderr,
+      maxBytes: 1024 * 1024,
+      pageLimit: 1,
     });
-    assert.equal(remainder.output.next, 2);
-    assert.equal(remainder.output.eof, true);
+    assert.equal(remainder.stdout, 'diff --git a/a b/a\n');
+    assert.equal(remainder.stderr, 'warning: recovered\n');
+    assert.equal(remainder.command.running, false);
     assert.deepEqual(requests.at(-1), {
-      call: 'terminal_command_output',
-      with: { id, owner, ...pane, after: 1, limit: 1 },
+      call: 'terminal_command_wait',
+      with: { id, owner, ...pane, timeout_ms: 30000 },
     });
     await resumed.close();
   } finally {

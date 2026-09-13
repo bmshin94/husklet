@@ -3099,6 +3099,89 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           throw cause;
         }
       },
+      resumeCommandText: async (
+        command,
+        {
+          after,
+          stdout = [],
+          stderr = [],
+          maxBytes,
+          maxPages = 4_096,
+          pageLimit = 16,
+          pollIntervalMs = 25,
+          signal,
+        },
+      ) => {
+        command = exactTerminalCommand(command);
+        if (!Number.isSafeInteger(after) || after < 0)
+          throw new TypeError('terminal command resume cursor must be a nonnegative safe integer');
+        if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 16 * 1024 * 1024)
+          throw new RangeError('terminal command maxBytes must be between 1 and 16777216');
+        if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 4_096)
+          throw new RangeError('terminal command maxPages must be between 1 and 4096');
+        if (!Number.isInteger(pageLimit) || pageLimit < 1 || pageLimit > 16)
+          throw new RangeError('terminal command pageLimit must be between 1 and 16');
+        exactExecutionPollInterval(pollIntervalMs);
+        const exactInitial = (value: readonly number[], stream: string) => {
+          if (
+            !Array.isArray(value) ||
+            value.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)
+          )
+            throw new TypeError(`terminal command ${stream} resume bytes must be octets`);
+          return [...value];
+        };
+        const bytes = {
+          stdout: exactInitial(stdout, 'stdout'),
+          stderr: exactInitial(stderr, 'stderr'),
+        };
+        const scoped = signal ? api.withSignal(signal) : api;
+        let total = bytes.stdout.length + bytes.stderr.length;
+        if (total > maxBytes)
+          throw new RangeError('terminal command initial output exceeds maxBytes');
+        let cursor = after;
+        let phase = 'output';
+        try {
+          for (let pageNumber = 0; pageNumber < maxPages; pageNumber += 1) {
+            requireOutputActive(signal);
+            const page = await scoped.terminal.commandOutput(command, {
+              after: cursor,
+              limit: pageLimit,
+            });
+            if (page.output.gap)
+              throw new ExecutionOutputGapError(command.id, cursor, page.output.next);
+            let pageBytes = 0;
+            for (const entry of page.output.entries) {
+              pageBytes += entry.bytes.length;
+              if (total + pageBytes > maxBytes)
+                throw new RangeError('terminal command output exceeded maxBytes');
+            }
+            for (const entry of page.output.entries) bytes[entry.stream].push(...entry.bytes);
+            total += pageBytes;
+            cursor = page.output.next;
+            if (page.output.eof) {
+              phase = 'wait';
+              const completed = await scoped.terminal.commandWait(command);
+              if (completed.running)
+                throw new Error('terminal command output ended before the command completed');
+              phase = 'decode';
+              const decode = (value: number[]) =>
+                new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(value));
+              return {
+                command: completed,
+                stdout: decode(bytes.stdout),
+                stderr: decode(bytes.stderr),
+              };
+            }
+            if (!page.output.more) await outputPoll(pollIntervalMs, signal);
+          }
+          throw new RangeError('terminal command resume exceeded maxPages');
+        } catch (cause) {
+          throw new TerminalCommandOperationError(command, phase, cursor, cause, {
+            stdout: Object.freeze(bytes.stdout),
+            stderr: Object.freeze(bytes.stderr),
+          });
+        }
+      },
       read: async (slot, lines) =>
         exactPane(
           expect(

@@ -1720,6 +1720,24 @@ export interface WorkspaceApi {
         cancelTimeoutMs?: number;
       },
     ): Promise<{ command: TerminalCommand; stdout: string; stderr: string }>;
+    /**
+     * Resume bounded UTF-8 collection for an immutable supervised command after reconnect.
+     * Initial bytes and `after` should come from `TerminalCommandOperationError`. This observer
+     * never signals the command; failures retain the latest completely consumed cursor and bytes.
+     */
+    resumeCommandText(
+      command: TerminalCommand,
+      options: {
+        after: number;
+        stdout?: readonly number[];
+        stderr?: readonly number[];
+        maxBytes: number;
+        maxPages?: number;
+        pageLimit?: number;
+        pollIntervalMs?: number;
+        signal?: AbortSignal;
+      },
+    ): Promise<{ command: TerminalCommand; stdout: string; stderr: string }>;
     /** Arm and read before CAS spawn, then return a later bounded terminal screen revision. */
     spawnAndWait(
       slot: string,
