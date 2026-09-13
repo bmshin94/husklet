@@ -5334,9 +5334,22 @@ mod unix {
         let removal_bounds = removal
             .compute_bounds(&first)
             .expect("removal belongs to its fault card");
+        let fault_badge = find_mapped_labelled(&first, "Faulted");
+        let fault_bounds = fault_badge
+            .compute_bounds(&first)
+            .expect("fault state belongs to its card");
         assert!(
-            (8.0..=12.0).contains(&(removal_bounds.y() - retry_bounds.y() - retry_bounds.height())),
-            "{case} removal disclosure is not a distinct compact block after Retry: retry={retry_bounds:?} removal={removal_bounds:?}"
+            (retry_bounds.y() - fault_bounds.y()).abs() <= 12.0,
+            "{case} Retry is detached from the fault summary: retry={retry_bounds:?} fault={fault_bounds:?}"
+        );
+        assert!(
+            removal_bounds.y() >= retry_bounds.y() + retry_bounds.height(),
+            "{case} removal disclosure overlaps the header recovery action"
+        );
+        assert!(
+            first.height() <= 230,
+            "{case} fault recovery card exceeded the compact 230px budget: {}px",
+            first.height()
         );
         assert!(retry.grab_focus(), "{case} Retry is the first keyboard action");
         assert!(retry.has_focus(), "{case} Retry owns keyboard focus");

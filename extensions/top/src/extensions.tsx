@@ -2475,10 +2475,7 @@ export function Extensions({
                               const provider = extension.pane_providers?.[0];
                               const hasCardAction = Boolean(
                                 update ||
-                                (!builtIn &&
-                                  (extension.status.startsWith('fault:') ||
-                                    !extension.enabled ||
-                                    catalogueEntry)) ||
+                                (!builtIn && (!extension.enabled || catalogueEntry)) ||
                                 provider,
                               );
                               return (
@@ -2517,6 +2514,17 @@ export function Extensions({
                                         }
                                       />
                                       {builtIn ? <Badge label="Built-in" tone="accent" /> : null}
+                                      {!update && extension.name !== 'top' && faulted ? (
+                                        <Button
+                                          key="lifecycle"
+                                          label={retrying ? 'Retrying…' : 'Retry'}
+                                          variant="filled"
+                                          tone={retrying ? 'neutral' : 'accent'}
+                                          size="small"
+                                          enabled={!busy}
+                                          onInvoke={() => lifecycle(extension, 'retry')}
+                                        />
+                                      ) : null}
                                     </Row>
                                     {builtIn ? (
                                       <Text
@@ -2570,19 +2578,9 @@ export function Extensions({
                                             onInvoke={() => inspect(update.reference, update)}
                                           />
                                         )}
-                                        {!update && extension.name !== 'top' && faulted ? (
-                                          <Button
-                                            key="lifecycle"
-                                            label={retrying ? 'Retrying…' : 'Retry'}
-                                            variant="filled"
-                                            tone={retrying ? 'neutral' : 'accent'}
-                                            size="small"
-                                            enabled={!busy}
-                                            onInvoke={() => lifecycle(extension, 'retry')}
-                                          />
-                                        ) : !update &&
-                                          extension.name !== 'top' &&
-                                          !extension.enabled ? (
+                                        {!update &&
+                                        extension.name !== 'top' &&
+                                        !extension.enabled ? (
                                           <InlineButton
                                             key="lifecycle"
                                             label="Enable"

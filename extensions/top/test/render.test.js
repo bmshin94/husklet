@@ -3750,6 +3750,12 @@ test('fault retry keeps its primary slot while the lifecycle request is pending'
   assert.deepEqual(taggedProperty(stage, 'Retry', 'Button', 'Variant'), { Variant: 'Filled' });
   assert.deepEqual(taggedProperty(stage, 'Retry', 'Button', 'Tone'), { Tone: 'Accent' });
   assert.deepEqual(taggedProperty(stage, 'Retry', 'Button', 'Size'), { ControlSize: 'Small' });
+  assert.equal(ancestorTags(stage, 'Retry')[0], 'Row');
+  assert.equal(ancestorTags(stage, 'Faulted')[0], 'Row');
+  assert.ok(
+    sharedAncestor(stage, ['Faulted', 'Retry'], 'Row'),
+    'fault status and its recovery action share the compact summary row',
+  );
   assert.deepEqual(taggedProperty(stage, 'Remove extension…', 'Expander', 'Variant'), {
     Variant: 'Outline',
   });
