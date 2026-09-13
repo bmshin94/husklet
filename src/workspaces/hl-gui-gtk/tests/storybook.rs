@@ -2634,12 +2634,66 @@ mod unix {
             root.width(),
             root.height()
         );
+        if story.contains("focused outline") {
+            assert_single_focus_border(&capture_window, root, target, story);
+        }
         capture_widget(&capture_window, root, story);
         capture_window.set_child(None::<&gtk::Widget>);
         capture_window.close();
         window.set_child(Some(root));
         window.present();
         settle_toolkit();
+    }
+
+    fn assert_single_focus_border(window: &gtk::Window, root: &gtk::Widget, target: &gtk::Widget, case: &str) {
+        settle_toolkit();
+        let chrome = target.first_child().expect("focused action owns visible chrome");
+        let paintable = gtk::WidgetPaintable::new(Some(root));
+        let snapshot = gtk::Snapshot::new();
+        paintable.snapshot(
+            snapshot.upcast_ref::<gtk::gdk::Snapshot>(),
+            f64::from(root.width()),
+            f64::from(root.height()),
+        );
+        let node = snapshot.to_node().expect("focused Storybook specimen renders");
+        let texture = window
+            .renderer()
+            .expect("Storybook window owns renderer")
+            .render_texture(&node, None);
+        let stride = texture.width() as usize * 4;
+        let mut pixels = vec![0_u8; stride * texture.height() as usize];
+        texture.download(&mut pixels, stride);
+        let bounds = chrome
+            .compute_bounds(root)
+            .expect("focused chrome belongs to capture root");
+        let x0 = bounds.x().round() as usize;
+        let y0 = bounds.y().round() as usize;
+        let x1 = (bounds.x() + bounds.width()).round() as usize - 1;
+        let y1 = (bounds.y() + bounds.height()).round() as usize - 1;
+        let is_accent = |x: usize, y: usize| {
+            let pixel = &pixels[y * stride + x * 4..y * stride + x * 4 + 3];
+            [[0xf7, 0x9d, 0x55], [0x55, 0x9d, 0xf7]].iter().any(|accent| {
+                pixel
+                    .iter()
+                    .zip(accent)
+                    .all(|(actual, expected)| actual.abs_diff(*expected) <= 32)
+            })
+        };
+        let count = |inset: usize| {
+            let (left, top, right, bottom) = (x0 + inset, y0 + inset, x1 - inset, y1 - inset);
+            (left..=right)
+                .flat_map(|x| [(x, top), (x, bottom)])
+                .chain((top + 1..bottom).flat_map(|y| [(left, y), (right, y)]))
+                .filter(|(x, y)| is_accent(*x, *y))
+                .count()
+        };
+        let minimum = ((x1 - x0 + y1 - y0) / 3).max(4);
+        let outer = count(0);
+        let inner = count(1);
+        assert!(
+            outer >= minimum && inner >= minimum,
+            "{case} must draw one contiguous 2px accent perimeter: outer={outer}, inner={inner}, bounds=({x0},{y0})..({x1},{y1})"
+        );
     }
 
     fn reveal_for_capture(root: &gtk::Widget, target: &gtk::Widget) {

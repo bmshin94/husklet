@@ -16,10 +16,10 @@ mod unix {
         NetworkEndpointInventory, NetworkInventory, NetworkKind, NetworkSummary,
     };
     use hl_extension::{
-        codec, Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
-        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PaneProvider, PreferenceValue,
+        Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
+        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PROTOCOL, PaneProvider, PreferenceValue,
         RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire, WorkspaceConfiguration,
-        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, PROTOCOL,
+        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, codec,
     };
     use hl_gui::{Renderer as _, SourceMutation, Theme, Tree};
     use hl_gui_gtk::Surface;
@@ -4969,19 +4969,25 @@ mod unix {
         let y0 = bounds.y().round().max(0.0) as usize;
         let x1 = ((bounds.x() + bounds.width()).round() as usize - 1).min(width - 1);
         let y1 = ((bounds.y() + bounds.height()).round() as usize - 1).min(texture.height() as usize - 1);
-        let boundary = (x0..=x1)
-            .flat_map(|x| [(x, y0), (x, y1)])
-            .chain((y0 + 1..y1).flat_map(|y| [(x0, y), (x1, y)]))
-            .collect::<Vec<_>>();
-        let count = |color: [u8; 3]| {
+        let perimeter = |inset: usize| {
+            let (left, top, right, bottom) = (x0 + inset, y0 + inset, x1 - inset, y1 - inset);
+            (left..=right)
+                .flat_map(|x| [(x, top), (x, bottom)])
+                .chain((top + 1..bottom).flat_map(|y| [(left, y), (right, y)]))
+                .collect::<Vec<_>>()
+        };
+        let outer = perimeter(0);
+        let inner = perimeter(1);
+        let count = |boundary: &[(usize, usize)], color: [u8; 3]| {
             boundary
                 .iter()
                 .filter(|(x, y)| pixels[y * stride + x * 4..y * stride + x * 4 + 3] == color)
                 .count()
         };
         // `Texture::download` exposes GDK's native B8G8R8A8 byte order here.
-        let line = count([0x43, 0x38, 0x32]);
-        let accent = count([0xf7, 0x9d, 0x55]);
+        let line = count(&outer, [0x43, 0x38, 0x32]);
+        let accent = count(&outer, [0xf7, 0x9d, 0x55]);
+        let inner_accent = count(&inner, [0xf7, 0x9d, 0x55]);
         let minimum = ((bounds.width() + bounds.height()) / 3.0) as usize;
         if focused {
             assert!(
@@ -4992,6 +4998,10 @@ mod unix {
                 line, 0,
                 "{case} retained a second neutral ring under focus: line={line}, accent={accent}"
             );
+            assert!(
+                inner_accent >= minimum,
+                "{case} focus border was not one contiguous 2px perimeter: outer={accent}, inner={inner_accent}, bounds={bounds:?}"
+            );
         } else {
             assert!(
                 line >= minimum,
@@ -5000,6 +5010,10 @@ mod unix {
             assert_eq!(
                 accent, 0,
                 "{case} painted focus accent while it was not focused: accent={accent}"
+            );
+            assert_eq!(
+                inner_accent, 0,
+                "{case} resting outline retained an inset accent stroke: inner={inner_accent}"
             );
         }
     }
