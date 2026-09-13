@@ -6,6 +6,7 @@ import type {
   Frame,
   DataRow,
   RowRequest,
+  RowRequestContext,
   SourceMutation,
   SurfaceBootstrap,
 } from '@husklet/client';
@@ -102,15 +103,16 @@ export async function connect({
   connectTimeout,
 }: ConnectOptions = {}) {
   const connected: { session?: Session } = {};
-  const pendingRows: Array<{ request: RowRequest; channel: number }> = [];
+  const pendingRows: Array<{ request: RowRequest; channel: number; context: RowRequestContext }> =
+    [];
   const session = await Session.connect(path, {
-    onRows: (request, channel) => {
+    onRows: (request, channel, context) => {
       if (connected.session === undefined) {
-        pendingRows.push({ request, channel });
+        pendingRows.push({ request, channel, context });
         return;
       }
       if (!deliverRows(connected.session, request, channel, onEventError) && onRows)
-        onRows(request, channel);
+        onRows(request, channel, context);
     },
     pendingLimit,
     timeout,
@@ -133,8 +135,9 @@ export async function connect({
     retiredSlots: new Set(),
     routesEvents: true,
   });
-  for (const { request, channel } of pendingRows) {
-    if (!deliverRows(session, request, channel, onEventError) && onRows) onRows(request, channel);
+  for (const { request, channel, context } of pendingRows) {
+    if (!deliverRows(session, request, channel, onEventError) && onRows)
+      onRows(request, channel, context);
   }
   return session;
 }

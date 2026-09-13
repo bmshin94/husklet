@@ -797,6 +797,10 @@ export interface RowWindow {
     };
     rows: unknown[];
 }
+/** Lifetime of one host-owned row request; aborted before its channel authority is retired. */
+export interface RowRequestContext {
+    signal: AbortSignal;
+}
 export declare function validateRowRequest(value: unknown): RowRequest;
 export declare function validateUiEvent(value: unknown): PaneSelection | InterfaceEvent;
 export declare class ExtensionError extends Error {
@@ -981,7 +985,7 @@ export interface ConnectOptions {
     pendingLimit?: number;
     timeout?: number;
     connectTimeout?: number;
-    onRows?: (request: RowRequest, channel: number) => void | Promise<void>;
+    onRows?: (request: RowRequest, channel: number, context: RowRequestContext) => void | Promise<void>;
     onReply?: (reply: unknown) => void;
     onEvent?: (event: HostEvent, channel: number) => void | Promise<void>;
     onEventError?: (error: unknown) => void;

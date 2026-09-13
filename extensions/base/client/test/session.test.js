@@ -6135,6 +6135,92 @@ test('a coalesced Unix close revokes later GUI and row frames in the same read',
   }
 });
 
+test('row channel retirement aborts stale database work before a replacement generation', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-row-cancel-'));
+  const socketPath = path.join(directory, 'host.sock');
+  let peer;
+  const returned = [];
+  const server = net.createServer((socket) => {
+    peer = socket;
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      const frames = reader.take(chunk);
+      returned.push(...frames);
+      for (const frame of frames) {
+        if (frame.kind === KIND.ping)
+          socket.write(encode({ channel: frame.channel, kind: KIND.pong, payload: frame.payload }));
+      }
+    });
+    socket.write(
+      encode({
+        channel: CONTROL,
+        kind: KIND.open,
+        payload: { protocol: 1, peer: 'row-cancel', granted: [] },
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  let session;
+  const observations = [];
+  try {
+    session = await connect({
+      path: socketPath,
+      onRows: async (request, channel, { signal }) => {
+        observations.push({ request, channel, signal });
+        if (request.version === 1 || request.version === 3) {
+          await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+          return;
+        }
+        session.answer(channel, {
+          source: request.source,
+          version: request.version,
+          request: request.id,
+          range: request.range,
+          rows: [{ id: 999_999, embedding: 'bounded replacement row' }],
+        });
+      },
+    });
+    const sendOneByte = async (frame) => {
+      for (const byte of encode(frame)) peer.write(Uint8Array.of(byte));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    };
+    await sendOneByte({
+      channel: 41,
+      kind: KIND.event,
+      payload: { id: 1, source: 9, version: 1, range: { start: 999_936, count: 64 } },
+    });
+    assert.equal(observations.length, 1);
+    assert.equal(observations[0].signal.aborted, false);
+    await sendOneByte({ channel: 41, kind: KIND.close, payload: Buffer.alloc(0) });
+    assert.equal(observations[0].signal.aborted, true, 'cancelled query receives its abort before authority is forgotten');
+    await sendOneByte({
+      channel: 41,
+      kind: KIND.event,
+      payload: { id: 2, source: 9, version: 2, range: { start: 999_936, count: 64 } },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    const answers = returned.filter((frame) => frame.channel === 41 && frame.kind === KIND.response);
+    assert.equal(answers.length, 1, 'the cancelled generation emits no late row answer');
+    assert.equal(answers[0].payload.version, 2);
+    assert.equal(answers[0].payload.request, 2);
+    await session.ping(); // Cancelling stale row work keeps the ordered session usable.
+    await sendOneByte({
+      channel: 42,
+      kind: KIND.event,
+      payload: { id: 3, source: 9, version: 3, range: { start: 0, count: 1 } },
+    });
+    const reconnectWork = observations.at(-1);
+    assert.equal(reconnectWork.signal.aborted, false);
+    await session.close();
+    assert.equal(reconnectWork.signal.aborted, true, 'socket teardown cancels work before reconnect');
+  } finally {
+    await session?.close();
+    peer?.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('an asynchronous row listener failure closes its real Unix request generation', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-row-listener-error-'));
   const socketPath = path.join(directory, 'host.sock');

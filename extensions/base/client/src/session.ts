@@ -372,7 +372,7 @@ export class Session {
   #eventChannels = new Map<number, symbol>();
   #pending = [];
   #pings = new Map();
-  #rows = new Map<number, RowRequest>();
+  #rows = new Map<number, { request: RowRequest; controller: AbortController }>();
   #nextPing = 1;
   #limit;
   #timeout;
@@ -669,8 +669,9 @@ export class Session {
   /** Answers a row window the host asked for. */
   answer(channel, window) {
     safeUnsigned(channel, 'row answer channel');
-    const request = this.#rows.get(channel);
-    if (!request) throw new RowRequestUnavailableError(channel);
+    const active = this.#rows.get(channel);
+    if (!active) throw new RowRequestUnavailableError(channel);
+    const { request } = active;
     const answer = requiredObject(window, 'row answer');
     const range = requiredObject(answer.range, 'row answer range');
     if (
@@ -814,6 +815,8 @@ export class Session {
         this.#finish(new Error('extension host closed the session'));
         this.#socket.destroy();
       } else {
+        const row = this.#rows.get(frame.channel);
+        if (row) row.controller.abort('host retired the row request');
         this.#rows.delete(frame.channel);
         const topic = this.#eventTopics.get(frame.channel);
         this.#eventTopics.delete(frame.channel);
@@ -832,8 +835,9 @@ export class Session {
         throw new Error(`outstanding row request limit of ${this.#limit} is exhausted`);
       }
       const request = validateRowRequest(frame.payload);
-      this.#rows.set(frame.channel, request);
-      const delivered = this.#onRows(request, frame.channel);
+      const controller = new AbortController();
+      this.#rows.set(frame.channel, { request, controller });
+      const delivered = this.#onRows(request, frame.channel, { signal: controller.signal });
       if (delivered && typeof delivered.then === 'function') {
         Promise.resolve(delivered).catch((error) => {
           this.#finish(error);
@@ -1005,6 +1009,7 @@ export class Session {
       pending.reject(error);
     }
     this.#pings.clear();
+    for (const row of this.#rows.values()) row.controller.abort(error);
     this.#rows.clear();
     this.#events.clear();
     this.#topics.clear();
