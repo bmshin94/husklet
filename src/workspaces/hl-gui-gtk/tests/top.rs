@@ -2903,6 +2903,7 @@ mod unix {
             "failure body does not repeat the header identity"
         );
         let retry = find_button(&failure_root, "Retry inspection");
+        let settings = find_button(&failure_root, "Open workspace settings");
         let back = find_button(&failure_root, "Back to catalogue");
         let technical = find_expander(&failure_root, "Technical details");
         assert!(
@@ -2966,13 +2967,24 @@ mod unix {
                 retry_bounds.y() < detail_bounds.y(),
                 "{width_name} Retry must precede secondary details"
             );
-            for (label, action) in [("retry", &retry), ("back", &back)] {
+            for (label, action) in [("retry", &retry), ("settings", &settings), ("back", &back)] {
                 assert!(
                     action.has_css_class("size-small"),
                     "{width_name} {label} action is compact"
                 );
                 assert_standard_action(action, width_name, label, 28);
             }
+            let action_bounds = [&retry, &settings, &back].map(|action| {
+                widgets_with_class(action.upcast_ref(), "hl-button-chrome")[0]
+                    .compute_bounds(&failure_root)
+                    .expect("recovery chrome belongs to failure card")
+            });
+            assert!(
+                action_bounds
+                    .windows(2)
+                    .all(|pair| pair[1].x() - (pair[0].x() + pair[0].width()) >= 8.0),
+                "{width_name} recovery actions need at least 8px between controls: {action_bounds:?}"
+            );
             capture(
                 window,
                 &format!("extension-acquisition-failure-{width_name}"),
@@ -2980,7 +2992,54 @@ mod unix {
                 800,
             );
         }
-        retry.emit_clicked();
+        assert!(settings.is_mapped() && settings.is_sensitive());
+        let _ = surface.reports().drain();
+        settings.grab_focus();
+        settings.emit_clicked();
+        settle_toolkit();
+        send_report(surface, wire, 101, |event| {
+            matches!(event, hl_gui::Event::Invoke { .. })
+        });
+
+        apply_extension_update_until(
+            wire,
+            tree,
+            surface,
+            "Workspace settings",
+            |request| match request {
+                Request::WorkspaceInfo => Reply::Workspace(workspace_info()),
+                Request::WorkspaceInspect { .. } => Reply::WorkspaceConfiguration(workspace_configuration()),
+                other => panic!("unexpected workspace-settings recovery call: {other:?}"),
+            },
+            || None,
+        );
+        let settings_root = surface.widget().clone().upcast::<gtk::Widget>();
+        let _ = surface.reports().drain();
+        find_button(&settings_root, "Return to extension retry").emit_clicked();
+        settle_toolkit();
+        send_report(surface, wire, 101, |event| {
+            matches!(event, hl_gui::Event::Invoke { .. })
+        });
+        apply_extension_update_until(
+            wire,
+            tree,
+            surface,
+            "Developer Tool 01",
+            |request| match request {
+                Request::ExtensionList => Reply::Extensions(extensions()),
+                Request::ExtensionCatalogue => Reply::ExtensionCatalogue(catalogue()),
+                Request::WorkspaceInfo => Reply::Workspace(workspace_info()),
+                Request::WorkspaceInspect { .. } => Reply::WorkspaceConfiguration(workspace_configuration()),
+                Request::EventSubscribe { .. } => Reply::Done,
+                Request::EventUnsubscribe { .. } => Reply::Done,
+                other => panic!("unexpected extension recovery return call: {other:?}"),
+            },
+            || None,
+        );
+        let returned_root = surface.widget().clone().upcast::<gtk::Widget>();
+        let reference_entry = find_entry_placeholder(&returned_root, "registry.example/extension:version");
+        assert_eq!(reference_entry.text(), reference);
+        find_tooltip_button(&returned_root, "Review the 1.0.0 update for Developer Tool 01").emit_clicked();
         settle_toolkit();
         send_report(surface, wire, 101, |event| {
             matches!(event, hl_gui::Event::Invoke { .. })
@@ -3023,13 +3082,23 @@ mod unix {
                         error: None,
                     })
                 }
+                Request::ExtensionList => Reply::Extensions(extensions()),
+                Request::ExtensionCatalogue => Reply::ExtensionCatalogue(catalogue()),
+                Request::WorkspaceInfo => Reply::Workspace(workspace_info()),
+                Request::WorkspaceInspect { .. } => Reply::WorkspaceConfiguration(workspace_configuration()),
                 Request::EventSubscribe { topic } => {
-                    assert_eq!(topic, hl_extension::Topic::ExtensionAcquisitions);
-                    acquisition_subscribed.set(true);
+                    if topic == hl_extension::Topic::ExtensionAcquisitions {
+                        acquisition_subscribed.set(true);
+                    } else {
+                        assert_eq!(topic, hl_extension::Topic::Extensions);
+                    }
                     Reply::Done
                 }
                 Request::EventUnsubscribe { topic } => {
-                    assert_eq!(topic, hl_extension::Topic::ExtensionAcquisitions);
+                    assert!(matches!(
+                        topic,
+                        hl_extension::Topic::ExtensionAcquisitions | hl_extension::Topic::Extensions
+                    ));
                     Reply::Done
                 }
                 other => panic!("unexpected extension review call: {other:?}"),
@@ -3579,12 +3648,28 @@ mod unix {
             inventory_event_sent.get(),
             "the fixture must publish the post-update duty lifecycle before success"
         );
+        apply_extension_update_until(
+            wire,
+            tree,
+            surface,
+            "Healthy extensions",
+            |request| match request {
+                Request::EventUnsubscribe { .. } => Reply::Done,
+                other => panic!("unexpected installed reveal call: {other:?}"),
+            },
+            || None,
+        );
         drain_extension_renders(wire, tree, surface);
         let success_root = surface.widget().clone().upcast::<gtk::Widget>();
         assert!(!has_label(&success_root, "Update available"));
         assert!(
-            find_tooltip_button(&success_root, "Review access requested by Developer Tool 02").is_sensitive(),
-            "success restores catalogue actions"
+            has_label(&success_root, "Installed extensions"),
+            "verified publication moves to the durable installed inventory"
+        );
+        assert!(has_label(&success_root, "developer-tool-01"));
+        assert!(
+            !has_label(&success_root, "Find extensions"),
+            "success cannot leave the committed extension hidden in Discover"
         );
         capture_update_surface(window, &success_root, "update-success");
     }

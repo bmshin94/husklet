@@ -512,8 +512,20 @@ function RequestedPermissionSummary({ groups }: { groups: { label: string; count
   );
 }
 
-export function Extensions({ api }: { api: WorkspaceApi }) {
-  const [mode, setMode] = React.useState<ExtensionMode>('installed');
+export function Extensions({
+  api,
+  initialReference = '',
+  onReferenceChange,
+  onOpenWorkspaceSettings,
+}: {
+  api: WorkspaceApi;
+  initialReference?: string;
+  onReferenceChange?: (reference: string) => void;
+  onOpenWorkspaceSettings?: () => void;
+}) {
+  const [mode, setMode] = React.useState<ExtensionMode>(
+    initialReference ? 'discover' : 'installed',
+  );
   const [installed, setInstalled] = React.useState<ExtensionSummary[]>([]);
   const [catalogue, setCatalogue] = React.useState<ExtensionCatalogue | null>(null);
   const [catalogueState, setCatalogueState] = React.useState<'loading' | 'ready' | 'error'>(
@@ -526,7 +538,11 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
   >('loading');
   const [inventoryError, setInventoryError] = React.useState('');
   const [watchError, setWatchError] = React.useState('');
-  const [reference, setReference] = React.useState('');
+  const [reference, setReferenceState] = React.useState(initialReference);
+  const setReference = (next: string) => {
+    setReferenceState(next);
+    onReferenceChange?.(next);
+  };
   const [acquisition, setAcquisition] = React.useState<ExtensionAcquisitionStatus | null>(null);
   const [catalogueExpectation, setCatalogueExpectation] =
     React.useState<ExtensionCatalogueEntry | null>(null);
@@ -594,6 +610,17 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
     setCatalogueCategory('');
     setCatalogueLimit(CATALOGUE_PAGE_SIZE);
     setInstalledQuery('');
+    setInstalledFilter('all');
+    setInstalledLimit(INSTALLED_PAGE_SIZE);
+  };
+
+  const revealInstalled = (name: string) => {
+    setMode('installed');
+    setCatalogueQuery('');
+    setCatalogueFilter('discover');
+    setCatalogueCategory('');
+    setCatalogueLimit(CATALOGUE_PAGE_SIZE);
+    setInstalledQuery(name);
     setInstalledFilter('all');
     setInstalledLimit(INSTALLED_PAGE_SIZE);
   };
@@ -769,6 +796,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
       setAcquisition(null);
       setReference('');
       await reload();
+      if (result.changed) revealInstalled(result.extension.name);
       setNotice(
         result.changed
           ? {
@@ -811,9 +839,13 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
               extension.name === reviewed.name && extension.image_digest === reviewed.image_digest,
           );
           if (committed) {
+            ++inventoryEpoch.current;
             setInstalled(listing);
+            setInventoryState(listing.length === 0 ? 'empty' : 'ready');
+            setInventoryError('');
             setAcquisition(null);
             setReference('');
+            revealInstalled(committed.name);
             setNotice({
               label: `${reviewed.name} ${updating ? 'updated' : 'installed'}, but the confirmation reply was lost. Current extension state was verified by refresh.`,
               uncertain: false,
@@ -1531,7 +1563,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                 </Column>
               )}
               {!acquisition ? (
-                <Expander label="Install from an OCI image" expanded={false}>
+                <Expander label="Install from an OCI image" expanded={Boolean(reference)}>
                   <Card grow={false} width="fill" variant="outline">
                     <CardContent>
                       <Row gap={1} width="fill" wrap>
@@ -2138,7 +2170,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                             tone="danger"
                             width={COPY_WIDTH}
                           />
-                          <Row gap={1} wrap>
+                          <Row gap={2} wrap>
                             <Button
                               label="Retry inspection"
                               size="small"
@@ -2147,6 +2179,16 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                               enabled={!busy}
                               onInvoke={() => inspect(reference, catalogueExpectation)}
                             />
+                            {isAcquisitionAuthenticationFailure(acquisition.error) &&
+                            onOpenWorkspaceSettings ? (
+                              <Button
+                                label="Open workspace settings"
+                                size="small"
+                                variant="outline"
+                                enabled={!busy}
+                                onInvoke={onOpenWorkspaceSettings}
+                              />
+                            ) : null}
                             <Button
                               label="Back to catalogue"
                               size="small"
@@ -2810,6 +2852,10 @@ export function acquisitionFailure(detail: string): string {
     return 'Workspace image service is unavailable. Reopen the workspace, then retry inspection.';
   }
   return 'The image could not be inspected. Verify its registry, name, version, and visibility, then retry.';
+}
+
+export function isAcquisitionAuthenticationFailure(detail: string | null | undefined): boolean {
+  return /unauthorized|denied|authentication required|insufficient_scope/i.test(detail ?? '');
 }
 
 export function acquisitionTechnicalDetail(detail: string): string {

@@ -1,5 +1,7 @@
 import React from 'react';
 import {
+  Button,
+  Column,
   Row,
   Responsive,
   Select,
@@ -182,6 +184,7 @@ export function Top({
     return () => clearTimeout(timer);
   }, [api, preferencesReady, sidebarWidth]);
   const [requestedExecution, setRequestedExecution] = useState('');
+  const [extensionReference, setExtensionReference] = useState('');
   const containers = useResource(api.containers.list, initial.containers);
   const images = useResource(api.images.list, initial.images);
   const volumes = useResource(api.volumes.list, initial.volumes);
@@ -274,9 +277,26 @@ export function Top({
         onOpen={setSection}
       />
     ) : section === 'settings' ? (
-      <Workspace api={api} />
+      extensionReference ? (
+        <Column width="fill" height="fill" gap={1}>
+          <Button
+            label="Return to extension retry"
+            size="small"
+            variant="ghost"
+            onInvoke={() => setSection('extensions')}
+          />
+          <Workspace api={api} />
+        </Column>
+      ) : (
+        <Workspace api={api} />
+      )
     ) : section === 'extensions' ? (
-      <Extensions api={api} />
+      <Extensions
+        api={api}
+        initialReference={extensionReference}
+        onReferenceChange={setExtensionReference}
+        onOpenWorkspaceSettings={() => setSection('settings')}
+      />
     ) : section === 'containers' ? (
       <Containers
         api={api}

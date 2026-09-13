@@ -2421,10 +2421,14 @@ test('extension discovery keeps the newest result when catalogue retries finish 
 
 test('extension inspection keeps invalid and failed references recoverable with a direct retry', async () => {
   const references = [];
+  let settingsOpened = 0;
   let attempt = 0;
   const stage = host();
   stage.render(
     h(Extensions, {
+      onOpenWorkspaceSettings: () => {
+        settingsOpened += 1;
+      },
       api: {
         extensions: {
           list: async () => [],
@@ -2494,6 +2498,7 @@ test('extension inspection keeps invalid and failed references recoverable with 
     ),
   );
   assert.ok(labelled(stage, 'Retry inspection'));
+  assert.ok(labelled(stage, 'Open workspace settings'));
   assert.ok(labelled(stage, 'Back to catalogue'));
   assert.deepEqual(taggedProperty(stage, 'Retry inspection', 'Button', 'Size'), {
     ControlSize: 'Small',
@@ -2501,6 +2506,23 @@ test('extension inspection keeps invalid and failed references recoverable with 
   assert.deepEqual(taggedProperty(stage, 'Back to catalogue', 'Button', 'Size'), {
     ControlSize: 'Small',
   });
+  assert.deepEqual(taggedProperty(stage, 'Open workspace settings', 'Button', 'Size'), {
+    ControlSize: 'Small',
+  });
+  assert.ok(
+    labelled(stage, 'Retry inspection').SetProp.id <
+      labelled(stage, 'Open workspace settings').SetProp.id &&
+      labelled(stage, 'Open workspace settings').SetProp.id <
+        labelled(stage, 'Back to catalogue').SetProp.id,
+    'authentication recovery keeps Retry first and Back last in keyboard order',
+  );
+  invoke(stage, 'Open workspace settings');
+  assert.equal(settingsOpened, 1);
+  assert.equal(
+    fieldValue(stage, 'registry.example/extension:version'),
+    'registry.example/reviewed:1',
+    'opening settings does not discard the immutable retry reference',
+  );
   assert.ok(labelled(stage, 'Technical details'));
   assert.ok(
     labelled(stage, 'Retry inspection').SetProp.id <
@@ -2663,6 +2685,7 @@ test('a stale cancellation refreshes the authoritative phase and remains cancell
 
 test('exact workspace environment consent carries its required verb and clears coherently', async () => {
   const installs = [];
+  let installed = [];
   const selector = { workspace: 'development', name: 'DATABASE_URL' };
   const candidate = {
     name: 'environment-reader',
@@ -2677,7 +2700,7 @@ test('exact workspace environment consent carries its required verb and clears c
     h(Extensions, {
       api: {
         extensions: {
-          list: async () => [],
+          list: async () => installed,
           startAcquisition: async () => ({ job: 'environment-review' }),
           acquisition: async () => ({
             job: 'environment-review',
@@ -2690,7 +2713,9 @@ test('exact workspace environment consent carries its required verb and clears c
           }),
           installAndWait: async (...arguments_) => {
             installs.push(arguments_);
-            return { changed: true, extension: { ...candidate, status: 'duty', enabled: true } };
+            const extension = { ...candidate, status: 'duty', enabled: true };
+            installed = [extension];
+            return { changed: true, extension };
           },
         },
         watchExtensions: async () => () => {},
@@ -2718,8 +2743,13 @@ test('exact workspace environment consent carries its required verb and clears c
   invoke(stage, 'Install with selected access');
   await settled();
   await settled();
+  await settled();
+  await settled();
   assert.deepEqual(installs[0][2].capabilities, ['workspace-environment:read']);
   assert.deepEqual(installs[0][2].workspaceEnvironment, { read: [selector], write: [] });
+  assert.equal(fieldValue(stage, 'Search installed'), 'environment-reader');
+  assert.ok(labelled(stage, 'Installed extensions'));
+  assert.ok(labelled(stage, 'environment-reader'));
 });
 
 test('a long extension acquisition stays attached to its host job until review is ready', async () => {
@@ -3068,6 +3098,10 @@ test('extension review grants one exact network without workspace-wide network a
   invoke(stage, 'Install with selected access');
   await settled();
   await settled();
+  await settled();
+  await settled();
+  await settled();
+  await settled();
   assert.deepEqual(calls[0][2].networks, {
     selectors: [{ name: 'database' }],
     create: false,
@@ -3209,6 +3243,8 @@ test('extension image entry submits from the keyboard and consent explains reque
   invoke(stage, 'Install with selected access');
   await settled();
   await settled();
+  await settled();
+  await settled();
   assert.deepEqual(calls.filter(([operation]) => operation === 'inspect').length, 1);
   assert.deepEqual(calls.at(-1).slice(0, 3), ['install', 'candidate', 8]);
   assert.deepEqual(calls.at(-1)[3].capabilities, ['containers:read', 'terminals:output']);
@@ -3218,6 +3254,8 @@ test('extension image entry submits from the keyboard and consent explains reque
       'assistant installed, but the confirmation reply was lost. Current extension state was verified by refresh.',
     ),
   );
+  assert.equal(fieldValue(stage, 'Search installed'), 'assistant');
+  assert.ok(labelled(stage, 'assistant'));
 });
 
 test('a ready extension review can be abandoned without granting authority', async () => {
@@ -3367,6 +3405,8 @@ test('a lost install reply follows the committing job instead of replaying stale
   finishCommit();
   await settled();
   await settled();
+  await settled();
+  await settled();
 
   assert.deepEqual(waits, [['commit-recovery', 3]]);
   assert.equal(installs, 1);
@@ -3376,6 +3416,8 @@ test('a lost install reply follows the committing job instead of replaying stale
       'database-tools installed, but the confirmation reply was lost. Current extension state was verified by refresh.',
     ),
   );
+  assert.equal(fieldValue(stage, 'Search installed'), 'database-tools');
+  assert.ok(labelled(stage, 'database-tools'));
 });
 
 test('installed extension removal requires final consent and a failure remains retryable', async () => {
