@@ -2694,6 +2694,29 @@ mod unix {
             outer >= minimum && inner >= minimum,
             "{case} must draw one contiguous 2px accent perimeter: outer={outer}, inner={inner}, bounds=({x0},{y0})..({x1},{y1})"
         );
+        let (mid_x, mid_y) = ((x0 + x1) / 2, (y0 + y1) / 2);
+        for run in [
+            [is_accent(mid_x, y0), is_accent(mid_x, y0 + 1), is_accent(mid_x, y0 + 2)],
+            [is_accent(mid_x, y1), is_accent(mid_x, y1 - 1), is_accent(mid_x, y1 - 2)],
+            [is_accent(x0, mid_y), is_accent(x0 + 1, mid_y), is_accent(x0 + 2, mid_y)],
+            [is_accent(x1, mid_y), is_accent(x1 - 1, mid_y), is_accent(x1 - 2, mid_y)],
+        ] {
+            assert_eq!(
+                run,
+                [true, true, false],
+                "{case} focus edge was not one solid two-pixel run"
+            );
+        }
+        for (left, top) in [(x0, y0), (x1 - 4, y0), (x0, y1 - 4), (x1 - 4, y1 - 4)] {
+            let corner = (top..=top + 4)
+                .flat_map(|y| (left..=left + 4).map(move |x| (x, y)))
+                .filter(|(x, y)| is_accent(*x, *y))
+                .count();
+            assert!(
+                corner >= 4,
+                "{case} rounded focus corner contains a gap: {corner} accent pixels"
+            );
+        }
     }
 
     fn reveal_for_capture(root: &gtk::Widget, target: &gtk::Widget) {

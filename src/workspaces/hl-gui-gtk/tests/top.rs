@@ -4988,6 +4988,7 @@ mod unix {
         let line = count(&outer, [0x43, 0x38, 0x32]);
         let accent = count(&outer, [0xf7, 0x9d, 0x55]);
         let inner_accent = count(&inner, [0xf7, 0x9d, 0x55]);
+        let accent_at = |x: usize, y: usize| pixels[y * stride + x * 4..y * stride + x * 4 + 3] == [0xf7, 0x9d, 0x55];
         let minimum = ((bounds.width() + bounds.height()) / 3.0) as usize;
         if focused {
             assert!(
@@ -5002,6 +5003,29 @@ mod unix {
                 inner_accent >= minimum,
                 "{case} focus border was not one contiguous 2px perimeter: outer={accent}, inner={inner_accent}, bounds={bounds:?}"
             );
+            let (mid_x, mid_y) = ((x0 + x1) / 2, (y0 + y1) / 2);
+            for run in [
+                [accent_at(mid_x, y0), accent_at(mid_x, y0 + 1), accent_at(mid_x, y0 + 2)],
+                [accent_at(mid_x, y1), accent_at(mid_x, y1 - 1), accent_at(mid_x, y1 - 2)],
+                [accent_at(x0, mid_y), accent_at(x0 + 1, mid_y), accent_at(x0 + 2, mid_y)],
+                [accent_at(x1, mid_y), accent_at(x1 - 1, mid_y), accent_at(x1 - 2, mid_y)],
+            ] {
+                assert_eq!(
+                    run,
+                    [true, true, false],
+                    "{case} focus edge was not one solid two-pixel run"
+                );
+            }
+            for (left, top) in [(x0, y0), (x1 - 4, y0), (x0, y1 - 4), (x1 - 4, y1 - 4)] {
+                let corner = (top..=top + 4)
+                    .flat_map(|y| (left..=left + 4).map(move |x| (x, y)))
+                    .filter(|(x, y)| accent_at(*x, *y))
+                    .count();
+                assert!(
+                    corner >= 4,
+                    "{case} rounded focus corner contains a gap: {corner} accent pixels"
+                );
+            }
         } else {
             assert!(
                 line >= minimum,

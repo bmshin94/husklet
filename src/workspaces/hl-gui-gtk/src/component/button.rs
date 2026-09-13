@@ -50,11 +50,14 @@ fn inline() -> gtk::Button {
     widget
 }
 
-fn chrome(class: &str, content: &gtk::Box) -> gtk::Frame {
-    let chrome = gtk::Frame::new(None);
+fn chrome(class: &str, content: &gtk::Box) -> gtk::Box {
+    // A Frame owns its own `border` CSS node. Painting the action border on the
+    // frame itself therefore produces two independently antialiased contours.
+    // Plain box chrome has exactly one paintable boundary.
+    let chrome = axis::row(0);
     chrome.add_css_class(class);
     chrome.set_valign(gtk::Align::Center);
-    chrome.set_child(Some(content));
+    chrome.append(content);
     chrome
 }
 
