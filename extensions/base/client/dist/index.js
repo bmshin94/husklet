@@ -3500,7 +3500,7 @@ export function workspace(session, { signal } = {}) {
                 }
                 if (!identity)
                     throw new TypeError('host returned a filesystem file without an identity');
-                return { text: parts.join(''), identity, bytes };
+                return Object.freeze({ path, text: parts.join(''), identity, bytes });
             },
             resumeText: async (failure, { signal } = {}) => {
                 if (!(failure instanceof FileTextOperationError))
@@ -3536,7 +3536,12 @@ export function workspace(session, { signal } = {}) {
                 }
                 try {
                     const text = new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(contents));
-                    return { text, identity: failure.identity, bytes: contents.length };
+                    return Object.freeze({
+                        path: failure.path,
+                        text,
+                        identity: failure.identity,
+                        bytes: contents.length,
+                    });
                 }
                 catch (error) {
                     throw new FileTextDecodeError(failure.path, failure.identity, contents.length, error);
@@ -3564,6 +3569,16 @@ export function workspace(session, { signal } = {}) {
                         throw cause;
                     throw new FileWriteOperationError(path, observed, exact, cause);
                 }
+            },
+            writeTextObserved: (observed, contents) => {
+                if (!observed ||
+                    typeof observed.path !== 'string' ||
+                    observed.path.length === 0 ||
+                    typeof observed.identity !== 'string' ||
+                    observed.identity.length === 0) {
+                    throw new TypeError('observed text write requires a path-bearing file observation');
+                }
+                return api.files.writeObserved(observed.path, observed.identity, typeof contents === 'string' ? new TextEncoder().encode(contents) : contents);
             },
             recoverObservedWrite: async (failure, { signal } = {}) => {
                 if (!(failure instanceof FileWriteOperationError)) {
@@ -6157,6 +6172,7 @@ export const protocolCoverage = Object.freeze({
             'stat',
             'write',
             'writeObserved',
+            'writeTextObserved',
             'recoverObservedWrite',
             'createObserved',
             'mkdir',

@@ -650,9 +650,10 @@ export interface FileRange {
 }
 /** One identity-stable UTF-8 file collected under an explicit caller-owned bound. */
 export interface FileText {
-    text: string;
-    identity: string;
-    bytes: number;
+    readonly path: string;
+    readonly text: string;
+    readonly identity: string;
+    readonly bytes: number;
 }
 export interface ExtensionState {
     identity: string;
@@ -2308,6 +2309,8 @@ export interface WorkspaceApi {
         write(path: string, contents: Iterable<number>): Promise<void>;
         /** Atomically replace exactly the file identity returned by stat/readRange. */
         writeObserved(path: string, observed: string, contents: Iterable<number>): Promise<string>;
+        /** Atomically replace the exact path and identity carried by one stable text observation. */
+        writeTextObserved(observed: FileText, contents: string | Iterable<number>): Promise<string>;
         /** Reconcile an ambiguous observed write without overwriting an intervening file generation. */
         recoverObservedWrite(failure: FileWriteOperationError, options?: {
             signal?: AbortSignal;

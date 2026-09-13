@@ -83,7 +83,7 @@ test('readText decodes split UTF-8 over fragmented real Unix frames and enforces
         chunkBytes: 2,
         observed: 'good-v1',
       }),
-      { text: 'A€B', identity: 'good-v1', bytes: 5 },
+      { path: 'docs/good.txt', text: 'A€B', identity: 'good-v1', bytes: 5 },
     );
     assert.deepEqual(
       requests.slice(0, 3).map(({ offset, limit, observed }) => ({ offset, limit, observed })),
@@ -225,6 +225,7 @@ test('readText resumes an exact UTF-8 prefix after fragmented Unix loss and reje
     );
     const second = await connect({ path: socketPath });
     assert.deepEqual(await workspace(second).files.resumeText(failure), {
+      path: 'docs/model.txt',
       text: 'A€B',
       identity: 'document-v1',
       bytes: 5,

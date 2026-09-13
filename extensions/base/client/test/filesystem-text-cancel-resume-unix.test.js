@@ -86,7 +86,12 @@ test('cancelled in-flight file range preserves an exact prefix for reconnect res
 
     const resumed = await connect({ path: socketPath });
     const document = await workspace(resumed).files.resumeText(failure);
-    assert.deepEqual(document, { text: 'abcd', identity: 'file-v1', bytes: 4 });
+    assert.deepEqual(document, {
+      path: 'docs/large.txt',
+      text: 'abcd',
+      identity: 'file-v1',
+      bytes: 4,
+    });
     assert.deepEqual(offsets, [0, 2, 2], 'the acknowledged prefix is never fetched twice');
     await resumed.close();
   } finally {

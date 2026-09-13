@@ -126,6 +126,7 @@ groups
     '- `host.files.recoverObservedWrite(error)` — reconciles a lost `writeObserved` reply after reconnect: it retries only while the original identity is current, accepts a replacement only after an identity-pinned exact byte comparison, and fails closed on intervening content.',
     '- `host.files.readChunks(...)` — iterates an identity-pinned file through bounded ranges with consumer backpressure; requires `filesystem:read`.',
     '- `host.files.readText(path, { maxBytes, ... })` — reads identity-pinned UTF-8 across range boundaries, reports malformed text as `FileTextDecodeError`, and reports an oversized generation as `FileTextLimitError` with exact path, identity, authoritative total, and caller limit; requires `filesystem:read`.',
+    '- `host.files.writeTextObserved(file, contents)` — atomically replaces the immutable path and identity carried together by `readText`/`resumeText`; callers cannot accidentally substitute a second path while preparing a reviewed edit.',
   );
 groups
   .get('Extension preferences')

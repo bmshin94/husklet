@@ -64,11 +64,7 @@ export async function applyReviewedFile(
     maxBytes: 1024 * 1024,
     chunkBytes: 64 * 1024,
   });
-  const written = await host.files.writeObserved(
-    target.path,
-    file.identity,
-    new TextEncoder().encode(target.replacement),
-  );
+  const written = await host.files.writeTextObserved(file, target.replacement);
   const check = await host.containers.execText(target.container, target.generation, {
     command: ['git', 'diff', '--check', '--', target.path],
     maxBytes: 256 * 1024,
