@@ -16,10 +16,10 @@ mod unix {
         NetworkEndpointInventory, NetworkInventory, NetworkKind, NetworkSummary,
     };
     use hl_extension::{
-        Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
-        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PROTOCOL, PaneProvider, PreferenceValue,
+        codec, Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
+        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PaneProvider, PreferenceValue,
         RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire, WorkspaceConfiguration,
-        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, codec,
+        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, PROTOCOL,
     };
     use hl_gui::{Renderer as _, SourceMutation, Theme, Tree};
     use hl_gui_gtk::Surface;
@@ -3620,6 +3620,33 @@ mod unix {
                 let status_bounds = status
                     .compute_bounds(root)
                     .expect("decision status belongs to review footer");
+                let rows = widgets_with_class(root, "hl-form-control-label");
+                assert!(!rows.is_empty(), "{width_name} review fixture has permission rows");
+                let scroll = rows[0]
+                    .ancestor(gtk::ScrolledWindow::static_type())
+                    .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
+                    .expect("permission rows belong to the review viewport");
+                scroll.vadjustment().set_value(0.0);
+                settle_toolkit();
+                let viewport = scroll.compute_bounds(root).expect("review viewport belongs to root");
+                let viewport_end = viewport.y() + viewport.height();
+                let mut last_whole = 0.0_f32;
+                for row in rows {
+                    let bounds = row.compute_bounds(root).expect("permission row belongs to root");
+                    let natural_end = bounds.y() + row.height() as f32;
+                    assert!(
+                        bounds.y() >= viewport_end || natural_end <= viewport_end,
+                        "{width_name} {state} paints a partial permission row: row={bounds:?}, natural_end={natural_end}, viewport={viewport:?}"
+                    );
+                    if natural_end <= viewport_end {
+                        last_whole = last_whole.max(natural_end);
+                    }
+                }
+                let footer_top = update_bounds.y() - 8.0;
+                assert!(
+                    last_whole + 8.0 <= footer_top,
+                    "{width_name} {state} last complete permission row lacks footer clearance: end={last_whole}, footer={footer_top}"
+                );
                 if width == 600 {
                     assert!(
                         status_bounds.y() + status_bounds.height() <= update_bounds.y(),
@@ -3775,7 +3802,50 @@ mod unix {
                     800,
                 );
             }
-            if state != "update-review" {
+            if state == "update-required" {
+                capture(&capture_window, &format!("extensions-{state}-{width_name}"), width, 800);
+                let credential = find_label(root, "Inject credential service.token");
+                let scroll = credential
+                    .ancestor(gtk::ScrolledWindow::static_type())
+                    .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
+                    .expect("required review retains its scrolling viewport");
+                let adjustment = scroll.vadjustment();
+                let initial = credential
+                    .compute_bounds(root)
+                    .expect("required review final credential is rooted");
+                let before = adjustment.value();
+                adjustment.set_value(adjustment.upper() - adjustment.page_size());
+                settle_toolkit();
+                let scrolled = credential
+                    .compute_bounds(root)
+                    .expect("required review scrolled credential remains rooted");
+                assert!(
+                    adjustment.value() > before && scrolled.y() < initial.y(),
+                    "{width_name} required review did not reveal its final credential: adjustment={before}->{}, credential={initial:?}->{scrolled:?}",
+                    adjustment.value()
+                );
+                let update = find_button(root, "Update with selected access");
+                let footer = update
+                    .parent()
+                    .and_then(|row| row.parent())
+                    .expect("required review decision row belongs to its footer");
+                let separator_top = footer
+                    .compute_bounds(root)
+                    .expect("required review footer belongs to root")
+                    .y()
+                    + 8.0;
+                assert!(
+                    scrolled.y() + scrolled.height() <= separator_top - 8.0,
+                    "{width_name} required review final credential lacks footer clearance: credential={scrolled:?}, separator={separator_top}"
+                );
+                capture(
+                    &capture_window,
+                    &format!("extensions-{state}-last-credential-{width_name}"),
+                    width,
+                    800,
+                );
+            }
+            if !matches!(state, "update-review" | "update-required") {
                 capture(&capture_window, &format!("extensions-{state}-{width_name}"), width, 800);
             }
             gtk::prelude::GtkWindowExt::set_focus(&capture_window, None::<&gtk::Widget>);

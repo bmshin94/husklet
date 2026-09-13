@@ -41,6 +41,7 @@ const KIND = {
   Monospace: 'flag',
   Wrap: 'flag',
   Ellipsize: 'flag',
+  WholeRows: 'infer',
   // Appearance
   Variant: 'variant',
   Tone: 'tone',

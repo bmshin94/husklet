@@ -5083,6 +5083,12 @@
           }
         },
         {
+          "name": "WholeRows",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
           "name": "Variant",
           "payload": {
             "kind": "unit"
@@ -14901,7 +14907,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:48d1cb7b30eb74e0",
+  "source_fingerprint": "fnv1a64:6ef0938afe2348c5",
   "specification_version": 1,
   "topics": [
     {

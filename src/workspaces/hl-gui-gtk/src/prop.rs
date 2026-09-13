@@ -43,6 +43,7 @@ pub(crate) fn apply(widget: &gtk::Widget, node: &Node, prop: Prop, value: &PropV
         Prop::Monospace => monospace(widget, value),
         Prop::Wrap => wrap(widget, node, value),
         Prop::Ellipsize => ellipsize(widget, value),
+        Prop::WholeRows => whole_rows(widget, value),
         Prop::Variant | Prop::Tone | Prop::Scale | Prop::Size | Prop::Color => {
             crate::style::mark(widget, prop, value);
             if prop == Prop::Tone {
@@ -68,6 +69,100 @@ pub(crate) fn apply(widget: &gtk::Widget, node: &Node, prop: Prop, value: &PropV
         Prop::Columns => columns(widget, value),
         Prop::Schema | Prop::Source | Prop::RowHeight => {
             crate::collection::configure(widget, node, prop, value, reports);
+        }
+    }
+}
+
+/// Reserves only the allocated fractional tail at the lower edge of a
+/// scrolling form. This keeps a control actionable as a whole without baking
+/// a font, row height or viewport width into the producer.
+fn whole_rows(widget: &gtk::Widget, value: &PropValue) {
+    let Some(scroll) = widget.downcast_ref::<gtk::ScrolledWindow>() else {
+        return;
+    };
+    let enabled = value
+        .as_flag()
+        .unwrap_or_else(|| value.as_text().is_some_and(|identity| !identity.is_empty()));
+    if !enabled {
+        scroll.set_margin_bottom(0);
+        return;
+    }
+    if !scroll.has_css_class("hl-whole-rows") {
+        scroll.add_css_class("hl-whole-rows");
+        let weak = scroll.downgrade();
+        scroll.vadjustment().connect_upper_notify(move |_| {
+            let Some(scroll) = weak.upgrade() else {
+                return;
+            };
+            scroll.set_margin_bottom(0);
+            schedule_whole_rows(&scroll);
+        });
+    }
+    scroll.set_margin_bottom(0);
+    scroll.vadjustment().set_value(scroll.vadjustment().lower());
+    schedule_whole_rows(scroll);
+}
+
+fn schedule_whole_rows(scroll: &gtk::ScrolledWindow) {
+    let weak = scroll.downgrade();
+    let attempts = std::rc::Rc::new(std::cell::Cell::new(0_u16));
+    let allocated = std::rc::Rc::new(std::cell::Cell::new(0_u8));
+    gtk::glib::idle_add_local(move || {
+        let Some(scroll) = weak.upgrade() else {
+            return gtk::glib::ControlFlow::Break;
+        };
+        // GTK excludes margins from the widget's allocated height.
+        let boundary = scroll.height();
+        let mut candidate = scroll.first_child();
+        let mut saw_row = false;
+        while let Some(row) = candidate {
+            if row.has_css_class("hl-form-control-label") {
+                saw_row = true;
+                if let Some(bounds) = row.compute_bounds(&scroll) {
+                    let top = bounds.y().round() as i32;
+                    // `compute_bounds` intersects with the scroller's clip;
+                    // allocation height retains the concealed part we need to
+                    // detect before it becomes a half-row.
+                    let bottom = top + row.height();
+                    if top < boundary && bottom > boundary {
+                        if allocated.get() < 3 {
+                            allocated.set(allocated.get().saturating_add(1));
+                            return gtk::glib::ControlFlow::Continue;
+                        }
+                        scroll.set_margin_bottom(scroll.margin_bottom() + boundary - top);
+                        return gtk::glib::ControlFlow::Break;
+                    }
+                }
+            }
+            candidate = next_descendant(scroll.upcast_ref(), &row);
+        }
+        if saw_row {
+            allocated.set(allocated.get().saturating_add(1));
+            if allocated.get() >= 3 {
+                return gtk::glib::ControlFlow::Break;
+            }
+        }
+        attempts.set(attempts.get() + 1);
+        if attempts.get() < 600 {
+            gtk::glib::ControlFlow::Continue
+        } else {
+            gtk::glib::ControlFlow::Break
+        }
+    });
+}
+
+fn next_descendant(root: &gtk::Widget, current: &gtk::Widget) -> Option<gtk::Widget> {
+    if let Some(child) = current.first_child() {
+        return Some(child);
+    }
+    let mut at = current.clone();
+    loop {
+        if let Some(sibling) = at.next_sibling() {
+            return Some(sibling);
+        }
+        at = at.parent()?;
+        if at == *root {
+            return None;
         }
     }
 }

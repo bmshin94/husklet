@@ -761,6 +761,13 @@ const PROPS: &[Entry] = &[
         note: "for a label",
     },
     Entry {
+        prop: Prop::WholeRows,
+        group: "layout",
+        editor: "text",
+        values: &["Flag", "Text"],
+        note: "keeps form rows wholly visible or wholly below a scrolling viewport boundary; a changed text identity recalculates after content changes",
+    },
+    Entry {
         prop: Prop::Variant,
         group: "appearance",
         editor: "enum",
@@ -956,7 +963,8 @@ impl Entry {
             | Prop::Expanded
             | Prop::Secret
             | Prop::Destructive
-            | Prop::Wrap => Some("false"),
+            | Prop::Wrap
+            | Prop::WholeRows => Some("false"),
             Prop::Variant => Some("plain"),
             Prop::Tone => Some("neutral"),
             Prop::Scale => Some("body"),
@@ -996,6 +1004,7 @@ impl Entry {
             | Prop::Monospace
             | Prop::Wrap
             | Prop::Ellipsize
+            | Prop::WholeRows
             | Prop::Variant
             | Prop::Tone
             | Prop::Scale

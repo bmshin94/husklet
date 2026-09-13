@@ -35,6 +35,8 @@ pub enum Prop {
     /// for a text node, whole children for a row or a column.
     Wrap,
     Ellipsize,
+    /// Keeps complete form rows at a scrolling viewport's lower boundary.
+    WholeRows,
     // Appearance
     Variant,
     Tone,

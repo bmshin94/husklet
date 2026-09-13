@@ -1160,7 +1160,18 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
     .join(' ');
 
   const content = (
-    <Scroll grow width="fill" height="fill">
+    <Scroll
+      grow
+      width="fill"
+      height="fill"
+      wholeRows={
+        acquisition?.candidate
+          ? missingRequiredCapabilities.length > 0
+            ? 'permission-required'
+            : 'permission-review'
+          : undefined
+      }
+    >
       <Container
         pad={acquisition?.candidate ? { top: 4, end: 4, bottom: 18, start: 4 } : 4}
         gap={3}

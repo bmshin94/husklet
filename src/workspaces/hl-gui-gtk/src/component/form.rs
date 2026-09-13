@@ -37,6 +37,7 @@ fn helper() -> gtk::Label {
 /// placed before the caption, which is where a person expects to find it.
 fn caption() -> gtk::Box {
     let widget = axis::row(8);
+    widget.add_css_class("hl-form-control-label");
     widget.set_valign(gtk::Align::Center);
     let caption = slot::caption_label();
     caption.set_wrap(true);
