@@ -3316,6 +3316,7 @@ mod unix {
                     "Heading scale selector expanded to {}px",
                     choice.width()
                 );
+                assert!(choice.grab_focus(), "Heading scale selector accepts keyboard focus");
                 choice.emit_clicked();
                 settle_toolkit();
                 let option = find::<gtk::Button>(choice.upcast_ref(), |button| {
