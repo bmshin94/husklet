@@ -4964,7 +4964,7 @@ test('execution observation is scoped to its page and replaces inventory without
     truncated: true,
   });
   await settled();
-  assert.ok(labelled(stage, 'live-command'));
+  assert.ok(hasValue(stage, 'live-command'));
   assert.ok(labelled(stage, 'The host execution catalogue was truncated at its safety limit.'));
   invoke(stage, 'Images');
   await settled();
@@ -4989,8 +4989,8 @@ test('execution observation is scoped to its page and replaces inventory without
   });
   await settled();
   assert.equal(
-    labelled(stage, 'late-command'),
-    undefined,
+    hasValue(stage, 'late-command'),
+    false,
     'disposed observation ignores late delivery',
   );
 });
@@ -7279,9 +7279,11 @@ test('execution details, separate bounded streams, wait and retry are operationa
   await settled();
   assert.ok(labelled(stage, 'Execution summary'));
   assert.ok(labelled(stage, 'Process · 77'));
-  assert.ok(labelled(stage, 'Command · sleep 5'));
+  assert.ok(labelled(stage, 'Command'));
+  assert.ok(hasValue(stage, 'sleep 5'));
   assert.ok(labelled(stage, 'User · root'));
-  assert.ok(labelled(stage, 'Container · c1'));
+  assert.ok(labelled(stage, 'Container ID'));
+  assert.ok(hasValue(stage, 'c1'));
   assert.ok(labelled(stage, 'Technical details'));
   assert.ok(
     stage.frames
@@ -8308,6 +8310,15 @@ function labelled(stage, label) {
         'SetProp' in patch && patch.SetProp.prop === 'Label' && patch.SetProp.value?.Text === label,
     )
     .at(-1);
+}
+
+function hasValue(stage, value) {
+  return stage.frames
+    .flatMap((frame) => frame.patches)
+    .some(
+      (patch) =>
+        'SetProp' in patch && patch.SetProp.prop === 'Value' && patch.SetProp.value?.Text === value,
+    );
 }
 
 function switchNodes(stage) {

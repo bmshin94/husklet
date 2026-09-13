@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   CardContent,
+  Code,
   Column,
   ConfirmAction,
   Expander,
@@ -14,6 +15,7 @@ import {
   KeyValueTable,
   LogView,
   ResourceState,
+  ResourceIdentity,
   Row,
   Scroll,
   Spinner,
@@ -274,8 +276,7 @@ export function Executions({
             width="fill"
           >
             <ResourceSummary
-              label={item.command?.join(' ') || shortId(item.id)}
-              detail={`container ${shortId(item.container_id)}`}
+              summary={<ExecutionCardIdentity value={item} />}
               status={
                 <Badge
                   label={executionStatus(item)}
@@ -481,15 +482,36 @@ function ExecutionDetail({
 
 function ExecutionSummaryDetail({ value }: { value: ExecutionSummary | null }) {
   if (!value) return null;
+  const command = executionCommand(value);
   return (
     <Column gap={1} width="fill">
       <Heading label="Execution summary" scale="caption" />
       {value.pid > 0 ? <Text label={`Process · ${value.pid}`} color="text-dim" /> : null}
-      <Text label={`Command · ${value.command?.join(' ') || 'Unavailable'}`} wrap />
+      <Column gap={0} width="fill">
+        <Text label="Command" color="text-dim" />
+        <Code value={command} tooltip={command} wrap width="fill" />
+      </Column>
       <Text label={`User · ${value.user || 'Default user'}`} color="text-dim" wrap />
-      <Text label={`Container · ${shortId(value.container_id)}`} color="text-dim" />
+      <ResourceIdentity label="Container ID" value={value.container_id} />
     </Column>
   );
+}
+
+/** Compact exact command and container authority without merging either value into prose. */
+function ExecutionCardIdentity({ value }: { value: ExecutionSummary }) {
+  const command = executionCommand(value);
+  return (
+    <Row gap={1} align="center" wrap grow>
+      <Text label="Command" color="text-dim" />
+      <Code value={command} tooltip={command} ellipsize grow />
+      <Text label="Container" color="text-dim" />
+      <Code value={shortId(value.container_id)} tooltip={value.container_id} ellipsize />
+    </Row>
+  );
+}
+
+function executionCommand(value: ExecutionSummary): string {
+  return value.command?.join(' ') || 'Unavailable';
 }
 
 function executionFailureSummary(error: unknown): string {

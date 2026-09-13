@@ -104,7 +104,7 @@ test(
       );
       invoke(stage, 'Executions');
       await until(() => labelled(stage, 'Reading executions…'));
-      await until(() => labelled(stage, 'stale-command'));
+      await until(() => textValue(stage, 'stale-command'));
       assert.ok(labelled(stage, 'Terminate'));
       assert.ok(labelled(stage, 'The host execution catalogue was truncated at its safety limit.'));
 
@@ -135,7 +135,7 @@ test(
       assert.equal(attempts, 3);
 
       invoke(stage, 'Refresh');
-      await until(() => labelled(stage, 'current-command'));
+      await until(() => textValue(stage, 'current-command'));
       assert.equal(attempts, 4);
       assert.ok(
         labelled(stage, 'Terminate'),
@@ -156,6 +156,12 @@ function labelled(stage, label) {
     .flatMap((frame) => frame.patches)
     .filter((patch) => patch.SetProp?.prop === 'Label' && patch.SetProp.value?.Text === label)
     .at(-1);
+}
+
+function textValue(stage, value) {
+  return stage.frames
+    .flatMap((frame) => frame.patches)
+    .some((patch) => patch.SetProp?.prop === 'Value' && patch.SetProp.value?.Text === value);
 }
 
 function invoke(stage, label) {

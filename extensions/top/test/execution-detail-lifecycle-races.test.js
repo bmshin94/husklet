@@ -142,14 +142,14 @@ test(
         }),
       );
       invoke(stage, 'Executions');
-      await until(() => labelled(stage, 'generation-1'));
+      await until(() => textValue(stage, 'generation-1'));
       invoke(stage, 'Details');
       await until(() => calls.includes('execution_inspect'));
       invoke(stage, 'Terminate');
       assert.ok(labelled(stage, `Send SIGTERM to execution ${id}?`));
       const start = stage.frames.length;
       invoke(stage, 'Refresh');
-      await until(() => labelled(stage, 'generation-2'));
+      await until(() => textValue(stage, 'generation-2'));
       await delay(140);
       assert.equal(lengths(mutations), 0);
       assert.ok(
@@ -171,7 +171,7 @@ test(
       invoke(stage, 'Load output');
       await until(() => calls.filter((call) => call === 'execution_logs').length === 1);
       invoke(stage, 'Refresh');
-      await until(() => labelled(stage, 'generation-3'));
+      await until(() => textValue(stage, 'generation-3'));
       await delay(140);
       assert.equal(labelled(stage, 'stale-output'), undefined);
 
@@ -180,7 +180,7 @@ test(
       invoke(stage, 'Wait up to 5s');
       await until(() => calls.filter((call) => call === 'execution_wait').length === 1);
       invoke(stage, 'Refresh');
-      await until(() => labelled(stage, 'generation-4'));
+      await until(() => textValue(stage, 'generation-4'));
       await delay(140);
       assert.equal(lengths(mutations), 2);
       assert.equal(lists, 4, 'stale wait cannot trigger another inventory reload');
@@ -203,6 +203,11 @@ function labelled(stage, label) {
     .flatMap((frame) => frame.patches)
     .filter((patch) => patch.SetProp?.prop === 'Label' && patch.SetProp.value?.Text === label)
     .at(-1);
+}
+function textValue(stage, value) {
+  return stage.frames
+    .flatMap((frame) => frame.patches)
+    .some((patch) => patch.SetProp?.prop === 'Value' && patch.SetProp.value?.Text === value);
 }
 function invoke(stage, label) {
   const nodes = stage.frames

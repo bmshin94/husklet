@@ -939,6 +939,37 @@ mod unix {
                     "{width_name} collapsed execution record stacked its summary to {}px",
                     card.height()
                 );
+                if width == 600 {
+                    assert!(
+                        card.width() <= 568,
+                        "narrow execution card escaped the 568px readable width: {}px",
+                        card.width()
+                    );
+                }
+                let command = assert_selectable_code(
+                    &card,
+                    "/bin/sh -lc npm test",
+                    "/bin/sh -lc npm test",
+                    &format!("{width_name} collapsed execution command"),
+                );
+                let container_id = "a".repeat(64);
+                let container = assert_selectable_code(
+                    &card,
+                    &container_id[..12],
+                    &container_id,
+                    &format!("{width_name} collapsed container identity"),
+                );
+                assert_eq!(command.ellipsize(), gtk::pango::EllipsizeMode::End);
+                assert_eq!(container.ellipsize(), gtk::pango::EllipsizeMode::End);
+                for label in ["Command", "Container"] {
+                    let label = find_label(&card, label);
+                    assert_eq!(label.accessible_role(), gtk::AccessibleRole::Label);
+                    assert!(!label.has_css_class("hl-code"), "{label:?} became monospace");
+                }
+                assert!(
+                    command.width() <= card.width() && container.width() <= card.width(),
+                    "{width_name} execution authority escaped its card"
+                );
                 if width == 1_200 {
                     let status = find_label(&card, "exit 0")
                         .compute_bounds(&card)
@@ -2179,8 +2210,11 @@ mod unix {
             let detail_root = surface.widget().clone().upcast::<gtk::Widget>();
             window.set_child(Some(&detail_root));
             assert!(has_label(&detail_root, "Execution summary"));
-            assert!(has_label(&detail_root, "Command · /bin/sh -lc npm test"));
+            assert!(has_label(&detail_root, "Command"));
+            assert!(has_label(&detail_root, "/bin/sh -lc npm test"));
             assert!(has_label(&detail_root, "User · developer"));
+            assert!(has_label(&detail_root, "Container ID"));
+            assert!(has_label(&detail_root, &"a".repeat(64)));
             let technical = find_expander(&detail_root, "Technical details");
             assert!(!technical.is_expanded(), "raw property table starts disclosed");
             assert!(technical.grab_focus(), "technical disclosure is keyboard reachable");
@@ -2193,7 +2227,7 @@ mod unix {
                 detail_root.measure(gtk::Orientation::Vertical, width);
                 detail_root.allocate(width, 1_600, -1, None);
                 window.queue_draw();
-                settle_toolkit();
+                settle_frame();
                 assert!(
                     technical.allocation().width() <= detail_root.allocation().width(),
                     "technical disclosure stays within the {width_name} detail surface"
@@ -2208,7 +2242,35 @@ mod unix {
                     "{width_name} execution detail collapsed to {}px",
                     card.width()
                 );
-                capture(&window, &format!("execution-detail-{width_name}"), width, 800);
+                let command = assert_wrapped_selectable_code(
+                    &card,
+                    "/bin/sh -lc npm test",
+                    "/bin/sh -lc npm test",
+                    &format!("{width_name} expanded execution command"),
+                );
+                let container_id = "a".repeat(64);
+                let container = assert_wrapped_selectable_code(
+                    &card,
+                    &container_id,
+                    &container_id,
+                    &format!("{width_name} expanded container identity"),
+                );
+                assert!(command.wraps(), "{width_name} expanded command does not wrap");
+                assert!(
+                    container.wraps(),
+                    "{width_name} expanded container identity does not wrap"
+                );
+                assert!(
+                    command.width() <= card.width() - 20 && container.width() <= card.width() - 20,
+                    "{width_name} expanded execution authority escaped its card"
+                );
+                for label in ["Command", "Container ID"] {
+                    let label = find_label(&card, label);
+                    assert_eq!(label.accessible_role(), gtk::AccessibleRole::Label);
+                    assert!(!label.has_css_class("hl-code"), "{label:?} became monospace");
+                }
+                assert!(technical.grab_focus(), "technical disclosure regains focus for capture");
+                capture_stable(&window, &format!("execution-detail-{width_name}"), width, 800);
             }
         }
         if fixture == "populated" && name == "images" {
@@ -3925,6 +3987,40 @@ mod unix {
             }
         }
         panic!("label {wanted:?} was not found")
+    }
+
+    fn assert_selectable_code(root: &gtk::Widget, value: &str, tooltip: &str, case: &str) -> gtk::Label {
+        let label = find_label(root, value);
+        assert_code_label(&label, value, tooltip, case);
+        label
+    }
+
+    fn assert_wrapped_selectable_code(root: &gtk::Widget, value: &str, tooltip: &str, case: &str) -> gtk::Label {
+        let mut matches = Vec::new();
+        collect_labelled(root, value, &mut matches);
+        let label = matches
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+            .find(|label| label.has_css_class("hl-code") && label.wraps())
+            .unwrap_or_else(|| panic!("{case} was not found as wrapped Code"));
+        assert_code_label(&label, value, tooltip, case);
+        label
+    }
+
+    fn assert_code_label(label: &gtk::Label, value: &str, tooltip: &str, case: &str) {
+        assert!(label.has_css_class("hl-code"), "{case} is not rendered as Code");
+        assert!(label.has_css_class("monospace"), "{case} is not monospace");
+        assert!(label.is_selectable(), "{case} cannot be selected and copied");
+        assert_eq!(label.accessible_role(), gtk::AccessibleRole::Label);
+        assert_eq!(label.tooltip_text().as_deref(), Some(tooltip));
+        assert!(label.grab_focus(), "{case} is not keyboard reachable");
+        label.select_region(0, -1);
+        assert_eq!(
+            label.selection_bounds(),
+            Some((0, value.chars().count() as i32)),
+            "{case} cannot select its complete exact value"
+        );
+        label.select_region(0, 0);
     }
 
     fn find_toggle(root: &gtk::Widget, label: &str) -> gtk::ToggleButton {

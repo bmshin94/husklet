@@ -351,6 +351,60 @@ test('execution output has an observable loading state and explicit empty result
   assert.deepEqual(property(stage, 'More actions', 'Width'), { Length: 'Content' });
 });
 
+test('execution summaries keep exact commands and container authority selectable', async () => {
+  const containerId = 'c'.repeat(64);
+  const item = {
+    id: 'e'.repeat(32),
+    container_id: containerId,
+    running: false,
+    exit_code: 0,
+    result: { kind: 'code', value: 0 },
+    created_at_ms: 1_000,
+    started_at_ms: 1_010,
+    finished_at_ms: 1_100,
+    pid: 41,
+    command: ['/bin/sh', '-lc', 'printf ready'],
+    user: 'developer',
+  };
+  const command = '/bin/sh -lc printf ready';
+  const compactContainerId = containerId.slice(0, 12);
+  const stage = host();
+  stage.render(
+    h(Executions, {
+      api: { containers: { execution: async () => item } },
+      resource: resource([item]),
+    }),
+  );
+
+  assert.equal(tag(stage, 'Command'), 'Text', 'the compact command label stays proportional');
+  assert.equal(tag(stage, 'Container'), 'Text', 'the compact container label stays proportional');
+  assert.equal(tagForValue(stage, command), 'Code');
+  assert.equal(tagForValue(stage, compactContainerId), 'Code');
+  assert.deepEqual(propertyForValue(stage, command, 'Tooltip'), { Text: command });
+  assert.deepEqual(propertyForValue(stage, compactContainerId, 'Tooltip'), { Text: containerId });
+  assert.deepEqual(propertyForValue(stage, command, 'Ellipsize'), { Flag: true });
+  assert.deepEqual(propertyForValue(stage, compactContainerId, 'Ellipsize'), { Flag: true });
+  assert.deepEqual(ancestorTagsForValue(stage, command).slice(0, 3), ['Row', 'Row', 'CardContent']);
+  assert.ok(
+    ancestorTagsForValue(stage, compactContainerId).includes('Card'),
+    'the exact container identity stays inside its execution card',
+  );
+
+  invoke(stage, 'Details');
+  await settled();
+  await settled();
+
+  assert.equal(tag(stage, 'Command'), 'Text', 'the detail command label stays proportional');
+  assert.equal(tag(stage, 'Container ID'), 'Text', 'ResourceIdentity keeps its label proportional');
+  assert.equal(tagForValue(stage, command), 'Code');
+  assert.equal(tagForValue(stage, containerId), 'Code');
+  assert.deepEqual(propertyForValue(stage, command, 'Wrap'), { Flag: true });
+  assert.deepEqual(propertyForValue(stage, containerId, 'Wrap'), { Flag: true });
+  assert.deepEqual(propertyForValue(stage, command, 'Tooltip'), { Text: command });
+  assert.deepEqual(propertyForValue(stage, containerId, 'Tooltip'), { Text: containerId });
+  assert.deepEqual(ancestorTagsForValue(stage, containerId).slice(0, 2), ['Column', 'Column']);
+});
+
 function currentLabels(stage) {
   const labels = new Map();
   const parents = new Map();
@@ -387,6 +441,45 @@ function ancestorTags(stage, label) {
   let node = patches
     .filter((patch) => patch.SetProp?.prop === 'Label' && patch.SetProp.value?.Text === label)
     .at(-1)?.SetProp.id;
+  const ancestors = [];
+  while (parents.has(node)) {
+    node = parents.get(node);
+    ancestors.push(tags.get(node));
+  }
+  return ancestors;
+}
+
+function valueNode(stage, value) {
+  return stage.frames
+    .flatMap((frame) => frame.patches)
+    .filter((patch) => patch.SetProp?.prop === 'Value' && patch.SetProp.value?.Text === value)
+    .at(-1)?.SetProp.id;
+}
+
+function tagForValue(stage, value) {
+  const patches = stage.frames.flatMap((frame) => frame.patches);
+  const node = valueNode(stage, value);
+  return patches.find((patch) => patch.Create?.id === node)?.Create.tag;
+}
+
+function propertyForValue(stage, value, prop) {
+  const patches = stage.frames.flatMap((frame) => frame.patches);
+  const node = valueNode(stage, value);
+  return patches.filter((patch) => patch.SetProp?.id === node && patch.SetProp.prop === prop).at(-1)
+    ?.SetProp.value;
+}
+
+function ancestorTagsForValue(stage, value) {
+  const patches = stage.frames.flatMap((frame) => frame.patches);
+  const tags = new Map(
+    patches.filter((patch) => patch.Create).map((patch) => [patch.Create.id, patch.Create.tag]),
+  );
+  const parents = new Map(
+    patches
+      .filter((patch) => patch.Insert)
+      .map((patch) => [patch.Insert.child, patch.Insert.parent]),
+  );
+  let node = valueNode(stage, value);
   const ancestors = [];
   while (parents.has(node)) {
     node = parents.get(node);
