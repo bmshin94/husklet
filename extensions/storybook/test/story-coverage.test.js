@@ -249,7 +249,9 @@ test('workspace layout bounds slots and interactively splits by stable identity'
   assert(split);
   assert(chooser && focus, 'chooser and keyboard focus controls are visible');
   assert(first.patches.some((patch) => patch.SetProp?.value?.Text === 'nested horizontal split'));
-  assert(first.patches.some((patch) => patch.SetProp?.value?.Text?.includes('top/containers')));
+  assert(
+    first.patches.some((patch) => JSON.stringify(patch.SetProp?.value)?.includes('top/containers')),
+  );
   let before = stage.frames.length;
   assert(stage.surface.dispatch({ trigger: 'Invoke', node: chooser, id: `${chooser}:Invoke` }));
   let changed = stage.since(before);

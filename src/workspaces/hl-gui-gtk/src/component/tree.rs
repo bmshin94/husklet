@@ -14,7 +14,7 @@ use super::axis;
 
 /// Space one level of depth adds to what an item holds, in pixels.
 const INDENT_PIXELS: i32 = 16;
-/// Height a tree asks for before it starts scrolling, in pixels.
+/// Natural height a tree may occupy before it starts scrolling, in pixels.
 const TRUNK_PIXELS: i32 = 160;
 
 /// Tree components.
@@ -33,8 +33,8 @@ fn trunk() -> gtk::ScrolledWindow {
     let window = gtk::ScrolledWindow::new();
     window.set_child(Some(&column));
     window.set_hexpand(true);
-    window.set_vexpand(true);
-    window.set_min_content_height(TRUNK_PIXELS);
+    window.set_propagate_natural_height(true);
+    window.set_max_content_height(TRUNK_PIXELS);
     window
 }
 

@@ -8,8 +8,6 @@ import {
   ConfirmAction,
   Heading,
   InlineMessage,
-  List,
-  ListItemButton,
   Row,
   Scroll,
   Select,
@@ -129,7 +127,7 @@ export function WorkspaceLayoutStory() {
 
   return (
     <Scroll width={'fill'} height={'fill'}>
-      <Column gap={2} grow={true}>
+      <Column gap={2} width={'fill'}>
         <Heading label={'Workspace layout control'} scale={'title'} />
         <Text
           label={
@@ -152,75 +150,68 @@ export function WorkspaceLayoutStory() {
             record(`Activated tab ${tab}.`);
           }}
         />
-        <Row gap={2} wrap={true}>
-          <Column gap={1}>
-            <Heading label={'Pane slots'} scale={'body'} />
-            <List>
-              {visible.map((pane) => (
-                <ListItemButton
-                  key={pane.slot}
-                  label={`${pane.title} · ${pane.occupant}${pane.provider ? ` · ${pane.provider}` : ''}${pane.slot === focusedSlot ? ' · focused' : ''}`}
-                  variant={pane.slot === selected?.slot ? 'filled' : 'plain'}
-                  onInvoke={() => {
-                    setSelectedSlot(pane.slot);
-                    record(`Selected immutable slot ${pane.slot}.`);
-                  }}
-                />
-              ))}
-            </List>
-          </Column>
-          <Column gap={2} grow={true}>
-            <Heading label={'Layout topology'} scale={'body'} />
-            <Tree>
-              <TreeItem label={'workspace tabs'} expanded={true}>
-                <TreeItem
-                  label={`Shells · ${orientation} split${activeTab === 'shells' ? ' · active' : ''}`}
-                  expanded={true}
-                >
-                  <TreeItem label={'nested horizontal split'} expanded={true}>
-                    {panes
-                      .filter(({ tab }) => tab === 'shells')
-                      .map((pane) => (
-                        <TreeItem
-                          key={pane.slot}
-                          label={`${pane.slot} · ${pane.occupant}${pane.slot === focusedSlot ? ' · focused' : ''}`}
-                        />
-                      ))}
-                  </TreeItem>
-                </TreeItem>
-                <TreeItem
-                  label={`Observability${activeTab === 'observability' ? ' · active' : ''}`}
-                  expanded={true}
-                >
-                  {panes
-                    .filter(({ tab }) => tab === 'observability')
-                    .map((pane) => (
-                      <TreeItem
-                        key={pane.slot}
-                        label={`${pane.slot} · ${pane.occupant}${pane.slot === focusedSlot ? ' · focused' : ''}`}
-                      />
-                    ))}
-                </TreeItem>
+        <Heading label={'Selected pane'} scale={'body'} />
+        <Select
+          value={selected?.slot ?? ''}
+          choices={visible.map((pane) => ({
+            value: pane.slot,
+            label: `${pane.title} · ${pane.occupant}${pane.provider ? ` · ${pane.provider}` : ''}${pane.slot === focusedSlot ? ' · focused' : ''}`,
+          }))}
+          onChange={(event) => {
+            const slot = String(event.value);
+            setSelectedSlot(slot);
+            record(`Selected immutable slot ${slot}.`);
+          }}
+        />
+        <Heading label={'Layout topology'} scale={'body'} />
+        <Tree height={'content'}>
+          <TreeItem label={'workspace tabs'} expanded={true}>
+            <TreeItem
+              label={`Shells · ${orientation} split${activeTab === 'shells' ? ' · active' : ''}`}
+              expanded={true}
+            >
+              <TreeItem label={'nested horizontal split'} expanded={true}>
+                {panes
+                  .filter(({ tab }) => tab === 'shells')
+                  .map((pane) => (
+                    <TreeItem
+                      key={pane.slot}
+                      label={`${pane.slot} · ${pane.occupant}${pane.slot === focusedSlot ? ' · focused' : ''}`}
+                    />
+                  ))}
               </TreeItem>
-            </Tree>
-            {selected && neighbor ? (
-              <Splitter orientation={orientation} position={140} grow={true}>
-                <Card label={selected.title}>
-                  <CardHeader label={selected.title} detail={selected.slot} />
-                  <CardContent>
-                    <Text label={selected.provider || selected.occupant} />
-                  </CardContent>
-                </Card>
-                <Card label={neighbor.title}>
-                  <CardHeader label={neighbor.title} detail={neighbor.slot} />
-                  <CardContent>
-                    <Text label={neighbor.occupant} />
-                  </CardContent>
-                </Card>
-              </Splitter>
-            ) : null}
-          </Column>
-        </Row>
+            </TreeItem>
+            <TreeItem
+              label={`Observability${activeTab === 'observability' ? ' · active' : ''}`}
+              expanded={true}
+            >
+              {panes
+                .filter(({ tab }) => tab === 'observability')
+                .map((pane) => (
+                  <TreeItem
+                    key={pane.slot}
+                    label={`${pane.slot} · ${pane.occupant}${pane.slot === focusedSlot ? ' · focused' : ''}`}
+                  />
+                ))}
+            </TreeItem>
+          </TreeItem>
+        </Tree>
+        {selected && neighbor ? (
+          <Splitter orientation={orientation} position={140} height={{ step: 30 }}>
+            <Card label={selected.title} height={{ step: 30 }}>
+              <CardHeader label={selected.title} detail={selected.slot} />
+              <CardContent>
+                <Text label={selected.provider || selected.occupant} />
+              </CardContent>
+            </Card>
+            <Card label={neighbor.title} height={{ step: 30 }}>
+              <CardHeader label={neighbor.title} detail={neighbor.slot} />
+              <CardContent>
+                <Text label={neighbor.occupant} />
+              </CardContent>
+            </Card>
+          </Splitter>
+        ) : null}
         <Row gap={2} wrap={true}>
           <Button label={'Split beside'} onInvoke={() => split('horizontal')} />
           <Button label={'Split below'} onInvoke={() => split('vertical')} />

@@ -287,6 +287,9 @@ mod unix {
                     if story == "Splitter" { 160 } else { 140 },
                     &format!("{story} narrow"),
                 );
+                if story == "Workspace layout control" {
+                    assert_workspace_layout_is_compact(&root, "Workspace layout control narrow");
+                }
             }
             capture_story(&realized_window, &format!("{story} narrow"));
             if story == "Button" {
@@ -1132,6 +1135,9 @@ mod unix {
                 if story == "Splitter" { 160 } else { 140 },
                 &format!("{story} wide"),
             );
+            if story == "Workspace layout control" {
+                assert_workspace_layout_is_compact(&root, "Workspace layout control wide");
+            }
         }
         if story == "Navigation and transient UI" {
             let mut menu_items = descendants::<gtk::Button>(&root)
@@ -3674,6 +3680,36 @@ mod unix {
         assert_splitter_pixels(window, root, &paned, true, case);
         gtk::prelude::RootExt::set_focus(window, None::<&gtk::Widget>);
         settle_toolkit();
+    }
+
+    fn assert_workspace_layout_is_compact(root: &gtk::Widget, case: &str) {
+        let topology_tail = find::<gtk::Label>(root, |label| label.text() == "pane-terminal-3 · terminal");
+        let first_card = descendants::<gtk::Widget>(root)
+            .into_iter()
+            .find(|widget| widget.has_css_class("hl-card"))
+            .expect("Workspace layout owns pane cards");
+        let first_action =
+            find::<gtk::Button>(root, |button| button_caption(button).as_deref() == Some("Split beside"));
+        let topology = topology_tail
+            .compute_bounds(root)
+            .expect("topology belongs to document");
+        let card = first_card.compute_bounds(root).expect("pane card belongs to document");
+        let action = first_action.compute_bounds(root).expect("actions belong to document");
+        let topology_gap = card.y() - topology.y() - topology.height();
+        let action_gap = action.y() - card.y() - card.height();
+        assert!(
+            (8.0..=12.0).contains(&topology_gap),
+            "{case} leaves {topology_gap}px between topology and pane cards"
+        );
+        assert!(
+            card.height() >= 120.0,
+            "{case} pane cards collapsed to {}px",
+            card.height()
+        );
+        assert!(
+            (8.0..=12.0).contains(&action_gap),
+            "{case} leaves {action_gap}px between pane cards and actions"
+        );
     }
 
     fn await_painted_frame(window: &gtk::Window) {
