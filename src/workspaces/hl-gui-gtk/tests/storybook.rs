@@ -275,7 +275,7 @@ mod unix {
                 assert_confirm_action_document(&realized_window, &root, 16.0, "initial narrow");
             }
             if story == "RecoveryState" {
-                assert_recovery_state(&root, "narrow");
+                assert_recovery_state(&realized_window, &root, "Retry attempts · 1", 16.0, "narrow");
             }
             capture_story(&realized_window, &format!("{story} narrow"));
             if story == "Button" {
@@ -1112,7 +1112,7 @@ mod unix {
             assert_document_horizontally_contained(&root, story);
         }
         if story == "RecoveryState" {
-            assert_recovery_state(&root, "wide");
+            assert_recovery_state(&realized_window, &root, "Retry attempts · 1", 264.0, "wide");
         }
         if story == "Navigation and transient UI" {
             let mut menu_items = descendants::<gtk::Button>(&root)
@@ -2160,7 +2160,13 @@ mod unix {
             assert!(disclosure.has_focus(), "controlled rerender preserves summary focus");
         }
         if story == "RecoveryState" {
-            find::<gtk::Label>(&root, |label| label.text() == "Attempt 2");
+            for (width, expected_x, case) in [(600, 16.0, "retried narrow"), (1_200, 264.0, "retried wide")] {
+                realized_window.set_default_size(width, 800);
+                realized_window.set_size_request(width, 800);
+                settle_window_width(&realized_window, width);
+                assert_attempt_receipt(&realized_window, &root, "Retry attempts · 2", expected_x, case);
+                capture_story(&realized_window, &format!("RecoveryState {case}"));
+            }
             let mut disclosures = descendants::<gtk::Expander>(&root)
                 .into_iter()
                 .filter(|expander| expander.label().as_deref() == Some("Technical details"))
@@ -3377,7 +3383,7 @@ mod unix {
             .expect("FormControlLabel caption names its Switch")
     }
 
-    fn assert_recovery_state(root: &gtk::Widget, case: &str) {
+    fn assert_recovery_state(window: &gtk::Window, root: &gtk::Widget, receipt: &str, expected_x: f32, case: &str) {
         let message = find::<gtk::Box>(root, |candidate| {
             candidate.has_css_class("hl-inlinemessage")
                 && descendants::<gtk::Label>(candidate.upcast_ref())
@@ -3429,6 +3435,7 @@ mod unix {
             message_bounds.x() >= 0.0 && message_bounds.x() + message_bounds.width() <= root.width() as f32,
             "{case} RecoveryState summary escapes the component document"
         );
+        assert_attempt_receipt(window, root, receipt, expected_x, case);
 
         let partial_summary = "1 container snapshot unavailable; available rows remain visible.";
         let partial_message = find::<gtk::Box>(root, |candidate| {
@@ -3472,6 +3479,102 @@ mod unix {
         assert!(
             partial_bounds.x() >= 0.0 && partial_bounds.x() + partial_bounds.width() <= root.width() as f32,
             "{case} partial RecoveryState summary escapes the component document"
+        );
+    }
+
+    fn assert_attempt_receipt(window: &gtk::Window, root: &gtk::Widget, text: &str, expected_x: f32, case: &str) {
+        let receipt = find::<gtk::Label>(root, |label| label.text() == text);
+        assert_eq!(receipt.accessible_role(), gtk::AccessibleRole::Label);
+        assert!(
+            !receipt.is_focusable(),
+            "{case} retry receipt must not enter keyboard order"
+        );
+        let mut ancestor = receipt.parent();
+        while let Some(widget) = ancestor {
+            assert!(
+                !widget.is::<gtk::Button>(),
+                "{case} retry receipt must not inherit Button interaction semantics"
+            );
+            if widget == *root {
+                break;
+            }
+            ancestor = widget.parent();
+        }
+        let bounds = receipt
+            .compute_bounds(root)
+            .expect("retry receipt belongs to RecoveryState document");
+        assert!(
+            bounds.height() <= 20.0,
+            "{case} retry receipt is not compact: {bounds:?}"
+        );
+        assert!(
+            (bounds.x() - expected_x).abs() <= 1.0,
+            "{case} retry receipt is not aligned to its content edge: {bounds:?}"
+        );
+
+        let mut disclosures = descendants::<gtk::Expander>(root)
+            .into_iter()
+            .filter(|expander| expander.label().as_deref() == Some("Technical details"))
+            .collect::<Vec<_>>();
+        disclosures.sort_by(|left, right| {
+            left.compute_bounds(root)
+                .expect("disclosure belongs to RecoveryState document")
+                .y()
+                .total_cmp(
+                    &right
+                        .compute_bounds(root)
+                        .expect("disclosure belongs to RecoveryState document")
+                        .y(),
+                )
+        });
+        let disclosure_bounds = disclosures[0]
+            .compute_bounds(root)
+            .expect("complete disclosure belongs to RecoveryState document");
+        let partial_heading = find::<gtk::Label>(root, |label| label.text() == "Partial result");
+        let partial_bounds = partial_heading
+            .compute_bounds(root)
+            .expect("partial heading belongs to RecoveryState document");
+        let before = bounds.y() - (disclosure_bounds.y() + disclosure_bounds.height());
+        let after = partial_bounds.y() - (bounds.y() + bounds.height());
+        assert!(
+            (8.0..=12.0).contains(&before),
+            "{case} receipt leading gap is {before}px"
+        );
+        assert!(
+            (16.0..=24.0).contains(&after),
+            "{case} receipt section gap is {after}px"
+        );
+
+        let paintable = gtk::WidgetPaintable::new(Some(root));
+        let snapshot = gtk::Snapshot::new();
+        paintable.snapshot(
+            snapshot.upcast_ref::<gtk::gdk::Snapshot>(),
+            f64::from(root.width()),
+            f64::from(root.height()),
+        );
+        let node = snapshot.to_node().expect("RecoveryState document renders");
+        let texture = window
+            .renderer()
+            .expect("Storybook window owns renderer")
+            .render_texture(&node, None);
+        let stride = texture.width() as usize * 4;
+        let mut pixels = vec![0_u8; stride * texture.height() as usize];
+        texture.download(&mut pixels, stride);
+        let x0 = bounds.x().floor().max(0.0) as usize;
+        let y0 = bounds.y().floor().max(0.0) as usize;
+        let x1 = (bounds.x() + bounds.width()).ceil().min(texture.width() as f32) as usize;
+        let y1 = (bounds.y() + bounds.height()).ceil().min(texture.height() as f32) as usize;
+        let painted = (y0..y1)
+            .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+            .filter(|(x, y)| {
+                pixels[*y * stride + *x * 4..*y * stride + *x * 4 + 3]
+                    .iter()
+                    .all(|channel| *channel >= 128)
+            })
+            .count();
+        assert!(
+            painted >= 40,
+            "{case} retry receipt has no visible dim text: {painted} pixels"
         );
     }
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Button, Column, RecoveryState, Text } from '@husklet/react';
+import { Column, RecoveryState, Text } from '@husklet/react';
 
 export function RecoveryStateStory() {
   const [attempt, setAttempt] = useState(1);
@@ -15,13 +15,15 @@ export function RecoveryStateStory() {
         retryLabel="Try again"
         onRetry={() => setAttempt((current) => current + 1)}
       />
-      <Button label={`Attempt ${attempt}`} enabled={false} variant="plain" />
-      <Text label="Partial result" scale="title" />
-      <RecoveryState
-        summary="1 container snapshot unavailable; available rows remain visible."
-        tone="warning"
-        error="worker: process endpoint did not respond"
-      />
+      <Text label={`Retry attempts · ${attempt}`} color="text-dim" />
+      <Column gap={2} width="fill" pad={{ top: 2 }}>
+        <Text label="Partial result" scale="title" />
+        <RecoveryState
+          summary="1 container snapshot unavailable; available rows remain visible."
+          tone="warning"
+          error="worker: process endpoint did not respond"
+        />
+      </Column>
     </Column>
   );
 }
