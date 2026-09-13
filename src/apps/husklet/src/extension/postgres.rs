@@ -558,6 +558,19 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
             self.peer.close_lease(&id)?;
             return Err(HostError::Conflict("postgres peer reused a live lease identity".into()));
         }
+        match self.authority.current(&authentication.binding) {
+            Ok(true) => {}
+            Ok(false) => {
+                self.peer.close_lease(&id)?;
+                return Err(HostError::Conflict(
+                    "postgres lease authority changed during connection".into(),
+                ));
+            }
+            Err(error) => {
+                self.peer.close_lease(&id)?;
+                return Err(error);
+            }
+        }
         state.leases.insert(
             id.as_str().into(),
             LeaseRecord {
@@ -1037,6 +1050,87 @@ mod tests {
         ));
         assert_eq!(credentials.reads.load(Ordering::SeqCst), 0);
         assert_eq!(resolver.resolutions.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn authority_revoked_during_open_is_closed_before_the_lease_is_published() {
+        struct RevokingPeer {
+            live: Arc<AtomicBool>,
+            closed: Arc<AtomicUsize>,
+        }
+
+        impl Peer for RevokingPeer {
+            fn open(
+                &self,
+                _: &PostgresConnection,
+                _: &DatabaseEndpoint,
+                _: &DatabaseAuthentication,
+            ) -> Result<PostgresLeaseId, HostError> {
+                self.live.store(false, Ordering::SeqCst);
+                PostgresLeaseId::new("revoked-during-open")
+            }
+
+            fn start(&self, _: &PostgresLeaseId, _: &PostgresQuery) -> Result<PostgresQueryId, HostError> {
+                panic!("a revoked lease must never start a query")
+            }
+
+            fn page(
+                &self,
+                _: &PostgresLeaseId,
+                _: &PostgresQueryId,
+                _: Option<&PostgresCursor>,
+            ) -> Result<PostgresPage, HostError> {
+                panic!("a revoked lease must never expose a page")
+            }
+
+            fn cancel(&self, _: &PostgresLeaseId, _: &PostgresQueryId) -> Result<PostgresQueryState, HostError> {
+                panic!("a revoked lease must never be cancellable")
+            }
+
+            fn close_query(&self, _: &PostgresLeaseId, _: &PostgresQueryId) -> Result<(), HostError> {
+                panic!("a revoked lease must never publish a query")
+            }
+
+            fn close_lease(&self, _: &PostgresLeaseId) -> Result<(), HostError> {
+                self.closed.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let live = Arc::new(AtomicBool::new(true));
+        let authority = FakeAuthority {
+            live: Arc::clone(&live),
+            revision: Arc::new(AtomicUsize::new(7)),
+            network_revision: Arc::new(AtomicUsize::new(3)),
+        };
+        let closed = Arc::new(AtomicUsize::new(0));
+        let owner = installation('a');
+        let broker = HostPostgres::new(
+            owner.clone(),
+            authority,
+            RevokingPeer {
+                live,
+                closed: Arc::clone(&closed),
+            },
+        );
+
+        assert!(matches!(
+            broker.open_once(
+                &owner,
+                &QueryOperationToken::new("revoked-open").unwrap(),
+                &connection(),
+            ),
+            Err(HostError::Conflict(message)) if message.contains("during connection")
+        ));
+        assert_eq!(closed.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            broker.status(
+                &owner,
+                &PostgresLeaseId::new("revoked-during-open").unwrap(),
+                &PostgresQueryId::new("never-published").unwrap(),
+            ),
+            Err(HostError::Absent(_))
+        ));
     }
 
     #[test]
