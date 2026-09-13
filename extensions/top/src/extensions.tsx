@@ -1211,6 +1211,7 @@ export function Extensions({
 
   const content = (
     <Scroll
+      key={acquisition?.candidate ? 'review' : mode}
       grow
       width="fill"
       height="fill"

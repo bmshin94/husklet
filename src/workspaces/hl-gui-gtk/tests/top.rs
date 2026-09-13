@@ -1885,6 +1885,21 @@ mod unix {
             }
         }
         if fixture == "populated" && name == "extensions" && !catalogue_empty {
+            let installed_intro = find_label(
+                &root,
+                "Discover tools, review their access, and manage what runs in this workspace.",
+            );
+            let installed_scroll = installed_intro
+                .ancestor(gtk::ScrolledWindow::static_type())
+                .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
+                .expect("Extensions heading belongs to its mode viewport");
+            let installed_adjustment = installed_scroll.vadjustment();
+            installed_adjustment.configure(100.0, 0.0, 200.0, 1.0, 10.0, 50.0);
+            settle_toolkit();
+            assert!(
+                installed_adjustment.value() > 0.0,
+                "installed fixture must carry a nonzero scroll position into the mode switch"
+            );
             find_toggle(&root, "Discover").set_active(true);
             settle_toolkit();
             send_report(&surface, &mut wire, 100, |event| {
@@ -1894,6 +1909,16 @@ mod unix {
                 panic!("unexpected mode switch request: {request:?}")
             });
             let discover_root = surface.widget().clone().upcast::<gtk::Widget>();
+            let discover_intro = find_label(
+                &discover_root,
+                "Discover tools, review their access, and manage what runs in this workspace.",
+            );
+            let discover_scroll = discover_intro
+                .ancestor(gtk::ScrolledWindow::static_type())
+                .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
+                .expect("Discover heading belongs to its fresh mode viewport");
+            assert_eq!(discover_scroll.vadjustment().value(), 0.0);
+            assert_eq!(discover_scroll.hadjustment().value(), 0.0);
             assert!(has_placeholder(&discover_root, "Search extensions"));
             assert!(!has_placeholder(&discover_root, "Search installed"));
             assert!(has_label(&discover_root, "19 of 20 extensions"));

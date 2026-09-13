@@ -939,8 +939,18 @@ test('Top owns workspace settings and extension management in the same tab', asy
   invoke(stage, 'Extensions');
   await settled();
   await settled();
+  const modeFrame = stage.frames.length;
   selectExtensionMode(stage, 'Discover');
   await settled();
+  const modePatches = stage.frames.slice(modeFrame).flatMap((frame) => frame.patches);
+  assert.ok(
+    modePatches.some((patch) => patch.Remove),
+    'switching extension modes retires the prior native scroll state',
+  );
+  assert.ok(
+    modePatches.some((patch) => patch.Create?.tag === 'Scroll'),
+    'switching extension modes mounts a fresh scroll viewport at its origin',
+  );
   assert.ok(labelled(stage, 'Discover'));
   assert.ok(labelled(stage, '1 extension'));
   assert.ok(labelled(stage, 'Component playground'));
