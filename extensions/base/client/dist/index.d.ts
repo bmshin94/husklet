@@ -3,6 +3,15 @@ export { PROTOCOL_SPECIFICATION_VERSION, PROTOCOL_VERSION, PROTOCOL_BOUNDS, PROT
 import { semanticText, semanticXml } from './semantic.js';
 export { semanticText, semanticXml };
 import type { CallOptions, ConnectOptions, PaneText, Session as ClientSession, WorkspaceApi } from './api.js';
+/** An extension install/update may have committed before its reply was lost. */
+export declare class ExtensionCommitOperationError extends Error {
+    readonly operation: any;
+    readonly job: any;
+    readonly revision: any;
+    readonly candidate: any;
+    readonly review: any;
+    constructor(operation: any, job: any, revision: any, candidate: any, review: any, cause: any);
+}
 /** A post-creation execution failure whose immutable identity remains recoverable. */
 export declare class ExecutionOperationError extends Error {
     readonly executionId: any;

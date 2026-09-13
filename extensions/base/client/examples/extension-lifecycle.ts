@@ -1,4 +1,9 @@
-import { connect, workspace, type ExtensionAcquisitionStatus } from '@husklet/client';
+import {
+  connect,
+  ExtensionCommitOperationError,
+  workspace,
+  type ExtensionAcquisitionStatus,
+} from '@husklet/client';
 declare const process: { argv: string[]; stdout: { write(value: string): void } };
 
 type Configuration = { path: string; reference: string; retryReference: string };
@@ -34,10 +39,9 @@ if (!cancellationResult.changed) throw new Error('acquisition cancellation was n
 // job remains inspectable and cannot be confused with later progress.
 const acquisition = await host.extensions.startAcquisition(configuration.retryReference);
 const candidate = await ready(host, acquisition.job);
-const installed = await host.extensions.installAndWait(
-  candidate.job,
-  candidate.revision,
-  {
+let installed;
+try {
+  installed = await host.extensions.installAndWait(candidate.job, candidate.revision, {
     capabilities: candidate.candidate!.requested,
     containers: { selectors: [{ name: 'postgres' }], create: false },
     filesystem: {
@@ -47,8 +51,14 @@ const installed = await host.extensions.installAndWait(
       delete: [],
       rename: [],
     },
-  },
-);
+  });
+} catch (error) {
+  if (!(error instanceof ExtensionCommitOperationError)) throw error;
+  await session.close();
+  session = await connect({ path: configuration.path, pendingLimit: 8, timeout: 5_000 });
+  host = workspace(session);
+  installed = { changed: true as const, extension: await host.extensions.recoverCommit(error) };
+}
 if (!installed.changed) throw new Error('install was not observed');
 const identity = installed.extension;
 await host.extensions.disableAndWait(identity.name, identity.image_digest);
@@ -62,4 +72,6 @@ if (persisted.image_digest !== identity.image_digest || !persisted.enabled)
   throw new Error('installed lifecycle state did not survive host restart');
 await host.extensions.removeAndWait(identity.name, identity.image_digest);
 await session.close();
-process.stdout.write(`${JSON.stringify({ catalogue: catalogue.entries.length, removed: identity.name })}\n`);
+process.stdout.write(
+  `${JSON.stringify({ catalogue: catalogue.entries.length, removed: identity.name })}\n`,
+);

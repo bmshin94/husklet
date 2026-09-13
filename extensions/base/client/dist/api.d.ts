@@ -165,6 +165,15 @@ export interface ExtensionReviewedGrants {
     workspaceEnvironment?: WorkspaceEnvironmentGrant;
     credentials?: CredentialGrant;
 }
+/** An extension commit may have completed before its identity reply was lost. Never replay it. */
+export declare class ExtensionCommitOperationError extends Error {
+    readonly operation: 'install' | 'update';
+    readonly job: string;
+    readonly revision: number;
+    readonly candidate: Readonly<ExtensionCandidate>;
+    readonly review: Readonly<ExtensionReviewedGrants>;
+    readonly cause: unknown;
+}
 export interface ExtensionCandidate {
     name: string;
     version: string;
@@ -1230,6 +1239,11 @@ export interface WorkspaceApi {
             image_digest: string;
             revision: number;
         }>;
+        /** Reconcile a lost install/update reply from terminal acquisition and exact persisted authority. */
+        recoverCommit(failure: ExtensionCommitOperationError, options?: {
+            timeoutMs?: number;
+            signal?: AbortSignal;
+        }): Promise<ExtensionSummary>;
         /** Enabled manifest declarations, independent of whether a provider currently occupies a pane. */
         providers(): Promise<ExtensionProviderCatalogue>;
         /** Wait for the extension lifecycle cursor to change, then return its enabled provider catalogue. */

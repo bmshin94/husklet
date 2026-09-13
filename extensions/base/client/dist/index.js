@@ -4,6 +4,31 @@ import { semanticText, semanticXml } from './semantic.js';
 export { semanticText, semanticXml };
 import { ExtensionError, Session } from './session.js';
 import { encodeRequest, PROTOCOL_REPLIES, PROTOCOL_REQUEST_CAPABILITIES, PROTOCOL_TOPICS, } from './generated-protocol.js';
+function immutableCopy(value) {
+    if (Array.isArray(value))
+        return Object.freeze(value.map(immutableCopy));
+    if (value !== null && typeof value === 'object')
+        return Object.freeze(Object.fromEntries(Object.entries(value).map(([key, child]) => [key, immutableCopy(child)])));
+    return value;
+}
+/** An extension install/update may have committed before its reply was lost. */
+export class ExtensionCommitOperationError extends Error {
+    operation;
+    job;
+    revision;
+    candidate;
+    review;
+    constructor(operation, job, revision, candidate, review, cause) {
+        super(`extension ${operation} for ${candidate.name} may have committed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+        this.name = 'ExtensionCommitOperationError';
+        this.operation = operation;
+        this.job = job;
+        this.revision = revision;
+        this.candidate = immutableCopy(candidate);
+        this.review = immutableCopy(review);
+        this.cause = cause;
+    }
+}
 /** A post-creation execution failure whose immutable identity remains recoverable. */
 export class ExecutionOperationError extends Error {
     executionId;
@@ -648,6 +673,30 @@ function extensionAuthority(extension) {
         workspace_environment: extension.workspace_environment ?? null,
         credentials: extension.credentials ?? null,
         pane_providers: extension.pane_providers ?? null,
+    });
+}
+function reviewedAuthority(review) {
+    return JSON.stringify({
+        granted: review.capabilities,
+        containers: review.containers,
+        images: review.images,
+        networks: review.networks,
+        volumes: review.volumes,
+        filesystem: review.filesystem,
+        workspace_environment: review.workspaceEnvironment,
+        credentials: review.credentials,
+    });
+}
+function extensionReviewedAuthority(extension) {
+    return JSON.stringify({
+        granted: extension.granted,
+        containers: extension.containers,
+        images: extension.images,
+        networks: extension.networks,
+        volumes: extension.volumes,
+        filesystem: extension.filesystem,
+        workspace_environment: extension.workspace_environment,
+        credentials: extension.credentials,
     });
 }
 function exactFileRange(offset, limit) {
@@ -5721,6 +5770,16 @@ export function workspace(session, { signal } = {}) {
     api.watchExtensionAcquisitions = (listener) => watch('extension-acquisitions', 'extension_acquisitions', listener, 'extension acquisition');
     const commitAcquisitionAndWait = async (operation, job, revision, review, { timeoutMs = 30_000 } = {}) => {
         const { capabilities: granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }, credentials = { read: [], write: [], inject: [] }, } = review;
+        const normalizedReview = {
+            capabilities: granted,
+            containers,
+            images,
+            networks,
+            volumes,
+            filesystem,
+            workspaceEnvironment,
+            credentials,
+        };
         if (!Number.isSafeInteger(revision) || revision < 0) {
             throw new TypeError(`extension ${operation} wait requires a nonnegative safe integer revision`);
         }
@@ -5764,8 +5823,16 @@ export function workspace(session, { signal } = {}) {
         });
         const stop = await api.watchExtensions(observed);
         let timer;
+        let primaryFailure;
+        let cleanupFailure;
+        let outcome;
         try {
-            committed = await api.extensions[operation](job, revision, digest, granted, containers, images, networks, volumes, filesystem, workspaceEnvironment, credentials);
+            try {
+                committed = await api.extensions[operation](job, revision, digest, granted, containers, images, networks, volumes, filesystem, workspaceEnvironment, credentials);
+            }
+            catch (error) {
+                throw new ExtensionCommitOperationError(operation, job, revision, candidate, normalizedReview, error);
+            }
             if (committed.name !== candidate.name ||
                 committed.image_digest !== digest ||
                 committed.version !== candidate.version) {
@@ -5780,17 +5847,62 @@ export function workspace(session, { signal } = {}) {
                     timer = setTimeout(() => resolve(null), timeoutMs);
                 }),
             ]);
-            return extension === null
-                ? { changed: false, name: candidate.name, image_digest: digest, revision }
-                : { changed: true, extension };
+            outcome =
+                extension === null
+                    ? { changed: false, name: candidate.name, image_digest: digest, revision }
+                    : { changed: true, extension };
+        }
+        catch (error) {
+            primaryFailure = error;
         }
         finally {
             clearTimeout(timer);
-            await stop();
+            try {
+                await stop();
+            }
+            catch (error) {
+                cleanupFailure = error;
+            }
         }
+        if (primaryFailure !== undefined)
+            throw primaryFailure;
+        if (cleanupFailure !== undefined)
+            throw cleanupFailure;
+        return outcome;
     };
     api.extensions.installAndWait = (job, revision, review, options) => commitAcquisitionAndWait('install', job, revision, review, options);
     api.extensions.updateAndWait = (job, revision, review, options) => commitAcquisitionAndWait('update', job, revision, review, options);
+    api.extensions.recoverCommit = async (failure, { timeoutMs = 30_000, signal } = {}) => {
+        if (!(failure instanceof ExtensionCommitOperationError))
+            throw new TypeError('extension commit recovery requires ExtensionCommitOperationError');
+        if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000)
+            throw new RangeError('extension commit recovery timeout must be between 1 and 30000ms');
+        const scoped = signal ? api.withSignal(signal) : api;
+        let status = await scoped.extensions.acquisition(failure.job);
+        const deadline = Date.now() + timeoutMs;
+        while (status.state === 'committing' || status.state === 'ready') {
+            const remaining = deadline - Date.now();
+            if (remaining <= 0)
+                throw new Error('extension commit outcome is still unresolved');
+            const next = await scoped.extensions.waitForAcquisition(failure.job, status.revision, {
+                timeoutMs: Math.min(remaining, 30_000),
+                signal,
+            });
+            if (!next.changed)
+                throw new Error('extension commit outcome is still unresolved');
+            status = next.status;
+        }
+        const expectedState = failure.operation === 'install' ? 'installed' : 'updated';
+        if (status.state !== expectedState)
+            throw new Error(`extension ${failure.operation} finished as ${status.state}`);
+        const extension = (await scoped.extensions.list()).find(({ name }) => name === failure.candidate.name);
+        if (!extension ||
+            extension.image_digest !== failure.candidate.image_digest ||
+            extension.version !== failure.candidate.version ||
+            extensionReviewedAuthority(extension) !== reviewedAuthority(failure.review))
+            throw new Error(`extension ${failure.candidate.name} no longer matches the committed candidate and reviewed authority`);
+        return extension;
+    };
     api.extensions.waitForAcquisition = async (job, afterRevision, { timeoutMs = 30_000, signal } = {}) => {
         if (typeof job !== 'string' ||
             job.length === 0 ||
