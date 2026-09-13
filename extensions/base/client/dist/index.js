@@ -394,6 +394,20 @@ export class TerminalOperationError extends Error {
         this.cause = cause;
     }
 }
+/** An observed pane close may have committed before its reply was lost. */
+export class TerminalCloseOperationError extends Error {
+    slot;
+    generation;
+    revision;
+    constructor(slot, generation, revision, cause) {
+        super(`terminal pane ${slot} at generation ${generation} may have closed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+        this.name = 'TerminalCloseOperationError';
+        this.slot = slot;
+        this.generation = generation;
+        this.revision = revision;
+        this.cause = cause;
+    }
+}
 /** A tab pin/unpin may have committed before its reply was lost. */
 export class TerminalPinOperationError extends Error {
     tab;
@@ -5257,6 +5271,32 @@ export function workspace(session, { signal } = {}) {
             clearTimeout(timer);
             await stop();
         }
+    };
+    api.terminal.closeObservedRecoverable = async (slot, generation, revision) => {
+        try {
+            await api.terminal.closeObserved(slot, generation, revision);
+        }
+        catch (error) {
+            throw new TerminalCloseOperationError(slot, generation, revision, error);
+        }
+    };
+    api.terminal.recoverClose = async (failure) => {
+        if (!(failure instanceof TerminalCloseOperationError))
+            throw new TypeError('terminal close recovery requires TerminalCloseOperationError');
+        const inventory = await api.terminal.panes();
+        if (inventory.truncated)
+            throw new Error('terminal close recovery requires a complete pane inventory');
+        const current = inventory.panes.find(({ slot }) => slot === failure.slot);
+        if (current?.generation === failure.generation)
+            throw new Error('the exact pane generation remains present; close outcome is unresolved');
+        return {
+            closed: {
+                slot: failure.slot,
+                generation: failure.generation,
+                revision: failure.revision,
+            },
+            replacement: current ?? null,
+        };
     };
     api.terminal.closeAndWait = async (slot, generation, revision, { timeoutMs = 30_000 } = {}) => {
         if (typeof slot !== 'string' || slot.length === 0)

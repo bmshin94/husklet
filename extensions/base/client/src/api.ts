@@ -915,6 +915,13 @@ export declare class TerminalOperationError extends Error {
       }>;
   readonly cause: unknown;
 }
+/** An observed pane close may have committed before its reply was lost. */
+export declare class TerminalCloseOperationError extends Error {
+  readonly slot: string;
+  readonly generation: number;
+  readonly revision: number;
+  readonly cause: unknown;
+}
 /** A tab pin/unpin may have committed before its reply was lost. Never replay it blindly. */
 export declare class TerminalPinOperationError extends Error {
   readonly tab: string;
@@ -2113,6 +2120,13 @@ export interface WorkspaceApi {
     >;
     close(slot: string): Promise<void>;
     closeObserved(slot: string, generation: number, revision: number): Promise<void>;
+    /** Issue an observed close while preserving exact reconnect recovery authority. */
+    closeObservedRecoverable(slot: string, generation: number, revision: number): Promise<void>;
+    /** Reconcile a lost close reply without replay; replacement is reported explicitly. */
+    recoverClose(failure: TerminalCloseOperationError): Promise<{
+      closed: { slot: string; generation: number; revision: number };
+      replacement: InspectablePane | null;
+    }>;
     /** Arm pane changes before CAS close and prove absence only from a complete inventory. */
     closeAndWait(
       slot: string,

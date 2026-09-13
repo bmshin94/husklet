@@ -133,6 +133,13 @@ export declare class TerminalOperationError extends Error {
     readonly result: any;
     constructor(operation: any, result: any, cause: any);
 }
+/** An observed pane close may have committed before its reply was lost. */
+export declare class TerminalCloseOperationError extends Error {
+    readonly slot: any;
+    readonly generation: any;
+    readonly revision: any;
+    constructor(slot: any, generation: any, revision: any, cause: any);
+}
 /** A tab pin/unpin may have committed before its reply was lost. */
 export declare class TerminalPinOperationError extends Error {
     readonly tab: any;
