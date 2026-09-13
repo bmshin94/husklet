@@ -74,37 +74,24 @@ fn install_defaults_with(
                 version = env!("CARGO_PKG_VERSION")
             ));
         }
-        if let Some(entry) = roster.entries().into_iter().find(|entry| entry.name == name) {
-            if entry.image_digest != candidate.digest || !roster.matches_manifest(&name, &candidate.manifest) {
-                let update = roster
-                    .prepare_update(&candidate.manifest, &candidate.digest)
-                    .map_err(|error| error.to_string())?;
-                roster
-                    .commit_update_resource_scoped(
-                        update,
-                        &candidate.manifest.capabilities,
-                        &candidate.manifest.containers,
-                        &candidate.manifest.images,
-                        &candidate.manifest.networks,
-                        &candidate.manifest.volumes,
-                        &candidate.manifest.filesystem,
-                        &candidate.manifest.workspace_environment,
-                        &candidate.manifest.credentials,
-                        moment(),
-                    )
-                    .map_err(|error| error.to_string())?;
-            }
-            match roster.stage(&name) {
-                Stage::Duty => {}
-                Stage::Standby => roster.enable(&name).map_err(|error| error.to_string())?,
-                Stage::Fault { .. } => roster.retry(&name).map_err(|error| error.to_string())?,
-                Stage::Vacancy => unreachable!("the existing default remains installed"),
-            }
-        } else {
+        install_default(&mut roster, &name, &candidate)?;
+    }
+    Ok(())
+}
+
+fn install_default<S: hl_ws::storage::Storage>(
+    roster: &mut Roster<S>,
+    name: &ExtensionName,
+    candidate: &Candidate,
+) -> Result<(), String> {
+    if let Some(entry) = roster.entries().into_iter().find(|entry| entry.name == *name) {
+        if entry.image_digest != candidate.digest || !roster.matches_manifest(name, &candidate.manifest) {
+            let update = roster
+                .prepare_update(&candidate.manifest, &candidate.digest)
+                .map_err(|error| error.to_string())?;
             roster
-                .register_resource_scoped(
-                    &candidate.manifest,
-                    &candidate.digest,
+                .commit_update_resource_scoped(
+                    update,
                     &candidate.manifest.capabilities,
                     &candidate.manifest.containers,
                     &candidate.manifest.images,
@@ -116,8 +103,29 @@ fn install_defaults_with(
                     moment(),
                 )
                 .map_err(|error| error.to_string())?;
-            roster.enable(&name).map_err(|error| error.to_string())?;
         }
+        match roster.stage(name) {
+            Stage::Duty => {}
+            Stage::Standby => roster.enable(name).map_err(|error| error.to_string())?,
+            Stage::Fault { .. } => roster.retry(name).map_err(|error| error.to_string())?,
+            Stage::Vacancy => unreachable!("the existing default remains installed"),
+        }
+    } else {
+        roster
+            .register_enabled_resource_scoped(
+                &candidate.manifest,
+                &candidate.digest,
+                &candidate.manifest.capabilities,
+                &candidate.manifest.containers,
+                &candidate.manifest.images,
+                &candidate.manifest.networks,
+                &candidate.manifest.volumes,
+                &candidate.manifest.filesystem,
+                &candidate.manifest.workspace_environment,
+                &candidate.manifest.credentials,
+                moment(),
+            )
+            .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -150,6 +158,45 @@ fn moment() -> i64 {
 mod tests {
     use super::*;
     use hl_extension::{Activation, Capability, Grant, Presentation};
+    use hl_ws::storage::{Key, Storage};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Instant;
+
+    #[derive(Clone)]
+    struct CountPuts {
+        directory: hl_ws::storage::Directory,
+        puts: Arc<AtomicUsize>,
+    }
+
+    impl Storage for CountPuts {
+        type Error = hl_ws::storage::Error;
+
+        fn put(&self, key: &Key, bytes: &[u8]) -> Result<(), Self::Error> {
+            self.puts.fetch_add(1, Ordering::SeqCst);
+            self.directory.put(key, bytes)
+        }
+
+        fn get(&self, key: &Key) -> Result<Vec<u8>, Self::Error> {
+            self.directory.get(key)
+        }
+
+        fn list(&self, prefix: Option<&Key>) -> Result<Vec<Key>, Self::Error> {
+            self.directory.list(prefix)
+        }
+
+        fn list_until(&self, prefix: Option<&Key>, deadline: Instant) -> Result<Vec<Key>, Self::Error> {
+            self.directory.list_until(prefix, deadline)
+        }
+
+        fn remove(&self, key: &Key) -> Result<(), Self::Error> {
+            self.directory.remove(key)
+        }
+
+        fn remove_until(&self, key: &Key, deadline: Instant) -> Result<(), Self::Error> {
+            self.directory.remove_until(key, deadline)
+        }
+    }
 
     fn top_manifest() -> Manifest {
         trusted_manifest("top").expect("checked-in Top manifest")
@@ -247,6 +294,35 @@ mod tests {
         assert_eq!(entries[0].stage, Stage::Duty);
         assert!(entries[0].granted.holds(Capability::ExtensionRead));
         assert!(entries[0].granted.holds(Capability::WorkspaceRead));
+    }
+
+    #[test]
+    fn fresh_default_publishes_enabled_identity_and_authority_once() {
+        let temporary = tempfile::tempdir().expect("temporary storage");
+        let puts = Arc::new(AtomicUsize::new(0));
+        let storage = CountPuts {
+            directory: hl_ws::storage::Directory::open(temporary.path()).expect("directory"),
+            puts: Arc::clone(&puts),
+        };
+        let mut roster = Roster::open(storage).expect("roster");
+        let manifest = top_manifest();
+        let name = manifest.name.clone();
+        let candidate = Candidate {
+            reference: "registry.test/top:0.4.0".into(),
+            digest: "sha256:fresh-top".into(),
+            manifest,
+        };
+
+        install_default(&mut roster, &name, &candidate).expect("atomic install");
+
+        assert_eq!(
+            puts.load(Ordering::SeqCst),
+            1,
+            "standby authority must never be published"
+        );
+        let entry = &roster.entries()[0];
+        assert_eq!(entry.image_digest, "sha256:fresh-top");
+        assert_eq!(entry.stage, Stage::Duty);
     }
 
     #[test]
