@@ -8703,7 +8703,7 @@ function ancestorTags(stage, label) {
   );
   const found = labelled(stage, label)?.SetProp.id;
   const ancestors = [];
-  for (let node = found; parents.has(node); ) {
+  for (let node = found; parents.has(node);) {
     node = parents.get(node);
     ancestors.push(tags.get(node));
   }
