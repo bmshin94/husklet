@@ -780,7 +780,7 @@ function NetworkSummaryDetail({ network }: { network: NetworkSummary }) {
       <Row gap={1} wrap>
         <Badge label={`Driver · ${network.driver}`} />
         <Badge label={`Scope · ${network.scope}`} />
-        <Badge label={network.kind === 'builtin' ? 'Built-in' : 'Custom'} />
+        <Badge label={`Type · ${network.kind === 'builtin' ? 'Built-in' : 'Custom'}`} />
       </Row>
       <ResourceIdentity label="Immutable network ID" value={network.id} />
       <Heading label={`Connected containers · ${containers.length}`} scale="caption" />

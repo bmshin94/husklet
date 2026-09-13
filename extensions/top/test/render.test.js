@@ -6073,6 +6073,7 @@ test('network inspection exposes loading, retry, empty and domain-specific detai
   assert.ok(labelled(stage, 'Network details'));
   assert.ok(labelled(stage, 'Driver · bridge'));
   assert.ok(labelled(stage, 'Scope · local'));
+  assert.ok(labelled(stage, 'Type · Custom'));
   assert.ok(labelled(stage, 'Connected containers · 1'));
   assert.ok(labelled(stage, '1 connected'));
   assert.ok(labelled(stage, 'Refresh connections'));
