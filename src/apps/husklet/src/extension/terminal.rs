@@ -69,6 +69,7 @@ pub enum Request {
     PinTab {
         tab: String,
         pinned: bool,
+        origin: TerminalOrigin,
     },
     FocusTab(String),
     /// A pane split off the named slot.
@@ -348,9 +349,14 @@ impl TerminalSurface for Relay {
     }
 
     fn pin_tab(&self, tab: &str, pinned: bool) -> Result<(), HostError> {
+        let origin = self
+            .origin
+            .clone()
+            .ok_or_else(|| HostError::Failed("terminal port has no authenticated installation identity".into()))?;
         self.done(Request::PinTab {
             tab: tab.to_owned(),
             pinned,
+            origin,
         })
     }
 
@@ -573,6 +579,37 @@ mod tests {
             errand.answer(Ok(Answer::Slot("p7".into())));
         });
         assert_eq!(attributed.open_tab("query").unwrap(), "p7");
+        window.join().unwrap();
+    }
+
+    #[test]
+    fn pinning_carries_the_authenticated_installation_and_anonymous_relays_fail_closed() {
+        let (relay, errands) = Relay::open();
+        assert!(relay.pin_tab("tab-7", true).is_err());
+        let installation = hl_rpc::InstallationIdentity::new("0123456789abcdef0123456789abcdef").unwrap();
+        let authority = hl_extension::Authority::new(
+            hl_rpc::PeerName::new("agent").unwrap(),
+            hl_rpc::Warrant::default(),
+            vec![],
+        )
+        .for_installation(installation.clone());
+        let attributed = relay.of(&authority).unwrap();
+        let window = std::thread::spawn(move || {
+            let errand = errands.recv().unwrap();
+            assert_eq!(
+                errand.request(),
+                &Request::PinTab {
+                    tab: "tab-7".into(),
+                    pinned: true,
+                    origin: TerminalOrigin {
+                        extension: hl_rpc::PeerName::new("agent").unwrap(),
+                        installation,
+                    },
+                }
+            );
+            errand.answer(Ok(Answer::Done));
+        });
+        attributed.pin_tab("tab-7", true).unwrap();
         window.join().unwrap();
     }
 

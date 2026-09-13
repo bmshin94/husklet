@@ -793,11 +793,41 @@ impl<'a> Tabs<'a> {
     }
 
     pub(crate) fn pin(&self, tab: &str, pinned: bool) -> Result<(), hl_extension::HostError> {
+        self.pin_entry(tab, pinned, None)
+    }
+
+    pub(crate) fn pin_for_extension(
+        &self,
+        tab: &str,
+        pinned: bool,
+        origin: &hl::extension::TerminalOrigin,
+    ) -> Result<(), hl_extension::HostError> {
+        self.pin_entry(tab, pinned, Some(origin))
+    }
+
+    fn pin_entry(
+        &self,
+        tab: &str,
+        pinned: bool,
+        origin: Option<&hl::extension::TerminalOrigin>,
+    ) -> Result<(), hl_extension::HostError> {
         let mut entries = self.window.entries.borrow_mut();
         let entry = entries
             .iter_mut()
             .find(|entry| entry.name == tab)
             .ok_or_else(|| hl_extension::HostError::Absent(tab.to_owned()))?;
+        if let Some(origin) = origin {
+            if entry.origin
+                != (hl_ws_term::TabOrigin::Extension {
+                    name: origin.extension.clone(),
+                    installation: origin.installation.clone(),
+                })
+            {
+                return Err(hl_extension::HostError::Conflict(
+                    "terminal tab is not owned by this extension installation".into(),
+                ));
+            }
+        }
         let Some(pin) = entry.pin.as_ref() else {
             return Err(hl_extension::HostError::Conflict(
                 "the overview tab is always protected".into(),
@@ -1230,6 +1260,55 @@ mod focus_ownership_tests {
             drop(entries);
             Page::new(&tw, &tab).close();
             assert!(tw.entries.borrow().iter().any(|entry| entry.name == tab));
+            tw.closing.set(true);
+        });
+        if !ran {
+            println!("skipped: no display connection");
+        }
+    }
+
+    #[test]
+    fn extension_pin_is_confined_to_the_exact_tab_creator_installation() {
+        let ran = crate::test_support::on_the_toolkit_thread(|| {
+            let workspace = WorkspaceConfig::new("extension-pin-test", "alpine:3.20", hl_ws::Arch::Amd64);
+            let tw = Window::bench(&workspace);
+            let page = gtk::Label::new(Some("owned"));
+            let tab = Tabs::new(&tw).add("query", None, &page, true);
+            let owner = hl::extension::TerminalOrigin {
+                extension: hl_rpc::PeerName::new("database").unwrap(),
+                installation: hl_rpc::InstallationIdentity::new("a".repeat(32)).unwrap(),
+            };
+            Tabs::new(&tw)
+                .attribute(
+                    &tab,
+                    hl_ws_term::TabOrigin::Extension {
+                        name: owner.extension.clone(),
+                        installation: owner.installation.clone(),
+                    },
+                )
+                .unwrap();
+            let replacement = hl::extension::TerminalOrigin {
+                extension: owner.extension.clone(),
+                installation: hl_rpc::InstallationIdentity::new("b".repeat(32)).unwrap(),
+            };
+            assert!(Tabs::new(&tw).pin_for_extension(&tab, true, &replacement).is_err());
+            assert!(
+                !tw.entries
+                    .borrow()
+                    .iter()
+                    .find(|entry| entry.name == tab)
+                    .unwrap()
+                    .pinned
+            );
+            Tabs::new(&tw).pin_for_extension(&tab, true, &owner).unwrap();
+            assert!(
+                tw.entries
+                    .borrow()
+                    .iter()
+                    .find(|entry| entry.name == tab)
+                    .unwrap()
+                    .pinned
+            );
             tw.closing.set(true);
         });
         if !ran {

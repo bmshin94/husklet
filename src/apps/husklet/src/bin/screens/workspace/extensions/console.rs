@@ -90,7 +90,9 @@ impl Console {
             Request::OpenTabOnce { token, title, origin } => {
                 Self::open_once(window, token, title, origin.as_ref()).map(Answer::OpenTabOnce)
             }
-            Request::PinTab { tab, pinned } => Tabs::new(window).pin(tab, *pinned).map(|()| Answer::Done),
+            Request::PinTab { tab, pinned, origin } => Tabs::new(window)
+                .pin_for_extension(tab, *pinned, origin)
+                .map(|()| Answer::Done),
             Request::FocusTab(tab) => Tabs::new(window).focus(tab).map(|()| Answer::Done),
             Request::Split { slot, division } => Self::split(window, slot, *division).map(Answer::Slot),
             Request::Spawn { slot, command } => Self::spawn(window, slot, command).map(|()| Answer::Done),

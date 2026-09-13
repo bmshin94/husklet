@@ -1725,6 +1725,13 @@ mod tests {
             Ok(format!("tab-{title}"))
         }
 
+        fn pin_tab(&self, tab: &str, _pinned: bool) -> Result<(), HostError> {
+            self.ledger.note("terminal.pin_tab");
+            Err(HostError::Conflict(format!(
+                "terminal tab {tab} is not owned by this extension installation"
+            )))
+        }
+
         fn split(&self, _slot: &str, _division: Division) -> Result<String, HostError> {
             self.ledger.note("terminal.split");
             Ok("s2".to_owned())
@@ -2902,6 +2909,43 @@ mod tests {
     fn ask(wire: &mut Wire<UnixStream>, request: &Request) -> Frame {
         wire.send(&codec::request(request).expect("encoded")).expect("sent");
         wire.receive().expect("an answer")
+    }
+
+    #[test]
+    fn denied_foreign_tab_pin_preserves_the_real_unix_conversation() {
+        let ledger = Arc::new(Ledger::default());
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let observed = Arc::clone(&ledger);
+        let served = std::thread::spawn(move || {
+            let host = Host { ledger };
+            let authority = Authority::new(
+                ExtensionName::new("agent").unwrap(),
+                Grant::new([Capability::TerminalRead, Capability::TerminalLayoutControl]),
+                Vec::new(),
+            );
+            let mut conversation = Conversation::new(ours, authority, "dev", Queue::new())?;
+            conversation.greet()?;
+            conversation.serve(&services(&host))
+        });
+        let mut wire = Wire::new(theirs);
+        shake(&mut wire, PROTOCOL);
+        assert!(matches!(
+            codec::read_failure(&ask(
+                &mut wire,
+                &Request::TerminalPinTab {
+                    tab: "user-tab".into(),
+                    pinned: true,
+                },
+            )),
+            Ok(Failure::Conflict { detail }) if detail.contains("not owned")
+        ));
+        assert!(matches!(
+            codec::read_reply(&ask(&mut wire, &Request::TerminalTabs)),
+            Ok(Reply::Tabs(_))
+        ));
+        assert_eq!(observed.reached(), vec!["terminal.pin_tab", "terminal.tabs"]);
+        drop(wire);
+        let _ = served.join().unwrap();
     }
 
     #[test]
