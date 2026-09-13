@@ -991,7 +991,12 @@ test('Top owns workspace settings and extension management in the same tab', asy
   assert.deepEqual(
     ancestorTags(stage, 'Review access').slice(0, 4),
     ['Row', 'CardContent', 'Card', 'Row'],
-    'catalogue trust and action share the compact final content row',
+    'catalogue lifecycle action owns a dedicated compact row',
+  );
+  assert.deepEqual(
+    ancestorTags(stage, 'Trust details').slice(0, 3),
+    ['CardContent', 'Card', 'Row'],
+    'secondary trust disclosure has its own row instead of indenting the lifecycle action',
   );
   assert.equal(
     ancestorProperty(stage, 'Component playground', 'Card', 'Justify'),

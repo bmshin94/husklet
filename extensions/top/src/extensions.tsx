@@ -1454,41 +1454,41 @@ export function Extensions({
                                   wrap
                                 />
                               ) : null}
+                              <Expander label="Trust details" expanded={false}>
+                                <Column gap={1}>
+                                  <Text label={trust.label} color="text-dim" wrap />
+                                  <Text
+                                    label={`Catalogue source · ${entry.source}`}
+                                    color="text-dim"
+                                    wrap
+                                  />
+                                  <Text
+                                    label={`Categories · ${(entry.categories ?? []).join(', ')}`}
+                                    color="text-dim"
+                                    wrap
+                                  />
+                                  <Text
+                                    label={`Image · ${compactImageReference(entry.reference)}`}
+                                    color="text-dim"
+                                    tooltip={entry.reference}
+                                    wrap
+                                  />
+                                  <Text
+                                    label={`Protocol ${entry.protocol ?? 'unavailable'} · ${entry.architectures?.join(', ') || 'architecture unavailable'}`}
+                                    color="text-dim"
+                                    wrap
+                                  />
+                                  {installedExtension ? (
+                                    <Text
+                                      label={`Installed image · ${capitalize(extensionState(installedExtension))} · ${compactDigest(installedExtension.image_digest)}`}
+                                      color="text-dim"
+                                      tooltip={installedExtension.image_digest}
+                                      wrap
+                                    />
+                                  ) : null}
+                                </Column>
+                              </Expander>
                               <Row gap={3} width="fill" wrap align="center" justify="start">
-                                <Expander label="Trust details" expanded={false}>
-                                  <Column gap={1}>
-                                    <Text label={trust.label} color="text-dim" wrap />
-                                    <Text
-                                      label={`Catalogue source · ${entry.source}`}
-                                      color="text-dim"
-                                      wrap
-                                    />
-                                    <Text
-                                      label={`Categories · ${(entry.categories ?? []).join(', ')}`}
-                                      color="text-dim"
-                                      wrap
-                                    />
-                                    <Text
-                                      label={`Image · ${compactImageReference(entry.reference)}`}
-                                      color="text-dim"
-                                      tooltip={entry.reference}
-                                      wrap
-                                    />
-                                    <Text
-                                      label={`Protocol ${entry.protocol ?? 'unavailable'} · ${entry.architectures?.join(', ') || 'architecture unavailable'}`}
-                                      color="text-dim"
-                                      wrap
-                                    />
-                                    {installedExtension ? (
-                                      <Text
-                                        label={`Installed image · ${capitalize(extensionState(installedExtension))} · ${compactDigest(installedExtension.image_digest)}`}
-                                        color="text-dim"
-                                        tooltip={installedExtension.image_digest}
-                                        wrap
-                                      />
-                                    ) : null}
-                                  </Column>
-                                </Expander>
                                 {builtIn ? (
                                   installedExtension && provider ? (
                                     providerAction(installedExtension, provider)

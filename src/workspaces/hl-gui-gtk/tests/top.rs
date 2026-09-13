@@ -2005,6 +2005,12 @@ mod unix {
                 let review_bounds_in_card = review
                     .compute_bounds(&review_card)
                     .expect("Discover action belongs to its card");
+                if width == 600 {
+                    assert!(
+                        (review_bounds_in_card.x() - description_bounds.x()).abs() <= 1.0,
+                        "narrow lifecycle action is indented from catalogue content: description={description_bounds:?} action={review_bounds_in_card:?}"
+                    );
+                }
                 let category = find_mapped_labelled(&review_card, "Category · Developer tools");
                 let category_bounds = category
                     .compute_bounds(&review_card)
@@ -2069,7 +2075,7 @@ mod unix {
                 } else {
                     let heights = [review_card.height(), access_card.height()];
                     assert!(
-                        heights.iter().all(|height| *height <= 184),
+                        heights.iter().all(|height| *height <= 210),
                         "narrow Discover cards stretched sparse content into {heights:?}px panels"
                     );
                     assert_eq!(
@@ -2078,15 +2084,27 @@ mod unix {
                         "narrow Discover cards must use one consistent full-width column"
                     );
                 }
-                let trust_label = trust.label_widget().expect("trust disclosure owns a label");
-                let trust_label_bounds = trust_label
+                let trust_bounds = trust
                     .compute_bounds(&review_card)
-                    .expect("trust label belongs to its card");
-                let trust_action_gap = review_bounds_in_card.x() - trust_label_bounds.x() - trust_label_bounds.width();
+                    .expect("trust disclosure belongs to its card");
+                let trust_action_gap = review_bounds_in_card.y() - trust_bounds.y() - trust_bounds.height();
                 assert!(
-                    (12.0..=16.0).contains(&trust_action_gap),
-                    "{width_name} visible trust-label/action gap must be 12 to 16px: {trust_action_gap}px"
+                    (4.0..=12.0).contains(&trust_action_gap),
+                    "{width_name} lifecycle row must follow trust metadata by 4 to 12px: {trust_action_gap}px"
                 );
+                assert!(trust.grab_focus(), "{width_name} trust disclosure accepts focus");
+                assert!(review.is_focusable(), "{width_name} lifecycle action accepts focus");
+                trust.set_expanded(true);
+                settle_toolkit();
+                let expanded_action = review
+                    .compute_bounds(&review_card)
+                    .expect("expanded trust keeps its lifecycle action in the card");
+                assert!(
+                    (expanded_action.x() - review_bounds_in_card.x()).abs() <= 1.0,
+                    "{width_name} expanding trust shifted the lifecycle action horizontally"
+                );
+                trust.set_expanded(false);
+                settle_toolkit();
                 let catalogue_cards = widgets_with_class(&discover_root, "hl-card")
                     .into_iter()
                     .filter(|card| card.is_visible())
@@ -2099,8 +2117,11 @@ mod unix {
                     .iter()
                     .filter(|bounds| bounds.y() >= 0.0 && bounds.y() + bounds.height() <= 800.0)
                     .count();
-                let required = if width == 1_200 { 9 } else { 3 };
-                let height_limit = if width == 1_200 { 210.0 } else { 184.0 };
+                // Trust and lifecycle controls are separate 44px interaction rows. Keep
+                // the cards bounded while requiring two complete catalogue rows wide
+                // and two complete cards narrow in the first viewport.
+                let required = if width == 1_200 { 6 } else { 2 };
+                let height_limit = 210.0;
                 assert!(
                     card_bounds.iter().all(|bounds| bounds.height() <= height_limit),
                     "{width_name} catalogue includes a card above {height_limit}px: {card_bounds:?}"
