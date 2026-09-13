@@ -104,6 +104,28 @@ export class ExecutionOperationError extends Error {
   }
 }
 
+/** An execution may have started before its identity reply was lost. */
+export class ExecutionStartOperationError extends Error {
+  readonly containerId;
+  readonly generation;
+  readonly command;
+  readonly credentialKeys;
+  readonly before;
+
+  constructor(containerId, generation, command, credentialKeys, before, cause) {
+    super(
+      `execution start in container ${containerId} may have committed: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    this.name = 'ExecutionStartOperationError';
+    this.containerId = containerId;
+    this.generation = generation;
+    this.command = Object.freeze([...command]);
+    this.credentialKeys = Object.freeze([...credentialKeys]);
+    this.before = Object.freeze({ ids: Object.freeze([...before.ids]), complete: before.complete });
+    this.cause = cause;
+  }
+}
+
 /** The host associated an execution identity with a container other than the selected target. */
 export class ExecutionContainerMismatchError extends Error {
   readonly executionId;
@@ -1903,6 +1925,27 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         }
         return inventory;
       },
+      reconcileExecutionStart: async (failure) => {
+        if (!(failure instanceof ExecutionStartOperationError)) {
+          throw new TypeError(
+            'execution start reconciliation requires an ExecutionStartOperationError',
+          );
+        }
+        const inventory = await api.containers.executions();
+        const known = new Set(failure.before.ids);
+        const candidates = inventory.executions.filter(
+          (execution) =>
+            !known.has(execution.id) &&
+            execution.container_id === failure.containerId &&
+            execution.command.length === failure.command.length &&
+            execution.command.every((argument, index) => argument === failure.command[index]),
+        );
+        return {
+          candidates,
+          complete: failure.before.complete && !inventory.truncated,
+          retrySafe: false,
+        };
+      },
       executionLogs: async (id, { stdout = true, stderr = true } = {}) =>
         expect(
           await session.call('execution_logs', {
@@ -2350,6 +2393,39 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           }),
           'identity',
         );
+      },
+      execWithCredentialsObserved: async (
+        id,
+        generation,
+        { command, environment = [], credentials, user, workingDirectory, stdin = false },
+      ) => {
+        const containerId = immutableIdentity(id, [32, 64], 'container');
+        const argv = exactCommand(command);
+        const exactEnvironment = exactExecEnvironment(environment);
+        const exactCredentials = exactExecCredentials(credentials ?? [], exactEnvironment);
+        const before = await api.containers.executions();
+        try {
+          return await api.containers.execWithCredentials(containerId, generation, {
+            command: argv,
+            environment: exactEnvironment,
+            credentials: exactCredentials,
+            user,
+            workingDirectory,
+            stdin,
+          });
+        } catch (cause) {
+          throw new ExecutionStartOperationError(
+            containerId,
+            generation,
+            argv,
+            exactCredentials.map(([, key]) => key),
+            {
+              ids: before.executions.map(({ id: executionId }) => executionId),
+              complete: !before.truncated,
+            },
+            cause,
+          );
+        }
       },
       execAndWait: async (
         id,

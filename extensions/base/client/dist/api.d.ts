@@ -835,6 +835,19 @@ export declare class ExecutionOperationError extends Error {
     /** Exact bounded stderr bytes acknowledged at `after` by text-oriented helpers. */
     readonly stderr?: readonly number[];
 }
+/** An execution may have started before its identity reply was lost. Never retry it blindly. */
+export declare class ExecutionStartOperationError extends Error {
+    readonly containerId: string;
+    readonly generation: number;
+    readonly command: readonly string[];
+    /** Names only; credential values never cross this recovery surface. */
+    readonly credentialKeys: readonly string[];
+    readonly before: Readonly<{
+        ids: readonly string[];
+        complete: boolean;
+    }>;
+    readonly cause: unknown;
+}
 /** A client-owned execution exceeded its post-start wall-clock deadline. */
 export declare class ExecutionDeadlineError extends Error {
     readonly executionId: string;
@@ -1256,6 +1269,15 @@ export interface WorkspaceApi {
         }): Promise<ContainerOutput>;
         execution(id: string): Promise<ExecutionSummary>;
         executions(): Promise<ExecutionList>;
+        /**
+         * Find exact-container execution candidates after an ambiguous start. Concurrent identical
+         * commands remain candidates, so this never authorizes retry or automatic cancellation.
+         */
+        reconcileExecutionStart(failure: ExecutionStartOperationError): Promise<{
+            candidates: ExecutionSummary[];
+            complete: boolean;
+            retrySafe: false;
+        }>;
         executionLogs(id: string, streams?: {
             stdout?: boolean;
             stderr?: boolean;
@@ -1594,6 +1616,18 @@ export interface WorkspaceApi {
             user?: string;
             workingDirectory?: string;
             /** Retain a bounded writable stdin attachment; additionally requires `containers:input`. */
+            stdin?: boolean;
+        }): Promise<string>;
+        /**
+         * Arm a bounded execution inventory before host-side credential injection. A lost identity
+         * reply throws ExecutionStartOperationError for reconnect reconciliation, never a retry hint.
+         */
+        execWithCredentialsObserved(id: string, generation: number, options: {
+            command: string[];
+            environment?: [string, string][];
+            credentials: [environment: string, key: string][];
+            user?: string;
+            workingDirectory?: string;
             stdin?: boolean;
         }): Promise<string>;
         attachTerminal(id: string, command: string[]): Promise<string>;

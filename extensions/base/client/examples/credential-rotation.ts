@@ -1,4 +1,33 @@
-import type { WorkspaceApi } from '@husklet/client';
+import { ExecutionStartOperationError, type WorkspaceApi } from '@husklet/client';
+
+/**
+ * Start a process with host-injected credentials. On reply loss, reconnect only to identify
+ * cleanup candidates; never retry or cancel a candidate automatically because a concurrent
+ * identical command remains possible.
+ */
+export async function startCredentialProcess(
+  host: WorkspaceApi,
+  reconnect: () => Promise<WorkspaceApi>,
+  container: { id: string; generation: number },
+  key: string,
+) {
+  try {
+    const executionId = await host.containers.execWithCredentialsObserved(
+      container.id,
+      container.generation,
+      {
+        command: ['psql', '--no-password'],
+        credentials: [['PGPASSWORD', key]],
+      },
+    );
+    return { started: true as const, executionId };
+  } catch (cause) {
+    if (!(cause instanceof ExecutionStartOperationError)) throw cause;
+    const resumed = await reconnect();
+    const recovery = await resumed.containers.reconcileExecutionStart(cause);
+    return { started: false as const, recovery };
+  }
+}
 
 /**
  * Give a database client a short-lived view of the current secret. Disconnect, installation

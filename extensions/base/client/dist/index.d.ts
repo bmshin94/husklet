@@ -16,6 +16,15 @@ export declare class ExecutionOperationError extends Error {
     readonly stderr: any;
     constructor(executionId: any, phase: any, cause: any, execution?: any, after?: any, recovery?: any);
 }
+/** An execution may have started before its identity reply was lost. */
+export declare class ExecutionStartOperationError extends Error {
+    readonly containerId: any;
+    readonly generation: any;
+    readonly command: any;
+    readonly credentialKeys: any;
+    readonly before: any;
+    constructor(containerId: any, generation: any, command: any, credentialKeys: any, before: any, cause: any);
+}
 /** The host associated an execution identity with a container other than the selected target. */
 export declare class ExecutionContainerMismatchError extends Error {
     readonly executionId: any;
