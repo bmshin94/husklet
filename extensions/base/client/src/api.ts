@@ -2248,6 +2248,8 @@ export interface WorkspaceApi {
         chunkBytes?: number;
         observed?: string | null;
         signal?: AbortSignal;
+        /** Wrap cancellation with the exact acknowledged prefix for reconnect via resumeText. */
+        preservePartialOnAbort?: boolean;
       },
     ): Promise<FileText>;
     /** Resume an interrupted text read from its exact acknowledged byte prefix and file identity. */

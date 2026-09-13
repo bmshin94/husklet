@@ -4367,12 +4367,13 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         } = {},
       ) {
         const [start, limit] = exactFileRange(offset, chunkBytes);
+        const scoped = signal ? api.withSignal(signal) : api;
         let cursor = start;
         let identity = observed;
         let total;
         for (;;) {
           requireFilesystemActive(signal);
-          const range = await api.files.readRange(path, cursor, limit, identity);
+          const range = await scoped.files.readRange(path, cursor, limit, identity);
           requireFilesystemActive(signal);
           identity ??= range.identity;
           if (range.identity !== identity) {
@@ -4396,11 +4397,13 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           chunkBytes = 65_536,
           observed = null,
           signal,
+          preservePartialOnAbort = false,
         }: {
           maxBytes: number;
           chunkBytes?: number;
           observed?: string | null;
           signal?: AbortSignal;
+          preservePartialOnAbort?: boolean;
         },
       ) => {
         if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 64 * 1024 * 1024) {
@@ -4409,6 +4412,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           );
         }
         const [, limit] = exactFileRange(0, chunkBytes);
+        if (typeof preservePartialOnAbort !== 'boolean')
+          throw new TypeError('filesystem text preservePartialOnAbort must be boolean');
         const decoder = new TextDecoder('utf-8', { fatal: true });
         const parts: string[] = [];
         const chunks: Uint8Array[] = [];
@@ -4444,7 +4449,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
             !(error instanceof FileExtentChangedError) &&
             !(error instanceof FileTextLimitError) &&
             !(error instanceof FileTextOperationError) &&
-            !(error instanceof Error && error.name === 'AbortError')
+            (preservePartialOnAbort || !(error instanceof Error && error.name === 'AbortError'))
           ) {
             const contents = chunks.flatMap((chunk) => Array.from(chunk));
             throw new FileTextOperationError(path, identity, contents, maxBytes, error);

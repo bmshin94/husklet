@@ -3403,12 +3403,13 @@ export function workspace(session, { signal } = {}) {
             },
             readChunks: async function* (path, { offset = 0, chunkBytes = 65_536, observed = null, signal, } = {}) {
                 const [start, limit] = exactFileRange(offset, chunkBytes);
+                const scoped = signal ? api.withSignal(signal) : api;
                 let cursor = start;
                 let identity = observed;
                 let total;
                 for (;;) {
                     requireFilesystemActive(signal);
-                    const range = await api.files.readRange(path, cursor, limit, identity);
+                    const range = await scoped.files.readRange(path, cursor, limit, identity);
                     requireFilesystemActive(signal);
                     identity ??= range.identity;
                     if (range.identity !== identity) {
@@ -3426,11 +3427,13 @@ export function workspace(session, { signal } = {}) {
                     cursor = next;
                 }
             },
-            readText: async (path, { maxBytes, chunkBytes = 65_536, observed = null, signal, }) => {
+            readText: async (path, { maxBytes, chunkBytes = 65_536, observed = null, signal, preservePartialOnAbort = false, }) => {
                 if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 64 * 1024 * 1024) {
                     throw new RangeError('filesystem text maxBytes must be an integer between 1 and 67108864');
                 }
                 const [, limit] = exactFileRange(0, chunkBytes);
+                if (typeof preservePartialOnAbort !== 'boolean')
+                    throw new TypeError('filesystem text preservePartialOnAbort must be boolean');
                 const decoder = new TextDecoder('utf-8', { fatal: true });
                 const parts = [];
                 const chunks = [];
@@ -3464,7 +3467,7 @@ export function workspace(session, { signal } = {}) {
                         !(error instanceof FileExtentChangedError) &&
                         !(error instanceof FileTextLimitError) &&
                         !(error instanceof FileTextOperationError) &&
-                        !(error instanceof Error && error.name === 'AbortError')) {
+                        (preservePartialOnAbort || !(error instanceof Error && error.name === 'AbortError'))) {
                         const contents = chunks.flatMap((chunk) => Array.from(chunk));
                         throw new FileTextOperationError(path, identity, contents, maxBytes, error);
                     }

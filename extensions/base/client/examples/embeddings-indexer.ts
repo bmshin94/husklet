@@ -101,6 +101,7 @@ try {
         chunkBytes,
         observed: exact.identity,
         signal,
+        preservePartialOnAbort: true,
       });
     } catch (cause) {
       if (!(cause instanceof FileTextOperationError)) throw cause;
