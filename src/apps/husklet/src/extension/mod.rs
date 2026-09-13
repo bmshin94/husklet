@@ -26,6 +26,7 @@ mod inventory;
 mod listener;
 mod management;
 mod management_events;
+mod postgres;
 mod registration;
 mod resource;
 mod revision;
