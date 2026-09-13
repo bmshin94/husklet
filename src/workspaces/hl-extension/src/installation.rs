@@ -166,8 +166,8 @@ impl Record {
         if !holds(Capability::CredentialWrite) {
             self.credentials.write.clear();
         }
-        if !holds(Capability::CredentialInject) {
-            self.credentials.inject.clear();
+        if !holds(Capability::CredentialExposeToExecution) {
+            self.credentials.expose_to_execution.clear();
         }
     }
 }
@@ -837,7 +837,8 @@ impl Summary {
         }
     }
 
-    pub const EXECUTION_NOTICE: &'static str = "This extension can run programs inside this workspace. It is isolated from the rest of \
+    pub const EXECUTION_NOTICE: &'static str =
+        "This extension can run programs inside this workspace. It is isolated from the rest of \
          your machine by the workspace, not from the workspace itself.";
 }
 
@@ -1153,22 +1154,18 @@ mod tests {
             .install(&manifest, "sha256:a", &manifest.capabilities, 10)
             .expect("installed");
 
-        assert!(
-            installation
-                .install(&manifest, "sha256:b", &manifest.capabilities, 20)
-                .is_err()
-        );
+        assert!(installation
+            .install(&manifest, "sha256:b", &manifest.capabilities, 20)
+            .is_err());
     }
 
     #[test]
     fn lifecycle_replacements_rotate_the_command_authority_incarnation() {
         fn assert_incarnation(value: &str) {
             assert_eq!(value.len(), 32);
-            assert!(
-                value
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            );
+            assert!(value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
         }
 
         let mut installation = Installation::new();

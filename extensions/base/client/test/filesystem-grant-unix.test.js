@@ -81,7 +81,7 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
           'workspace-environment:read',
           'credentials:read',
           'credentials:write',
-          'credentials:inject',
+          'credentials:expose-to-execution',
         ],
         filesystem: {
           read: [{ subtree: 'src' }, { exact: 'README.md' }],
@@ -104,7 +104,7 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
         credentials: {
           read: ['database.password'],
           write: ['database.password'],
-          inject: ['database.password'],
+          expose_to_execution: ['database.password'],
         },
       },
     });
@@ -127,7 +127,7 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
     assert.deepEqual(session.grantedCredentials, {
       read: ['database.password'],
       write: ['database.password'],
-      inject: ['database.password'],
+      expose_to_execution: ['database.password'],
     });
     assert(Object.isFrozen(session.grantedCredentials));
     assert(Object.isFrozen(session.grantedCredentials.read));
@@ -135,7 +135,7 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
     const credentialApi = workspace(session).credentials;
     assert.equal(credentialApi.keyGrant('read', 'database.password'), true);
     assert.equal(credentialApi.keyGrant('read', 'other.password'), false);
-    assert.equal(credentialApi.keyGrant('inject', 'database.password'), true);
+    assert.equal(credentialApi.keyGrant('expose_to_execution', 'database.password'), true);
     const files = workspace(session).files;
     assert.equal(files.pathGrant('read', 'src/index.ts'), 'subtree');
     assert.equal(files.pathGrant('read', 'src\\./nested//index.ts'), 'subtree');

@@ -16,10 +16,10 @@ mod unix {
         NetworkEndpointInventory, NetworkInventory, NetworkKind, NetworkSummary,
     };
     use hl_extension::{
-        Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
-        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PROTOCOL, PaneProvider, PreferenceValue,
+        codec, Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
+        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PaneProvider, PreferenceValue,
         RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire, WorkspaceConfiguration,
-        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, codec,
+        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, PROTOCOL,
     };
     use hl_gui::{Renderer as _, SourceMutation, Theme, Tree};
     use hl_gui_gtk::Surface;
@@ -698,7 +698,10 @@ mod unix {
                 );
                 assert!(pagination.has_css_class("variant-outline"));
                 assert!(pagination.has_css_class("size-small"));
-                assert!(pagination.height() >= 44, "{width_name} pagination lost its 44px target");
+                assert!(
+                    pagination.height() >= 44,
+                    "{width_name} pagination lost its 44px target"
+                );
                 let pagination_chrome = widgets_with_class(pagination.upcast_ref(), "hl-button-chrome")
                     .into_iter()
                     .next()
@@ -752,7 +755,10 @@ mod unix {
                 settle_toolkit();
                 let reports = surface.reports().drain();
                 assert_eq!(
-                    reports.iter().filter(|event| matches!(event, hl_gui::Event::Invoke { .. })).count(),
+                    reports
+                        .iter()
+                        .filter(|event| matches!(event, hl_gui::Event::Invoke { .. }))
+                        .count(),
                     1,
                     "one pagination activation must emit exactly one Invoke"
                 );
@@ -1692,10 +1698,19 @@ mod unix {
                 );
                 assert!(disable.is_mapped(), "{width_name} Disable is visible");
                 assert_standard_action(&disable, width_name, "Disable", 28);
-                assert!(removal.is_focusable(), "{width_name} removal disclosure is keyboard reachable");
-                assert!(!removal.is_expanded(), "{width_name} removal disclosure starts collapsed");
+                assert!(
+                    removal.is_focusable(),
+                    "{width_name} removal disclosure is keyboard reachable"
+                );
+                assert!(
+                    !removal.is_expanded(),
+                    "{width_name} removal disclosure starts collapsed"
+                );
                 assert!(removal.has_css_class("variant-outline"));
-                assert!(removal.height() >= 44, "{width_name} removal disclosure lost its target");
+                assert!(
+                    removal.height() >= 44,
+                    "{width_name} removal disclosure lost its target"
+                );
                 let removal_bounds = removal
                     .compute_bounds(&card)
                     .expect("removal disclosure belongs to its card");
@@ -1725,7 +1740,10 @@ mod unix {
             }
             let installed_root = surface.widget().clone().upcast::<gtk::Widget>();
             let removal_disclosure = find_expander(&installed_root, "Remove extension…");
-            assert!(removal_disclosure.grab_focus(), "removal disclosure accepts keyboard focus");
+            assert!(
+                removal_disclosure.grab_focus(),
+                "removal disclosure accepts keyboard focus"
+            );
             removal_disclosure.emit_by_name::<()>("activate", &[]);
             settle_toolkit();
             send_report(&surface, &mut wire, 98, |event| {
@@ -1736,7 +1754,10 @@ mod unix {
             });
             let installed_root = surface.widget().clone().upcast::<gtk::Widget>();
             let removal_disclosure = find_expander(&installed_root, "Remove extension…");
-            assert!(removal_disclosure.is_expanded(), "removal disclosure exposes expanded state");
+            assert!(
+                removal_disclosure.is_expanded(),
+                "removal disclosure exposes expanded state"
+            );
             let remove = find_button(&installed_root, "Remove extension");
             assert!(remove.grab_focus(), "removal trigger accepts keyboard focus");
             remove.emit_clicked();
@@ -1933,17 +1954,12 @@ mod unix {
             assert!(has_placeholder(&discover_root, "Search extensions"));
             assert!(!has_placeholder(&discover_root, "Search installed"));
             assert!(has_label(&discover_root, "19 of 20 extensions"));
-            let verified = ancestor_with_class(
-                &find_mapped_labelled(&discover_root, "Verified publisher"),
-                "hl-badge",
-            )
-            .expect("verified publisher signal is a semantic badge");
+            let verified = ancestor_with_class(&find_mapped_labelled(&discover_root, "Verified publisher"), "hl-badge")
+                .expect("verified publisher signal is a semantic badge");
             assert!(verified.has_css_class("tone-positive"));
-            let community = ancestor_with_class(
-                &find_mapped_labelled(&discover_root, "Community publisher"),
-                "hl-badge",
-            )
-            .expect("community publisher signal is a semantic badge");
+            let community =
+                ancestor_with_class(&find_mapped_labelled(&discover_root, "Community publisher"), "hl-badge")
+                    .expect("community publisher signal is a semantic badge");
             assert!(community.has_css_class("tone-warning"));
             let review = find_tooltip_button(&discover_root, "Review the 1.0.0 update for Developer Tool 01");
             let review_access = find_tooltip_button(&discover_root, "Review access requested by Developer Tool 02");
@@ -3144,7 +3160,7 @@ mod unix {
             "Retry becomes actionable after failed inspection settles"
         );
         for (width_name, width) in [("wide", 1_200), ("narrow", 600)] {
-                resize_window(&window, width, 800);
+            resize_window(&window, width, 800);
             window.set_child(Some(&failure_root));
             window.present();
             settle_toolkit();
@@ -3395,7 +3411,7 @@ mod unix {
                                     "signing.certificate".into(),
                                 ],
                                 write: vec!["deploy.key".into(), "release.token".into(), "artifact.password".into()],
-                                inject: vec![
+                                expose_to_execution: vec![
                                     "database.url".into(),
                                     "cloud.credentials".into(),
                                     "service.token".into(),
@@ -3693,7 +3709,10 @@ mod unix {
         let review_root = surface.widget().clone().upcast::<gtk::Widget>();
         assert!(has_label(&review_root, "Update with selected access"));
         capture_update_surface(window, &review_root, "update-review");
-        assert!(has_label(&review_root, "Inject credential service.token"));
+        assert!(has_label(
+            &review_root,
+            "Expose to launched process credential service.token"
+        ));
         let update = find_button(&review_root, "Update with selected access");
         assert!(update.is_sensitive(), "required consent enables the update");
         update.emit_clicked();
@@ -4186,9 +4205,9 @@ mod unix {
                     "Change credential deploy.key",
                     "Change credential release.token",
                     "Change credential artifact.password",
-                    "Inject credential database.url",
-                    "Inject credential cloud.credentials",
-                    "Inject credential service.token",
+                    "Expose to launched process credential database.url",
+                    "Expose to launched process credential cloud.credentials",
+                    "Expose to launched process credential service.token",
                 ]
                 .into_iter()
                 .map(|label| find_label(root, label))
@@ -4272,7 +4291,7 @@ mod unix {
             }
             if state == "update-required" {
                 capture(&capture_window, &format!("extensions-{state}-{width_name}"), width, 800);
-                let credential = find_label(root, "Inject credential service.token");
+                let credential = find_label(root, "Expose to launched process credential service.token");
                 let scroll = credential
                     .ancestor(gtk::ScrolledWindow::static_type())
                     .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
@@ -5271,11 +5290,19 @@ mod unix {
         }
         let retry = find_button(&first, "Retry");
         let removal = find_expander(&first, "Remove extension…");
-        assert!(retry.has_css_class("variant-filled"), "{case} Retry is the fault card primary");
+        assert!(
+            retry.has_css_class("variant-filled"),
+            "{case} Retry is the fault card primary"
+        );
         assert!(retry.has_css_class("tone-accent"), "{case} Retry uses accent emphasis");
-        assert!(removal.has_css_class("variant-outline"), "{case} removal remains neutral secondary chrome");
+        assert!(
+            removal.has_css_class("variant-outline"),
+            "{case} removal remains neutral secondary chrome"
+        );
         let retry_bounds = retry.compute_bounds(&first).expect("Retry belongs to its fault card");
-        let removal_bounds = removal.compute_bounds(&first).expect("removal belongs to its fault card");
+        let removal_bounds = removal
+            .compute_bounds(&first)
+            .expect("removal belongs to its fault card");
         assert!(
             (8.0..=12.0).contains(&(removal_bounds.y() - retry_bounds.y() - retry_bounds.height())),
             "{case} removal disclosure is not a distinct compact block after Retry: retry={retry_bounds:?} removal={removal_bounds:?}"

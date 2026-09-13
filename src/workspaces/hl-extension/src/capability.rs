@@ -138,8 +138,8 @@ pub enum Capability {
     CredentialRead,
     /// Resolves a named credential into a container execution environment
     /// without returning its bytes to the extension.
-    #[serde(rename = "credentials:inject")]
-    CredentialInject,
+    #[serde(rename = "credentials:expose-to-execution")]
+    CredentialExposeToExecution,
     /// Replaces or removes one named credential through revision compare-and-swap.
     #[serde(rename = "credentials:write")]
     CredentialWrite,
@@ -200,7 +200,7 @@ impl Capability {
             Self::PreferenceRead => "preferences:read",
             Self::PreferenceWrite => "preferences:write",
             Self::CredentialRead => "credentials:read",
-            Self::CredentialInject => "credentials:inject",
+            Self::CredentialExposeToExecution => "credentials:expose-to-execution",
             Self::CredentialWrite => "credentials:write",
             Self::Interface => "interface:render",
             Self::NotificationPublish => "notifications:publish",
@@ -310,7 +310,7 @@ impl Capability {
         Self::PreferenceRead,
         Self::PreferenceWrite,
         Self::CredentialRead,
-        Self::CredentialInject,
+        Self::CredentialExposeToExecution,
         Self::CredentialWrite,
         Self::Interface,
         Self::NotificationPublish,

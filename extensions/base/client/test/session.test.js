@@ -625,7 +625,7 @@ test('real Unix composite execution authority rejects before framing and preserv
         command: ['psql'],
         credentials: [['PGPASSWORD', 'postgres.password']],
       }),
-      /credentials:inject/,
+      /credentials:expose-to-execution/,
     );
     await assert.rejects(
       containers.exec('c'.repeat(64), 1, { command: ['debug-helper'], stdin: true }),
@@ -1581,7 +1581,7 @@ test('real Unix execution reads reject another identity and preserve session hea
   }
 });
 
-test('real Unix credential injection sends only the key without granting secret reads', async () => {
+test('real Unix credential exposure to the launched process sends only the key without granting secret reads', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-credential-exec-'));
   const socketPath = path.join(directory, 'host.sock');
   const calls = [];
@@ -1610,7 +1610,7 @@ test('real Unix credential injection sends only the key without granting secret 
         payload: {
           protocol: 1,
           peer: 'credential-exec',
-          granted: ['containers:execute', 'credentials:inject'],
+          granted: ['containers:execute', 'credentials:expose-to-execution'],
         },
       }),
     );
@@ -4692,7 +4692,7 @@ test('real Unix credential execution rejects oversized and colliding bindings be
         payload: {
           protocol: 1,
           peer: 'fixture',
-          granted: ['containers:execute', 'credentials:inject', 'workspaces:read'],
+          granted: ['containers:execute', 'credentials:expose-to-execution', 'workspaces:read'],
         },
       }),
     );

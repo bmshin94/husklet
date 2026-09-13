@@ -1914,7 +1914,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         volumes = { selectors: [], create: false },
         filesystem = { read: [], write: [], create: [], delete: [], rename: [] },
         workspaceEnvironment = { read: [], write: [] },
-        credentials = { read: [], write: [], inject: [] },
+        credentials = { read: [], write: [], expose_to_execution: [] },
       ) =>
         expect(
           await session.call('extension_install', {
@@ -1943,7 +1943,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         volumes = { selectors: [], create: false },
         filesystem = { read: [], write: [], create: [], delete: [], rename: [] },
         workspaceEnvironment = { read: [], write: [] },
-        credentials = { read: [], write: [], inject: [] },
+        credentials = { read: [], write: [], expose_to_execution: [] },
       ) =>
         expect(
           await session.call('extension_update', {
@@ -2544,7 +2544,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         const exactEnvironment = exactExecEnvironment(environment);
         requireCapabilities(
           'containers:execute',
-          'credentials:inject',
+          'credentials:expose-to-execution',
           ...(stdin ? (['containers:input'] as const) : []),
         );
         return expect(
@@ -7202,7 +7202,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       volumes = { selectors: [], create: false },
       filesystem = { read: [], write: [], create: [], delete: [], rename: [] },
       workspaceEnvironment = { read: [], write: [] },
-      credentials = { read: [], write: [], inject: [] },
+      credentials = { read: [], write: [], expose_to_execution: [] },
     } = review;
     const normalizedReview: ExtensionReviewedGrants = {
       capabilities: granted,

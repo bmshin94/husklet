@@ -154,7 +154,7 @@ export type ReadonlyWorkspaceEnvironmentGrant = {
 export interface CredentialGrant {
     read: string[];
     write: string[];
-    inject: string[];
+    expose_to_execution: string[];
 }
 export type CredentialGrantOperation = keyof CredentialGrant;
 export type ReadonlyCredentialGrant = {
@@ -1726,7 +1726,7 @@ export interface WorkspaceApi {
             stdin?: boolean;
         }): Promise<string>;
         /**
-         * Arm a bounded execution inventory before host-side credential injection. A lost identity
+         * Arm a bounded execution inventory before host-side credential exposure to the launched process. A lost identity
          * reply throws ExecutionStartOperationError for reconnect reconciliation, never a retry hint.
          */
         execWithCredentialsObserved(id: string, generation: number, options: {

@@ -242,7 +242,7 @@
     {
       "executes": false,
       "mutates": false,
-      "wire": "credentials:inject"
+      "wire": "credentials:expose-to-execution"
     },
     {
       "executes": false,
@@ -594,7 +594,7 @@
           }
         },
         {
-          "name": "credentials:inject",
+          "name": "credentials:expose-to-execution",
           "payload": {
             "kind": "unit"
           }
@@ -1377,7 +1377,7 @@
           }
         },
         {
-          "name": "inject",
+          "name": "expose_to_execution",
           "optional": true,
           "schema": {
             "kind": "array",
@@ -15031,7 +15031,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:6728fb7abf114192",
+  "source_fingerprint": "fnv1a64:84e06348924f75c1",
   "specification_version": 1,
   "topics": [
     {

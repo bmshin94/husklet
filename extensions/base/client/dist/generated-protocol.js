@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:9705c2a2e2bf0b08
+// Protocol artifact fnv1a64:221980d95a7bbbc9
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -245,7 +245,7 @@ export const PROTOCOL_CAPABILITIES = Object.freeze([
   {
     "executes": false,
     "mutates": false,
-    "wire": "credentials:inject"
+    "wire": "credentials:expose-to-execution"
   },
   {
     "executes": false,
@@ -947,7 +947,7 @@ const definitions = {
         }
       },
       {
-        "name": "credentials:inject",
+        "name": "credentials:expose-to-execution",
         "payload": {
           "kind": "unit"
         }
@@ -1730,7 +1730,7 @@ const definitions = {
         }
       },
       {
-        "name": "inject",
+        "name": "expose_to_execution",
         "optional": true,
         "schema": {
           "kind": "array",

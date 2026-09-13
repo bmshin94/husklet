@@ -50,7 +50,7 @@ test('credential CAS recovery never replays and rejects concurrent rotation over
         protocol: 1,
         peer: 'rotation',
         granted: ['credentials:read', 'credentials:write'],
-        credentials: { read: ['database.password'], write: ['database.password'], inject: [] },
+        credentials: { read: ['database.password'], write: ['database.password'], expose_to_execution: [] },
       },
     });
   });

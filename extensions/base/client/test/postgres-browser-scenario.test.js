@@ -238,7 +238,7 @@ test('Postgres browser streams credential-backed rows over real Unix framing', a
           'containers:read',
           'containers:execute',
           'containers:input',
-          'credentials:inject',
+          'credentials:expose-to-execution',
           'networks:read',
           'networks:connect',
           'networks:disconnect',

@@ -25,8 +25,8 @@ test('fragmented credential rotation failure never echoes secret bytes and recon
         granted: ['credentials:read', 'credentials:write'],
         credentials:
           current === 1
-            ? { read: [], write: ['postgres.password', 'retired.password'], inject: [] }
-            : { read: ['postgres.password'], write: [], inject: [] },
+            ? { read: [], write: ['postgres.password', 'retired.password'], expose_to_execution: [] }
+            : { read: ['postgres.password'], write: [], expose_to_execution: [] },
       },
     });
     for (const byte of greeting) socket.write(Uint8Array.of(byte));

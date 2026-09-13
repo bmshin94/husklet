@@ -574,7 +574,7 @@ export function Extensions({
   const [grantedCredentials, setGrantedCredentials] = React.useState<CredentialGrant>({
     read: [],
     write: [],
-    inject: [],
+    expose_to_execution: [],
   });
   const [busy, setBusy] = React.useState('');
   const [error, setError] = React.useState('');
@@ -733,7 +733,7 @@ export function Extensions({
             setGrantedVolumes({ selectors: [], create: false });
             setGrantedFilesystem(emptyFilesystemGrant());
             setGrantedWorkspaceEnvironment({ read: [], write: [] });
-            setGrantedCredentials({ read: [], write: [], inject: [] });
+            setGrantedCredentials({ read: [], write: [], expose_to_execution: [] });
             setPermissionDetailsExpanded((status.candidate.required?.length ?? 0) > 0);
           }
         }
@@ -889,7 +889,7 @@ export function Extensions({
     setGrantedVolumes({ selectors: [], create: false });
     setGrantedFilesystem(emptyFilesystemGrant());
     setGrantedWorkspaceEnvironment({ read: [], write: [] });
-    setGrantedCredentials({ read: [], write: [], inject: [] });
+    setGrantedCredentials({ read: [], write: [], expose_to_execution: [] });
     candidateKey.current = '';
     setError('');
   };
@@ -1110,7 +1110,7 @@ export function Extensions({
   const requestedCredentials = acquisition?.candidate?.requested_credentials ?? {
     read: [],
     write: [],
-    inject: [],
+    expose_to_execution: [],
   };
   const requiredCapabilities = acquisition?.candidate?.required ?? [];
   const missingRequiredCapabilities = requiredCapabilities.filter(
@@ -1135,12 +1135,12 @@ export function Extensions({
       requestedWorkspaceEnvironment.write.length +
       requestedCredentials.read.length +
       requestedCredentials.write.length +
-      requestedCredentials.inject.length
+      requestedCredentials.expose_to_execution.length
     : 0;
   const grantedCredentialCount =
     grantedCredentials.read.length +
     grantedCredentials.write.length +
-    grantedCredentials.inject.length;
+    grantedCredentials.expose_to_execution.length;
   const grantedPermissionCount =
     granted.length +
     grantedContainers.selectors.length +
@@ -1181,7 +1181,7 @@ export function Extensions({
           count:
             requestedCredentials.read.length +
             requestedCredentials.write.length +
-            requestedCredentials.inject.length,
+            requestedCredentials.expose_to_execution.length,
         },
       ]
     : [];
@@ -2107,7 +2107,7 @@ export function Extensions({
                           )}
                           {requestedCredentials.read.length +
                             requestedCredentials.write.length +
-                            requestedCredentials.inject.length >
+                            requestedCredentials.expose_to_execution.length >
                             0 && (
                             <>
                               <Text label="Credential access" color="text-dim" />
@@ -2117,38 +2117,51 @@ export function Extensions({
                                 wrap
                                 width={COPY_WIDTH}
                               />
+                              {requestedCredentials.expose_to_execution.length > 0 && (
+                                <Text
+                                  label="A launched process and this extension can read, print, or persist every exposed secret."
+                                  color="warning"
+                                  wrap
+                                  width={COPY_WIDTH}
+                                />
+                              )}
                             </>
                           )}
-                          {(['read', 'write', 'inject'] as const).flatMap((operation) =>
-                            requestedCredentials[operation].map((key) => {
-                              const checked = grantedCredentials[operation].includes(key);
-                              const capability = `credentials:${operation}` as ExtensionCapability;
-                              return (
-                                <FormControlLabel
-                                  key={`${operation}:${key}`}
-                                  label={`${operation === 'read' ? 'Read' : operation === 'write' ? 'Change' : 'Inject'} credential ${key}`}
-                                  gap={2}
-                                >
-                                  <Switch
-                                    checked={checked}
-                                    onToggle={(event: Change) => {
-                                      const selected = event.value
-                                        ? [...grantedCredentials[operation], key]
-                                        : grantedCredentials[operation].filter(
-                                            (candidate) => candidate !== key,
-                                          );
-                                      setGrantedCredentials((current) => ({
-                                        ...current,
-                                        [operation]: selected,
-                                      }));
-                                      setGranted((current) =>
-                                        withCapability(current, capability, selected.length > 0),
-                                      );
-                                    }}
-                                  />
-                                </FormControlLabel>
-                              );
-                            }),
+                          {(['read', 'write', 'expose_to_execution'] as const).flatMap(
+                            (operation) =>
+                              requestedCredentials[operation].map((key) => {
+                                const checked = grantedCredentials[operation].includes(key);
+                                const capability = (
+                                  operation === 'expose_to_execution'
+                                    ? 'credentials:expose-to-execution'
+                                    : `credentials:${operation}`
+                                ) as ExtensionCapability;
+                                return (
+                                  <FormControlLabel
+                                    key={`${operation}:${key}`}
+                                    label={`${operation === 'read' ? 'Read' : operation === 'write' ? 'Change' : 'Expose to launched process'} credential ${key}`}
+                                    gap={2}
+                                  >
+                                    <Switch
+                                      checked={checked}
+                                      onToggle={(event: Change) => {
+                                        const selected = event.value
+                                          ? [...grantedCredentials[operation], key]
+                                          : grantedCredentials[operation].filter(
+                                              (candidate) => candidate !== key,
+                                            );
+                                        setGrantedCredentials((current) => ({
+                                          ...current,
+                                          [operation]: selected,
+                                        }));
+                                        setGranted((current) =>
+                                          withCapability(current, capability, selected.length > 0),
+                                        );
+                                      }}
+                                    />
+                                  </FormControlLabel>
+                                );
+                              }),
                           )}
                           <Spacer height={6} />
                         </Column>
@@ -3006,7 +3019,7 @@ export function capabilityLabel(capability: ExtensionCapability): string {
     'preferences:read': 'Read this extension’s interface preferences',
     'preferences:write': 'Change this extension’s interface preferences',
     'credentials:read': 'Read selected extension credentials',
-    'credentials:inject': 'Inject selected credentials into container processes',
+    'credentials:expose-to-execution': 'Expose selected credentials to launched processes',
     'credentials:write': 'Change selected extension credentials',
     'notifications:publish': 'Show workspace notifications',
   };

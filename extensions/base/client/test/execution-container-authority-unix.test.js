@@ -70,7 +70,7 @@ test('credential-backed SQL never reaches an execution owned by another containe
       payload: {
         protocol: 1,
         peer: 'postgres-authority-fixture',
-        granted: ['containers:read', 'containers:execute', 'containers:input', 'credentials:inject'],
+        granted: ['containers:read', 'containers:execute', 'containers:input', 'credentials:expose-to-execution'],
       },
     });
   });
@@ -173,7 +173,7 @@ test('cancel after create verifies exact container before stopping the stranded 
       payload: {
         protocol: 1,
         peer: 'postgres-abort-authority-fixture',
-        granted: ['containers:read', 'containers:execute', 'containers:input', 'credentials:inject'],
+        granted: ['containers:read', 'containers:execute', 'containers:input', 'credentials:expose-to-execution'],
       },
     });
   });

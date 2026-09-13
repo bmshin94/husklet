@@ -403,7 +403,7 @@ export class Session {
   #credentials = freezeCredentialGrant({
     read: [],
     write: [],
-    inject: [],
+    expose_to_execution: [],
   }) as ReadonlyCredentialGrant;
   #greeted;
   #ready;
@@ -1098,7 +1098,7 @@ export class Session {
       volumes: welcome.volumes ?? { selectors: [], create: false },
     };
     const environment = welcome.workspace_environment ?? { read: [], write: [] };
-    const credentials = welcome.credentials ?? { read: [], write: [], inject: [] };
+    const credentials = welcome.credentials ?? { read: [], write: [], expose_to_execution: [] };
     encodeRequest('extension_install', {
       job: 'grant-validation',
       revision: 0,
@@ -1187,7 +1187,7 @@ export class Session {
     for (const [operation, capability] of [
       ['read', 'credentials:read'],
       ['write', 'credentials:write'],
-      ['inject', 'credentials:inject'],
+      ['expose_to_execution', 'credentials:expose-to-execution'],
     ]) {
       if (credentials[operation].length > 0 && !this.#granted.includes(capability))
         throw new TypeError(

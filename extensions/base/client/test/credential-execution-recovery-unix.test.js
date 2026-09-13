@@ -75,8 +75,8 @@ test('credential execution reply loss exposes bounded exact-container cleanup ca
       payload: {
         protocol: 1,
         peer: `credential-recovery-${current}`,
-        granted: ['containers:read', 'containers:execute', 'credentials:inject'],
-        credentials: { read: [], write: [], inject: ['postgres.password'] },
+        granted: ['containers:read', 'containers:execute', 'credentials:expose-to-execution'],
+        credentials: { read: [], write: [], expose_to_execution: ['postgres.password'] },
       },
     });
   });

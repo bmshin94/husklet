@@ -12,7 +12,7 @@ pub struct CredentialGrant {
     #[serde(default)]
     pub write: Vec<String>,
     #[serde(default)]
-    pub inject: Vec<String>,
+    pub expose_to_execution: Vec<String>,
 }
 
 impl CredentialGrant {
@@ -26,8 +26,8 @@ impl CredentialGrant {
         self.write.iter().any(|value| value == key)
     }
     #[must_use]
-    pub fn permits_inject(&self, key: &str) -> bool {
-        self.inject.iter().any(|value| value == key)
+    pub fn permits_exposure_to_execution(&self, key: &str) -> bool {
+        self.expose_to_execution.iter().any(|value| value == key)
     }
     #[must_use]
     pub fn intersect(&self, consented: &Self) -> Self {
@@ -37,11 +37,11 @@ impl CredentialGrant {
         Self {
             read: overlap(&self.read, &consented.read),
             write: overlap(&self.write, &consented.write),
-            inject: overlap(&self.inject, &consented.inject),
+            expose_to_execution: overlap(&self.expose_to_execution, &consented.expose_to_execution),
         }
     }
     fn validate(&self) -> Result<(), Invalid> {
-        let groups = [&self.read, &self.write, &self.inject];
+        let groups = [&self.read, &self.write, &self.expose_to_execution];
         if groups.iter().map(|group| group.len()).sum::<usize>() > Self::LIMIT
             || groups
                 .iter()
@@ -697,7 +697,11 @@ impl Resources {
         if value == 0 {
             return ceiling;
         }
-        if value > ceiling { ceiling } else { value }
+        if value > ceiling {
+            ceiling
+        } else {
+            value
+        }
     }
 }
 
@@ -886,8 +890,10 @@ impl Manifest {
         if !manifest.credentials.write.is_empty() && !manifest.capabilities.holds(Capability::CredentialWrite) {
             return Err(Invalid::Undeclared(Capability::CredentialWrite));
         }
-        if !manifest.credentials.inject.is_empty() && !manifest.capabilities.holds(Capability::CredentialInject) {
-            return Err(Invalid::Undeclared(Capability::CredentialInject));
+        if !manifest.credentials.expose_to_execution.is_empty()
+            && !manifest.capabilities.holds(Capability::CredentialExposeToExecution)
+        {
+            return Err(Invalid::Undeclared(Capability::CredentialExposeToExecution));
         }
         manifest.credentials.validate()?;
         manifest.containers.validate()?;
@@ -1025,7 +1031,7 @@ mod tests {
         ContainerGrant, ContainerSelector, FilesystemGrant, FilesystemSelector, ImageGrant, ImageSelector, Manifest,
         NetworkGrant, NetworkSelector, VolumeGrant, VolumeSelector,
     };
-    use crate::{Capability, Grant, PROTOCOL, RelativePath};
+    use crate::{Capability, Grant, RelativePath, PROTOCOL};
 
     fn document(extra: &str) -> String {
         format!(

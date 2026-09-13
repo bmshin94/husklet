@@ -173,7 +173,7 @@ test('Postgres GUI uses bounded observation, opaque credentials, pane text, and 
           granted: [
             'containers:read',
             'containers:execute',
-            'credentials:inject',
+            'credentials:expose-to-execution',
             'panes:observe',
             'terminals:output',
             'filesystem:write',

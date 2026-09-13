@@ -19,7 +19,7 @@ test('lost install reply recovers exact reviewed authority without replay over f
     volumes: { selectors: [], create: false },
     filesystem: { read: [], write: [], create: [], delete: [], rename: [] },
     workspace_environment: { read: [], write: [] },
-    credentials: { read: [], write: [], inject: [] },
+    credentials: { read: [], write: [], expose_to_execution: [] },
   };
   const candidate = {
     name: 'reviewed',

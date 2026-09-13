@@ -1291,17 +1291,17 @@ impl Session {
                 }
                 for (_, key) in credentials {
                     validate_credential_key(key)?;
-                    if !self.credentials.permits_inject(key) {
+                    if !self.credentials.permits_exposure_to_execution(key) {
                         return Err(Failure::Denied {
-                            capability: Capability::CredentialInject.as_str().into(),
-                            detail: format!("credential {key} is outside the consented inject scope"),
+                            capability: Capability::CredentialExposeToExecution.as_str().into(),
+                            detail: format!("credential {key} is outside the consented execution-exposure scope"),
                         });
                     }
                 }
                 let credentials_port = self
                     .peer
                     .authority()
-                    .port(Capability::CredentialInject, services.state)?;
+                    .port(Capability::CredentialExposeToExecution, services.state)?;
                 let target = self.resolve_mutation_container(id, services.containers)?;
                 let mut shape = environment.clone();
                 for (variable, _) in credentials {
@@ -1527,7 +1527,7 @@ impl Session {
                 self.visible_workspace_for(name, port.inspect(name)?),
             )),
             Request::WorkspaceCreate { configuration } => {
-                // Lifecycle control does not imply authority to inject process
+                // Lifecycle control does not imply authority to expose credentials to process
                 // environment. Creation has no prior record to preserve, so
                 // initial values need the same bounded, exact selector grant as a patch.
                 if !configuration.environment.is_empty() {

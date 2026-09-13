@@ -27,7 +27,7 @@ const capabilities = [
   'containers:create',
   'containers:execute',
   'containers:input',
-  'credentials:inject',
+  'credentials:expose-to-execution',
   'containers:lifecycle',
   'containers:remove',
   'networks:read',
@@ -1034,7 +1034,7 @@ test('Postgres browser refuses a replacement generation before resolving credent
       );
     },
     1,
-    ['containers:read', 'containers:execute', 'containers:input', 'credentials:inject'],
+    ['containers:read', 'containers:execute', 'containers:input', 'credentials:expose-to-execution'],
   );
   assert.deepEqual(run.calls, [
     { call: 'container_inspect_observed', with: { id, generation: 7 } },

@@ -20,6 +20,15 @@ use hl_extension::{
     WorkspaceConfiguration, WorkspaceInfo, WorkspaceTerminal,
 };
 
+#[test]
+fn retired_credential_inject_scope_is_rejected_without_an_alias() {
+    assert!(serde_json::from_str::<Capability>("\"credentials:inject\"").is_err());
+    assert_eq!(
+        serde_json::from_str::<Capability>("\"credentials:expose-to-execution\"").unwrap(),
+        Capability::CredentialExposeToExecution,
+    );
+}
+
 const COMMAND_OWNER: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 /// Records what was actually reached, so a refusal that still touched a service
@@ -1473,7 +1482,7 @@ fn session(capabilities: &[Capability], roots: &[&str]) -> Session {
     .with_credentials(hl_extension::CredentialGrant {
         read: vec!["postgres.password".into()],
         write: vec!["postgres.password".into()],
-        inject: vec!["postgres.password".into()],
+        expose_to_execution: vec!["postgres.password".into()],
     })
 }
 
@@ -1579,7 +1588,7 @@ fn workspace_creation_cannot_bypass_environment_write_consent() {
     };
     let failure = session(&[Capability::WorkspaceControl], &[])
         .dispatch(&request, &services(&host))
-        .expect_err("lifecycle control does not grant environment injection");
+        .expect_err("lifecycle control does not grant environment exposure");
     assert!(matches!(failure, Failure::Denied { ref capability, .. }
         if capability == Capability::WorkspaceEnvironmentWrite.as_str()));
     assert!(host.ledger.reached().is_empty(), "denial must precede creation");
@@ -4968,12 +4977,15 @@ fn credential_execution_requires_both_grants_and_resolves_only_inside_the_host()
     let mut missing = session(&[Capability::ContainerExecute], &[]);
     assert!(
         matches!(missing.dispatch(&request, &services_with_state(&host, &state)),
-        Err(Failure::Denied { capability, .. }) if capability == "credentials:inject")
+        Err(Failure::Denied { capability, .. }) if capability == "credentials:expose-to-execution")
     );
     assert!(!state.read.get());
     assert!(host.ledger.reached().is_empty());
 
-    let mut granted = session(&[Capability::ContainerExecute, Capability::CredentialInject], &[]);
+    let mut granted = session(
+        &[Capability::ContainerExecute, Capability::CredentialExposeToExecution],
+        &[],
+    );
     assert!(
         matches!(granted.dispatch(&request, &services_with_state(&host, &state)), Ok(Reply::Identity(id)) if id == "e".repeat(32))
     );
@@ -4988,7 +5000,7 @@ fn exact_credential_grant_never_authorizes_a_sibling_key() {
     let mut client = session(
         &[
             Capability::ContainerExecute,
-            Capability::CredentialInject,
+            Capability::CredentialExposeToExecution,
             Capability::CredentialRead,
         ],
         &[],
@@ -5006,7 +5018,7 @@ fn exact_credential_grant_never_authorizes_a_sibling_key() {
     assert!(matches!(
         client.dispatch(&request, &services_with_state(&host, &state)),
         Err(Failure::Denied { capability, detail })
-            if capability == "credentials:inject" && detail.contains("postgres.password.backup")
+            if capability == "credentials:expose-to-execution" && detail.contains("postgres.password.backup")
     ));
     assert!(!state.read.get(), "denial precedes secret lookup");
     assert!(host.ledger.reached().is_empty(), "denial precedes container lookup");

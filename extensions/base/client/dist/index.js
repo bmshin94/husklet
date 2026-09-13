@@ -1491,7 +1491,7 @@ export function workspace(session, { signal } = {}) {
                 return exactAcquisitionStatus(exactJob, expect(await session.call('extension_acquisition_status', { job: exactJob }), 'extension_acquisition'));
             },
             cancelAcquisition: (job, revision) => done('extension_acquisition_cancel', { job: exactAcquisitionJob(job), revision }),
-            install: async (job, revision, imageDigest, granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }, credentials = { read: [], write: [], inject: [] }) => expect(await session.call('extension_install', {
+            install: async (job, revision, imageDigest, granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }, credentials = { read: [], write: [], expose_to_execution: [] }) => expect(await session.call('extension_install', {
                 job,
                 revision,
                 image_digest: immutableDigest(imageDigest, 'extension candidate image'),
@@ -1504,7 +1504,7 @@ export function workspace(session, { signal } = {}) {
                 workspace_environment: workspaceEnvironment,
                 credentials,
             }), 'extension'),
-            update: async (job, revision, imageDigest, granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }, credentials = { read: [], write: [], inject: [] }) => expect(await session.call('extension_update', {
+            update: async (job, revision, imageDigest, granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }, credentials = { read: [], write: [], expose_to_execution: [] }) => expect(await session.call('extension_update', {
                 job,
                 revision,
                 image_digest: immutableDigest(imageDigest, 'extension candidate image'),
@@ -1943,7 +1943,7 @@ export function workspace(session, { signal } = {}) {
             },
             execWithCredentials: async (id, generation, { command, environment = [], credentials, user, workingDirectory, stdin = false }) => {
                 const exactEnvironment = exactExecEnvironment(environment);
-                requireCapabilities('containers:execute', 'credentials:inject', ...(stdin ? ['containers:input'] : []));
+                requireCapabilities('containers:execute', 'credentials:expose-to-execution', ...(stdin ? ['containers:input'] : []));
                 return expect(await session.call('container_exec_credential', {
                     ...containerMutation(id, generation),
                     command,
@@ -5940,7 +5940,7 @@ export function workspace(session, { signal } = {}) {
     };
     api.watchExtensionAcquisitions = (listener) => watch('extension-acquisitions', 'extension_acquisitions', listener, 'extension acquisition');
     const commitAcquisitionAndWait = async (operation, job, revision, review, { timeoutMs = 30_000 } = {}) => {
-        const { capabilities: granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }, credentials = { read: [], write: [], inject: [] }, } = review;
+        const { capabilities: granted, containers = { selectors: [], create: false }, images = { read: [], use: [], pull: [], remove: [], prune_all_unused: false }, networks = { selectors: [], create: false }, volumes = { selectors: [], create: false }, filesystem = { read: [], write: [], create: [], delete: [], rename: [] }, workspaceEnvironment = { read: [], write: [] }, credentials = { read: [], write: [], expose_to_execution: [] }, } = review;
         const normalizedReview = {
             capabilities: granted,
             containers,
