@@ -3516,8 +3516,25 @@ test('Top is visibly required and offers no self-disable or self-removal trap', 
               version: '0.1.0',
               enabled: true,
               status: 'running',
+              pane_providers: [{ id: 'main', title: 'Workspace manager' }],
             },
           ],
+          catalogue: async () => ({
+            entries: [
+              {
+                id: 'top',
+                title: 'Workspace manager',
+                description: 'Manage this workspace.',
+                version: '99.0.0',
+                reference: `registry.example/untrusted/top:latest@sha256:${'b'.repeat(64)}`,
+                publisher: 'Unknown',
+                source: 'remote:test',
+                categories: ['Workspace'],
+                publisher_verified: false,
+              },
+            ],
+            complete: true,
+          }),
         },
         watchExtensions: async () => () => {},
       },
@@ -3533,6 +3550,20 @@ test('Top is visibly required and offers no self-disable or self-removal trap', 
   assert.equal(labelled(stage, 'Disable'), undefined);
   assert.equal(labelled(stage, 'Remove'), undefined);
   assert.equal(labelled(stage, 'More actions'), undefined);
+  assert.equal(labelled(stage, 'Review update'), undefined);
+  assert.equal(labelled(stage, 'Check for changes'), undefined);
+  assert.ok(labelled(stage, 'Built-in'));
+  assert.ok(
+    labelled(stage, 'Top is managed by Husklet and stays available for workspace recovery.'),
+  );
+  assert.ok(labelled(stage, 'Open'), 'Top keeps its useful provider action');
+
+  selectExtensionMode(stage, 'Discover');
+  await settled();
+  assert.ok(labelled(stage, 'Installed · built-in'));
+  assert.equal(labelled(stage, 'Review update'), undefined);
+  assert.equal(labelled(stage, 'Check current image'), undefined);
+  assert.ok(labelled(stage, 'Open'), 'the catalogue card keeps the provider action');
 });
 
 test('installed extensions expose truthful enabled, disabled, fault and retry states', async () => {

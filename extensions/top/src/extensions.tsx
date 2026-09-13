@@ -1332,8 +1332,10 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                         const installedExtension = installed.find(
                           (extension) => extension.name === entry.id,
                         );
+                        const builtIn = installedExtension?.name === 'top';
                         const updateAvailable = Boolean(
                           installedExtension &&
+                          !builtIn &&
                           newerVersion(entry.version, installedExtension.version),
                         );
                         const provider = installedExtension?.pane_providers?.[0];
@@ -1360,9 +1362,11 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                 <Badge
                                   label={
                                     installedExtension
-                                      ? updateAvailable
-                                        ? 'Update available'
-                                        : 'Installed · current'
+                                      ? builtIn
+                                        ? 'Installed · built-in'
+                                        : updateAvailable
+                                          ? 'Update available'
+                                          : 'Installed · current'
                                       : 'Available'
                                   }
                                   tone={
@@ -1436,7 +1440,11 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                     ) : null}
                                   </Column>
                                 </Expander>
-                                {updateAvailable ? (
+                                {builtIn ? (
+                                  installedExtension && provider ? (
+                                    providerAction(installedExtension, provider)
+                                  ) : null
+                                ) : updateAvailable ? (
                                   <Button
                                     label="Review update"
                                     tooltip={`Review the ${entry.version} update for ${entry.title}`}
@@ -2327,7 +2335,9 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                               const catalogueEntry = catalogue?.entries.find(
                                 (entry) => entry.id === extension.name,
                               );
+                              const builtIn = extension.name === 'top';
                               const update =
+                                !builtIn &&
                                 catalogueEntry &&
                                 newerVersion(catalogueEntry.version, extension.version)
                                   ? catalogueEntry
@@ -2341,10 +2351,11 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                               const provider = extension.pane_providers?.[0];
                               const hasCardAction = Boolean(
                                 update ||
-                                (extension.name !== 'top' &&
-                                  (extension.status.startsWith('fault:') || !extension.enabled)) ||
-                                provider ||
-                                catalogueEntry,
+                                (!builtIn &&
+                                  (extension.status.startsWith('fault:') ||
+                                    !extension.enabled ||
+                                    catalogueEntry)) ||
+                                provider,
                               );
                               return (
                                 <Card
@@ -2381,7 +2392,15 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                               : 'neutral'
                                         }
                                       />
+                                      {builtIn ? <Badge label="Built-in" tone="accent" /> : null}
                                     </Row>
+                                    {builtIn ? (
+                                      <Text
+                                        label="Top is managed by Husklet and stays available for workspace recovery."
+                                        color="text-dim"
+                                        wrap
+                                      />
+                                    ) : null}
                                     <ExtensionFault extension={extension} />
                                     {updateCompatibility ? (
                                       <Text
@@ -2452,7 +2471,7 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                         ) : !update && provider ? (
                                           providerAction(extension, provider)
                                         ) : null}
-                                        {!update && catalogueEntry ? (
+                                        {!builtIn && !update && catalogueEntry ? (
                                           <Button
                                             label="Check for changes"
                                             tooltip={`Check ${extension.name} image for changes`}
@@ -2466,7 +2485,8 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                             }
                                           />
                                         ) : null}
-                                        {extension.enabled &&
+                                        {!builtIn &&
+                                        extension.enabled &&
                                         !extension.status.startsWith('fault:') ? (
                                           <Button
                                             label="Disable"
@@ -2476,18 +2496,20 @@ export function Extensions({ api }: { api: WorkspaceApi }) {
                                             onInvoke={() => lifecycle(extension, 'disable')}
                                           />
                                         ) : null}
-                                        <Button
-                                          label="More actions"
-                                          variant="ghost"
-                                          size="small"
-                                          tooltip={`Remove ${extension.name} and its private workspace data`}
-                                          enabled={!busy}
-                                          onInvoke={() =>
-                                            setRemovalMenu((current) =>
-                                              current === extension.name ? '' : extension.name,
-                                            )
-                                          }
-                                        />
+                                        {!builtIn ? (
+                                          <Button
+                                            label="More actions"
+                                            variant="ghost"
+                                            size="small"
+                                            tooltip={`Remove ${extension.name} and its private workspace data`}
+                                            enabled={!busy}
+                                            onInvoke={() =>
+                                              setRemovalMenu((current) =>
+                                                current === extension.name ? '' : extension.name,
+                                              )
+                                            }
+                                          />
+                                        ) : null}
                                       </Row>
                                     ) : null}
                                     {removalMenu === extension.name ? (
