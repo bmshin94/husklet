@@ -7,13 +7,18 @@
 //! must satisfy.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
+use hl_extension::port::{ContainerInventory, ExtensionStateStore, NetworkStore};
 use hl_extension::{
     HostError, PostgresBroker, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage,
     PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken,
 };
 use hl_rpc::InstallationIdentity;
+use sha2::{Digest, Sha256};
+
+use super::Records;
 
 const LEASE_LIMIT: usize = 8;
 const QUERY_LIMIT: usize = 32;
@@ -58,10 +63,194 @@ pub(crate) trait Authority: Send + Sync {
     fn current(&self, binding: &Binding) -> Result<bool, HostError>;
 }
 
+/// Durable installation lookup used by the production authority adapter.
+///
+/// Keeping this separate from container and credential ports makes replacement
+/// observable on every lease use without granting the broker extension-management
+/// authority.
+pub(crate) trait InstallationAuthority: Send + Sync {
+    fn current(&self, installation: &InstallationIdentity) -> Result<bool, HostError>;
+}
+
+/// Re-opens the durable roster for every check, so disable, removal, and
+/// reinstall revoke an already authenticated database lease immediately.
+pub(crate) struct WorkspaceInstallation {
+    root: PathBuf,
+    name: hl_extension::ExtensionName,
+}
+
+impl WorkspaceInstallation {
+    pub(crate) fn new(root: PathBuf, name: hl_extension::ExtensionName) -> Self {
+        Self { root, name }
+    }
+}
+
+impl InstallationAuthority for WorkspaceInstallation {
+    fn current(&self, installation: &InstallationIdentity) -> Result<bool, HostError> {
+        let storage =
+            hl_ws::storage::Directory::open(&self.root).map_err(|error| HostError::Failed(error.to_string()))?;
+        let records = Records::open(storage).map_err(|error| HostError::Failed(error.to_string()))?;
+        Ok(records
+            .all()
+            .map_err(|error| HostError::Failed(error.to_string()))?
+            .iter()
+            .any(|record| record.enabled && record.name == self.name && record.incarnation == installation.as_str()))
+    }
+}
+
+/// Production authority assembled from Husklet's existing narrow host services.
+///
+/// It never returns credential bytes to the extension protocol. Values move from
+/// the private state store into [`Authentication`] and from there directly into
+/// [`Peer::open`]. Every later operation re-reads all four authorities.
+pub(crate) struct ServiceAuthority<'a, C, N, S> {
+    installation: InstallationIdentity,
+    installations: &'a dyn InstallationAuthority,
+    containers: &'a C,
+    networks: &'a N,
+    credentials: &'a S,
+}
+
+impl<'a, C, N, S> ServiceAuthority<'a, C, N, S>
+where
+    C: ContainerInventory + Sync,
+    N: NetworkStore + Sync,
+    S: ExtensionStateStore + Sync,
+{
+    pub(crate) fn new(
+        installation: InstallationIdentity,
+        installations: &'a dyn InstallationAuthority,
+        containers: &'a C,
+        networks: &'a N,
+        credentials: &'a S,
+    ) -> Self {
+        Self {
+            installation,
+            installations,
+            containers,
+            networks,
+            credentials,
+        }
+    }
+
+    fn container(&self, connection: &PostgresConnection) -> Result<(), HostError> {
+        let container = self.containers.inspect(&connection.container_id)?;
+        if container.id != connection.container_id || container.generation != connection.container_generation {
+            return Err(HostError::Conflict("postgres container identity was replaced".into()));
+        }
+        Ok(())
+    }
+
+    fn network(&self, connection: &PostgresConnection) -> Result<u64, HostError> {
+        let network = self.networks.inspect(&connection.network)?;
+        if network.id != connection.network && network.name != connection.network {
+            return Err(HostError::Conflict(
+                "postgres network identity does not match the request".into(),
+            ));
+        }
+        let endpoints = network
+            .endpoints
+            .as_ref()
+            .ok_or_else(|| HostError::Conflict("postgres network membership was not inspected".into()))?;
+        if endpoints.truncated || !endpoints.containers.iter().any(|id| id == &connection.container_id) {
+            return Err(HostError::Conflict(
+                "postgres container is not an authoritative member of the requested network".into(),
+            ));
+        }
+        let bytes = serde_json::to_vec(&network).map_err(|error| HostError::Failed(error.to_string()))?;
+        let digest = Sha256::digest(bytes);
+        Ok(u64::from_be_bytes(digest[..8].try_into().expect("sha256 prefix")) | 1)
+    }
+
+    fn credential(&self, key: &str) -> Result<(u64, Secret), HostError> {
+        let credential = self.credentials.credential(key)?;
+        if credential.key != key || credential.revision == 0 {
+            return Err(HostError::Conflict("postgres credential snapshot is invalid".into()));
+        }
+        let value = credential
+            .value
+            .ok_or_else(|| HostError::Absent(format!("postgres credential {key} is absent")))?;
+        Ok((credential.revision, Secret::new(value)))
+    }
+
+    fn installation_current(&self, supplied: &str) -> Result<bool, HostError> {
+        Ok(supplied == self.installation.as_str() && self.installations.current(&self.installation)?)
+    }
+}
+
+impl<C, N, S> Authority for ServiceAuthority<'_, C, N, S>
+where
+    C: ContainerInventory + Sync,
+    N: NetworkStore + Sync,
+    S: ExtensionStateStore + Sync,
+{
+    fn authenticate(&self, installation: &str, connection: &PostgresConnection) -> Result<Authentication, HostError> {
+        if !self.installation_current(installation)? {
+            return Err(HostError::Absent("postgres installation authority was replaced".into()));
+        }
+        self.container(connection)?;
+        let network_revision = self.network(connection)?;
+        let mut revisions = BTreeMap::new();
+        let mut secrets = Vec::with_capacity(connection.credential_keys.len());
+        for key in &connection.credential_keys {
+            let (revision, secret) = self.credential(key)?;
+            revisions.insert(key.clone(), revision);
+            secrets.push((key.clone(), secret));
+        }
+        Ok(Authentication {
+            binding: Binding {
+                installation: installation.into(),
+                container_id: connection.container_id.clone(),
+                container_generation: connection.container_generation,
+                network: connection.network.clone(),
+                network_revision,
+                credentials: revisions,
+            },
+            secrets,
+        })
+    }
+
+    fn current(&self, binding: &Binding) -> Result<bool, HostError> {
+        if !self.installation_current(&binding.installation)? {
+            return Ok(false);
+        }
+        let connection = PostgresConnection {
+            container_id: binding.container_id.clone(),
+            container_generation: binding.container_generation,
+            network: binding.network.clone(),
+            port: 1,
+            database: "authority-check".into(),
+            user: "authority-check".into(),
+            credential_keys: binding.credentials.keys().cloned().collect(),
+        };
+        match self.container(&connection) {
+            Ok(()) => {}
+            Err(HostError::Absent(_) | HostError::Conflict(_)) => return Ok(false),
+            Err(error) => return Err(error),
+        }
+        match self.network(&connection) {
+            Ok(revision) if revision == binding.network_revision => {}
+            Ok(_) | Err(HostError::Absent(_) | HostError::Conflict(_)) => return Ok(false),
+            Err(error) => return Err(error),
+        }
+        for (key, revision) in &binding.credentials {
+            let credential = match self.credentials.credential(key) {
+                Ok(credential) => credential,
+                Err(HostError::Absent(_) | HostError::Conflict(_)) => return Ok(false),
+                Err(error) => return Err(error),
+            };
+            if credential.revision != *revision || credential.value.is_none() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
 /// Authenticated `PostgreSQL` transport. Secret material enters only `open`.
 pub(crate) trait Peer: Send + Sync {
     fn open(&self, connection: &PostgresConnection, secrets: &[(String, Secret)])
-        -> Result<PostgresLeaseId, HostError>;
+    -> Result<PostgresLeaseId, HostError>;
     fn start(&self, lease: &PostgresLeaseId, query: &PostgresQuery) -> Result<PostgresQueryId, HostError>;
     fn page(
         &self,
@@ -351,8 +540,10 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use hl_extension::port::{ContainerSummary, ExtensionCredential, ExtensionState};
+    use hl_extension::{NetworkEndpointInventory, NetworkKind, NetworkSummary};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     #[derive(Clone)]
     struct FakeAuthority {
@@ -456,6 +647,167 @@ mod tests {
 
     fn installation(value: char) -> InstallationIdentity {
         InstallationIdentity::new(value.to_string().repeat(32)).unwrap()
+    }
+
+    struct CurrentInstallation {
+        owner: InstallationIdentity,
+        live: AtomicBool,
+    }
+
+    impl InstallationAuthority for CurrentInstallation {
+        fn current(&self, installation: &InstallationIdentity) -> Result<bool, HostError> {
+            Ok(self.live.load(Ordering::SeqCst) && installation == &self.owner)
+        }
+    }
+
+    struct ContainerService {
+        generation: AtomicUsize,
+    }
+
+    impl ContainerInventory for ContainerService {
+        fn list(&self) -> Result<Vec<ContainerSummary>, HostError> {
+            Ok(Vec::new())
+        }
+
+        fn inspect(&self, id: &str) -> Result<ContainerSummary, HostError> {
+            Ok(ContainerSummary {
+                id: id.into(),
+                name: "database".into(),
+                image: "postgres:17".into(),
+                state: "running".into(),
+                created: 1,
+                generation: self.generation.load(Ordering::SeqCst) as u64,
+                ports: Vec::new(),
+            })
+        }
+    }
+
+    struct NetworkService {
+        member: AtomicBool,
+    }
+
+    impl NetworkStore for NetworkService {
+        fn inspect(&self, reference: &str) -> Result<NetworkSummary, HostError> {
+            Ok(NetworkSummary {
+                id: reference.into(),
+                name: "private-db".into(),
+                driver: "bridge".into(),
+                scope: "local".into(),
+                kind: NetworkKind::Custom,
+                endpoints: Some(NetworkEndpointInventory {
+                    containers: self
+                        .member
+                        .load(Ordering::SeqCst)
+                        .then(|| "a".repeat(64))
+                        .into_iter()
+                        .collect(),
+                    truncated: false,
+                }),
+            })
+        }
+    }
+
+    struct CredentialService {
+        revision: AtomicUsize,
+        reads: AtomicUsize,
+    }
+
+    impl ExtensionStateStore for CredentialService {
+        fn read(&self) -> Result<ExtensionState, HostError> {
+            Err(HostError::Unsupported("not used".into()))
+        }
+
+        fn write(&self, _: &str, _: &[u8]) -> Result<String, HostError> {
+            Err(HostError::Unsupported("not used".into()))
+        }
+
+        fn clear(&self, _: &str) -> Result<(), HostError> {
+            Err(HostError::Unsupported("not used".into()))
+        }
+
+        fn credential(&self, key: &str) -> Result<ExtensionCredential, HostError> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            Ok(ExtensionCredential {
+                key: key.into(),
+                revision: self.revision.load(Ordering::SeqCst) as u64,
+                value: Some(b"host-only-password".to_vec()),
+            })
+        }
+    }
+
+    #[test]
+    fn production_authority_binds_real_service_snapshots_and_revokes_live() {
+        let owner = installation('a');
+        let installations = CurrentInstallation {
+            owner: owner.clone(),
+            live: AtomicBool::new(true),
+        };
+        let containers = ContainerService {
+            generation: AtomicUsize::new(9),
+        };
+        let networks = NetworkService {
+            member: AtomicBool::new(true),
+        };
+        let credentials = CredentialService {
+            revision: AtomicUsize::new(7),
+            reads: AtomicUsize::new(0),
+        };
+        let peer = FakePeer::default();
+        let authority = ServiceAuthority::new(owner.clone(), &installations, &containers, &networks, &credentials);
+        let broker = HostPostgres::new(owner.clone(), authority, peer.clone());
+        let PostgresOpenOutcome::Opened { lease } = broker
+            .open_once(
+                &owner,
+                &QueryOperationToken::new("production-open").unwrap(),
+                &connection(),
+            )
+            .unwrap()
+        else {
+            panic!("new service snapshot must open")
+        };
+
+        credentials.revision.store(8, Ordering::SeqCst);
+        assert!(matches!(
+            broker.start_once(&owner, &lease, &query("production-query", "select 42")),
+            Err(HostError::Conflict(_))
+        ));
+        assert_eq!(peer.closed.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn production_authority_denies_cross_installation_before_reading_a_secret() {
+        let owner = installation('a');
+        let installations = CurrentInstallation {
+            owner: owner.clone(),
+            live: AtomicBool::new(true),
+        };
+        let containers = ContainerService {
+            generation: AtomicUsize::new(9),
+        };
+        let networks = NetworkService {
+            member: AtomicBool::new(true),
+        };
+        let credentials = CredentialService {
+            revision: AtomicUsize::new(7),
+            reads: AtomicUsize::new(0),
+        };
+        let authority = ServiceAuthority::new(owner, &installations, &containers, &networks, &credentials);
+
+        assert!(matches!(
+            authority.authenticate(installation('b').as_str(), &connection()),
+            Err(HostError::Absent(_))
+        ));
+        assert_eq!(credentials.reads.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn durable_installation_lookup_fails_closed_when_the_record_is_absent() {
+        let root = tempfile::tempdir().expect("workspace storage");
+        let authority = WorkspaceInstallation::new(
+            root.path().to_owned(),
+            hl_extension::ExtensionName::new("postgres-browser").unwrap(),
+        );
+        assert!(!authority.current(&installation('a')).unwrap());
     }
 
     #[test]
