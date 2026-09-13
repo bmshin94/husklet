@@ -2737,9 +2737,6 @@ mod unix {
             settle_toolkit();
             capture_story(&realized_window, "DataTable ready selected");
         }
-        root.measure(gtk::Orientation::Horizontal, -1);
-        root.measure(gtk::Orientation::Vertical, 300);
-        allocate(&root, 300, 1_600);
         assert_contained(&root, story);
         assert!(
             readable_heading(&root),
@@ -2752,6 +2749,13 @@ mod unix {
                 "appending a batch exceeded fixed retention"
             );
         }
+        realized_window.set_child(None::<&gtk::Widget>);
+        realized_window.close();
+        settle_toolkit();
+        assert!(
+            root.root().is_none() && realized_window.child().is_none(),
+            "{story} retained a rooted widget after its window closed"
+        );
 
         let (status, stderr) = child.stop();
         assert!(stderr.is_empty(), "{story} wrote warnings/errors: {stderr}");
