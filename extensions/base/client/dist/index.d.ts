@@ -8,6 +8,7 @@ export declare class ExecutionOperationError extends Error {
     readonly executionId: any;
     readonly phase: any;
     readonly execution: any;
+    readonly containerId: any;
     readonly after: any;
     readonly partialLine: any;
     readonly lines: any;

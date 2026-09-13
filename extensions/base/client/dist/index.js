@@ -9,6 +9,7 @@ export class ExecutionOperationError extends Error {
     executionId;
     phase;
     execution;
+    containerId;
     after;
     partialLine;
     lines;
@@ -21,6 +22,7 @@ export class ExecutionOperationError extends Error {
         this.phase = phase;
         this.cause = cause;
         this.execution = execution;
+        this.containerId = recovery?.containerId;
         this.after = after;
         this.partialLine = recovery?.partialLine;
         this.lines = recovery?.lines;
@@ -1533,7 +1535,9 @@ export function workspace(session, { signal } = {}) {
                     return { executionId, execution, next: cursor, pages, complete: true };
                 }
                 catch (cause) {
-                    throw new ExecutionOperationError(executionId, phase, cause, undefined, cursor);
+                    throw new ExecutionOperationError(executionId, phase, cause, undefined, cursor, {
+                        containerId,
+                    });
                 }
             },
             resumeJsonLinePages: async (id, configuration, onPage) => {
@@ -1616,6 +1620,7 @@ export function workspace(session, { signal } = {}) {
                 catch (cause) {
                     if (cause instanceof ExecutionOperationError)
                         throw new ExecutionOperationError(cause.executionId, cause.phase, cause.cause, cause.execution, cause.after, {
+                            containerId: cause.containerId,
                             partialLine: Object.freeze([...pending]),
                             lines,
                         });
@@ -1923,7 +1928,9 @@ export function workspace(session, { signal } = {}) {
                             .cancelExecution(executionId, { signal: cancelSignal, timeoutMs: cancelTimeoutMs })
                             .catch(() => { });
                     }
-                    throw new ExecutionOperationError(executionId, phase, cause, undefined, acknowledged);
+                    throw new ExecutionOperationError(executionId, phase, cause, undefined, acknowledged, {
+                        containerId,
+                    });
                 }
                 finally {
                     if (deadline !== undefined)
@@ -1966,7 +1973,11 @@ export function workspace(session, { signal } = {}) {
                 }
                 catch (cause) {
                     if (cause instanceof ExecutionOperationError)
-                        throw new ExecutionOperationError(cause.executionId, cause.phase, cause.cause, cause.execution, cause.after, { stdout: flatten(chunks.stdout), stderr: flatten(chunks.stderr) });
+                        throw new ExecutionOperationError(cause.executionId, cause.phase, cause.cause, cause.execution, cause.after, {
+                            containerId: cause.containerId,
+                            stdout: flatten(chunks.stdout),
+                            stderr: flatten(chunks.stderr),
+                        });
                     throw cause;
                 }
                 const decode = (parts) => new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(flatten(parts)));
@@ -1974,7 +1985,11 @@ export function workspace(session, { signal } = {}) {
                     return { ...result, stdout: decode(chunks.stdout), stderr: decode(chunks.stderr) };
                 }
                 catch (cause) {
-                    throw new ExecutionOperationError(result.executionId, 'output', cause, result.execution, undefined, { stdout: flatten(chunks.stdout), stderr: flatten(chunks.stderr) });
+                    throw new ExecutionOperationError(result.executionId, 'output', cause, result.execution, undefined, {
+                        containerId: immutableIdentity(id, [32, 64], 'container'),
+                        stdout: flatten(chunks.stdout),
+                        stderr: flatten(chunks.stderr),
+                    });
                 }
             },
             execLines: async (id, generation, configuration, onLine) => {
@@ -2041,7 +2056,11 @@ export function workspace(session, { signal } = {}) {
                 }
                 catch (cause) {
                     if (cause instanceof ExecutionOperationError) {
-                        throw new ExecutionOperationError(cause.executionId, cause.phase, cause.cause, cause.execution, cause.after, { partialLine: Object.freeze([...pending]), lines });
+                        throw new ExecutionOperationError(cause.executionId, cause.phase, cause.cause, cause.execution, cause.after, {
+                            containerId: cause.containerId,
+                            partialLine: Object.freeze([...pending]),
+                            lines,
+                        });
                     }
                     throw cause;
                 }
@@ -2054,7 +2073,7 @@ export function workspace(session, { signal } = {}) {
                     }
                 }
                 catch (cause) {
-                    throw new ExecutionOperationError(result.executionId, 'output', cause, result.execution);
+                    throw new ExecutionOperationError(result.executionId, 'output', cause, result.execution, undefined, { containerId: immutableIdentity(id, [32, 64], 'container') });
                 }
                 return { ...result, lines };
             },

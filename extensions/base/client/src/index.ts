@@ -72,6 +72,7 @@ export class ExecutionOperationError extends Error {
   readonly executionId;
   readonly phase;
   readonly execution;
+  readonly containerId;
   readonly after;
   readonly partialLine;
   readonly lines;
@@ -94,6 +95,7 @@ export class ExecutionOperationError extends Error {
     this.phase = phase;
     this.cause = cause;
     this.execution = execution;
+    this.containerId = recovery?.containerId;
     this.after = after;
     this.partialLine = recovery?.partialLine;
     this.lines = recovery?.lines;
@@ -2012,7 +2014,9 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           if (execution.running) throw new ExecutionOutputEndedEarlyError(executionId);
           return { executionId, execution, next: cursor, pages, complete: true as const };
         } catch (cause) {
-          throw new ExecutionOperationError(executionId, phase, cause, undefined, cursor);
+          throw new ExecutionOperationError(executionId, phase, cause, undefined, cursor, {
+            containerId,
+          });
         }
       },
       resumeJsonLinePages: async (id, configuration, onPage) => {
@@ -2115,6 +2119,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
               cause.execution,
               cause.after,
               {
+                containerId: cause.containerId,
                 partialLine: Object.freeze([...pending]),
                 lines,
               },
@@ -2511,7 +2516,9 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
               .cancelExecution(executionId, { signal: cancelSignal, timeoutMs: cancelTimeoutMs })
               .catch(() => {});
           }
-          throw new ExecutionOperationError(executionId, phase, cause, undefined, acknowledged);
+          throw new ExecutionOperationError(executionId, phase, cause, undefined, acknowledged, {
+            containerId,
+          });
         } finally {
           if (deadline !== undefined) clearTimeout(deadline);
           signal?.removeEventListener('abort', stopStreaming);
@@ -2557,7 +2564,11 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
               cause.cause,
               cause.execution,
               cause.after,
-              { stdout: flatten(chunks.stdout), stderr: flatten(chunks.stderr) },
+              {
+                containerId: cause.containerId,
+                stdout: flatten(chunks.stdout),
+                stderr: flatten(chunks.stderr),
+              },
             );
           throw cause;
         }
@@ -2572,7 +2583,11 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
             cause,
             result.execution,
             undefined,
-            { stdout: flatten(chunks.stdout), stderr: flatten(chunks.stderr) },
+            {
+              containerId: immutableIdentity(id, [32, 64], 'container'),
+              stdout: flatten(chunks.stdout),
+              stderr: flatten(chunks.stderr),
+            },
           );
         }
       },
@@ -2645,7 +2660,11 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
               cause.cause,
               cause.execution,
               cause.after,
-              { partialLine: Object.freeze([...pending]), lines },
+              {
+                containerId: cause.containerId,
+                partialLine: Object.freeze([...pending]),
+                lines,
+              },
             );
           }
           throw cause;
@@ -2657,7 +2676,14 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
             await outputStep(() => onStderr(stderrTail), options.signal);
           }
         } catch (cause) {
-          throw new ExecutionOperationError(result.executionId, 'output', cause, result.execution);
+          throw new ExecutionOperationError(
+            result.executionId,
+            'output',
+            cause,
+            result.execution,
+            undefined,
+            { containerId: immutableIdentity(id, [32, 64], 'container') },
+          );
         }
         return { ...result, lines };
       },

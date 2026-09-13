@@ -10,13 +10,21 @@ export async function resumeGitText(
   failure: ExecutionOperationError,
   maxBytes = 1024 * 1024,
 ) {
+  if (!failure.containerId) {
+    throw new Error('Git execution recovery is missing its original container identity');
+  }
   const stdout = [...(failure.stdout ?? [])];
   const stderr = [...(failure.stderr ?? [])];
   if (stdout.length + stderr.length > maxBytes)
     throw new RangeError('saved Git output is too large');
   const resumed = await host.containers.resumeExecutionStreaming(
     failure.executionId,
-    { after: failure.after, pageLimit: 2, maxPages: 4_096 },
+    {
+      after: failure.after,
+      expectedContainerId: failure.containerId,
+      pageLimit: 2,
+      maxPages: 4_096,
+    },
     (page) => {
       const additions = { stdout: [] as number[], stderr: [] as number[] };
       for (const entry of page.entries) additions[entry.stream].push(...entry.bytes);

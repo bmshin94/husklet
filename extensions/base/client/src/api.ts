@@ -794,10 +794,12 @@ export declare class RowRequestUnavailableError extends Error {
 
 export declare class ExecutionOperationError extends Error {
   readonly executionId: string;
-  readonly phase: 'wait' | 'logs' | 'input' | 'output' | 'inspect';
+  readonly phase: 'wait' | 'logs' | 'input' | 'output' | 'inspect' | 'verify';
   readonly cause: unknown;
   /** The authoritative completed summary when waiting succeeded and output retrieval failed. */
   readonly execution?: ExecutionSummary;
+  /** Exact container selected when this execution was created or explicitly resumed. */
+  readonly containerId?: string;
   /** Last output sequence fully acknowledged by a stream consumer. */
   readonly after?: number;
   /** Bounded unterminated stdout bytes retained by line-oriented helpers for exact resume. */

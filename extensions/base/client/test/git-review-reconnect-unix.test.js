@@ -4,7 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import test from 'node:test';
-import { ExecutionOperationError, connect, workspace } from '../dist/index.js';
+import {
+  ExecutionContainerMismatchError,
+  ExecutionOperationError,
+  connect,
+  workspace,
+} from '../dist/index.js';
 import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
 
 test('Git review retains only acknowledged bounded text across fragmented socket loss', async () => {
@@ -14,6 +19,7 @@ test('Git review retains only acknowledged bounded text across fragmented socket
   const diff = Buffer.from('diff --git a/src/a.ts b/src/a.ts\n');
   const connections = new Set();
   const calls = [];
+  let dropped = false;
   const server = net.createServer((socket) => {
     connections.add(socket);
     socket.on('close', () => connections.delete(socket));
@@ -23,6 +29,7 @@ test('Git review retains only acknowledged bounded text across fragmented socket
         if (frame.kind !== KIND.request) continue;
         calls.push(frame.payload);
         if (frame.payload.call === 'execution_output' && frame.payload.with.after === 1) {
+          dropped = true;
           socket.destroy();
           continue;
         }
@@ -34,7 +41,7 @@ test('Git review retains only acknowledged bounded text across fragmented socket
                   reply: 'execution',
                   with: {
                     id: executionId,
-                    container_id: 'c'.repeat(64),
+                    container_id: dropped ? 'd'.repeat(64) : 'c'.repeat(64),
                     running: true,
                     exit_code: -1,
                     pid: 7,
@@ -85,6 +92,7 @@ test('Git review retains only acknowledged bounded text across fragmented socket
   await new Promise((resolve) => server.listen(socketPath, resolve));
   try {
     const session = await connect({ path: socketPath });
+    let failure;
     await assert.rejects(
       workspace(session).containers.execText('c'.repeat(64), 4, {
         command: ['git', 'diff'],
@@ -101,7 +109,9 @@ test('Git review retains only acknowledged bounded text across fragmented socket
         pollIntervalMs: 10,
       }),
       (error) => {
+        failure = error;
         assert(error instanceof ExecutionOperationError);
+        assert.equal(error.containerId, 'c'.repeat(64));
         assert.equal(error.after, 1);
         assert.deepEqual(error.stdout, [...diff]);
         assert.deepEqual(error.stderr, []);
@@ -110,6 +120,25 @@ test('Git review retains only acknowledged bounded text across fragmented socket
         return true;
       },
     );
+    const resumed = await connect({ path: socketPath });
+    const callsBeforeResume = calls.length;
+    await assert.rejects(
+      workspace(resumed).containers.resumeExecutionStreaming(
+        failure.executionId,
+        { after: failure.after, expectedContainerId: failure.containerId },
+        () => assert.fail('a foreign execution must not deliver diff output'),
+      ),
+      (error) =>
+        error instanceof ExecutionOperationError &&
+        error.after === 1 &&
+        error.containerId === 'c'.repeat(64) &&
+        error.cause instanceof ExecutionContainerMismatchError,
+    );
+    assert.deepEqual(
+      calls.slice(callsBeforeResume).map(({ call }) => call),
+      ['execution_inspect'],
+    );
+    await resumed.close();
   } finally {
     for (const connection of connections) connection.destroy();
     await new Promise((resolve) => server.close(resolve));
