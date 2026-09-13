@@ -918,6 +918,15 @@ test('Top owns workspace settings and extension management in the same tab', asy
     true,
     'environment controls reflow instead of colliding at narrow widths',
   );
+  assert.deepEqual(ancestorProperty(stage, 'Remove TOKEN', 'Row', 'Width'), {
+    Length: 'Fill',
+  });
+  assert.deepEqual(taggedProperty(stage, 'Add variable', 'Button', 'Variant'), {
+    Variant: 'Outline',
+  });
+  assert.deepEqual(taggedProperty(stage, 'Add variable', 'Button', 'Size'), {
+    ControlSize: 'Small',
+  });
   toggleLatestSwitch(stage, true);
   await settled();
   assert.equal(placeholderProperty(stage, 'value', 'Secret')?.Flag, false);

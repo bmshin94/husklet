@@ -609,6 +609,27 @@ mod unix {
                     .expect("credential Entry reports the exact typed value");
                 assert!(matches!(changed, hl_gui::Event::Change { .. }));
                 assert_eq!(name_entry.text(), "TOKEN_NEXT");
+                let name_bounds = name_entry
+                    .compute_bounds(&root)
+                    .expect("credential name belongs to the Top root");
+                let add_variable = find_button(&root, "Add variable");
+                let add_bounds = add_variable
+                    .compute_bounds(&root)
+                    .expect("Add variable belongs to the Top root");
+                let content_x = if width == 600 { 27.0 } else { 203.0 };
+                assert!(
+                    (name_bounds.x() - content_x).abs() <= 1.0,
+                    "{width_name} environment editor is detached from its content edge: {name_bounds:?}"
+                );
+                assert!(
+                    (add_bounds.x() - content_x).abs() <= 1.0,
+                    "{width_name} Add variable action is detached from its editor: {add_bounds:?}"
+                );
+                assert_standard_action(&add_variable, width_name, "add environment variable", 28);
+                assert!(
+                    add_variable.has_css_class("variant-outline"),
+                    "{width_name} Add variable must remain a compact secondary action"
+                );
                 capture(&window, &format!("settings-credential-edit-{width_name}"), width, 800);
             }
             if fixture == "populated" && name == "images" {

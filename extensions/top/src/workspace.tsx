@@ -552,7 +552,7 @@ function Environment({
       ),
     );
   return (
-    <Column gap={2}>
+    <Column gap={2} grow width="fill" align="start">
       {values.length > 0 && (
         <FormControlLabel label="Show environment values" gap={2}>
           <Switch
@@ -562,7 +562,7 @@ function Environment({
         </FormControlLabel>
       )}
       {values.map((row, index) => (
-        <Row key={`environment-${index}`} gap={1} align="center" wrap>
+        <Row key={`environment-${index}`} gap={1} width="fill" align="center" wrap>
           <Entry
             value={row[0]}
             placeholder="NAME"
@@ -585,9 +585,14 @@ function Environment({
           />
         </Row>
       ))}
-      <CardActions>
-        <Button label="Add variable" onInvoke={() => onChange([...values, ['', '']])} />
-      </CardActions>
+      <Row width="fill" justify="start">
+        <Button
+          label="Add variable"
+          size="small"
+          variant="outline"
+          onInvoke={() => onChange([...values, ['', '']])}
+        />
+      </Row>
     </Column>
   );
 }
