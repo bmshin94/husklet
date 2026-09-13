@@ -3401,9 +3401,9 @@ export function workspace(session, { signal } = {}) {
                 const exactKey = exactCredentialKey(key);
                 return session.grantedCredentials[operation].includes(exactKey);
             },
-            read: async (key) => {
+            read: async (key, options = {}) => {
                 const exactKey = exactCredentialKey(key);
-                const credential = expect(await session.call('credential_read', { key: exactKey }), 'credential');
+                const credential = expect(await session.call('credential_read', { key: exactKey }, options), 'credential');
                 if (credential.key !== exactKey) {
                     throw new TypeError(`host returned credential ${credential.key}, expected ${exactKey}; no credential value was assumed`);
                 }
@@ -3435,7 +3435,7 @@ export function workspace(session, { signal } = {}) {
                 try {
                     if (controller.signal.aborted)
                         throw credentialAbort(controller.signal);
-                    const credential = await api.credentials.read(exactKey);
+                    const credential = await api.credentials.read(exactKey, { signal: controller.signal });
                     source = credential.value;
                     if (!source)
                         throw new ExtensionError({

@@ -4359,10 +4359,10 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         const exactKey = exactCredentialKey(key);
         return session.grantedCredentials[operation].includes(exactKey);
       },
-      read: async (key) => {
+      read: async (key, options: CallOptions = {}) => {
         const exactKey = exactCredentialKey(key);
         const credential = expect(
-          await session.call('credential_read', { key: exactKey }),
+          await session.call('credential_read', { key: exactKey }, options),
           'credential',
         );
         if (credential.key !== exactKey) {
@@ -4403,7 +4403,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         let source: number[] | null | undefined;
         try {
           if (controller.signal.aborted) throw credentialAbort(controller.signal);
-          const credential = await api.credentials.read(exactKey);
+          const credential = await api.credentials.read(exactKey, { signal: controller.signal });
           source = credential.value;
           if (!source)
             throw new ExtensionError({

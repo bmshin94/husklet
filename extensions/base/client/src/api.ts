@@ -2185,7 +2185,7 @@ export interface WorkspaceApi {
   credentials: {
     /** Checks this connection's immutable exact-key grant before making a call. */
     keyGrant(operation: CredentialGrantOperation, key: string): boolean;
-    read(key: string): Promise<ExtensionCredential>;
+    read(key: string, options?: CallOptions): Promise<ExtensionCredential>;
     /**
      * Use one credential inside a bounded lifetime. The supplied bytes are scrubbed after the
      * consumer settles or the lease expires. Its signal is revoked when the session, caller, or

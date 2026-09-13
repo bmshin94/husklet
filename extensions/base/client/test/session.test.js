@@ -1819,6 +1819,65 @@ test('scoped credential use scrubs bytes and revokes long work on Unix replaceme
   }
 });
 
+test('credential lease expiry cancels a stalled fragmented Unix read before secret exposure', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-credential-read-cancel-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const peers = new Set();
+  let reads = 0;
+  const server = net.createServer((socket) => {
+    peers.add(socket);
+    socket.on('close', () => peers.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.payload.call !== 'credential_read') continue;
+        reads += 1;
+        const late = encode({
+          channel: frame.channel,
+          kind: KIND.response,
+          payload: {
+            reply: 'credential',
+            with: { key: 'embeddings.remote', revision: 9, value: [115, 101, 99, 114, 101, 116] },
+          },
+        });
+        socket.write(late.subarray(0, 1));
+      }
+    });
+    const greeting = encode({
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: { protocol: 1, peer: 'credential-read-cancel', granted: ['credentials:read'] },
+    });
+    for (const byte of greeting) socket.write(Uint8Array.of(byte));
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  let session;
+  try {
+    session = await connect({ path: socketPath, timeout: 1_000 });
+    let consumed = false;
+    const started = Date.now();
+    await assert.rejects(
+      workspace(session).credentials.withValue(
+        'embeddings.remote',
+        () => {
+          consumed = true;
+        },
+        { maxLifetimeMs: 20 },
+      ),
+      /aborted|expired/i,
+    );
+    assert.equal(consumed, false, 'late secret bytes must never reach the embedding consumer');
+    assert.equal(reads, 1);
+    assert.equal(session.signal.aborted, true, 'ordered read cancellation closes correlation state');
+    assert.ok(Date.now() - started < 500, 'lease expiry must beat the one-second call timeout');
+  } finally {
+    await session?.close();
+    for (const peer of peers) peer.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('real Unix preference read rejects duplicate keys without mutation and preserves session health', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-preference-identities-'));
   const socketPath = path.join(directory, 'host.sock');
