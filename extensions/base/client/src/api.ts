@@ -531,6 +531,11 @@ export interface ReadablePaneInventory {
   complete: boolean;
 }
 
+/** One coherent, bounded view of the window layout and every pane's agent-readable contents. */
+export interface ReadableTerminalLayout extends ReadablePaneInventory {
+  topology: TerminalTopology;
+}
+
 /** The pane layout kept changing while a bounded coherent inventory was assembled. */
 export declare class PaneInventoryChangedError extends Error {
   readonly attempts: number;
@@ -540,6 +545,12 @@ export declare class PaneInventoryChangedError extends Error {
   readonly after: ReadonlyArray<
     Readonly<Pick<InspectablePane, 'slot' | 'generation' | 'revision' | 'focused'>>
   >;
+}
+/** Tab topology changed while its pane contents were being converted to text. */
+export declare class TerminalLayoutChangedError extends Error {
+  readonly attempts: number;
+  readonly before: Readonly<TerminalTopology>;
+  readonly after: Readonly<TerminalTopology>;
 }
 /** Bounded pane discovery omitted identities, so whole-layout stability cannot be proven. */
 export declare class IncompletePaneInventoryError extends Error {
@@ -1694,6 +1705,15 @@ export interface WorkspaceApi {
       attempts?: number;
       signal?: AbortSignal;
     }): Promise<ReadablePaneInventory>;
+    /**
+     * Read split ratios, active/pinned tabs, and every pane's text as one bounded observation.
+     * Retries when topology changes without relying on pane revisions to expose tab-only changes.
+     */
+    readLayoutStable(options?: {
+      lines?: number;
+      attempts?: number;
+      signal?: AbortSignal;
+    }): Promise<ReadableTerminalLayout>;
     /** Arm observation, reconcile already-unread state, then wait for a fresh bounded projection. */
     waitForText(
       slot: string,

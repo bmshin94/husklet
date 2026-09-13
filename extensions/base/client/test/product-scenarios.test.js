@@ -14,6 +14,7 @@ const FILE_JOURNAL = '0123456789abcdef0123456789abcdef';
 const capabilities = [
   'panes:observe',
   'panes:semantic-read',
+  'terminals:read',
   'terminals:output',
   'terminals:input',
   'terminals:layout-control',
@@ -124,6 +125,32 @@ function respond(socket, frame, payload) {
   socket.write(encode({ channel: frame.channel, kind: KIND.response, payload }));
 }
 
+function topologyFor(panes) {
+  const leaves = panes.map((pane) => ({
+    kind: 'pane',
+    pane: {
+      slot: pane.slot,
+      working_directory: null,
+      command: null,
+      occupant: pane.kind === 'terminal' ? 'terminal' : 'surface',
+      provider: pane.provider,
+    },
+    grid: pane.kind === 'terminal' ? { columns: 80, rows: 24 } : null,
+    focused: pane.focused,
+  }));
+  const root = leaves.reduce((first, second) => ({
+    kind: 'split',
+    division: 'beside',
+    ratio_per_mille: 500,
+    first,
+    second,
+  }));
+  return {
+    active_tab: 'tab',
+    tabs: [{ id: 'tab', title: 'Agent', pinned: false, root }],
+  };
+}
+
 test('LLM terminal agent runs a supervised command without parsing a prompt', async () => {
   const commandOwner = 'a'.repeat(32);
   const pane = {
@@ -159,6 +186,8 @@ test('LLM terminal agent runs a supervised command without parsing a prompt', as
             truncated: false,
           },
         });
+      else if (call === 'terminal_topology')
+        respond(socket, frame, { reply: 'topology', with: topologyFor([pane, uiPane]) });
       else if (call === 'event_subscribe' || call === 'event_unsubscribe')
         respond(socket, frame, { reply: 'done' });
       else if (call === 'terminal_read_pane') {
@@ -252,6 +281,8 @@ test('LLM terminal agent reads a selected semantic surface without terminal inpu
       const call = frame.payload.call;
       if (call === 'pane_list')
         respond(socket, frame, { reply: 'panes', with: { panes: [pane], truncated: false } });
+      else if (call === 'terminal_topology')
+        respond(socket, frame, { reply: 'topology', with: topologyFor([pane]) });
       else if (call === 'pane_semantic_read')
         respond(socket, frame, {
           reply: 'semantics',

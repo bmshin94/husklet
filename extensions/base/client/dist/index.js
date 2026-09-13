@@ -339,6 +339,19 @@ export class PaneInventoryChangedError extends Error {
         this.after = Object.freeze(after.panes.map(cursor));
     }
 }
+/** Tab topology changed while its pane contents were being converted to text. */
+export class TerminalLayoutChangedError extends Error {
+    attempts;
+    before;
+    after;
+    constructor(attempts, before, after) {
+        super(`terminal layout or pane membership changed during ${attempts} bounded snapshot attempt${attempts === 1 ? '' : 's'}`);
+        this.name = 'TerminalLayoutChangedError';
+        this.attempts = attempts;
+        this.before = Object.freeze(before);
+        this.after = Object.freeze(after);
+    }
+}
 /** Bounded pane discovery omitted identities, so whole-layout stability cannot be proven. */
 export class IncompletePaneInventoryError extends Error {
     panes;
@@ -3577,6 +3590,50 @@ export function workspace(session, { signal } = {}) {
                 throw new PaneInventoryChangedError(attempts, before, after);
         }
         throw new Error('unreachable stable pane inventory attempt');
+    };
+    api.terminal.readLayoutStable = async ({ lines, attempts = 3, signal: readSignal } = {}) => {
+        if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 16) {
+            throw new RangeError('stable terminal layout attempts must be an integer within 1..=16');
+        }
+        if (lines !== undefined && (!Number.isSafeInteger(lines) || lines < 1 || lines > 2000)) {
+            throw new TerminalReadLimitError(lines);
+        }
+        if (readSignal?.aborted)
+            throw outputAbort(readSignal);
+        const scoped = readSignal === undefined ? api : workspace(hostSession, { signal: readSignal });
+        let before;
+        let after;
+        for (let attempt = 1; attempt <= attempts; attempt += 1) {
+            before = await scoped.terminal.topology();
+            let readable;
+            try {
+                readable = await scoped.terminal.readAllStable({ lines, attempts: 1 });
+            }
+            catch (error) {
+                if ((error instanceof PaneChangedError || error instanceof PaneInventoryChangedError) &&
+                    attempt < attempts)
+                    continue;
+                throw error;
+            }
+            after = await scoped.terminal.topology();
+            const membership = new Map();
+            const visit = (node, tab) => {
+                if (node.kind === 'pane')
+                    membership.set(node.pane.slot, tab);
+                else {
+                    visit(node.first, tab);
+                    visit(node.second, tab);
+                }
+            };
+            for (const tab of after.tabs)
+                visit(tab.root, tab.id);
+            const panesMatch = membership.size === readable.panes.length &&
+                readable.panes.every(({ pane }) => membership.get(pane.slot) === pane.tab);
+            if (panesMatch && JSON.stringify(before) === JSON.stringify(after)) {
+                return { topology: after, panes: readable.panes, complete: readable.complete };
+            }
+        }
+        throw new TerminalLayoutChangedError(attempts, before, after);
     };
     api.paneChanges = async function* ({ signal: iteratorSignal } = {}) {
         if (iteratorSignal?.aborted)

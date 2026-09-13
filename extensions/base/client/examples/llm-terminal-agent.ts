@@ -10,7 +10,7 @@ if (!configuration?.path || !configuration.slot || !configuration.prompt) {
 const session = await connect({ path: configuration.path, pendingLimit: 8, timeout: 5_000 });
 try {
   const terminal = workspace(session).terminal;
-  const context = await terminal.readAllStable({ lines: 80, attempts: 3 });
+  const context = await terminal.readLayoutStable({ lines: 80, attempts: 3 });
   const contextIncomplete =
     !context.complete ||
     context.panes.some(({ readable }) => readable.kind === 'ui' && !readable.complete);
@@ -24,7 +24,7 @@ try {
   }));
   if (observed.kind === 'ui') {
     process.stdout.write(
-      `${JSON.stringify({ context: panes, incomplete: contextIncomplete, selected: { kind: 'ui', text: observed.text, complete: observed.complete } })}\n`,
+      `${JSON.stringify({ layout: context.topology, context: panes, incomplete: contextIncomplete, selected: { kind: 'ui', text: observed.text, complete: observed.complete } })}\n`,
     );
   } else {
     const deadlineMs = configuration.deadlineMs ?? 2_000;
@@ -84,7 +84,7 @@ try {
         }
       }
       process.stdout.write(
-        `${JSON.stringify({ context: panes, incomplete: contextIncomplete, selected: { kind: 'terminal', before: observed.text, command: result.command.id, stdout: result.stdout, stderr: result.stderr, exitCode: result.command.exit_code, completed: !result.command.running, pane: { slot: result.command.slot, generation: result.command.generation, revision: result.command.revision } } })}\n`,
+        `${JSON.stringify({ layout: context.topology, context: panes, incomplete: contextIncomplete, selected: { kind: 'terminal', before: observed.text, command: result.command.id, stdout: result.stdout, stderr: result.stderr, exitCode: result.command.exit_code, completed: !result.command.running, pane: { slot: result.command.slot, generation: result.command.generation, revision: result.command.revision } } })}\n`,
       );
     } finally {
       clearTimeout(deadline);

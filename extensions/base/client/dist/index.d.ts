@@ -109,6 +109,13 @@ export declare class PaneInventoryChangedError extends Error {
     readonly after: any;
     constructor(attempts: any, before: any, after: any);
 }
+/** Tab topology changed while its pane contents were being converted to text. */
+export declare class TerminalLayoutChangedError extends Error {
+    readonly attempts: any;
+    readonly before: any;
+    readonly after: any;
+    constructor(attempts: any, before: any, after: any);
+}
 /** Bounded pane discovery omitted identities, so whole-layout stability cannot be proven. */
 export declare class IncompletePaneInventoryError extends Error {
     readonly panes: any;
