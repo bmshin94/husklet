@@ -3452,6 +3452,11 @@ mod unix {
                 }
             },
         );
+        assert!(committed.get(), "update authority was committed");
+        assert!(
+            inventory_event_sent.get(),
+            "the fixture must publish the post-update duty lifecycle before success"
+        );
         drain_extension_renders(wire, tree, surface);
         let success_root = surface.widget().clone().upcast::<gtk::Widget>();
         assert!(!has_label(&success_root, "Update available"));
@@ -3466,7 +3471,7 @@ mod unix {
         ExtensionSummary {
             name: "developer-tool-01".into(),
             image_digest: digest.into(),
-            status: "running".into(),
+            status: "duty".into(),
             version: "1.0.0".into(),
             enabled: true,
             pane_providers: Vec::new(),
