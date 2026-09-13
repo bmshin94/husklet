@@ -278,11 +278,11 @@ fn standard_buttons(css: &mut String, theme: &Theme) {
          button.hl-button.variant-outline:hover > .hl-button-chrome, button.hl-button.variant-ghost:hover > .hl-button-chrome {{ background: {raised}; color: {text}; border-color: {line}; }}\n\
          button.hl-button.variant-filled:hover > .hl-button-chrome {{ box-shadow: inset 0 0 0 999px rgba(255,255,255,.10); }}\n\
          button.hl-button.variant-filled:active > .hl-button-chrome {{ box-shadow: inset 0 0 0 999px rgba(0,0,0,.14); }}\n\
-         button.hl-button:disabled > .hl-button-chrome {{ color: {faint}; background: {surface}; border-color: {line}; box-shadow: none; }}\n\
-         button.hl-button.variant-ghost:disabled > .hl-button-chrome, button.hl-button.variant-plain:disabled > .hl-button-chrome {{ background: transparent; border-color: transparent; }}\n\
          button.hl-button:focus > .hl-button-chrome, button.hl-button:focus-visible > .hl-button-chrome, button.hl-button > .hl-button-chrome.hl-focus-visible-proof {{ outline: none; box-shadow: inset 0 0 0 2px {accent}; }}\n\
          button.hl-button.variant-outline:focus > .hl-button-chrome, button.hl-button.variant-outline:focus-visible > .hl-button-chrome, button.hl-button.variant-outline > .hl-button-chrome.hl-focus-visible-proof {{ border: 2px solid {accent}; box-shadow: none; outline: none; }}\n\
-         button.hl-button.variant-filled:focus > .hl-button-chrome, button.hl-button.variant-filled:focus-visible > .hl-button-chrome, button.hl-button.variant-filled > .hl-button-chrome.hl-focus-visible-proof {{ box-shadow: inset 0 0 0 2px {ground}; }}",
+         button.hl-button.variant-filled:focus > .hl-button-chrome, button.hl-button.variant-filled:focus-visible > .hl-button-chrome, button.hl-button.variant-filled > .hl-button-chrome.hl-focus-visible-proof {{ box-shadow: inset 0 0 0 2px {ground}; }}\n\
+         button.hl-button.variant-filled.hl-disabled > .hl-button-chrome, button.hl-button.variant-outline.hl-disabled > .hl-button-chrome, button.hl-button.variant-ghost.hl-disabled > .hl-button-chrome, button.hl-button.variant-plain.hl-disabled > .hl-button-chrome {{ color: {faint}; background: {surface}; border-color: {line}; box-shadow: none; }}\n\
+         button.hl-button.variant-ghost.hl-disabled > .hl-button-chrome, button.hl-button.variant-plain.hl-disabled > .hl-button-chrome {{ background: transparent; border-color: transparent; }}",
         raised = theme.color(Token::Raised).hex(),
         text = theme.color(Token::Text).hex(),
         ground = theme.color(Token::Ground).hex(),
@@ -593,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn standard_button_focus_paints_only_its_visual_chrome() {
+    fn standard_button_focus_and_disabled_state_resolve_on_visual_chrome() {
         let css = super::sheet(&Theme::dark());
         assert!(css.contains("button.hl-button:focus, button.hl-button:focus-visible { outline: none; }"));
         assert!(css.contains(
@@ -601,6 +601,9 @@ mod tests {
         ));
         assert!(css.contains(
             "button.hl-button.variant-outline:focus > .hl-button-chrome, button.hl-button.variant-outline:focus-visible > .hl-button-chrome, button.hl-button.variant-outline > .hl-button-chrome.hl-focus-visible-proof { border: 2px solid #559df7; box-shadow: none; outline: none; }"
+        ));
+        assert!(css.contains(
+            "button.hl-button.variant-filled.hl-disabled > .hl-button-chrome, button.hl-button.variant-outline.hl-disabled > .hl-button-chrome"
         ));
         assert!(
             css.contains("button:focus-visible { outline: 2px"),

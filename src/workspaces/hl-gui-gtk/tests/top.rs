@@ -3589,6 +3589,13 @@ mod unix {
                 let cancel_bounds = cancel
                     .compute_bounds(root)
                     .expect("cancel decision belongs to review footer");
+                assert_filled_button_state_pixels(
+                    &capture_window,
+                    root,
+                    &update,
+                    state == "update-review",
+                    &format!("{width_name} update decision"),
+                );
                 assert!(
                     (update_bounds.y() - cancel_bounds.y()).abs() <= 2.0,
                     "{width_name} detached the secondary decision: update={update_bounds:?}, cancel={cancel_bounds:?}"
@@ -5066,6 +5073,69 @@ mod unix {
             })
             .count();
         assert!(ink >= 4, "{case} is absent from its current render bounds {bounds:?}");
+    }
+
+    fn assert_filled_button_state_pixels(
+        window: &gtk::Window,
+        root: &gtk::Widget,
+        action: &gtk::Button,
+        enabled: bool,
+        case: &str,
+    ) {
+        let texture = stable_texture(window, root.width(), 800);
+        let stride = texture.width() as usize * 4;
+        let mut pixels = vec![0_u8; stride * texture.height() as usize];
+        texture.download(&mut pixels, stride);
+        let chrome = action.first_child().expect("filled Button owns visible chrome");
+        let bounds = chrome.compute_bounds(root).expect("filled chrome belongs to Top root");
+        let x0 = bounds.x().round() as usize;
+        let y0 = bounds.y().round() as usize;
+        let x1 = (bounds.x() + bounds.width()).round() as usize - 1;
+        let mid_y = (y0 + (bounds.y() + bounds.height()).round() as usize - 1) / 2;
+        let pixel = |x: usize, y: usize| &pixels[y * stride + x * 4..y * stride + x * 4 + 3];
+        let close = |actual: &[u8], expected: [u8; 3]| {
+            [expected, [expected[2], expected[1], expected[0]]]
+                .into_iter()
+                .any(|expected| {
+                    actual
+                        .iter()
+                        .zip(expected)
+                        .all(|(channel, expected)| channel.abs_diff(expected) <= 20)
+                })
+        };
+        let (fill, border, text) = if enabled {
+            ([0x55, 0x9d, 0xf7], [0x55, 0x9d, 0xf7], [0x0f, 0x11, 0x15])
+        } else {
+            ([0x17, 0x1a, 0x20], [0x32, 0x38, 0x43], [0xa9, 0xb0, 0xbc])
+        };
+        assert!(
+            close(pixel(x0 + 6, mid_y), fill),
+            "{case} has wrong interior fill: {:?}",
+            pixel(x0 + 6, mid_y)
+        );
+        assert!(
+            close(pixel((x0 + x1) / 2, y0), border),
+            "{case} has wrong perimeter color: {:?}",
+            pixel((x0 + x1) / 2, y0)
+        );
+        let label = find_label(action.upcast_ref(), "Update with selected access");
+        let label_bounds = label.compute_bounds(root).expect("filled label belongs to Top root");
+        let lx0 = label_bounds.x().floor() as usize;
+        let ly0 = label_bounds.y().floor() as usize;
+        let lx1 = (label_bounds.x() + label_bounds.width()).ceil() as usize;
+        let ly1 = (label_bounds.y() + label_bounds.height()).ceil() as usize;
+        let glyph_pixels = (ly0..ly1)
+            .flat_map(|y| (lx0..lx1).map(move |x| (x, y)))
+            .filter(|(x, y)| close(pixel(*x, *y), text))
+            .count();
+        assert!(glyph_pixels >= 4, "{case} has no correctly toned label pixels");
+        if !enabled {
+            assert!(
+                !close(pixel(x0 + 6, mid_y), [0x55, 0x9d, 0xf7])
+                    && !close(pixel((x0 + x1) / 2, y0), [0x55, 0x9d, 0xf7]),
+                "{case} retained accent chrome while insensitive"
+            );
+        }
     }
 
     fn assert_outline_button_pixels(

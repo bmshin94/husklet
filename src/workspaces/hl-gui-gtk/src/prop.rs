@@ -87,7 +87,16 @@ fn tooltip(widget: &gtk::Widget, value: &PropValue) {
 fn enabled(widget: &gtk::Widget, node: &Node, value: &PropValue) {
     let busy = matches!(node.tag, Tag::Button | Tag::InlineButton)
         && node.prop(Prop::Busy).and_then(PropValue::as_flag).unwrap_or(false);
-    widget.set_sensitive(value.as_flag().unwrap_or(true) && !busy);
+    sensitivity(widget, value.as_flag().unwrap_or(true) && !busy);
+}
+
+fn sensitivity(widget: &gtk::Widget, sensitive: bool) {
+    widget.set_sensitive(sensitive);
+    if sensitive {
+        widget.remove_css_class("hl-disabled");
+    } else {
+        widget.add_css_class("hl-disabled");
+    }
 }
 
 fn checked(widget: &gtk::Widget, value: &PropValue) {
@@ -146,7 +155,7 @@ fn busy(widget: &gtk::Widget, node: &Node, value: &PropValue) {
             emblem.set_visible(!state && has_icon);
         }
         let enabled = node.prop(Prop::Enabled).and_then(PropValue::as_flag).unwrap_or(true);
-        widget.set_sensitive(!state && enabled);
+        sensitivity(widget, !state && enabled);
         if state {
             widget.add_css_class("hl-busy");
         } else {
