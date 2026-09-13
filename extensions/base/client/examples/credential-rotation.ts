@@ -59,7 +59,7 @@ export async function rotateDatabaseCredential(
   }
   const before = await host.credentials.read(key);
   try {
-    return await host.credentials.set(before.revision, key, replacement);
+    return await host.credentials.setObserved(before.revision, key, replacement);
   } catch (cause) {
     const after = await host.credentials.read(key);
     const same =

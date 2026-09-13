@@ -3,6 +3,13 @@ export { PROTOCOL_SPECIFICATION_VERSION, PROTOCOL_VERSION, PROTOCOL_BOUNDS, PROT
 import { semanticText, semanticXml } from './semantic.js';
 export { semanticText, semanticXml };
 import type { CallOptions, ConnectOptions, PaneText, Session as ClientSession, WorkspaceApi } from './api.js';
+/** A credential CAS write may have committed before its revision reply was lost. */
+export declare class CredentialSetOperationError extends Error {
+    readonly key: any;
+    readonly observed: any;
+    readonly value: any;
+    constructor(key: any, observed: any, value: any, cause: any);
+}
 /** An extension install/update may have committed before its reply was lost. */
 export declare class ExtensionCommitOperationError extends Error {
     readonly operation: any;

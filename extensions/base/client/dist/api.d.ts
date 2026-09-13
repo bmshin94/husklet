@@ -680,6 +680,13 @@ export interface ExtensionCredential {
     revision: number;
     value?: number[] | null;
 }
+/** A credential CAS write may have committed before its revision reply was lost. */
+export declare class CredentialSetOperationError extends Error {
+    readonly key: string;
+    readonly observed: number;
+    readonly value: readonly number[];
+    readonly cause: unknown;
+}
 export interface StateCodec<T> {
     decode(value: unknown): T;
     encode(value: T): unknown;
@@ -2388,6 +2395,10 @@ export interface WorkspaceApi {
             maxLifetimeMs?: number;
         }): Promise<number>;
         set(observed: number, key: string, value: Iterable<number>): Promise<number>;
+        /** Preserve exact CAS recovery authority when a credential-set reply is lost. */
+        setObserved(observed: number, key: string, value: Iterable<number>): Promise<number>;
+        /** Reconcile by exact revision and bytes without replaying the secret mutation. */
+        recoverSet(failure: CredentialSetOperationError, options?: CallOptions): Promise<number>;
         remove(observed: number, key: string): Promise<number>;
     };
     subscribe(topic: Topic): Promise<void>;

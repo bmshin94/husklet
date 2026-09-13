@@ -4,6 +4,20 @@ import { semanticText, semanticXml } from './semantic.js';
 export { semanticText, semanticXml };
 import { ExtensionError, Session } from './session.js';
 import { encodeRequest, PROTOCOL_REPLIES, PROTOCOL_REQUEST_CAPABILITIES, PROTOCOL_TOPICS, } from './generated-protocol.js';
+/** A credential CAS write may have committed before its revision reply was lost. */
+export class CredentialSetOperationError extends Error {
+    key;
+    observed;
+    value;
+    constructor(key, observed, value, cause) {
+        super(`credential ${key} update after revision ${observed} may have committed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+        this.name = 'CredentialSetOperationError';
+        this.key = key;
+        this.observed = observed;
+        this.value = Object.freeze([...value]);
+        this.cause = cause;
+    }
+}
 function immutableCopy(value) {
     if (Array.isArray(value))
         return Object.freeze(value.map(immutableCopy));
@@ -3846,6 +3860,33 @@ export function workspace(session, { signal } = {}) {
                 key: exactCredentialKey(key),
                 value: exactCredentialBytes(value),
             }), 'revision'),
+            setObserved: async (observed, key, value) => {
+                const exactKey = exactCredentialKey(key);
+                const exactValue = exactCredentialBytes(value);
+                try {
+                    return await api.credentials.set(observed, exactKey, exactValue);
+                }
+                catch (error) {
+                    throw new CredentialSetOperationError(exactKey, observed, exactValue, error);
+                }
+            },
+            recoverSet: async (failure, options = {}) => {
+                if (!(failure instanceof CredentialSetOperationError))
+                    throw new TypeError('credential set recovery requires CredentialSetOperationError');
+                const current = await api.credentials.read(failure.key, options);
+                const source = current.value;
+                try {
+                    const same = current.revision === failure.observed + 1 &&
+                        source?.length === failure.value.length &&
+                        source.every((byte, index) => byte === failure.value[index]);
+                    if (!same)
+                        throw new Error(`credential ${failure.key} no longer matches the ambiguous update; no mutation was replayed`);
+                    return current.revision;
+                }
+                finally {
+                    source?.fill(0);
+                }
+            },
             remove: async (observed, key) => expect(await session.call('credential_remove', { observed, key: exactCredentialKey(key) }), 'revision'),
         },
         subscribe,
