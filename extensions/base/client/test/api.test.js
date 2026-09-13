@@ -266,6 +266,9 @@ async function pair(options) {
         protocol: PROTOCOL,
         extension: 'test',
         granted: PROTOCOL_CAPABILITIES.map(({ wire }) => wire),
+        filesystem: {
+          read: [{ subtree: 'src' }, { subtree: 'logs' }, { exact: 'stale.ts' }],
+        },
       },
     }),
   );

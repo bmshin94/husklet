@@ -579,7 +579,9 @@ impl Conversation {
         }
         if self.may_observe(Topic::Filesystem) {
             if let Ok(inventory) = services.files.inventory(self.session.filesystem_read_selectors()) {
-                snapshots.push(Snapshot::Filesystem(inventory));
+                snapshots.push(Snapshot::Filesystem(
+                    self.session.visible_filesystem_inventory(inventory),
+                ));
             }
         }
         for snapshot in snapshots {

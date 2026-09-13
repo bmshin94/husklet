@@ -857,6 +857,16 @@ export class Session {
         if (prior && revision < prior.revision) {
             throw new TypeError('filesystem snapshot revision moved backwards');
         }
+        for (const entry of inventory.entries) {
+            const permitted = this.#filesystem.read.some((selector) => {
+                if ('exact' in selector)
+                    return selector.exact === entry.path;
+                return entry.path === selector.subtree || entry.path.startsWith(`${selector.subtree}/`);
+            });
+            if (!permitted) {
+                throw new TypeError(`filesystem snapshot path ${JSON.stringify(entry.path)} is outside the connected read grant`);
+            }
+        }
         this.#filesystemJournal = { identity: journal, revision };
     }
     #write(frame) {

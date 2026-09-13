@@ -49,6 +49,7 @@ struct Host {
     cancelled_revision: Cell<Option<u64>>,
     fail_notification: Cell<bool>,
     execution_container: RefCell<String>,
+    leak_filesystem_paths: Cell<bool>,
 }
 
 impl hl_extension::NotificationSink for Host {
@@ -157,6 +158,7 @@ impl Host {
             cancelled_revision: Cell::new(None),
             fail_notification: Cell::new(false),
             execution_container: RefCell::new("c1".into()),
+            leak_filesystem_paths: Cell::new(false),
         }
     }
 
@@ -1048,16 +1050,25 @@ impl hl_extension::port::WorkspaceControl for Host {
 impl WorkspaceFiles for Host {
     fn inventory(&self, roots: &[hl_extension::FilesystemSelector]) -> Result<FileInventory, HostError> {
         self.ledger.note("files.inventory");
+        let mut entries = vec![Entry {
+            path: match &roots[0] {
+                hl_extension::FilesystemSelector::Exact { exact } => exact.clone(),
+                hl_extension::FilesystemSelector::Subtree { subtree } => subtree.clone(),
+            },
+            directory: true,
+            size: 0,
+            identity: None,
+        }];
+        if self.leak_filesystem_paths.get() {
+            entries.push(Entry {
+                path: path("private/token"),
+                directory: false,
+                size: 6,
+                identity: Some("secret-v1".into()),
+            });
+        }
         Ok(FileInventory {
-            entries: vec![Entry {
-                path: match &roots[0] {
-                    hl_extension::FilesystemSelector::Exact { exact } => exact.clone(),
-                    hl_extension::FilesystemSelector::Subtree { subtree } => subtree.clone(),
-                },
-                directory: true,
-                size: 0,
-                identity: None,
-            }],
+            entries,
             complete: true,
             coalesced: 0,
             journal: "a".repeat(32),
@@ -1075,9 +1086,19 @@ impl WorkspaceFiles for Host {
         self.ledger.note("files.changes_since");
         Ok(hl_extension::port::FileChangePage {
             journal: "a".repeat(32),
-            changes: Vec::new(),
-            next: 0,
-            current: 0,
+            changes: self
+                .leak_filesystem_paths
+                .get()
+                .then(|| hl_extension::port::FileChange {
+                    revision: 1,
+                    kind: hl_extension::port::FileChangeKind::Modify,
+                    path: path("private/token"),
+                    entry: None,
+                })
+                .into_iter()
+                .collect(),
+            next: u64::from(self.leak_filesystem_paths.get()),
+            current: u64::from(self.leak_filesystem_paths.get()),
             more: false,
             truncated: false,
         })
@@ -3972,6 +3993,44 @@ fn filesystem_read_and_write_scopes_are_independent_and_fail_before_the_service(
     assert!(
         host.ledger.reached().is_empty(),
         "wrong-verb roots must fail before the filesystem port"
+    );
+}
+
+#[test]
+fn filesystem_replies_are_confined_even_when_the_host_adapter_returns_sibling_paths() {
+    let host = Host::new();
+    host.leak_filesystem_paths.set(true);
+    let mut session = session(&[Capability::FilesystemRead], &["src"]);
+
+    let Reply::FileInventory(inventory) = session
+        .dispatch(&Request::FilesystemInventory, &services(&host))
+        .expect("inventory")
+    else {
+        panic!("wrong reply");
+    };
+    assert_eq!(inventory.entries.len(), 1);
+    assert_eq!(inventory.entries[0].path, path("src"));
+
+    let Reply::FileChanges(page) = session
+        .dispatch(
+            &Request::FilesystemChanges {
+                observed: "a".repeat(32),
+                after: 0,
+                limit: 16,
+            },
+            &services(&host),
+        )
+        .expect("changes")
+    else {
+        panic!("wrong reply");
+    };
+    assert!(
+        page.changes.is_empty(),
+        "adapter leakage must be removed at the session boundary"
+    );
+    assert_eq!(
+        page.next, 1,
+        "the scoped journal cursor still advances past irrelevant changes"
     );
 }
 

@@ -430,6 +430,38 @@ impl Session {
         &self.filesystem
     }
 
+    /// Confines a host-produced inventory to this session's consented read roots.
+    ///
+    /// Adapters receive the roots as a query optimization, but they are not the
+    /// authority boundary: a stale or defective adapter must not disclose a
+    /// sibling path through a reply or subscription snapshot.
+    #[must_use]
+    pub fn visible_filesystem_inventory(
+        &self,
+        mut inventory: crate::port::FileInventory,
+    ) -> crate::port::FileInventory {
+        inventory
+            .entries
+            .retain(|entry| self.filesystem_read_permits(&entry.path));
+        inventory
+    }
+
+    #[must_use]
+    fn visible_filesystem_changes(&self, mut page: crate::port::FileChangePage) -> crate::port::FileChangePage {
+        page.changes.retain(|change| {
+            self.filesystem_read_permits(&change.path)
+                && change
+                    .entry
+                    .as_ref()
+                    .is_none_or(|entry| entry.path == change.path && self.filesystem_read_permits(&entry.path))
+        });
+        page
+    }
+
+    fn filesystem_read_permits(&self, path: &hl_rpc::RelativePath) -> bool {
+        self.filesystem.read.iter().any(|selector| selector.permits(path))
+    }
+
     #[must_use]
     pub const fn container_grant(&self) -> &ContainerGrant {
         &self.containers
@@ -2011,7 +2043,9 @@ impl Session {
         match request {
             Request::FilesystemInventory => {
                 let port = self.peer.authority().port(Capability::FilesystemRead, services.files)?;
-                Ok(Reply::FileInventory(port.inventory(&self.filesystem.read)?))
+                Ok(Reply::FileInventory(
+                    self.visible_filesystem_inventory(port.inventory(&self.filesystem.read)?),
+                ))
             }
             Request::FilesystemChanges { observed, after, limit } => {
                 if observed.len() != 32 || !observed.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -2025,12 +2059,9 @@ impl Session {
                     });
                 }
                 let port = self.peer.authority().port(Capability::FilesystemRead, services.files)?;
-                Ok(Reply::FileChanges(port.changes_since(
-                    &self.filesystem.read,
-                    observed,
-                    *after,
-                    usize::from(*limit),
-                )?))
+                Ok(Reply::FileChanges(self.visible_filesystem_changes(
+                    port.changes_since(&self.filesystem.read, observed, *after, usize::from(*limit))?,
+                )))
             }
             Request::FilesystemList { path } => {
                 let port = self.peer.authority().port(Capability::FilesystemRead, services.files)?;

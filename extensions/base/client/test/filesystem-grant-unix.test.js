@@ -21,21 +21,48 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
       for (const frame of reader.take(chunk)) {
         if (frame.kind !== KIND.request) continue;
         requests.push(frame.payload);
+        const subscribing = frame.payload.call === 'event_subscribe';
         const reply = encode({
           channel: frame.channel,
           kind: KIND.response,
-          payload: {
-            reply: 'entry',
-            with: {
-              path: frame.payload.with.path,
-              directory: false,
-              size: 12,
-              identity: 'readme-v1',
-            },
-          },
+          payload: subscribing
+            ? { reply: 'done' }
+            : {
+                reply: 'entry',
+                with: {
+                  path: frame.payload.with.path,
+                  directory: false,
+                  size: 12,
+                  identity: 'readme-v1',
+                },
+              },
         });
         for (let offset = 0; offset < reply.length; offset += 2)
           socket.write(reply.subarray(offset, offset + 2));
+        if (subscribing) {
+          const leaked = encode({
+            channel: 19,
+            kind: KIND.event,
+            payload: {
+              snapshot: 'filesystem',
+              of: {
+                entries: [
+                  {
+                    path: 'private/token',
+                    directory: false,
+                    size: 6,
+                    identity: 'secret-v1',
+                  },
+                ],
+                complete: true,
+                coalesced: 0,
+                journal: 'b'.repeat(32),
+                revision: 1,
+              },
+            },
+          });
+          for (const byte of leaked) socket.write(Uint8Array.of(byte));
+        }
       }
     });
     const greeting = encode({
@@ -56,6 +83,9 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
         filesystem: {
           read: [{ subtree: 'src' }, { exact: 'README.md' }],
           write: [{ exact: 'state/index.json' }],
+          create: [{ subtree: 'review-notes' }],
+          delete: [{ exact: 'review-notes/stale.md' }],
+          rename: [{ subtree: 'review-notes/drafts' }],
         },
         containers: { selectors: [{ name: 'postgres' }], create: false },
         images: {
@@ -78,9 +108,9 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
     assert.deepEqual(session.grantedFilesystem, {
       read: [{ subtree: 'src' }, { exact: 'README.md' }],
       write: [{ exact: 'state/index.json' }],
-      create: [],
-      delete: [],
-      rename: [],
+      create: [{ subtree: 'review-notes' }],
+      delete: [{ exact: 'review-notes/stale.md' }],
+      rename: [{ subtree: 'review-notes/drafts' }],
     });
     assert(Object.isFrozen(session.grantedFilesystem));
     assert(Object.isFrozen(session.grantedFilesystem.read));
@@ -94,6 +124,11 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
     assert.equal(files.pathGrant('read', './README.md'), null, 'exact selectors stay exact');
     assert.equal(files.pathGrant('write', 'state/index.json'), 'exact');
     assert.equal(files.pathGrant('write', 'state/index.json.tmp'), null);
+    assert.equal(files.pathGrant('create', 'review-notes/new.md'), 'subtree');
+    assert.equal(files.pathGrant('delete', 'review-notes/new.md'), null);
+    assert.equal(files.pathGrant('delete', 'review-notes/stale.md'), 'exact');
+    assert.equal(files.pathGrant('rename', 'review-notes/drafts/one.md'), 'subtree');
+    assert.equal(files.pathGrant('rename', 'review-notes/published/one.md'), null);
     assert.throws(() => files.pathGrant('read', '../secret'), /parent traversal/);
     const scoped = files.scopeChanges(
       {
@@ -168,6 +203,11 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
       assert(Object.isFrozen(grant.selectors ?? grant.read));
       assert(Object.isFrozen((grant.selectors ?? grant.read)[0]));
     }
+    await session.call('event_subscribe', { topic: 'filesystem' });
+    assert.match(
+      (await session.closed).message,
+      /filesystem snapshot path "private\/token" is outside the connected read grant/,
+    );
     session.close();
   } finally {
     for (const socket of sockets) socket.destroy();

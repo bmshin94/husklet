@@ -36,6 +36,14 @@ export async function applyReviewedFile(
   host: WorkspaceApi,
   target: { path: string; container: string; generation: number; replacement: string },
 ) {
+  if (host.files.pathGrant('read', target.path) === null)
+    throw new Error(
+      `review target ${JSON.stringify(target.path)} is outside filesystem:read consent`,
+    );
+  if (host.files.pathGrant('write', target.path) === null)
+    throw new Error(
+      `review target ${JSON.stringify(target.path)} is outside filesystem:write consent`,
+    );
   const file = await host.files.readText(target.path, {
     maxBytes: 1024 * 1024,
     chunkBytes: 64 * 1024,
