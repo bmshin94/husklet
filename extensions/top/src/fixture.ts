@@ -148,6 +148,7 @@ export function fixtureApi(api: WorkspaceApi, mode = 'populated'): WorkspaceApi 
                 slot,
                 generation: 7,
                 revision: 11,
+                lifecycle: 'live',
                 columns: 100,
                 rows: 30,
                 lines: ['$ npm test', '123 tests passed', '$'],
