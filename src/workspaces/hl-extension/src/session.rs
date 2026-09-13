@@ -824,6 +824,7 @@ impl Session {
             Request::TerminalTabs
             | Request::TerminalTopology
             | Request::TerminalOpenTab { .. }
+            | Request::TerminalOpenTabOnce { .. }
             | Request::TerminalPinTab { .. }
             | Request::TerminalFocusTab { .. }
             | Request::TerminalSplit { .. }
@@ -2020,7 +2021,23 @@ impl Session {
 
     fn command(request: &Request, port: &dyn TerminalSurface) -> Result<Reply, Failure> {
         match request {
-            Request::TerminalOpenTab { title } => Ok(Reply::Identity(port.open_tab(title)?)),
+            Request::TerminalOpenTab { title } => {
+                validate_pane_title(title)?;
+                Ok(Reply::Identity(port.open_tab(title)?))
+            }
+            Request::TerminalOpenTabOnce { token, title } => {
+                if token.len() != 32
+                    || !token
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                {
+                    return Err(Failure::Conflict {
+                        detail: "terminal open token must be 32 lowercase hexadecimal characters".into(),
+                    });
+                }
+                validate_pane_title(title)?;
+                Ok(Reply::TerminalOpenTabOnce(port.open_tab_once(token, title)?))
+            }
             Request::TerminalPinTab { tab, pinned } => {
                 port.pin_tab(tab, *pinned).map(|()| Reply::Done).map_err(Failure::from)
             }

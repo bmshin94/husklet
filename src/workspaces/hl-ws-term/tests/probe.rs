@@ -22,6 +22,7 @@ fn nonascii_title_and_cwd_roundtrip() {
         selected_tab: None,
         focused_pane: None,
         window_size: None,
+        open_tab_operations: Vec::new(),
     };
     let back = Session::parse(&s.serialize()).unwrap();
     assert_eq!(back.tabs[0].title, "café ☕", "title must survive round-trip");

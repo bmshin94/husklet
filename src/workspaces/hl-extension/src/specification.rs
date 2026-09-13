@@ -116,6 +116,7 @@ const REQUEST_TO_REPLY: &[(&str, &str)] = &[
     ("terminal_topology", "topology"),
     ("pane_list", "panes"),
     ("terminal_open_tab", "identity"),
+    ("terminal_open_tab_once", "terminal_open_tab_once"),
     ("terminal_pin_tab", "done"),
     ("terminal_focus_tab", "done"),
     ("terminal_split", "identity"),
@@ -242,6 +243,7 @@ fn request_capability(request: &str) -> Capability {
             Capability::TerminalProcessControl
         }
         "terminal_open_tab"
+        | "terminal_open_tab_once"
         | "terminal_pin_tab"
         | "terminal_split"
         | "terminal_split_observed"

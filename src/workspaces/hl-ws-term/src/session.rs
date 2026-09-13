@@ -166,6 +166,20 @@ pub struct WindowSize {
     pub height: u32,
 }
 
+/// Durable outcome of an idempotent extension tab-open request.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct OpenTabOperation {
+    pub extension: hl_rpc::PeerName,
+    pub installation: hl_rpc::InstallationIdentity,
+    pub token: String,
+    pub title: String,
+    pub tab_id: hl_rpc::PeerName,
+    pub open: bool,
+}
+
+pub const OPEN_TAB_OPERATION_LIMIT: usize = 256;
+const OPEN_TAB_LEDGER_LIMIT: usize = 4_096;
+
 /// A workspace's whole terminal session (its ordered tabs). Persisted to `session/layout.conf`.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct Session {
@@ -176,9 +190,42 @@ pub struct Session {
     pub focused_pane: Option<String>,
     /// Last allocated terminal-window size. Layout versions before 3 leave this unset.
     pub window_size: Option<WindowSize>,
+    /// Bounded replay ledger. Entries remain after their tab closes so a lost
+    /// reply can never turn into a second tab.
+    pub open_tab_operations: Vec<OpenTabOperation>,
 }
 
 impl Session {
+    /// Resolve an idempotent tab-open token for one installation.
+    pub fn open_tab_replay(
+        &self,
+        extension: &hl_rpc::PeerName,
+        installation: &hl_rpc::InstallationIdentity,
+        token: &str,
+        title: &str,
+    ) -> io::Result<Option<(&hl_rpc::PeerName, bool)>> {
+        if let Some(operation) = self.open_tab_operations.iter().find(|operation| {
+            &operation.extension == extension && &operation.installation == installation && operation.token == token
+        }) {
+            if operation.title != title {
+                return Err(Layout::invalid(
+                    "terminal open token was already used with a different title",
+                ));
+            }
+            return Ok(Some((&operation.tab_id, operation.open)));
+        }
+        if self
+            .open_tab_operations
+            .iter()
+            .filter(|operation| &operation.extension == extension && &operation.installation == installation)
+            .count()
+            == OPEN_TAB_OPERATION_LIMIT
+        {
+            return Err(Layout::invalid("terminal open operation ledger is full"));
+        }
+        Ok(None)
+    }
+
     /// The session directory for a workspace storage dir.
     #[must_use]
     pub fn dir(storage_dir: &Path) -> PathBuf {
@@ -205,6 +252,20 @@ impl Session {
             None => out.push_str("- -"),
         }
         out.push('\n');
+        for operation in &self.open_tab_operations {
+            out.push_str("open-once ");
+            out.push_str(operation.extension.as_str());
+            out.push(' ');
+            out.push_str(operation.installation.as_str());
+            out.push(' ');
+            out.push_str(&operation.token);
+            out.push(' ');
+            out.push_str(&Layout::escape(&operation.title));
+            out.push(' ');
+            out.push_str(operation.tab_id.as_str());
+            out.push(' ');
+            out.push_str(if operation.open { "open\n" } else { "closed\n" });
+        }
         for tab in &self.tabs {
             out.push_str("tab ");
             out.push_str(tab.id.as_str());
@@ -310,9 +371,54 @@ impl Session {
             _ => return Err(Layout::invalid("missing supported layout version")),
         };
         let mut tabs = Vec::new();
+        let mut open_tab_operations = Vec::new();
         while layout.peek().is_some() {
+            if layout.peek() == Some("open-once") {
+                layout.next();
+                if version != "6" || open_tab_operations.len() == OPEN_TAB_LEDGER_LIMIT {
+                    return Err(Layout::invalid("invalid or excessive open-once ledger"));
+                }
+                let extension = hl_rpc::PeerName::new(
+                    layout
+                        .next()
+                        .ok_or_else(|| Layout::invalid("open-once extension missing"))?,
+                )
+                .map_err(|_| Layout::invalid("open-once extension invalid"))?;
+                let installation = hl_rpc::InstallationIdentity::new(
+                    layout
+                        .next()
+                        .ok_or_else(|| Layout::invalid("open-once installation missing"))?,
+                )
+                .map_err(|_| Layout::invalid("open-once installation invalid"))?;
+                let token = layout
+                    .next()
+                    .ok_or_else(|| Layout::invalid("open-once token missing"))?
+                    .to_owned();
+                let title = Layout::unescape(
+                    layout
+                        .next()
+                        .ok_or_else(|| Layout::invalid("open-once title missing"))?,
+                );
+                let tab_id =
+                    hl_rpc::PeerName::new(layout.next().ok_or_else(|| Layout::invalid("open-once tab missing"))?)
+                        .map_err(|_| Layout::invalid("open-once tab invalid"))?;
+                let open = match layout.next() {
+                    Some("open") => true,
+                    Some("closed") => false,
+                    _ => return Err(Layout::invalid("open-once state invalid")),
+                };
+                open_tab_operations.push(OpenTabOperation {
+                    extension,
+                    installation,
+                    token,
+                    title,
+                    tab_id,
+                    open,
+                });
+                continue;
+            }
             if layout.next() != Some("tab") {
-                return Err(Layout::invalid("expected `tab`"));
+                return Err(Layout::invalid("expected `tab` or `open-once`"));
             }
             let id = if version == "6" {
                 hl_rpc::PeerName::new(
@@ -373,6 +479,16 @@ impl Session {
         if tabs.iter().any(|tab| !identities.insert(tab.id.clone())) {
             return Err(Layout::invalid("two tabs share one stable identity"));
         }
+        let mut operation_tokens = std::collections::HashSet::new();
+        if open_tab_operations.iter().any(|operation| {
+            !operation_tokens.insert((
+                operation.extension.clone(),
+                operation.installation.clone(),
+                operation.token.clone(),
+            ))
+        }) {
+            return Err(Layout::invalid("two open-once operations share one installation token"));
+        }
         if selected_tab.is_some_and(|index| index >= tabs.len()) {
             return Err(Layout::invalid("selected tab is outside the persisted tab list"));
         }
@@ -389,6 +505,7 @@ impl Session {
             selected_tab,
             focused_pane,
             window_size,
+            open_tab_operations,
         })
     }
 

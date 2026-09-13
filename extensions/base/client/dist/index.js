@@ -2548,6 +2548,7 @@ export function workspace(session, { signal } = {}) {
             tabs: async () => exactTabs(expect(await session.call('terminal_tabs'), 'tabs')),
             topology: async () => exactTopology(expect(await session.call('terminal_topology'), 'topology')),
             openTab: async (title) => expect(await session.call('terminal_open_tab', { title }), 'identity'),
+            openTabOnce: async (token, title) => expect(await session.call('terminal_open_tab_once', { token, title }), 'terminal_open_tab_once'),
             split: async (slot, division) => expect(await session.call('terminal_split', { slot, division }), 'identity'),
             splitObserved: (slot, generation, revision, division) => {
                 if (!Number.isSafeInteger(generation) ||

@@ -617,6 +617,11 @@ export interface TerminalTopology {
   active_tab: string | null;
   tabs: TabTopology[];
 }
+
+export interface TerminalOpenTabOnceResult {
+  tabId: string;
+  state: 'open' | 'closed';
+}
 export interface FileEntry {
   path: string;
   directory: boolean;
@@ -1820,6 +1825,8 @@ export interface WorkspaceApi {
     tabs(): Promise<TabSummary[]>;
     topology(): Promise<TerminalTopology>;
     openTab(title: string): Promise<string>;
+    /** Open at most one tab for this installation and durable retry token. */
+    openTabOnce(token: string, title: string): Promise<TerminalOpenTabOnceResult>;
     pinTab(tab: string, pinned?: boolean): Promise<void>;
     /** Select a tab, including a surface-only tab that has no terminal pane to focus. */
     focusTab(tab: string): Promise<void>;

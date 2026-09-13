@@ -11917,3 +11917,70 @@ test('fragmented Unix create-once reconnects to one immutable identity and rejec
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('fragmented Unix terminal open-once recovers a lost reply and preserves a closed tombstone', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-terminal-open-once-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const connections = new Set();
+  const token = '0123456789abcdef0123456789abcdef';
+  let accepted = 0;
+  let opens = 0;
+  const server = net.createServer((socket) => {
+    const connection = ++accepted;
+    connections.add(socket);
+    socket.on('close', () => connections.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.payload.call !== 'terminal_open_tab_once') continue;
+        assert.deepEqual(frame.payload.with, { token, title: 'Build output' });
+        if (connection === 1) {
+          opens += 1;
+          socket.destroy();
+          continue;
+        }
+        const reply = encode({
+          channel: 2,
+          kind: KIND.response,
+          payload: {
+            reply: 'terminal_open_tab_once',
+            with: { tabId: 'build-tab', state: connection === 2 ? 'open' : 'closed' },
+          },
+        });
+        for (const byte of reply) socket.write(Uint8Array.of(byte));
+      }
+    });
+    socket.write(
+      encode({
+        channel: CONTROL,
+        kind: KIND.open,
+        payload: {
+          protocol: 1,
+          peer: `terminal-open-once-${connection}`,
+          granted: ['terminals:layout-control'],
+        },
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const first = await connect({ path: socketPath });
+    await assert.rejects(workspace(first).terminal.openTabOnce(token, 'Build output'), /closed/);
+    const second = await connect({ path: socketPath });
+    assert.deepEqual(await workspace(second).terminal.openTabOnce(token, 'Build output'), {
+      tabId: 'build-tab',
+      state: 'open',
+    });
+    const third = await connect({ path: socketPath });
+    assert.deepEqual(await workspace(third).terminal.openTabOnce(token, 'Build output'), {
+      tabId: 'build-tab',
+      state: 'closed',
+    });
+    assert.equal(opens, 1);
+    await Promise.all([second.close(), third.close()]);
+  } finally {
+    for (const connection of connections) connection.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});

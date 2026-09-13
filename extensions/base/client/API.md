@@ -138,6 +138,7 @@ order; the JavaScript client's checks are never treated as a security boundary.
 - `host.terminal.topology(...)` — `terminal_topology`, requires `terminals:read`.
 - `host.terminal.panes(...)` — `pane_list`, requires `panes:observe`.
 - `host.terminal.openTab(...)` — `terminal_open_tab`, requires `terminals:layout-control`.
+- `host.terminal.openTabOnce(...)` — `terminal_open_tab_once`, requires `terminals:layout-control`.
 - `host.terminal.pinTab(...)` — `terminal_pin_tab`, requires `terminals:layout-control`.
 - `host.terminal.focusTab(...)` — `terminal_focus_tab`, requires `terminals:focus`.
 - `host.terminal.split(...)` — `terminal_split`, requires `terminals:layout-control`.

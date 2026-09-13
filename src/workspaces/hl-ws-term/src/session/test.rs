@@ -46,7 +46,80 @@ fn sample_session() -> Session {
             width: 913,
             height: 617,
         }),
+        open_tab_operations: Vec::new(),
     }
+}
+
+#[test]
+fn version_six_round_trips_open_and_closed_idempotency_tombstones() {
+    let mut session = sample_session();
+    let installation = hl_rpc::InstallationIdentity::new("0123456789abcdef0123456789abcdef").unwrap();
+    session.open_tab_operations = vec![
+        OpenTabOperation {
+            extension: hl_rpc::PeerName::new("reviewer").unwrap(),
+            installation: installation.clone(),
+            token: "11111111111111111111111111111111".into(),
+            title: "Build output".into(),
+            tab_id: session.tabs[0].id.clone(),
+            open: true,
+        },
+        OpenTabOperation {
+            extension: hl_rpc::PeerName::new("reviewer").unwrap(),
+            installation,
+            token: "22222222222222222222222222222222".into(),
+            title: "Closed output".into(),
+            tab_id: hl_rpc::PeerName::new("closed-tab").unwrap(),
+            open: false,
+        },
+    ];
+    let encoded = session.serialize();
+    assert_eq!(Session::parse(&encoded).unwrap(), session);
+    assert!(encoded.contains("open-once reviewer"));
+}
+
+#[test]
+fn open_once_replay_is_exact_bounded_and_isolated_by_installation() {
+    let mut session = sample_session();
+    let extension = hl_rpc::PeerName::new("reviewer").unwrap();
+    let first = hl_rpc::InstallationIdentity::new("0123456789abcdef0123456789abcdef").unwrap();
+    let replacement = hl_rpc::InstallationIdentity::new("fedcba9876543210fedcba9876543210").unwrap();
+    session.open_tab_operations.push(OpenTabOperation {
+        extension: extension.clone(),
+        installation: first.clone(),
+        token: "11111111111111111111111111111111".into(),
+        title: "Review".into(),
+        tab_id: session.tabs[0].id.clone(),
+        open: false,
+    });
+    assert_eq!(
+        session
+            .open_tab_replay(&extension, &first, "11111111111111111111111111111111", "Review")
+            .unwrap(),
+        Some((&session.tabs[0].id, false))
+    );
+    assert!(session
+        .open_tab_replay(&extension, &first, "11111111111111111111111111111111", "Other")
+        .is_err());
+    assert_eq!(
+        session
+            .open_tab_replay(&extension, &replacement, "11111111111111111111111111111111", "Review")
+            .unwrap(),
+        None
+    );
+    while session.open_tab_operations.len() < OPEN_TAB_OPERATION_LIMIT {
+        let index = session.open_tab_operations.len();
+        session.open_tab_operations.push(OpenTabOperation {
+            extension: extension.clone(),
+            installation: first.clone(),
+            token: format!("{index:032x}"),
+            title: "x".into(),
+            tab_id: session.tabs[0].id.clone(),
+            open: false,
+        });
+    }
+    assert!(session
+        .open_tab_replay(&extension, &first, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "new")
+        .is_err());
 }
 
 #[test]
@@ -123,6 +196,7 @@ fn escaping_survives_spaces_and_specials() {
         selected_tab: Some(0),
         focused_pane: None,
         window_size: None,
+        open_tab_operations: Vec::new(),
     };
     let back = Session::parse(&s.serialize()).unwrap();
     assert_eq!(back.tabs[0].title, "a b%c");
@@ -201,6 +275,7 @@ fn successful_layout_commit_prunes_only_unreferenced_histories() {
         selected_tab: Some(0),
         focused_pane: None,
         window_size: None,
+        open_tab_operations: Vec::new(),
     };
 
     session.save(temporary.path()).unwrap();
@@ -312,6 +387,7 @@ fn a_surface_pane_survives_the_layout_round_trip_beside_a_shell() {
         selected_tab: Some(0),
         focused_pane: Some("1".to_owned()),
         window_size: None,
+        open_tab_operations: Vec::new(),
     };
 
     let parsed = Session::parse(&session.serialize()).expect("a layout with a surface pane");

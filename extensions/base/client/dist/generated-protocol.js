@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:a1dfad293c17d128
+// Protocol artifact fnv1a64:dce5b5b83742b56c
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -408,6 +408,7 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "terminal_topology": "topology",
   "pane_list": "panes",
   "terminal_open_tab": "identity",
+  "terminal_open_tab_once": "terminal_open_tab_once",
   "terminal_pin_tab": "done",
   "terminal_focus_tab": "done",
   "terminal_split": "identity",
@@ -546,6 +547,7 @@ export const PROTOCOL_REQUEST_CAPABILITIES = Object.freeze({
   "terminal_topology": "terminals:read",
   "pane_list": "panes:observe",
   "terminal_open_tab": "terminals:layout-control",
+  "terminal_open_tab_once": "terminals:layout-control",
   "terminal_pin_tab": "terminals:layout-control",
   "terminal_focus_tab": "terminals:focus",
   "terminal_split": "terminals:layout-control",
@@ -7489,6 +7491,45 @@ const definitions = {
       }
     ]
   },
+  "TerminalOpenTabOnce": {
+    "fields": [
+      {
+        "name": "tabId",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "state",
+        "optional": false,
+        "schema": {
+          "kind": "ref",
+          "name": "TerminalTabState"
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {}
+  },
+  "TerminalTabState": {
+    "kind": "enum",
+    "serde": {},
+    "variants": [
+      {
+        "name": "open",
+        "payload": {
+          "kind": "unit"
+        }
+      },
+      {
+        "name": "closed",
+        "payload": {
+          "kind": "unit"
+        }
+      }
+    ]
+  },
   "TerminalTopology": {
     "fields": [
       {
@@ -9485,6 +9526,16 @@ const roots = {
         }
       },
       {
+        "name": "terminal_open_tab_once",
+        "payload": {
+          "kind": "newtype",
+          "of": {
+            "kind": "ref",
+            "name": "TerminalOpenTabOnce"
+          }
+        }
+      },
+      {
         "name": "done",
         "payload": {
           "kind": "unit"
@@ -11163,6 +11214,28 @@ const roots = {
         "name": "terminal_open_tab",
         "payload": {
           "fields": [
+            {
+              "name": "title",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "terminal_open_tab_once",
+        "payload": {
+          "fields": [
+            {
+              "name": "token",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            },
             {
               "name": "title",
               "optional": false,

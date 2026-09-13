@@ -87,6 +87,9 @@ impl Console {
             Request::Topology => Self::topology(window).map(Answer::Topology),
             Request::PaneList => Self::pane_inventory(window).map(Answer::Panes),
             Request::OpenTab { title, origin } => Self::open(window, title, origin.as_ref()).map(Answer::Slot),
+            Request::OpenTabOnce { token, title, origin } => {
+                Self::open_once(window, token, title, origin.as_ref()).map(Answer::OpenTabOnce)
+            }
             Request::PinTab { tab, pinned } => Tabs::new(window).pin(tab, *pinned).map(|()| Answer::Done),
             Request::FocusTab(tab) => Tabs::new(window).focus(tab).map(|()| Answer::Done),
             Request::Split { slot, division } => Self::split(window, slot, *division).map(Answer::Slot),
@@ -513,6 +516,57 @@ impl Console {
             .save()
             .map_err(|error| HostError::Failed(error.to_string()))?;
         Ok(tab)
+    }
+
+    fn open_once(
+        window: &Rc<TermWin>,
+        token: &str,
+        title: &str,
+        origin: Option<&hl::extension::TerminalOrigin>,
+    ) -> Result<hl_extension::port::TerminalOpenTabOnce, HostError> {
+        use hl_extension::port::{TerminalOpenTabOnce, TerminalTabState};
+        let origin =
+            origin.ok_or_else(|| HostError::Conflict("terminal request has no authenticated origin".into()))?;
+        let storage = window.ws.storage_dir(&crate::Home::current().root());
+        let session = hl_ws_term::Session::open(&storage).map_err(|error| HostError::Failed(error.to_string()))?;
+        match session.open_tab_replay(&origin.extension, &origin.installation, token, title) {
+            Ok(Some((tab_id, open))) => {
+                return Ok(TerminalOpenTabOnce {
+                    tab_id: tab_id.to_string(),
+                    state: if open {
+                        TerminalTabState::Open
+                    } else {
+                        TerminalTabState::Closed
+                    },
+                })
+            }
+            Ok(None) => {}
+            Err(error) => return Err(HostError::Conflict(error.to_string())),
+        }
+        let tab = Tabs::new(window).terminal();
+        Tabs::new(window).attribute(
+            &tab,
+            hl_ws_term::TabOrigin::Extension {
+                name: origin.extension.clone(),
+                installation: origin.installation.clone(),
+            },
+        )?;
+        let operation = hl_ws_term::OpenTabOperation {
+            extension: origin.extension.clone(),
+            installation: origin.installation.clone(),
+            token: token.to_owned(),
+            title: title.to_owned(),
+            tab_id: hl_rpc::PeerName::new(tab.clone()).map_err(|error| HostError::Failed(error.to_string()))?,
+            open: true,
+        };
+        if let Err(error) = WindowSession::new(window).save_with_open_operation(Some(operation)) {
+            Page::new(window, &tab).close();
+            return Err(HostError::Failed(error.to_string()));
+        }
+        Ok(TerminalOpenTabOnce {
+            tab_id: tab,
+            state: TerminalTabState::Open,
+        })
     }
 
     /// Divides one pane and names the pane that appeared.

@@ -494,6 +494,14 @@ impl TerminalSurface for Host {
         Ok(format!("tab-{title}"))
     }
 
+    fn open_tab_once(&self, _token: &str, title: &str) -> Result<hl_extension::port::TerminalOpenTabOnce, HostError> {
+        self.ledger.note("terminal.open_tab_once");
+        Ok(hl_extension::port::TerminalOpenTabOnce {
+            tab_id: format!("tab-{title}"),
+            state: hl_extension::port::TerminalTabState::Open,
+        })
+    }
+
     fn pin_tab(&self, _tab: &str, _pinned: bool) -> Result<(), HostError> {
         self.ledger.note("terminal.pin_tab");
         Ok(())
@@ -1983,6 +1991,13 @@ fn calls() -> Vec<(Request, Capability)> {
             Capability::TerminalLayoutControl,
         ),
         (
+            Request::TerminalOpenTabOnce {
+                token: "0123456789abcdef0123456789abcdef".into(),
+                title: "logs".into(),
+            },
+            Capability::TerminalLayoutControl,
+        ),
+        (
             Request::TerminalPinTab {
                 tab: "t1".into(),
                 pinned: true,
@@ -2640,6 +2655,7 @@ fn every_call_succeeds_with_its_capability_and_fails_without_it() {
         if matches!(
             request,
             Request::TerminalOpenTab { .. }
+                | Request::TerminalOpenTabOnce { .. }
                 | Request::TerminalSplit { .. }
                 | Request::TerminalSplitObserved { .. }
                 | Request::TerminalClosePane { .. }

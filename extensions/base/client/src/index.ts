@@ -47,6 +47,7 @@ import type {
   Session as ClientSession,
   StateCodec,
   TabSummary,
+  TerminalOpenTabOnceResult,
   WorkspaceApi,
   WireReply,
 } from './api.js';
@@ -3251,6 +3252,11 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         exactTopology(expect(await session.call('terminal_topology'), 'topology')),
       openTab: async (title) =>
         expect(await session.call('terminal_open_tab', { title }), 'identity'),
+      openTabOnce: async (token, title): Promise<TerminalOpenTabOnceResult> =>
+        expect(
+          await session.call('terminal_open_tab_once', { token, title }),
+          'terminal_open_tab_once',
+        ),
       split: async (slot, division) =>
         expect(await session.call('terminal_split', { slot, division }), 'identity'),
       splitObserved: (slot, generation, revision, division) => {

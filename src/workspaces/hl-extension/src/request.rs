@@ -344,6 +344,10 @@ pub enum Request {
     TerminalOpenTab {
         title: String,
     },
+    TerminalOpenTabOnce {
+        token: String,
+        title: String,
+    },
     TerminalPinTab {
         tab: String,
         pinned: bool,
@@ -717,6 +721,7 @@ impl Request {
             | Self::TerminalCommandStart { .. }
             | Self::TerminalCommandCancel { .. } => Capability::TerminalProcessControl,
             Self::TerminalOpenTab { .. }
+            | Self::TerminalOpenTabOnce { .. }
             | Self::TerminalPinTab { .. }
             | Self::TerminalSplit { .. }
             | Self::TerminalSplitObserved { .. }
@@ -927,6 +932,7 @@ pub enum Reply {
     Credential(crate::port::ExtensionCredential),
     Revision(u64),
     Identity(String),
+    TerminalOpenTabOnce(crate::port::TerminalOpenTabOnce),
     Done,
 }
 

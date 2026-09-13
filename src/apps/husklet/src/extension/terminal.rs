@@ -61,6 +61,11 @@ pub enum Request {
         title: String,
         origin: Option<TerminalOrigin>,
     },
+    OpenTabOnce {
+        token: String,
+        title: String,
+        origin: Option<TerminalOrigin>,
+    },
     PinTab {
         tab: String,
         pinned: bool,
@@ -159,6 +164,7 @@ pub enum Answer {
     Panes(PaneInventory),
     /// The identity of what was opened or split.
     Slot(String),
+    OpenTabOnce(hl_extension::port::TerminalOpenTabOnce),
     /// The text one pane is showing, for [`Request::Read`].
     Text(PaneText),
     Semantics(PaneSemanticTree),
@@ -324,6 +330,21 @@ impl TerminalSurface for Relay {
             title: title.to_owned(),
             origin: Some(origin),
         })
+    }
+
+    fn open_tab_once(&self, token: &str, title: &str) -> Result<hl_extension::port::TerminalOpenTabOnce, HostError> {
+        let origin = self
+            .origin
+            .clone()
+            .ok_or_else(|| HostError::Failed("terminal port has no authenticated installation identity".into()))?;
+        match self.ask(Request::OpenTabOnce {
+            token: token.to_owned(),
+            title: title.to_owned(),
+            origin: Some(origin),
+        })? {
+            Answer::OpenTabOnce(result) => Ok(result),
+            other => Err(other.mismatch()),
+        }
     }
 
     fn pin_tab(&self, tab: &str, pinned: bool) -> Result<(), HostError> {

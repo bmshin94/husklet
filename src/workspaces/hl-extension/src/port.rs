@@ -1405,6 +1405,21 @@ pub trait NetworkStore {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum TerminalTabState {
+    #[serde(rename = "open")]
+    Open,
+    #[serde(rename = "closed")]
+    Closed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct TerminalOpenTabOnce {
+    #[serde(rename = "tabId")]
+    pub tab_id: String,
+    pub state: TerminalTabState,
+}
+
 /// The workspace's terminal surface.
 pub trait TerminalSurface {
     /// Opens a non-persisted terminal tab running `command` directly in the
@@ -1439,6 +1454,12 @@ pub trait TerminalSurface {
     /// # Errors
     /// Returns a host failure.
     fn open_tab(&self, title: &str) -> Result<String, HostError>;
+
+    fn open_tab_once(&self, _token: &str, _title: &str) -> Result<TerminalOpenTabOnce, HostError> {
+        Err(HostError::Unsupported(
+            "idempotent terminal tab opening is unavailable".into(),
+        ))
+    }
 
     /// Protects or releases a tab from close actions.
     fn pin_tab(&self, _tab: &str, _pinned: bool) -> Result<(), HostError> {

@@ -253,6 +253,13 @@ impl<'a> WindowSession<'a> {
     }
 
     pub(crate) fn save(&self) -> std::io::Result<()> {
+        self.save_with_open_operation(None)
+    }
+
+    pub(crate) fn save_with_open_operation(
+        &self,
+        operation: Option<hl_ws_term::OpenTabOperation>,
+    ) -> std::io::Result<()> {
         let tw = self.window;
         let storage = tw.ws.storage_dir(&Home::current().root());
         std::fs::create_dir_all(Session::dir(&storage))?;
@@ -303,13 +310,21 @@ impl<'a> WindowSession<'a> {
         // Selecting the overview does not clear GTK's last-terminal cache. That stale terminal is
         // useful when returning to a shell tab, but it is not the focused pane of the saved view.
         let focused_pane = selected_tab.and(focused_pane);
+        let mut open_tab_operations = Session::open(&storage)?.open_tab_operations;
+        if let Some(operation) = operation {
+            open_tab_operations.push(operation);
+        }
+        for operation in &mut open_tab_operations {
+            operation.open = tabs.iter().any(|tab| tab.id == operation.tab_id);
+        }
         let session = Session {
             tabs,
             selected_tab,
             focused_pane,
             window_size: WindowGeometry::capture(tw),
+            open_tab_operations,
         };
-        if session.tabs.is_empty() {
+        if session.tabs.is_empty() && session.open_tab_operations.is_empty() {
             Session::clear(&storage)
         } else {
             session.save(&storage)

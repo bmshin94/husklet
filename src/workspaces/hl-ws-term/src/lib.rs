@@ -28,7 +28,10 @@ pub use launcher::LocalShellLauncher;
 pub use layout::{Dir, Layout, PaneId, Rect};
 pub use pty::PtyBackend;
 pub use render::{CpuRenderer, Image};
-pub use session::{History, Pane, PaneNode, Session, SessionTab, SplitDir, TabOrigin, WindowSize, WorkingDirectory};
+pub use session::{
+    History, OpenTabOperation, Pane, PaneNode, Session, SessionTab, SplitDir, TabOrigin, WindowSize, WorkingDirectory,
+    OPEN_TAB_OPERATION_LIMIT,
+};
 pub use vt::Vt;
 
 #[cfg(test)]

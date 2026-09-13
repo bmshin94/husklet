@@ -7138,6 +7138,45 @@
         }
       ]
     },
+    "TerminalOpenTabOnce": {
+      "fields": [
+        {
+          "name": "tabId",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "state",
+          "optional": false,
+          "schema": {
+            "kind": "ref",
+            "name": "TerminalTabState"
+          }
+        }
+      ],
+      "kind": "struct",
+      "serde": {}
+    },
+    "TerminalTabState": {
+      "kind": "enum",
+      "serde": {},
+      "variants": [
+        {
+          "name": "open",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
+          "name": "closed",
+          "payload": {
+            "kind": "unit"
+          }
+        }
+      ]
+    },
     "TerminalTopology": {
       "fields": [
         {
@@ -8873,6 +8912,10 @@
     },
     {
       "capability": "terminals:layout-control",
+      "request": "terminal_open_tab_once"
+    },
+    {
+      "capability": "terminals:layout-control",
       "request": "terminal_pin_tab"
     },
     {
@@ -9416,6 +9459,10 @@
     {
       "reply": "identity",
       "request": "terminal_open_tab"
+    },
+    {
+      "reply": "terminal_open_tab_once",
+      "request": "terminal_open_tab_once"
     },
     {
       "reply": "done",
@@ -10282,6 +10329,16 @@
             "kind": "newtype",
             "of": {
               "kind": "string"
+            }
+          }
+        },
+        {
+          "name": "terminal_open_tab_once",
+          "payload": {
+            "kind": "newtype",
+            "of": {
+              "kind": "ref",
+              "name": "TerminalOpenTabOnce"
             }
           }
         },
@@ -11964,6 +12021,28 @@
           "name": "terminal_open_tab",
           "payload": {
             "fields": [
+              {
+                "name": "title",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              }
+            ],
+            "kind": "struct"
+          }
+        },
+        {
+          "name": "terminal_open_tab_once",
+          "payload": {
+            "fields": [
+              {
+                "name": "token",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              },
               {
                 "name": "title",
                 "optional": false,
@@ -14941,7 +15020,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:6338c959fe5105ba",
+  "source_fingerprint": "fnv1a64:18b2f3a5ee34d587",
   "specification_version": 1,
   "topics": [
     {

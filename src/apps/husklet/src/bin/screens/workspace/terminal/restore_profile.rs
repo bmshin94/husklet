@@ -69,6 +69,7 @@ fn selected_tab_and_focused_pane_survive_a_real_widget_round_trip() {
                 selected_tab: Some(1),
                 focused_pane: Some("build-shell".into()),
                 window_size: None,
+                open_tab_operations: Vec::new(),
             };
 
             WindowSession::new(&tw).restore_with(&session, &launcher);
@@ -244,6 +245,7 @@ fn characterize(panes: usize) {
         selected_tab: Some(0),
         focused_pane: None,
         window_size: None,
+        open_tab_operations: Vec::new(),
     };
     WindowSession::new(&tw).restore_with(&session, &launcher);
     let frame_ran_before_restore_returned = first_frame.get();
