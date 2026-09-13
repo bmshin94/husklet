@@ -18,6 +18,7 @@ test('quiet terminal input discloses replacement without settling unrelated outp
     slot: 'agent',
     generation,
     revision,
+    lifecycle: 'live',
     columns: 80,
     rows: 24,
     lines: [line],

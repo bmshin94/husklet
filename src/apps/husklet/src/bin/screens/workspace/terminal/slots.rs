@@ -35,7 +35,34 @@ impl<'a> Slots<'a> {
 
     /// Register a pane holding a shell under its layout slot.
     pub(crate) fn hold(&self, terminal: &vte4::Terminal, slot: String) {
-        self.0.panes.borrow_mut().push(PaneRegistration::new(terminal, slot));
+        self.hold_with_lifecycle(
+            terminal,
+            slot,
+            Rc::new(Cell::new(hl_extension::port::TerminalLifecycle::Live)),
+        );
+    }
+
+    pub(crate) fn hold_with_lifecycle(
+        &self,
+        terminal: &vte4::Terminal,
+        slot: String,
+        lifecycle: Rc<Cell<hl_extension::port::TerminalLifecycle>>,
+    ) {
+        self.0
+            .panes
+            .borrow_mut()
+            .push(PaneRegistration::new(terminal, slot, lifecycle));
+    }
+
+    pub(crate) fn lifecycle(&self, terminal: &vte4::Terminal) -> hl_extension::port::TerminalLifecycle {
+        self.0
+            .panes
+            .borrow()
+            .iter()
+            .find(|pane| pane.terminal.upgrade().as_ref() == Some(terminal))
+            .map_or(hl_extension::port::TerminalLifecycle::Exited, |pane| {
+                pane.lifecycle.get()
+            })
     }
 
     /// Find the layout slot registered for `term` (pruning dead registry entries as it scans).

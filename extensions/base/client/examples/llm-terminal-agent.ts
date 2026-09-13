@@ -80,7 +80,7 @@ try {
     if (configuration.rawInput) {
       let inputResult;
       try {
-        inputResult = await terminal.writeObservedAndWaitForText(
+        inputResult = await terminal.writeLiveObservedAndWaitForText(
           observed.snapshot,
           configuration.rawInput,
           { timeoutMs: configuration.deadlineMs ?? 2_000 },

@@ -29,6 +29,7 @@ test('terminal text bounds fail before Unix framing and a fragmented valid read 
                   slot: 'shell',
                   generation: 3,
                   revision: 8,
+                  lifecycle: 'live',
                   columns: 80,
                   rows: 24,
                   lines: ['$ ready'],

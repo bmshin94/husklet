@@ -465,6 +465,7 @@ export interface PaneText {
     slot: string;
     generation?: number;
     revision?: number;
+    lifecycle: 'starting' | 'live' | 'exited';
     columns?: number;
     rows?: number;
     lines: string[];
@@ -954,6 +955,10 @@ export declare class PaneChangedError extends Error {
 export declare class PaneUnavailableError extends Error {
     readonly slot: string;
     readonly reason: 'absent' | 'inventory-truncated';
+}
+export declare class TerminalNotLiveError extends Error {
+    readonly snapshot: PaneText;
+    constructor(snapshot: PaneText);
 }
 /** Filesystem history rotated before an incremental consumer could resume its cursor. */
 export declare class FilesystemJournalGapError extends Error {
@@ -1994,6 +1999,19 @@ export interface WorkspaceApi {
         }>;
         /** Write against an observed terminal and project a replacement as terminal or semantic text. */
         writeObservedAndWaitForText(before: PaneText, input: string | Iterable<number>, options?: {
+            lines?: number;
+            timeoutMs?: number;
+            signal?: AbortSignal;
+        }): Promise<{
+            changed: true;
+            before: PaneText;
+            after: ReadablePane;
+        } | {
+            changed: false;
+            before: PaneText;
+        }>;
+        /** Refuse queued/dead input, then write against the exact live terminal observation. */
+        writeLiveObservedAndWaitForText(before: PaneText, input: string | Iterable<number>, options?: {
             lines?: number;
             timeoutMs?: number;
             signal?: AbortSignal;

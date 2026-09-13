@@ -220,6 +220,7 @@ impl TerminalSurface for Host {
             slot: slot.into(),
             generation: 0,
             revision: 0,
+            lifecycle: hl_extension::port::TerminalLifecycle::Live,
             columns: 120,
             rows: 40,
             lines: vec![format!("at most {lines}")],

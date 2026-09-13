@@ -2,7 +2,7 @@ export { ExtensionError, RowReplyMismatchError, RowRequestUnavailableError, Sess
 export { PROTOCOL_SPECIFICATION_VERSION, PROTOCOL_VERSION, PROTOCOL_BOUNDS, PROTOCOL_CAPABILITIES, PROTOCOL_TOPICS, PROTOCOL_REPLIES, PROTOCOL_REQUEST_CAPABILITIES, encodeRequest, validateRequest, validateReply, validateReplyFor, validateFailure, validateSnapshot, } from './generated-protocol.js';
 import { semanticText, semanticXml } from './semantic.js';
 export { semanticText, semanticXml };
-import type { CallOptions, ConnectOptions, Session as ClientSession, WorkspaceApi } from './api.js';
+import type { CallOptions, ConnectOptions, PaneText, Session as ClientSession, WorkspaceApi } from './api.js';
 /** A post-creation execution failure whose immutable identity remains recoverable. */
 export declare class ExecutionOperationError extends Error {
     readonly executionId: any;
@@ -164,6 +164,11 @@ export declare class PaneUnavailableError extends Error {
     readonly slot: any;
     readonly reason: any;
     constructor(slot: any, reason: any);
+}
+/** Input was intentionally withheld because the observed terminal has no live child process. */
+export declare class TerminalNotLiveError extends Error {
+    readonly snapshot: PaneText;
+    constructor(snapshot: PaneText);
 }
 /** Filesystem history rotated before an incremental consumer could resume its cursor. */
 export declare class FilesystemJournalGapError extends Error {

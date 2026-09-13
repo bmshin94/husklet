@@ -11,11 +11,13 @@ struct Launch<'a> {
     window: &'a Rc<TermWin>,
     terminal: &'a vte4::Terminal,
     pid: &'a Rc<Cell<i32>>,
+    lifecycle: &'a Rc<Cell<hl_extension::port::TerminalLifecycle>>,
 }
 
 impl Launch<'_> {
     fn attach(&self, child: i32, pty: &vte4::Pty) {
         self.pid.set(child);
+        self.lifecycle.set(hl_extension::port::TerminalLifecycle::Live);
         super::grid::synchronise(self.terminal, pty);
         self.watch_child(child);
         self.schedule_typed_text();
@@ -26,8 +28,10 @@ impl Launch<'_> {
         let window = self.window.clone();
         let terminal = self.terminal.clone();
         let pid = self.pid.clone();
+        let lifecycle = self.lifecycle.clone();
         glib::child_watch_add_local(glib::Pid(child), move |_pid, status| {
             let status = ChildStatus::finish(&pid, status);
+            lifecycle.set(hl_extension::port::TerminalLifecycle::Exited);
             if status.should_report(window.closing.get()) {
                 terminal.feed(format!("\r\n\x1b[31mworkspace session ended ({status})\x1b[0m\r\n").as_bytes());
                 return;
@@ -258,9 +262,10 @@ fn make_terminal_with_operation<L: PaneLauncher>(
         term.add_controller(scroll);
     }
     let pid = Rc::new(Cell::new(0));
+    let lifecycle = Rc::new(Cell::new(hl_extension::port::TerminalLifecycle::Starting));
     // Register this pane (terminal + its slot + pid) so the window's close handler can freeze it into its
     // own slot, and `save_session` can record which slot each pane owns.
-    Slots::new(tw).hold(&term, slot.to_owned());
+    Slots::new(tw).hold_with_lifecycle(&term, slot.to_owned(), lifecycle.clone());
     let application = application_path().to_string_lossy().into_owned();
     let workspace_key = tw.ws.key();
     // The terminal always enters the workspace worker. A host-shell override here can make a workspace
@@ -326,6 +331,7 @@ fn make_terminal_with_operation<L: PaneLauncher>(
             window: tw,
             terminal: &term,
             pid: &pid,
+            lifecycle: &lifecycle,
         }
         .attach(child, &pty),
         Err(e) => term.feed(format!("\r\n\x1b[31mfailed to start shell: {e}\x1b[0m\r\n").as_bytes()),

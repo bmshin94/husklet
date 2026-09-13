@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:2ee1b1f889ff8947
+// Protocol artifact fnv1a64:c66ca4ba31786f08
 export const PROTOCOL_SPECIFICATION_VERSION: 1;
 export const PROTOCOL_VERSION: 1;
 export const PROTOCOL_BOUNDS: Readonly<{ "extension_job_bytes": number; "extension_reference_bytes": number; "pane_input_bytes": number; "pane_inventory_items": number; "pane_text_bytes": number; "resource_inventory_items": number; "semantic_action_value_bytes": number; "semantic_depth": number; "semantic_nodes": number; "semantic_text_bytes": number; "terminal_command_argument_bytes": number; "terminal_command_bytes": number }>;
@@ -97,7 +97,7 @@ export type PaneProviderIdentity = { "extension": string; "provider": string };
 export type PaneSemanticAction = { "generation": number; "revision": number; "node": number; "action": SemanticActionKind; "value"?: string | null };
 export type PaneSemanticTree = { "slot": string; "generation": number; "revision": number; "root": SemanticNode; "truncated": boolean };
 export type PaneSummary = { "slot": string; "working_directory"?: string | null; "command"?: string | null; "occupant": Occupant; "provider"?: PaneProviderIdentity | null };
-export type PaneText = { "slot": string; "generation"?: number; "revision"?: number; "columns"?: number; "rows"?: number; "lines": Array<string>; "cursor_column"?: number; "cursor_row"?: number; "truncated": boolean };
+export type PaneText = { "slot": string; "generation"?: number; "revision"?: number; "lifecycle": TerminalLifecycle; "columns"?: number; "rows"?: number; "lines": Array<string>; "cursor_column"?: number; "cursor_row"?: number; "truncated": boolean };
 export type Patch = { "Create": { "id": NodeId; "tag": Tag } } | { "Insert": { "parent": NodeId; "child": NodeId; "before"?: NodeId | null } } | { "Move": { "parent": NodeId; "child": NodeId; "before"?: NodeId | null } } | { "SetProp": { "id": NodeId; "prop": Prop; "value": PropValue } } | { "ClearProp": { "id": NodeId; "prop": Prop } } | { "SetHandler": { "id": NodeId; "handler": Handler } } | { "ClearHandler": { "id": NodeId; "trigger": Trigger } } | { "Remove": { "id": NodeId } };
 export type PeerName = string;
 export type PointerPhase = "move" | "enter" | "leave" | "press" | "release" | "click" | "context" | "scroll";
@@ -123,6 +123,7 @@ export type Tag = "Column" | "Row" | "Grid" | "Scroll" | "Splitter" | "Stack" | 
 export type TerminalCommand = { "id": string; "owner": string; "slot": string; "generation": number; "revision": number; "running": boolean; "exit_code": number; "pid": number; "command": Array<string> };
 export type TerminalCommandInput = { "id": string; "committed": number };
 export type TerminalCommandOutput = { "id": string; "owner": string; "slot": string; "generation": number; "revision": number; "output": ExecutionOutputPage };
+export type TerminalLifecycle = "starting" | "live" | "exited";
 export type TerminalTopology = { "active_tab"?: string | null; "tabs": Array<TabTopology> };
 export type Token = "Ground" | "Surface" | "Raised" | "Line" | "Text" | "TextDim" | "TextFaint" | "Accent" | "Positive" | "Warning" | "Danger" | "Info";
 export type Tone = "Neutral" | "Accent" | "Positive" | "Warning" | "Danger";

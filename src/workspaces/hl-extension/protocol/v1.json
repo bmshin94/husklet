@@ -4441,6 +4441,14 @@
           }
         },
         {
+          "name": "lifecycle",
+          "optional": false,
+          "schema": {
+            "kind": "ref",
+            "name": "TerminalLifecycle"
+          }
+        },
+        {
           "name": "columns",
           "optional": true,
           "schema": {
@@ -7103,6 +7111,32 @@
       ],
       "kind": "struct",
       "serde": {}
+    },
+    "TerminalLifecycle": {
+      "kind": "enum",
+      "serde": {
+        "rename_all": "kebab-case"
+      },
+      "variants": [
+        {
+          "name": "starting",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
+          "name": "live",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
+          "name": "exited",
+          "payload": {
+            "kind": "unit"
+          }
+        }
+      ]
     },
     "TerminalTopology": {
       "fields": [
@@ -14907,7 +14941,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:e3ecd165f7976977",
+  "source_fingerprint": "fnv1a64:6574b17d292ba4a2",
   "specification_version": 1,
   "topics": [
     {

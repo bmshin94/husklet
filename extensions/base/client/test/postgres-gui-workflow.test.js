@@ -133,6 +133,7 @@ test('Postgres GUI uses bounded observation, opaque credentials, pane text, and 
               slot: 'database-shell',
               generation: 3,
               revision: 9,
+              lifecycle: 'live',
               columns: 100,
               rows: 30,
               lines: ['app=# select current_database();', ' current_database', ' app'],

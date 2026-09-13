@@ -99,6 +99,7 @@ test('stable layout retries a tab-only change over fragmented Unix frames', asyn
               slot: 'shell',
               generation: 4,
               revision: 9,
+              lifecycle: 'live',
               columns: 80,
               rows: 24,
               lines: ['$ ready'],

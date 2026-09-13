@@ -455,6 +455,15 @@ export class PaneUnavailableError extends Error {
         this.reason = reason;
     }
 }
+/** Input was intentionally withheld because the observed terminal has no live child process. */
+export class TerminalNotLiveError extends Error {
+    snapshot;
+    constructor(snapshot) {
+        super(`terminal pane ${snapshot.slot} is ${snapshot.lifecycle}; input requires a live process`);
+        this.name = 'TerminalNotLiveError';
+        this.snapshot = snapshot;
+    }
+}
 /** Filesystem history rotated before an incremental consumer could resume its cursor. */
 export class FilesystemJournalGapError extends Error {
     requested;
@@ -4540,6 +4549,17 @@ export function workspace(session, { signal } = {}) {
             throw new TypeError('observed terminal input requires a snapshot with an exact cursor');
         }
         return writeAndWait(before.slot, before.generation, before.revision, input, options, true);
+    };
+    api.terminal.writeLiveObservedAndWaitForText = (before, input, options) => {
+        if (!before ||
+            (before.lifecycle !== 'starting' &&
+                before.lifecycle !== 'exited' &&
+                before.lifecycle !== 'live')) {
+            throw new TypeError('live terminal input requires a snapshot with an exact lifecycle');
+        }
+        if (before.lifecycle !== 'live')
+            throw new TerminalNotLiveError(before);
+        return api.terminal.writeObservedAndWaitForText(before, input, options);
     };
     api.terminal.writeObservedAndWaitForQuietText = async (before, input, { lines, quietMs = 150, timeoutMs = 30_000, signal } = {}) => {
         if (!Number.isSafeInteger(quietMs) || quietMs < 1 || quietMs > 30_000) {

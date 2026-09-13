@@ -34,7 +34,7 @@ test('packaged external agent controls terminal bytes and semantic UI over real 
       } else if (call === 'terminal_read_pane') {
         terminalReads += 1; const revision = terminalReads < 3 ? 7 : 8;
         socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'text', with: {
-          slot: 'term-1', generation: 3, revision, columns: 80, rows: 24,
+          slot: 'term-1', generation: 3, revision, lifecycle: 'live', columns: 80, rows: 24,
           lines: revision === 7 ? ['$ '] : ['$ ^C'], cursor_column: 0, cursor_row: 1, truncated: false,
         } } }));
       } else if (call === 'terminal_write_pane') {

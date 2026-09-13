@@ -485,6 +485,9 @@ pub struct PaneText {
     pub generation: u64,
     #[serde(default)]
     pub revision: u64,
+    /// Whether input is queued for a worker that is still starting, delivered
+    /// to a live terminal process, or cannot be delivered because it exited.
+    pub lifecycle: TerminalLifecycle,
     /// Columns in the exact terminal grid this text and cursor were read from.
     #[serde(default)]
     pub columns: u16,
@@ -500,6 +503,14 @@ pub struct PaneText {
     pub cursor_row: u32,
     /// Whether older lines exist that this answer does not carry.
     pub truncated: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TerminalLifecycle {
+    Starting,
+    Live,
+    Exited,
 }
 
 pub const SEMANTIC_NODE_LIMIT: usize = 256;
@@ -1789,8 +1800,8 @@ pub trait WorkspaceFiles {
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_pane_text, pane_lines, Division, LayoutNode, NetworkStore, Occupant, PaneSummary, PaneText, PANE_LINES,
-        PANE_TEXT_BYTES,
+        bounded_pane_text, pane_lines, Division, LayoutNode, NetworkStore, Occupant, PaneSummary, PaneText,
+        TerminalLifecycle, PANE_LINES, PANE_TEXT_BYTES,
     };
 
     #[test]
@@ -1807,6 +1818,7 @@ mod tests {
             slot: "pane".into(),
             generation: 0,
             revision: 0,
+            lifecycle: TerminalLifecycle::Live,
             columns: 80,
             rows: 24,
             lines: vec![

@@ -1122,6 +1122,7 @@ tab_title = "Sample"
                 slot: slot.to_owned(),
                 generation: 0,
                 revision: 0,
+                lifecycle: hl_extension::port::TerminalLifecycle::Live,
                 columns: 80,
                 rows: 24,
                 lines: Vec::new(),

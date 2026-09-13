@@ -18,6 +18,7 @@ test('lost raw-input reply reconciles without treating unrelated output as repla
     slot: 'agent',
     generation: 9,
     revision,
+    lifecycle: 'live',
     columns: 80,
     rows: 24,
     lines: [line],

@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:2ee1b1f889ff8947
+// Protocol artifact fnv1a64:c66ca4ba31786f08
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -4792,6 +4792,14 @@ const definitions = {
         }
       },
       {
+        "name": "lifecycle",
+        "optional": false,
+        "schema": {
+          "kind": "ref",
+          "name": "TerminalLifecycle"
+        }
+      },
+      {
         "name": "columns",
         "optional": true,
         "schema": {
@@ -7454,6 +7462,32 @@ const definitions = {
     ],
     "kind": "struct",
     "serde": {}
+  },
+  "TerminalLifecycle": {
+    "kind": "enum",
+    "serde": {
+      "rename_all": "kebab-case"
+    },
+    "variants": [
+      {
+        "name": "starting",
+        "payload": {
+          "kind": "unit"
+        }
+      },
+      {
+        "name": "live",
+        "payload": {
+          "kind": "unit"
+        }
+      },
+      {
+        "name": "exited",
+        "payload": {
+          "kind": "unit"
+        }
+      }
+    ]
   },
   "TerminalTopology": {
     "fields": [

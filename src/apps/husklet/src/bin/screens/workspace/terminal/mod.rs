@@ -56,13 +56,19 @@ fn bounded_pointer_number(value: f64) -> f64 {
 pub(crate) struct PaneRegistration {
     terminal: glib::WeakRef<vte4::Terminal>,
     slot: String,
+    lifecycle: Rc<Cell<hl_extension::port::TerminalLifecycle>>,
 }
 
 impl PaneRegistration {
-    pub(crate) fn new(terminal: &vte4::Terminal, slot: String) -> Self {
+    pub(crate) fn new(
+        terminal: &vte4::Terminal,
+        slot: String,
+        lifecycle: Rc<Cell<hl_extension::port::TerminalLifecycle>>,
+    ) -> Self {
         Self {
             terminal: terminal.downgrade(),
             slot,
+            lifecycle,
         }
     }
 }

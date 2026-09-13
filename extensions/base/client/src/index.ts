@@ -42,6 +42,7 @@ import type {
   JsonState,
   NetworkInventory,
   PaneChange,
+  PaneText,
   Session as ClientSession,
   StateCodec,
   TabSummary,
@@ -617,6 +618,17 @@ export class PaneUnavailableError extends Error {
     this.name = 'PaneUnavailableError';
     this.slot = slot;
     this.reason = reason;
+  }
+}
+
+/** Input was intentionally withheld because the observed terminal has no live child process. */
+export class TerminalNotLiveError extends Error {
+  readonly snapshot: PaneText;
+
+  constructor(snapshot: PaneText) {
+    super(`terminal pane ${snapshot.slot} is ${snapshot.lifecycle}; input requires a live process`);
+    this.name = 'TerminalNotLiveError';
+    this.snapshot = snapshot;
   }
 }
 
@@ -5638,6 +5650,18 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       options,
       true,
     ) as ReturnType<WorkspaceApi['terminal']['writeObservedAndWaitForText']>;
+  };
+  api.terminal.writeLiveObservedAndWaitForText = (before, input, options) => {
+    if (
+      !before ||
+      (before.lifecycle !== 'starting' &&
+        before.lifecycle !== 'exited' &&
+        before.lifecycle !== 'live')
+    ) {
+      throw new TypeError('live terminal input requires a snapshot with an exact lifecycle');
+    }
+    if (before.lifecycle !== 'live') throw new TerminalNotLiveError(before);
+    return api.terminal.writeObservedAndWaitForText(before, input, options);
   };
   api.terminal.writeObservedAndWaitForQuietText = async (
     before,

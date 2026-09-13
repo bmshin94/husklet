@@ -19,6 +19,7 @@ test('fragmented Unix session discloses completed input authority when observati
     slot: 'agent',
     generation: 4,
     revision,
+    lifecycle: 'live',
     columns: 80,
     rows: 24,
     lines: [revision === 7 ? '$ ' : '$ deploy\ndeploy started'],

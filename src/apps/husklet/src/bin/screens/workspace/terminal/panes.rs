@@ -80,6 +80,7 @@ impl Panes {
             slot: slot.to_owned(),
             generation: 0,
             revision: 0,
+            lifecycle: Slots::new(window).lifecycle(&terminal),
             columns: u16::try_from(terminal.column_count()).unwrap_or_default(),
             rows: u16::try_from(terminal.row_count()).unwrap_or_default(),
             lines,
