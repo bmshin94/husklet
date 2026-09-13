@@ -13,6 +13,8 @@ pub struct CredentialGrant {
     pub write: Vec<String>,
     #[serde(default)]
     pub expose_to_execution: Vec<String>,
+    #[serde(default)]
+    pub r#use: Vec<String>,
 }
 
 impl CredentialGrant {
@@ -30,6 +32,10 @@ impl CredentialGrant {
         self.expose_to_execution.iter().any(|value| value == key)
     }
     #[must_use]
+    pub fn permits_use(&self, key: &str) -> bool {
+        self.r#use.iter().any(|value| value == key)
+    }
+    #[must_use]
     pub fn intersect(&self, consented: &Self) -> Self {
         let overlap = |requested: &[String], allowed: &[String]| {
             requested.iter().filter(|key| allowed.contains(key)).cloned().collect()
@@ -38,10 +44,11 @@ impl CredentialGrant {
             read: overlap(&self.read, &consented.read),
             write: overlap(&self.write, &consented.write),
             expose_to_execution: overlap(&self.expose_to_execution, &consented.expose_to_execution),
+            r#use: overlap(&self.r#use, &consented.r#use),
         }
     }
     fn validate(&self) -> Result<(), Invalid> {
-        let groups = [&self.read, &self.write, &self.expose_to_execution];
+        let groups = [&self.read, &self.write, &self.expose_to_execution, &self.r#use];
         if groups.iter().map(|group| group.len()).sum::<usize>() > Self::LIMIT
             || groups
                 .iter()
@@ -894,6 +901,9 @@ impl Manifest {
             && !manifest.capabilities.holds(Capability::CredentialExposeToExecution)
         {
             return Err(Invalid::Undeclared(Capability::CredentialExposeToExecution));
+        }
+        if !manifest.credentials.r#use.is_empty() && !manifest.capabilities.holds(Capability::CredentialUse) {
+            return Err(Invalid::Undeclared(Capability::CredentialUse));
         }
         manifest.credentials.validate()?;
         manifest.containers.validate()?;

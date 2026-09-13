@@ -247,6 +247,11 @@
     {
       "executes": false,
       "mutates": true,
+      "wire": "credentials:use"
+    },
+    {
+      "executes": false,
+      "mutates": true,
       "wire": "credentials:write"
     },
     {
@@ -595,6 +600,12 @@
         },
         {
           "name": "credentials:expose-to-execution",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
+          "name": "credentials:use",
           "payload": {
             "kind": "unit"
           }
@@ -1378,6 +1389,16 @@
         },
         {
           "name": "expose_to_execution",
+          "optional": true,
+          "schema": {
+            "kind": "array",
+            "of": {
+              "kind": "string"
+            }
+          }
+        },
+        {
+          "name": "r#use",
           "optional": true,
           "schema": {
             "kind": "array",
@@ -15031,7 +15052,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:84e06348924f75c1",
+  "source_fingerprint": "fnv1a64:3e7a1a9a545db277",
   "specification_version": 1,
   "topics": [
     {

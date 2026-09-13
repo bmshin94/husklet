@@ -140,6 +140,9 @@ pub enum Capability {
     /// without returning its bytes to the extension.
     #[serde(rename = "credentials:expose-to-execution")]
     CredentialExposeToExecution,
+    /// Host-side opaque consumption; never disclosure or process injection.
+    #[serde(rename = "credentials:use")]
+    CredentialUse,
     /// Replaces or removes one named credential through revision compare-and-swap.
     #[serde(rename = "credentials:write")]
     CredentialWrite,
@@ -201,6 +204,7 @@ impl Capability {
             Self::PreferenceWrite => "preferences:write",
             Self::CredentialRead => "credentials:read",
             Self::CredentialExposeToExecution => "credentials:expose-to-execution",
+            Self::CredentialUse => "credentials:use",
             Self::CredentialWrite => "credentials:write",
             Self::Interface => "interface:render",
             Self::NotificationPublish => "notifications:publish",
@@ -243,6 +247,7 @@ impl Capability {
                 | Self::StateWrite
                 | Self::PreferenceWrite
                 | Self::CredentialWrite
+                | Self::CredentialUse
                 | Self::NotificationPublish
         )
     }
@@ -311,6 +316,7 @@ impl Capability {
         Self::PreferenceWrite,
         Self::CredentialRead,
         Self::CredentialExposeToExecution,
+        Self::CredentialUse,
         Self::CredentialWrite,
         Self::Interface,
         Self::NotificationPublish,

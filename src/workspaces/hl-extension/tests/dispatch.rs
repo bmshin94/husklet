@@ -1483,6 +1483,7 @@ fn session(capabilities: &[Capability], roots: &[&str]) -> Session {
         read: vec!["postgres.password".into()],
         write: vec!["postgres.password".into()],
         expose_to_execution: vec!["postgres.password".into()],
+        r#use: Vec::new(),
     })
 }
 

@@ -18,6 +18,7 @@
 
 mod capability;
 pub mod codec;
+mod database;
 mod installation;
 mod manifest;
 pub mod port;
@@ -34,6 +35,11 @@ mod build_support;
 
 pub use capability::{Capability, Grant};
 pub use codec::Coding;
+pub use database::{
+    CredentialRevision, PostgresBroker, PostgresConnection, PostgresCursor, PostgresLease, PostgresLeaseId,
+    PostgresLeaseRevocation, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome,
+    QueryOperationToken,
+};
 pub use hl_rpc::{
     Authority, ChannelId, Channels, Compatibility, Denial, Emission, Flags, Frame, Hello, Kind, Limits, Malformed,
     PROTOCOL, Parcel, Permission, Permit, Purpose, Reason, Refusal, RelativePath, Streams, Transit, Wire,
