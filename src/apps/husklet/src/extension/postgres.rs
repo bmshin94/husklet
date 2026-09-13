@@ -10,12 +10,14 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 
 use hl_extension::{
-    HostError, PostgresBroker, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresPage, PostgresQuery,
-    PostgresQueryId, PostgresQueryState, PostgresStartOutcome,
+    HostError, PostgresBroker, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage,
+    PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken,
 };
+use hl_rpc::InstallationIdentity;
 
 const LEASE_LIMIT: usize = 8;
 const QUERY_LIMIT: usize = 32;
+const OPEN_LIMIT: usize = 32;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Binding {
@@ -56,16 +58,16 @@ pub(crate) trait Authority: Send + Sync {
     fn current(&self, binding: &Binding) -> Result<bool, HostError>;
 }
 
-/// Authenticated PostgreSQL transport. Secret material enters only `open`.
+/// Authenticated `PostgreSQL` transport. Secret material enters only `open`.
 pub(crate) trait Peer: Send + Sync {
     fn open(&self, connection: &PostgresConnection, secrets: &[(String, Secret)])
-    -> Result<PostgresLeaseId, HostError>;
+        -> Result<PostgresLeaseId, HostError>;
     fn start(&self, lease: &PostgresLeaseId, query: &PostgresQuery) -> Result<PostgresQueryId, HostError>;
     fn page(
         &self,
         lease: &PostgresLeaseId,
         query: &PostgresQueryId,
-        cursor: Option<&str>,
+        cursor: Option<&PostgresCursor>,
     ) -> Result<PostgresPage, HostError>;
     fn cancel(&self, lease: &PostgresLeaseId, query: &PostgresQueryId) -> Result<PostgresQueryState, HostError>;
     fn close_query(&self, lease: &PostgresLeaseId, query: &PostgresQueryId) -> Result<(), HostError>;
@@ -88,23 +90,34 @@ struct LeaseRecord {
 #[derive(Default)]
 struct State {
     leases: HashMap<String, LeaseRecord>,
+    opens: BTreeMap<String, (PostgresConnection, PostgresLeaseId)>,
 }
 
 /// Bounded broker scoped to one immutable extension installation.
 pub(crate) struct HostPostgres<A, P> {
-    installation: String,
+    installation: InstallationIdentity,
     authority: A,
     peer: P,
     state: Mutex<State>,
 }
 
 impl<A: Authority, P: Peer> HostPostgres<A, P> {
-    pub(crate) fn new(installation: impl Into<String>, authority: A, peer: P) -> Self {
+    pub(crate) fn new(installation: InstallationIdentity, authority: A, peer: P) -> Self {
         Self {
-            installation: installation.into(),
+            installation,
             authority,
             peer,
             state: Mutex::new(State::default()),
+        }
+    }
+
+    fn installation(&self, supplied: &InstallationIdentity) -> Result<(), HostError> {
+        if supplied == &self.installation {
+            Ok(())
+        } else {
+            Err(HostError::Absent(
+                "postgres operation is not owned by this installation".into(),
+            ))
         }
     }
 
@@ -127,9 +140,31 @@ impl<A: Authority, P: Peer> HostPostgres<A, P> {
 }
 
 impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
-    fn open(&self, connection: &PostgresConnection) -> Result<PostgresLeaseId, HostError> {
-        let authentication = self.authority.authenticate(&self.installation, connection)?;
-        if authentication.binding.installation != self.installation
+    fn open_once(
+        &self,
+        installation: &InstallationIdentity,
+        operation: &QueryOperationToken,
+        connection: &PostgresConnection,
+    ) -> Result<PostgresOpenOutcome, HostError> {
+        self.installation(installation)?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| HostError::Failed("postgres broker lock poisoned".into()))?;
+        if let Some((existing, lease)) = state.opens.get(operation.as_str()).cloned() {
+            if existing != *connection {
+                return Err(HostError::Conflict(
+                    "postgres open token was reused with a different connection".into(),
+                ));
+            }
+            self.live(&mut state, &lease)?;
+            return Ok(PostgresOpenOutcome::Reconciled { lease });
+        }
+        if state.opens.len() >= OPEN_LIMIT {
+            return Err(HostError::Conflict("postgres open operation limit reached".into()));
+        }
+        let authentication = self.authority.authenticate(self.installation.as_str(), connection)?;
+        if authentication.binding.installation != self.installation.as_str()
             || authentication.binding.container_id != connection.container_id
             || authentication.binding.container_generation != connection.container_generation
             || authentication.binding.network != connection.network
@@ -144,10 +179,6 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
                 "authentication snapshot does not exactly bind the request".into(),
             ));
         }
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| HostError::Failed("postgres broker lock poisoned".into()))?;
         if state.leases.len() >= LEASE_LIMIT {
             return Err(HostError::Conflict("postgres lease limit reached".into()));
         }
@@ -163,10 +194,19 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
                 queries: BTreeMap::new(),
             },
         );
-        Ok(id)
+        state
+            .opens
+            .insert(operation.as_str().into(), (connection.clone(), id.clone()));
+        Ok(PostgresOpenOutcome::Opened { lease: id })
     }
 
-    fn start_once(&self, lease: &PostgresLeaseId, query: &PostgresQuery) -> Result<PostgresStartOutcome, HostError> {
+    fn start_once(
+        &self,
+        installation: &InstallationIdentity,
+        lease: &PostgresLeaseId,
+        query: &PostgresQuery,
+    ) -> Result<PostgresStartOutcome, HostError> {
+        self.installation(installation)?;
         let mut state = self
             .state
             .lock()
@@ -201,12 +241,34 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
         Ok(PostgresStartOutcome::Started { query: id })
     }
 
-    fn page(
+    fn status(
         &self,
+        installation: &InstallationIdentity,
         lease: &PostgresLeaseId,
         query: &PostgresQueryId,
-        cursor: Option<&str>,
+    ) -> Result<PostgresQueryState, HostError> {
+        self.installation(installation)?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| HostError::Failed("postgres broker lock poisoned".into()))?;
+        let record = self.live(&mut state, lease)?;
+        record
+            .queries
+            .values()
+            .find(|item| &item.id == query)
+            .map(|item| item.state.clone())
+            .ok_or_else(|| HostError::Absent("postgres query is not owned by this lease".into()))
+    }
+
+    fn page(
+        &self,
+        installation: &InstallationIdentity,
+        lease: &PostgresLeaseId,
+        query: &PostgresQueryId,
+        cursor: Option<&PostgresCursor>,
     ) -> Result<PostgresPage, HostError> {
+        self.installation(installation)?;
         let mut state = self
             .state
             .lock()
@@ -215,21 +277,27 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
         let Some(query_record) = record.queries.values_mut().find(|item| &item.id == query) else {
             return Err(HostError::Absent("postgres query is not owned by this lease".into()));
         };
-        if cursor != query_record.cursor.as_ref().map(PostgresCursor::as_str) {
+        if cursor != query_record.cursor.as_ref() {
             return Err(HostError::Conflict(
                 "postgres cursor is stale or belongs to another page".into(),
             ));
         }
         let page = self.peer.page(lease, query, cursor)?;
         page.validate(&query_record.request)?;
-        query_record.cursor = page.next_cursor.clone();
+        query_record.cursor.clone_from(&page.next_cursor);
         if page.next_cursor.is_none() {
             query_record.state = PostgresQueryState::Completed;
         }
         Ok(page)
     }
 
-    fn cancel(&self, lease: &PostgresLeaseId, query: &PostgresQueryId) -> Result<PostgresQueryState, HostError> {
+    fn cancel(
+        &self,
+        installation: &InstallationIdentity,
+        lease: &PostgresLeaseId,
+        query: &PostgresQueryId,
+    ) -> Result<PostgresQueryState, HostError> {
+        self.installation(installation)?;
         let mut state = self
             .state
             .lock()
@@ -243,7 +311,13 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
         Ok(status)
     }
 
-    fn close_query(&self, lease: &PostgresLeaseId, query: &PostgresQueryId) -> Result<(), HostError> {
+    fn close_query(
+        &self,
+        installation: &InstallationIdentity,
+        lease: &PostgresLeaseId,
+        query: &PostgresQueryId,
+    ) -> Result<(), HostError> {
+        self.installation(installation)?;
         let mut state = self
             .state
             .lock()
@@ -259,7 +333,8 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
         Ok(())
     }
 
-    fn close_lease(&self, lease: &PostgresLeaseId) -> Result<(), HostError> {
+    fn close_lease(&self, installation: &InstallationIdentity, lease: &PostgresLeaseId) -> Result<(), HostError> {
+        self.installation(installation)?;
         let mut state = self
             .state
             .lock()
@@ -276,8 +351,8 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     #[derive(Clone)]
     struct FakeAuthority {
@@ -315,6 +390,7 @@ mod tests {
     #[derive(Clone, Default)]
     struct FakePeer {
         authenticated: Arc<AtomicBool>,
+        opened: Arc<AtomicUsize>,
         closed: Arc<AtomicUsize>,
     }
 
@@ -323,6 +399,7 @@ mod tests {
             assert_eq!(secrets.len(), 1);
             assert_eq!(secrets[0].0, "db.password");
             assert_eq!(secrets[0].1.as_bytes(), b"host-only-password");
+            self.opened.fetch_add(1, Ordering::SeqCst);
             self.authenticated.store(true, Ordering::SeqCst);
             PostgresLeaseId::new("lease-1")
         }
@@ -334,11 +411,11 @@ mod tests {
             &self,
             _: &PostgresLeaseId,
             _: &PostgresQueryId,
-            cursor: Option<&str>,
+            cursor: Option<&PostgresCursor>,
         ) -> Result<PostgresPage, HostError> {
             Ok(PostgresPage {
                 columns: vec!["answer".into()],
-                rows: vec![vec![42.into()]],
+                rows: vec![vec![Some("42".into())]],
                 next_cursor: cursor.is_none().then(|| PostgresCursor::new("page-2").unwrap()),
                 bytes: 2,
             })
@@ -377,6 +454,10 @@ mod tests {
         .unwrap()
     }
 
+    fn installation(value: char) -> InstallationIdentity {
+        InstallationIdentity::new(value.to_string().repeat(32)).unwrap()
+    }
+
     #[test]
     fn authentication_stays_host_side_and_lost_start_reply_reconciles_exactly() {
         let authority = FakeAuthority {
@@ -385,20 +466,39 @@ mod tests {
             network_revision: Arc::new(AtomicUsize::new(3)),
         };
         let peer = FakePeer::default();
-        let broker = HostPostgres::new("install-a", authority, peer.clone());
-        let lease = broker.open(&connection()).unwrap();
+        let owner = installation('a');
+        let broker = HostPostgres::new(owner.clone(), authority, peer.clone());
+        let operation = QueryOperationToken::new("open-a").unwrap();
+        let PostgresOpenOutcome::Opened { lease } = broker.open_once(&owner, &operation, &connection()).unwrap() else {
+            panic!()
+        };
+        assert!(matches!(
+            broker.open_once(&owner, &operation, &connection()).unwrap(),
+            PostgresOpenOutcome::Reconciled { .. }
+        ));
+        assert_eq!(peer.opened.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            broker.open_once(&installation('b'), &operation, &connection()),
+            Err(HostError::Absent(_))
+        ));
+        let mut changed = connection();
+        changed.database = "other".into();
+        assert!(matches!(
+            broker.open_once(&owner, &operation, &changed),
+            Err(HostError::Conflict(_))
+        ));
         let request = query("operation-a", "select 42");
-        let started = broker.start_once(&lease, &request).unwrap();
+        let started = broker.start_once(&owner, &lease, &request).unwrap();
         assert!(matches!(started, PostgresStartOutcome::Started { .. }));
         assert!(matches!(
-            broker.start_once(&lease, &request).unwrap(),
+            broker.start_once(&owner, &lease, &request).unwrap(),
             PostgresStartOutcome::Reconciled {
                 state: PostgresQueryState::Running,
                 ..
             }
         ));
         assert!(matches!(
-            broker.start_once(&lease, &query("operation-a", "delete from users")),
+            broker.start_once(&owner, &lease, &query("operation-a", "delete from users")),
             Err(HostError::Conflict(_))
         ));
         let public = format!("{started:?}");
@@ -406,16 +506,19 @@ mod tests {
         let PostgresStartOutcome::Started { query } = started else {
             panic!()
         };
-        assert_eq!(broker.cancel(&lease, &query).unwrap(), PostgresQueryState::Cancelled);
+        assert_eq!(
+            broker.cancel(&owner, &lease, &query).unwrap(),
+            PostgresQueryState::Cancelled
+        );
         assert!(matches!(
-            broker.start_once(&lease, &request).unwrap(),
+            broker.start_once(&owner, &lease, &request).unwrap(),
             PostgresStartOutcome::Reconciled {
                 state: PostgresQueryState::Cancelled,
                 ..
             }
         ));
-        broker.close_query(&lease, &query).unwrap();
-        broker.close_lease(&lease).unwrap();
+        broker.close_query(&owner, &lease, &query).unwrap();
+        broker.close_lease(&owner, &lease).unwrap();
     }
 
     #[test]
@@ -426,20 +529,36 @@ mod tests {
             network_revision: Arc::new(AtomicUsize::new(3)),
         };
         let peer = FakePeer::default();
-        let broker = HostPostgres::new("install-a", authority.clone(), peer.clone());
-        let lease = broker.open(&connection()).unwrap();
-        let request = query("operation-a", "select 42");
-        let PostgresStartOutcome::Started { query } = broker.start_once(&lease, &request).unwrap() else {
+        let owner = installation('a');
+        let broker = HostPostgres::new(owner.clone(), authority.clone(), peer.clone());
+        let PostgresOpenOutcome::Opened { lease } = broker
+            .open_once(&owner, &QueryOperationToken::new("open-a").unwrap(), &connection())
+            .unwrap()
+        else {
             panic!()
         };
-        let first = broker.page(&lease, &query, None).unwrap();
-        assert_eq!(first.rows, vec![vec![serde_json::json!(42)]]);
-        assert!(matches!(broker.page(&lease, &query, None), Err(HostError::Conflict(_))));
-        broker.page(&lease, &query, Some("page-2")).unwrap();
+        let request = query("operation-a", "select 42");
+        let PostgresStartOutcome::Started { query } = broker.start_once(&owner, &lease, &request).unwrap() else {
+            panic!()
+        };
+        let first = broker.page(&owner, &lease, &query, None).unwrap();
+        assert_eq!(first.rows, vec![vec![Some("42".into())]]);
+        assert!(matches!(
+            broker.page(&owner, &lease, &query, None),
+            Err(HostError::Conflict(_))
+        ));
+        let cursor = PostgresCursor::new("page-2").unwrap();
+        broker.page(&owner, &lease, &query, Some(&cursor)).unwrap();
         authority.revision.store(8, Ordering::SeqCst);
-        assert!(matches!(broker.cancel(&lease, &query), Err(HostError::Conflict(_))));
+        assert!(matches!(
+            broker.cancel(&owner, &lease, &query),
+            Err(HostError::Conflict(_))
+        ));
         assert_eq!(peer.closed.load(Ordering::SeqCst), 1);
-        assert!(matches!(broker.page(&lease, &query, None), Err(HostError::Absent(_))));
+        assert!(matches!(
+            broker.page(&owner, &lease, &query, None),
+            Err(HostError::Absent(_))
+        ));
     }
 
     #[test]
@@ -450,11 +569,17 @@ mod tests {
             network_revision: Arc::new(AtomicUsize::new(3)),
         };
         let peer = FakePeer::default();
-        let broker = HostPostgres::new("install-a", authority.clone(), peer.clone());
-        let lease = broker.open(&connection()).unwrap();
+        let owner = installation('a');
+        let broker = HostPostgres::new(owner.clone(), authority.clone(), peer.clone());
+        let PostgresOpenOutcome::Opened { lease } = broker
+            .open_once(&owner, &QueryOperationToken::new("open-a").unwrap(), &connection())
+            .unwrap()
+        else {
+            panic!()
+        };
         authority.network_revision.store(4, Ordering::SeqCst);
         assert!(matches!(
-            broker.start_once(&lease, &query("operation-a", "select 42")),
+            broker.start_once(&owner, &lease, &query("operation-a", "select 42")),
             Err(HostError::Conflict(_))
         ));
         assert_eq!(peer.closed.load(Ordering::SeqCst), 1);
