@@ -211,6 +211,19 @@ export class StateDecodeError extends TypeError {
   }
 }
 
+/** A JSON state write lost its outcome; exact CAS authority and candidate bytes are recoverable. */
+export class StateWriteOperationError extends Error {
+  readonly observed;
+  readonly contents;
+
+  constructor(observed, contents, cause) {
+    super(`extension state write after ${observed} failed before its outcome was known`, { cause });
+    this.name = 'StateWriteOperationError';
+    this.observed = observed;
+    this.contents = Object.freeze([...contents]);
+  }
+}
+
 /** Catalogue discovery was bounded before it became a complete searchable set. */
 export class IncompleteCatalogueError extends Error {
   readonly received;
@@ -3972,8 +3985,40 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         const checked = exactStateCodec(codec);
         return decodeJsonState(await api.state.read(), checked);
       },
-      writeJson: (observed, value, codec) =>
-        api.state.write(observed, encodeJsonState(value, codec)),
+      writeJson: (observed, value, codec) => {
+        observed = exactStateIdentity(observed);
+        const contents = encodeJsonState(value, codec);
+        return api.state.write(observed, contents).catch((cause) => {
+          if (cause instanceof ExtensionError) throw cause;
+          throw new StateWriteOperationError(observed, contents, cause);
+        });
+      },
+      recoverJsonWrite: async (failure, codec) => {
+        if (!(failure instanceof StateWriteOperationError))
+          throw new TypeError('state write recovery requires a StateWriteOperationError');
+        const checked = exactStateCodec(codec);
+        const current = await api.state.read();
+        if (
+          current.contents.length === failure.contents.length &&
+          current.contents.every((byte, index) => byte === failure.contents[index])
+        ) {
+          return decodeJsonState(current, checked);
+        }
+        if (current.identity !== failure.observed)
+          throw new ExtensionError({
+            error: 'conflict',
+            detail: 'state changed after the ambiguous write',
+          });
+        let identity;
+        try {
+          identity = await api.state.write(current.identity, failure.contents);
+        } catch (cause) {
+          if (cause instanceof ExtensionError) throw cause;
+          throw new StateWriteOperationError(current.identity, failure.contents, cause);
+        }
+        const value = decodeJsonState({ identity, contents: [...failure.contents] }, checked).value;
+        return { identity, value };
+      },
       updateJson: async (
         codec,
         update,
@@ -6404,7 +6449,7 @@ export const protocolCoverage = Object.freeze({
       'remove',
       'removeObserved',
     ],
-    state: ['read', 'write', 'clear'],
+    state: ['read', 'write', 'clear', 'readJson', 'writeJson', 'recoverJsonWrite', 'updateJson'],
     preferences: ['read', 'set', 'remove'],
     extensions: [
       'list',

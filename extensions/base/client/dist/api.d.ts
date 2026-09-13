@@ -653,6 +653,12 @@ export declare class StateDecodeError extends TypeError {
     readonly identity: string;
     readonly cause: unknown;
 }
+/** A JSON state write whose exact committed outcome was lost with the connection. */
+export declare class StateWriteOperationError extends Error {
+    readonly observed: string;
+    readonly contents: readonly number[];
+    readonly cause: unknown;
+}
 export type WorkspaceEvent = {
     event: 'key';
     key: string;
@@ -2054,6 +2060,8 @@ export interface WorkspaceApi {
         clear(observed: string): Promise<void>;
         readJson<T>(codec: StateCodec<T>): Promise<JsonState<T>>;
         writeJson<T>(observed: string, value: T, codec: StateCodec<T>): Promise<string>;
+        /** Reconcile an ambiguous JSON write by exact bytes; retry only if its CAS identity is unchanged. */
+        recoverJsonWrite<T>(failure: StateWriteOperationError, codec: StateCodec<T>): Promise<JsonState<T>>;
         /** The update callback may be rerun after a concurrent CAS conflict; abort prevents a later write/retry. */
         updateJson<T>(codec: StateCodec<T>, update: (current: T) => T | Promise<T>, options?: {
             attempts?: number;

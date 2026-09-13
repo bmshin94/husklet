@@ -63,6 +63,12 @@ export declare class StateDecodeError extends TypeError {
     readonly identity: any;
     constructor(identity: any, cause: any);
 }
+/** A JSON state write lost its outcome; exact CAS authority and candidate bytes are recoverable. */
+export declare class StateWriteOperationError extends Error {
+    readonly observed: any;
+    readonly contents: any;
+    constructor(observed: any, contents: any, cause: any);
+}
 /** Catalogue discovery was bounded before it became a complete searchable set. */
 export declare class IncompleteCatalogueError extends Error {
     readonly received: any;

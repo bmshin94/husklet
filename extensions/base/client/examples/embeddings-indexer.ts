@@ -1,4 +1,4 @@
-import { connect, workspace, type FileEntry } from '@husklet/client';
+import { StateWriteOperationError, connect, workspace, type FileEntry } from '@husklet/client';
 
 declare const process: {
   argv: string[];
@@ -53,6 +53,21 @@ process.once('SIGTERM', () => controller.abort('SIGTERM'));
 const session = await connect({ path: configuration.path, pendingLimit: 8, timeout: 30_000 });
 try {
   const host = workspace(session);
+  const persistCheckpoint = async (update: (current: Checkpoint) => Checkpoint) => {
+    try {
+      return await host.state.updateJson(checkpointCodec, update, { signal: controller.signal });
+    } catch (cause) {
+      if (!(cause instanceof StateWriteOperationError)) throw cause;
+      const resumed = await connect({ path: configuration.path, pendingLimit: 8, timeout: 30_000 });
+      try {
+        const recovered = await workspace(resumed).state.recoverJsonWrite(cause, checkpointCodec);
+        controller.abort('checkpoint recovered after reconnect; restart from durable cursor');
+        return recovered;
+      } finally {
+        await resumed.close();
+      }
+    }
+  };
   const roots = configuration.roots.map((path) => {
     const grant = host.files.pathGrant('read', path);
     if (grant === null) {
@@ -123,7 +138,7 @@ try {
     const indexed = { identity: document.identity, digest, bytes: document.bytes };
     if (persist)
       checkpoint = (
-        await host.state.updateJson(checkpointCodec, (current) => ({
+        await persistCheckpoint((current) => ({
           ...current,
           documents: { ...current.documents, [entry.path]: indexed },
         }))
@@ -176,7 +191,7 @@ try {
     throw new Error('document changed after inventory; refusing a stale checkpoint');
   }
   checkpoint = (
-    await host.state.updateJson(checkpointCodec, (current) => ({
+    await persistCheckpoint((current) => ({
       ...current,
       revision: caughtUp.cursor.revision,
       journal: caughtUp.cursor.journal,
@@ -195,7 +210,7 @@ try {
             const { [change.path]: _removed, ...documents } = checkpoint.documents;
             void _removed;
             checkpoint = (
-              await host.state.updateJson(checkpointCodec, (current) => ({
+              await persistCheckpoint((current) => ({
                 ...current,
                 revision: scopedPage.next,
                 documents,
@@ -204,7 +219,7 @@ try {
           }
         }
         checkpoint = (
-          await host.state.updateJson(checkpointCodec, (current) => ({
+          await persistCheckpoint((current) => ({
             ...current,
             journal: scopedPage.journal,
             revision: scopedPage.next,
