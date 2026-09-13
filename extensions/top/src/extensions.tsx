@@ -3020,6 +3020,7 @@ export function capabilityLabel(capability: ExtensionCapability): string {
     'preferences:write': 'Change this extension’s interface preferences',
     'credentials:read': 'Read selected extension credentials',
     'credentials:expose-to-execution': 'Expose selected credentials to launched processes',
+    'credentials:use': 'Use selected credentials through trusted host services',
     'credentials:write': 'Change selected extension credentials',
     'notifications:publish': 'Show workspace notifications',
   };
