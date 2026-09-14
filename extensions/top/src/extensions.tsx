@@ -806,7 +806,7 @@ export function Extensions({
         });
       }
     } catch (cause) {
-      setError(message(cause));
+      setError(acquisitionConnectionFailure(cause));
     } finally {
       acquisitionInFlight.current = false;
       setBusy('');
@@ -2990,6 +2990,28 @@ function extensionCommitConflict(cause: unknown): boolean {
   if (!cause || typeof cause !== 'object') return false;
   const failure = cause as { kind?: unknown; cause?: unknown };
   return failure.kind === 'conflict' || extensionCommitConflict(failure.cause);
+}
+
+export function acquisitionConnectionFailure(cause: unknown): string {
+  const detail = message(cause);
+  const failure = cause && typeof cause === 'object' ? (cause as { kind?: unknown }) : null;
+  if (
+    failure?.kind === 'absent' ||
+    /extension acquisition .*\b(absent|not found|does not exist)\b/i.test(detail)
+  ) {
+    return 'This inspection session ended when the workspace service restarted. Retry inspection; nothing was installed.';
+  }
+  if (/four extension acquisitions are already active/i.test(detail)) {
+    return 'Four image inspections are already active. Finish or cancel one, then retry.';
+  }
+  if (/acquisition history is full/i.test(detail)) {
+    return 'Inspection history is full. Reopen the workspace, then retry.';
+  }
+  if (/image reference|reference must|must contain 1 to 512 bytes/i.test(detail)) return detail;
+  if (/closed|socket|connection|ECONN|timed? ?out/i.test(detail)) {
+    return 'The connection closed before inspection finished. Retry inspection to resume its current job when possible; nothing is installed without your review.';
+  }
+  return 'Inspection could not be started. Reopen the workspace, verify the image reference, then retry.';
 }
 
 function selectorKey(selector: ContainerSelector): string {

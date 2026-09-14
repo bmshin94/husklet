@@ -9,9 +9,9 @@ use hl_ws::storage::Directory;
 
 use crate::config::WorkspaceConfig;
 
+use super::Roster;
 use super::acquisition::{AcquisitionJob, AcquisitionSnapshot, AcquisitionState, ExtensionAcquisitions};
 use super::management_events::ExtensionEvents;
-use super::Roster;
 
 trait RemovalCleanup {
     fn retire(&self) -> Result<(), HostError>;
@@ -48,6 +48,23 @@ impl ExtensionManagement {
             management.events.inventory(entries);
         }
         management
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_acquirer(
+        workspace: &WorkspaceConfig,
+        acquire: impl Fn(&WorkspaceConfig, &str, &std::sync::mpsc::Sender<super::Acquisition>, &super::Cancellation, bool)
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        let events = ExtensionEvents::default();
+        Self {
+            workspace: workspace.clone(),
+            acquisitions: ExtensionAcquisitions::with_acquirer_and_events(workspace, events.clone(), acquire),
+            events,
+            lifecycle: std::sync::Mutex::new(()),
+        }
     }
 
     fn roster(&self) -> Result<Roster<Directory>, HostError> {
@@ -435,7 +452,7 @@ fn failure(error: super::Refusal) -> HostError {
 mod tests {
     use super::*;
     use hl_extension::port::ExtensionStateStore as _;
-    use std::sync::{mpsc, Arc};
+    use std::sync::{Arc, mpsc};
     use std::time::Duration;
 
     struct Cleanup {
@@ -692,9 +709,11 @@ mod tests {
         let events = management.events();
         assert!(events.drain().unwrap().inventory.unwrap().is_empty());
 
-        assert!(management
-            .remove("absent", &format!("sha256:{}", "a".repeat(64)))
-            .is_err());
+        assert!(
+            management
+                .remove("absent", &format!("sha256:{}", "a".repeat(64)))
+                .is_err()
+        );
         assert!(events.drain().is_none());
     }
 
@@ -703,7 +722,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let management = ExtensionManagement::new(&workspace(root.path()));
         let digest = format!("sha256:{}", "a".repeat(64));
-        for refusal in [management.enable("absent", &digest), management.retry("absent", &digest)] {
+        for refusal in [
+            management.enable("absent", &digest),
+            management.retry("absent", &digest),
+        ] {
             assert!(
                 matches!(&refusal, Err(HostError::Conflict(detail)) if detail == "absent changed while its update was pending"),
                 "lifecycle policy denial must tell the caller to reconcile installed state: {refusal:?}"
@@ -733,9 +755,11 @@ mod tests {
         std::fs::create_dir_all(&data).unwrap();
         std::fs::write(data.join("index.db"), b"keep").unwrap();
 
-        assert!(management
-            .remove(name.as_str(), &format!("sha256:{}", "a".repeat(64)))
-            .is_err());
+        assert!(
+            management
+                .remove(name.as_str(), &format!("sha256:{}", "a".repeat(64)))
+                .is_err()
+        );
         assert_eq!(state.read().unwrap().contents, b"migration-checkpoint");
         assert_eq!(std::fs::read(data.join("index.db")).unwrap(), b"keep");
     }

@@ -26,6 +26,7 @@ import {
   parseMounts,
   parsePorts,
   acquisitionFailure,
+  acquisitionConnectionFailure,
   acquisitionTechnicalDetail,
   acquisitionLabel,
   acquisitionProgressFraction,
@@ -60,6 +61,24 @@ test('every host capability has explicit consent language and workspace lifecycl
   }
   assert.equal(capabilityLabel('workspaces:configure'), 'Modify workspace settings');
   assert.equal(capabilityLabel('workspaces:control'), 'Create, start, stop, and delete workspaces');
+});
+
+test('lost acquisition authority becomes concise restart and retry guidance', () => {
+  assert.equal(
+    acquisitionConnectionFailure({
+      kind: 'absent',
+      message: 'extension acquisition 7c5a is absent: NativeRunFailed(3) and internal details',
+    }),
+    'This inspection session ended when the workspace service restarted. Retry inspection; nothing was installed.',
+  );
+  assert.equal(
+    acquisitionConnectionFailure(new Error('socket closed while reading frame')),
+    'The connection closed before inspection finished. Retry inspection to resume its current job when possible; nothing is installed without your review.',
+  );
+  assert.equal(
+    acquisitionConnectionFailure(new Error('four extension acquisitions are already active')),
+    'Four image inspections are already active. Finish or cancel one, then retry.',
+  );
 });
 
 test('extension removal states exactly what is deleted and what remains', () => {

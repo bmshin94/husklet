@@ -1281,8 +1281,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use hl_extension::port::{
-        ContainerControl, ContainerInventory, ContainerSummary, Division, Entry, HostError, ImageStore, ImageSummary,
-        PaneSummary, TabSummary, TerminalSurface, WorkspaceFiles,
+        ContainerControl, ContainerInventory, ContainerSummary, Division, Entry, ExtensionStore, HostError, ImageStore,
+        ImageSummary, PaneSummary, TabSummary, TerminalSurface, WorkspaceFiles,
     };
     use hl_extension::{
         Authority, Capability, Channels, ExtensionName, Failure, Flags, Frame, Grant, Hello, Kind, PROTOCOL,
@@ -2066,6 +2066,12 @@ mod tests {
             notifications: host,
             postgres: None,
         }
+    }
+
+    fn services_with_extensions<'a>(host: &'a Host, extensions: &'a dyn ExtensionStore) -> Services<'a> {
+        let mut ports = services(host);
+        ports.extensions = extensions;
+        ports
     }
 
     fn postgres_host(
@@ -3036,6 +3042,53 @@ mod tests {
                     && catalogue.entries[0].reference == "registry/storybook:latest"
         ));
         assert_eq!(ledger.reached(), vec!["extensions.catalogue"]);
+        drop(wire);
+        assert_eq!(served.join().expect("joined"), Ok(()));
+    }
+
+    #[test]
+    fn repeated_acquisition_start_reattaches_over_the_real_unix_conversation() {
+        let (ours, theirs) = UnixStream::pair().expect("socket pair");
+        let workers = Arc::new(AtomicUsize::new(0));
+        let observed_workers = Arc::clone(&workers);
+        let served = std::thread::spawn(move || {
+            let root = tempfile::tempdir().expect("workspace root");
+            let mut workspace = crate::config::WorkspaceConfig::new("dev", "alpine", hl_ws::Arch::Amd64);
+            workspace.storage = Some(root.path().to_owned());
+            let management =
+                super::super::management::ExtensionManagement::with_acquirer(&workspace, move |_, _, _, _, _| {
+                    observed_workers.fetch_add(1, Ordering::AcqRel);
+                    std::thread::sleep(Duration::from_millis(250));
+                });
+            let host = Host {
+                ledger: Arc::new(Ledger::default()),
+            };
+            let authority = Authority::new(
+                ExtensionName::new("sample").expect("name"),
+                Grant::new([Capability::ExtensionInstall]),
+                Vec::new(),
+            );
+            let mut conversation = Conversation::new(ours, authority, "dev", Queue::new())?;
+            conversation.greet()?;
+            conversation.serve(&services_with_extensions(&host, &management))
+        });
+        let mut wire = Wire::new(theirs);
+        shake(&mut wire, PROTOCOL);
+        let request = Request::ExtensionAcquisitionStart {
+            reference: "registry.example/tool:1".into(),
+            refresh: true,
+        };
+        let first = match codec::read_reply(&ask(&mut wire, &request)).expect("first reply") {
+            Reply::ExtensionAcquisitionJob(job) => job.job,
+            other => panic!("unexpected first reply: {other:?}"),
+        };
+        let repeated = match codec::read_reply(&ask(&mut wire, &request)).expect("retry reply") {
+            Reply::ExtensionAcquisitionJob(job) => job.job,
+            other => panic!("unexpected retry reply: {other:?}"),
+        };
+
+        assert_eq!(repeated, first, "a socket retry recovers the exact live job");
+        assert_eq!(workers.load(Ordering::Acquire), 1, "only one image worker was started");
         drop(wire);
         assert_eq!(served.join().expect("joined"), Ok(()));
     }

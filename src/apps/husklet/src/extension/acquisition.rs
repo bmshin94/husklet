@@ -107,6 +107,7 @@ impl AcquisitionState {
 
 struct Job {
     snapshot: AcquisitionSnapshot,
+    refresh: bool,
     candidate: Option<Candidate>,
     cancellation: Cancellation,
 }
@@ -153,7 +154,7 @@ impl ExtensionAcquisitions {
         Self::with_acquirer_and_events(workspace, ExtensionEvents::default(), acquire)
     }
 
-    fn with_acquirer_and_events(
+    pub(super) fn with_acquirer_and_events(
         workspace: &WorkspaceConfig,
         events: ExtensionEvents,
         acquire: impl Fn(&WorkspaceConfig, &str, &mpsc::Sender<Acquisition>, &Cancellation, bool) + Send + Sync + 'static,
@@ -179,6 +180,18 @@ impl ExtensionAcquisitions {
         let cancellation = Cancellation::default();
         let job = {
             let mut registry = self.lock();
+            // Starting an acquisition is the one call whose reply can be lost
+            // before the caller learns its opaque job identity. Reattaching an
+            // exact reference/freshness request to its non-terminal job makes
+            // that boundary retryable and lets a restarted extension resume a
+            // ready consent review without pulling or inspecting the image a
+            // second time. Terminal jobs deliberately do not coalesce: Retry
+            // inspection means new work and receives fresh authority.
+            if let Some((id, _)) = registry.jobs.iter().find(|(_, job)| {
+                !job.snapshot.state.terminal() && job.snapshot.reference == reference && job.refresh == refresh
+            }) {
+                return Ok(*id);
+            }
             let active = registry
                 .jobs
                 .values()
@@ -216,6 +229,7 @@ impl ExtensionAcquisitions {
                         revision: 1,
                         state: AcquisitionState::Inspecting,
                     },
+                    refresh,
                     candidate: None,
                     cancellation: cancellation.clone(),
                 },
@@ -800,16 +814,13 @@ mod tests {
             .register(&installed, "sha256:installed", &installed.capabilities, 1)
             .unwrap();
         let reviewed_manifest = manifest("2.0.0", &[Capability::Interface]);
-        let service = ExtensionAcquisitions::with_acquirer(
-            &workspace,
-            move |_, reference, progress, _, _refresh| {
-                let _ = progress.send(Acquisition::Ready(Candidate {
-                    reference: reference.into(),
-                    digest: "sha256:reviewed".into(),
-                    manifest: reviewed_manifest.clone(),
-                }));
-            },
-        );
+        let service = ExtensionAcquisitions::with_acquirer(&workspace, move |_, reference, progress, _, _refresh| {
+            let _ = progress.send(Acquisition::Ready(Candidate {
+                reference: reference.into(),
+                digest: "sha256:reviewed".into(),
+                manifest: reviewed_manifest.clone(),
+            }));
+        });
         let job = service.start("registry/sample:2", false).unwrap();
         let reviewed = ready(&service, job);
 
@@ -831,7 +842,10 @@ mod tests {
         assert!(restored.revision > reviewed.revision);
         assert_eq!(restored.state, reviewed.state, "reviewed consent remains inspectable");
         let current = Roster::workspace(&workspace).unwrap().entries().remove(0);
-        assert_eq!((current.version.as_str(), current.image_digest.as_str()), ("1.1.0", "sha256:concurrent"));
+        assert_eq!(
+            (current.version.as_str(), current.image_digest.as_str()),
+            ("1.1.0", "sha256:concurrent")
+        );
     }
 
     fn workspace(root: &std::path::Path) -> WorkspaceConfig {
@@ -890,6 +904,53 @@ mod tests {
         service.start("registry/sample:stable", true).unwrap();
         assert!(!received.recv_timeout(Duration::from_secs(1)).unwrap());
         assert!(received.recv_timeout(Duration::from_secs(1)).unwrap());
+    }
+
+    #[test]
+    fn repeated_start_reattaches_to_the_exact_live_job_without_repeating_acquisition() {
+        let root = tempfile::tempdir().unwrap();
+        let (entered, observed) = mpsc::channel();
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let worker_release = Arc::clone(&release);
+        let service =
+            ExtensionAcquisitions::with_acquirer(&workspace(root.path()), move |_, reference, progress, _, refresh| {
+                entered.send((reference.to_owned(), refresh)).unwrap();
+                worker_release.wait();
+                let _ = progress.send(Acquisition::Ready(Candidate {
+                    reference: reference.into(),
+                    digest: "sha256:resumable".into(),
+                    manifest: manifest("1.0.0", &[]),
+                }));
+            });
+
+        let first = service.start("registry/sample:stable", true).unwrap();
+        assert_eq!(
+            observed.recv_timeout(Duration::from_secs(1)).unwrap(),
+            ("registry/sample:stable".into(), true),
+        );
+        let repeated = service.start(" registry/sample:stable ", true).unwrap();
+        assert_eq!(repeated, first, "a lost start reply must recover the same job identity");
+        assert!(
+            observed.recv_timeout(Duration::from_millis(30)).is_err(),
+            "reattachment must not start another image worker"
+        );
+
+        release.wait();
+        let reviewed = ready(&service, first);
+        assert_eq!(
+            service.start("registry/sample:stable", true).unwrap(),
+            first,
+            "a restarted UI must recover the existing consent review"
+        );
+        service.cancel(first, reviewed.revision).unwrap();
+        let retry = service.start("registry/sample:stable", true).unwrap();
+        assert_ne!(retry, first, "an explicit retry after a terminal job is fresh work");
+        assert_eq!(
+            observed.recv_timeout(Duration::from_secs(1)).unwrap(),
+            ("registry/sample:stable".into(), true),
+        );
+        release.wait();
+        let _ = ready(&service, retry);
     }
 
     #[test]
