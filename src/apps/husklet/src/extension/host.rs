@@ -722,7 +722,15 @@ fn run<S: Supply>(supply: &Arc<S>, hall: &Hall, plan: &Plan) {
         hall.deliver(Report::Reset);
         match session(supply, hall, plan) {
             Passage::Stopped => break,
-            Passage::Renewal => continue,
+            Passage::Renewal => {
+                // Retry closes this generation's listener. A real sidecar that
+                // remains running will then be reused by `ensure`, but it has
+                // no reason to reconnect to the replacement listener. Retire
+                // the connected generation first so retry always starts one
+                // process that can establish the new conversation.
+                supply.halt(plan);
+                continue;
+            }
             Passage::Unready(reason) => hall.loss(reason),
             Passage::End(reason) => {
                 hall.loss(reason);
@@ -1776,13 +1784,13 @@ tab_title = "Sample"
         assert_eq!(bench.ensures(), 2, "the sequence was run again");
         assert_eq!(
             bench.halts(),
-            0,
-            "renewal deliberately keeps the owned generation live"
+            1,
+            "renewal retires the connected generation before ensuring its replacement"
         );
         host.close().expect("closed");
         assert_eq!(
             bench.halts(),
-            1,
+            2,
             "owned shutdown stops the renewed generation once"
         );
     }
