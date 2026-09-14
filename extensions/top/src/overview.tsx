@@ -6,7 +6,7 @@ import {
   Column,
   Heading,
   Icon,
-  IconButton,
+  Button,
   ListSubheader,
   NavigationMenu,
   NavigationMenuItem,
@@ -187,10 +187,11 @@ export function Overview({
           <Heading label="Workspace" scale="display" align="start" grow={false} />
           <Spacer />
           {refreshing ? <Spinner /> : null}
-          <IconButton
-            label={refreshing ? 'Refreshing workspace inventory' : 'Refresh workspace inventory'}
+          <Button
+            label={refreshing ? 'Refreshing…' : 'Refresh'}
             tooltip={refreshing ? 'Refreshing workspace inventory…' : 'Refresh all resources'}
             icon="view-refresh-symbolic"
+            size="small"
             variant="ghost"
             enabled={!refreshing}
             onInvoke={refreshAll}

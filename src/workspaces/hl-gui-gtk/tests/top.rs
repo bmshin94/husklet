@@ -367,17 +367,11 @@ mod unix {
             }
             if fixture == "populated" && name == "processes" && width == 1_200 {
                 let refresh = find_tooltip_button(&root, "Refresh processes");
-                assert_eq!(
-                    (refresh.width(), refresh.height()),
-                    (28, 28),
-                    "process refresh must remain a compact toolbar icon action"
-                );
-                assert!(refresh.has_css_class("hl-iconbutton"));
+                assert_eq!(refresh.height(), 44, "process refresh loses its standard hit target");
+                assert!(refresh.width() >= 72, "process refresh loses its visible verb");
+                assert!(refresh.has_css_class("hl-button"));
                 assert!(refresh.has_css_class("size-small"));
-                let icon = refresh
-                    .child()
-                    .and_then(|child| child.downcast::<gtk::Image>().ok())
-                    .expect("process refresh renders its native icon");
+                let icon = find_image(refresh.upcast_ref());
                 assert_eq!(icon.icon_name().as_deref(), Some("view-refresh-symbolic"));
             }
             if fixture == "populated" && name == "containers" {

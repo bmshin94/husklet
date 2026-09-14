@@ -4473,11 +4473,11 @@ test('overview refreshes every authoritative inventory in one action', async () 
       onOpen() {},
     }),
   );
-  assert.ok(labelled(stage, 'Refresh workspace inventory'));
-  assert.deepEqual(taggedProperty(stage, 'Refresh workspace inventory', 'IconButton', 'Icon'), {
+  assert.ok(labelled(stage, 'Refresh'));
+  assert.deepEqual(taggedProperty(stage, 'Refresh', 'Button', 'Icon'), {
     Text: 'view-refresh-symbolic',
   });
-  invoke(stage, 'Refresh workspace inventory');
+  invoke(stage, 'Refresh');
   await settled();
   assert.deepEqual(calls.sort(), [
     'containers',
