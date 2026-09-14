@@ -13,13 +13,14 @@ mod unix {
     use hl_extension::port::{
         ExecutionResult, ExecutionSummary, ExtensionAcquisitionJob, ExtensionAcquisitionProgress,
         ExtensionAcquisitionStatus, ExtensionCandidate, ExtensionCatalogue, ExtensionCatalogueEntry, ImageDetails,
-        NetworkEndpointInventory, NetworkInventory, NetworkKind, NetworkSummary,
+        NetworkEndpointInventory, NetworkInventory, NetworkKind, NetworkSummary, PaneText, TerminalLifecycle,
     };
     use hl_extension::{
         Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
-        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, PROTOCOL, PaneProvider, PreferenceValue,
-        RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire, WorkspaceConfiguration,
-        WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo, WorkspaceTerminal, codec,
+        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, InspectablePane, PROTOCOL, PaneInventory,
+        PaneKind, PaneProvider, PreferenceValue, RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire,
+        WorkspaceConfiguration, WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo,
+        WorkspaceTerminal, codec,
     };
     use hl_gui::{Renderer as _, SourceMutation, Theme, Tree};
     use hl_gui_gtk::Surface;
@@ -34,6 +35,7 @@ mod unix {
         ("images", "images"),
         ("volumes", "volumes"),
         ("networks", "networks"),
+        ("terminals", "terminals"),
     ];
     const DEADLINE: Duration = Duration::from_secs(5);
     const PATCH_LIMIT: usize = 1_500;
@@ -85,6 +87,22 @@ mod unix {
         assert!(
             repository.join("extensions/top/dist/main.js").exists(),
             "run `npm --prefix extensions run build:sdk && npm --prefix extensions run build --workspace @husklet/top`"
+        );
+        assert_eq!(
+            CASES.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            [
+                "workspace",
+                "settings",
+                "extensions",
+                "containers",
+                "processes",
+                "executions",
+                "images",
+                "volumes",
+                "networks",
+                "terminals",
+            ],
+            "the rendered Top gate must cover every manager destination"
         );
         for fixture in ["populated", "error"] {
             for (name, section) in CASES {
@@ -158,6 +176,9 @@ mod unix {
         if !deny_volume_access {
             granted.extend([Capability::ContainerRead, Capability::VolumeRead]);
         }
+        if name == "terminals" {
+            granted.extend([Capability::PaneObserve, Capability::TerminalOutput]);
+        }
         wire.send(
             &codec::welcome(&Welcome {
                 protocol: PROTOCOL,
@@ -224,6 +245,35 @@ mod unix {
                         } else {
                             catalogue()
                         }),
+                        Request::PaneList => Reply::Panes(PaneInventory {
+                            panes: vec![InspectablePane {
+                                slot: "shell".into(),
+                                generation: 7,
+                                revision: 11,
+                                kind: PaneKind::Terminal,
+                                provider: None,
+                                tab: Some("daily".into()),
+                                title: Some("Daily work".into()),
+                                focused: true,
+                            }],
+                            truncated: false,
+                        }),
+                        Request::TerminalReadPane { slot, lines } => {
+                            assert_eq!(slot, "shell");
+                            assert_eq!(lines, Some(200));
+                            Reply::Text(PaneText {
+                                slot,
+                                generation: 7,
+                                revision: 11,
+                                lifecycle: TerminalLifecycle::Live,
+                                columns: 100,
+                                rows: 30,
+                                lines: vec!["$ npm test".into(), "123 tests passed".into(), "$".into()],
+                                cursor_column: 1,
+                                cursor_row: 2,
+                                truncated: false,
+                            })
+                        }
                         Request::SourceResize { mutation } | Request::SourceResizeAt { mutation, .. } => {
                             match mutation {
                                 SourceMutation::Length { source, version, rows } => {
@@ -264,6 +314,7 @@ mod unix {
             "images" => "Images",
             "volumes" | "volumes-denied" => "Volumes",
             "networks" => "Networks",
+            "terminals" => "Terminal tabs",
             _ => unreachable!(),
         };
         assert!(has_label(&root, heading), "{fixture}/{name} did not render {heading:?}");
@@ -372,6 +423,7 @@ mod unix {
                     "images" => Some(("Refresh images", "image inventory")),
                     "volumes" => Some(("Refresh volumes", "volume inventory")),
                     "networks" => Some(("Refresh networks", "network inventory")),
+                    "terminals" => Some(("Refresh terminals", "terminal inventory")),
                     _ => None,
                 };
                 if let Some((tooltip, purpose)) = refresh_context {
