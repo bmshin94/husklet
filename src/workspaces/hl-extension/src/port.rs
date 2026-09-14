@@ -935,6 +935,34 @@ pub struct FileChangePage {
     pub truncated: bool,
 }
 
+impl FileChangePage {
+    /// A terminal page has reached the exact current cursor; only a page with
+    /// remaining history may stop before it.
+    #[must_use]
+    pub fn has_consistent_completion(&self) -> bool {
+        self.current >= self.next && self.more == (self.next < self.current)
+    }
+}
+
+#[cfg(test)]
+mod file_change_page_tests {
+    use super::FileChangePage;
+
+    #[test]
+    fn a_terminal_change_page_cannot_leave_unreported_history() {
+        let page = FileChangePage {
+            changes: Vec::new(),
+            journal: "0123456789abcdef0123456789abcdef".into(),
+            after: 4,
+            next: 5,
+            current: 6,
+            more: false,
+            truncated: false,
+        };
+        assert!(!page.has_consistent_completion());
+    }
+}
+
 /// One installed extension and its durable lifecycle policy.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ExtensionSummary {

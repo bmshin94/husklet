@@ -2554,7 +2554,7 @@ test('real Unix change iterator reports a typed journal rotation and remains reu
   }
 });
 
-test('real Unix change iterator rejects a reply for another cursor over fragmented frames', async () => {
+test('real Unix change iterator rejects cursor substitution and false completion over fragmented frames', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-journal-stall-'));
   const socketPath = path.join(directory, 'host.sock');
   const calls = [];
@@ -2567,6 +2567,7 @@ test('real Unix change iterator rejects a reply for another cursor over fragment
       for (const frame of reader.take(chunk)) {
         if (frame.kind !== KIND.request) continue;
         calls.push(frame.payload.call);
+        const changeAttempt = calls.filter((call) => call === 'filesystem_changes').length;
         const payload =
           frame.payload.call === 'filesystem_changes'
             ? {
@@ -2574,9 +2575,9 @@ test('real Unix change iterator rejects a reply for another cursor over fragment
                 with: {
                   journal: FILE_JOURNAL,
                   changes: [],
-                  after: 11,
+                  after: changeAttempt === 1 ? 11 : 12,
                   next: 13,
-                  current: 13,
+                  current: changeAttempt === 1 ? 13 : 14,
                   more: false,
                   truncated: false,
                 },
@@ -2616,8 +2617,15 @@ test('real Unix change iterator rejects a reply for another cursor over fragment
       ['filesystem_changes'],
       'a stalled continuation must not be requested again',
     );
+    await assert.rejects(
+      workspace(session).files.catchUpChanges({
+        cursor: { journal: FILE_JOURNAL, revision: 12 },
+      }),
+      /inconsistent filesystem change page/,
+      'false completion must not become a durable caught-up checkpoint',
+    );
     assert.equal((await workspace(session).info()).name, 'index');
-    assert.deepEqual(calls, ['filesystem_changes', 'workspace_info']);
+    assert.deepEqual(calls, ['filesystem_changes', 'filesystem_changes', 'workspace_info']);
     await session.close();
   } finally {
     await session?.close();

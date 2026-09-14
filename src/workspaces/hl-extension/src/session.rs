@@ -2503,9 +2503,13 @@ impl Session {
                     });
                 }
                 let port = self.peer.authority().port(Capability::FilesystemRead, services.files)?;
-                Ok(Reply::FileChanges(self.visible_filesystem_changes(
-                    port.changes_since(&self.filesystem.read, observed, *after, usize::from(*limit))?,
-                )))
+                let page = port.changes_since(&self.filesystem.read, observed, *after, usize::from(*limit))?;
+                if !page.has_consistent_completion() {
+                    return Err(Failure::Failed {
+                        detail: "filesystem adapter returned an inconsistent change page".into(),
+                    });
+                }
+                Ok(Reply::FileChanges(self.visible_filesystem_changes(page)))
             }
             Request::FilesystemList { path } => {
                 let port = self.peer.authority().port(Capability::FilesystemRead, services.files)?;

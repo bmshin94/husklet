@@ -685,6 +685,7 @@ export interface FileChangePage {
     after: number;
     next: number;
     current: number;
+    /** True exactly when `next` precedes `current`; false means `next === current`. */
     more: boolean;
     truncated: boolean;
 }
