@@ -73,7 +73,7 @@ test('digest-pinned same-version review rejects a substituted image over real Un
         payload: {
           protocol: 1,
           extension: 'extension-update-test',
-          granted: ['extensions:read', 'extensions:install'],
+          granted: ['extensions:read', 'extensions:acquire', 'extensions:update'],
         },
       }),
     );

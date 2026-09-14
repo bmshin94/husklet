@@ -61,6 +61,9 @@ test('every host capability has explicit consent language and workspace lifecycl
   }
   assert.equal(capabilityLabel('workspaces:configure'), 'Modify workspace settings');
   assert.equal(capabilityLabel('workspaces:control'), 'Create, start, stop, and delete workspaces');
+  assert.equal(capabilityLabel('extensions:acquire'), 'Inspect and download extension images');
+  assert.equal(capabilityLabel('extensions:install'), 'Install new extensions');
+  assert.equal(capabilityLabel('extensions:update'), 'Replace installed extensions');
 });
 
 test('lost acquisition authority becomes concise restart and retry guidance', () => {
