@@ -45,6 +45,7 @@ impl<'a> Overview<'a> {
         terminal: &std::sync::Arc<hl::extension::Relay>,
         events: hl::extension::Events,
         gallery: &Gallery,
+        window: Option<std::rc::Weak<screens::workspace::terminal::TermWin>>,
         faulted: Rc<dyn Fn(u32)>,
     ) -> gtk::Widget {
         use hl::extension::{Order, Report};
@@ -118,11 +119,15 @@ impl<'a> Overview<'a> {
         });
         let ready_gallery = gallery.clone();
         let ready_name = name.to_string();
+        let ready_window = window;
         let ready_generation = Rc::new(std::cell::Cell::new(None));
         let published_generation = Rc::clone(&ready_generation);
         let ready = Rc::new(move || {
             if let Some(generation) = published_generation.get() {
                 ready_gallery.ready(&ready_name, generation);
+                if let Some(window) = ready_window.as_ref().and_then(std::rc::Weak::upgrade) {
+                    screens::workspace::terminal::PaneChooser::refresh(&window);
+                }
             }
         });
         let loading = if name.as_str() == "top" {
@@ -232,7 +237,16 @@ impl<'a> Overview<'a> {
                 .as_ref()
                 .and_then(std::rc::Weak::upgrade)
                 .map_or_else(hl::extension::Events::default, |window| window.observer());
-            let surface = Self::surface(&held, &entry.name, providers, &port, events, &shown, faulted);
+            let surface = Self::surface(
+                &held,
+                &entry.name,
+                providers,
+                &port,
+                events,
+                &shown,
+                observed.clone(),
+                faulted,
+            );
             if let Some(window) = observed.as_ref().and_then(std::rc::Weak::upgrade) {
                 screens::workspace::terminal::PaneChooser::recover(&window, entry.name.as_str());
             }
@@ -245,6 +259,9 @@ impl<'a> Overview<'a> {
                 screens::workspace::terminal::PaneChooser::withdraw(&window, name.as_str());
             }
             gallery_for_withdrawal.withdraw(name.as_str());
+            if let Some(window) = window.as_ref().and_then(std::rc::Weak::upgrade) {
+                screens::workspace::terminal::PaneChooser::refresh(&window);
+            }
         });
         let shelf = Shelf::with_lifecycle(view, workspace, &roster, surfaces, withdraw);
         shelf_anchor.replace(Rc::downgrade(&shelf));

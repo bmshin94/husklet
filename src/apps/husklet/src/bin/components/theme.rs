@@ -109,6 +109,19 @@ button.tabx:hover {{ opacity:1; background-color:rgba(255,255,255,.14); border-r
 .newtab label {{ font-size:14px; font-weight:400; }}
 .newtab:hover {{ background-color:{BG3}; color:{TXT}; }}
 stack.pages {{ background-color:{BG2}; }}
+.hl-pane-chooser {{ margin:6px 6px 0 0; }}
+.hl-pane-chooser > button {{ color:{DIM}; background-color:rgba(13,14,17,.76); border:1px solid {LINE}; border-radius:6px; box-shadow:none; min-width:26px; min-height:26px; padding:4px; }}
+.hl-pane-chooser > button:hover, .hl-pane-chooser > button:checked {{ color:{TXT}; background-color:{BG3}; border-color:{CONTROL_LINE}; }}
+.hl-pane-chooser image {{ -gtk-icon-size:15px; }}
+.pane-chooser-popover contents {{ background-color:{BG2}; border:1px solid {CONTROL_LINE}; border-radius:9px; box-shadow:0 8px 24px rgba(0,0,0,.42); }}
+.pane-choices > label.heading {{ font-size:11px; font-weight:650; color:{FAINT}; padding:3px 7px 5px; }}
+.pane-choices > label.caption {{ font-size:10.5px; font-weight:600; color:{FAINT}; padding:7px 7px 2px; }}
+.pane-choice {{ color:{TXT}; background:transparent; border:none; border-radius:6px; box-shadow:none; min-height:0; padding:6px 8px; font-size:12px; font-weight:500; }}
+.pane-choice:hover {{ background-color:{BG3}; }}
+.pane-choice.current, .pane-choice.current:disabled {{ color:{TXT}; background-color:rgba(47,128,255,.13); opacity:1; }}
+.pane-choice-icon {{ color:{DIM}; -gtk-icon-size:15px; }}
+.pane-choice.current .pane-choice-icon {{ color:{TXT}; }}
+.pane-choice-check {{ color:{ACCENT}; -gtk-icon-size:14px; }}
 
 /* ---- overview ---- */
 .dside {{ background-color:{BG1}; padding:9px 8px; min-width:100px; }}

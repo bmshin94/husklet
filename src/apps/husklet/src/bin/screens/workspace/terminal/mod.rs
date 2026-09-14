@@ -434,6 +434,7 @@ impl Window {
     /// Where this window finds the extension interfaces its panes may hold.
     pub(crate) fn exhibit(window: &Rc<TermWin>, gallery: screens::workspace::extensions::Gallery) {
         *window.gallery.borrow_mut() = Some(gallery);
+        PaneChooser::refresh(window);
     }
 
     /// The gallery this window was given, if the workspace shell offered one.

@@ -39,6 +39,7 @@ impl PaneChrome {
 }
 
 impl PaneChooser {
+    const NAME: &'static str = "pane-content-chooser";
     const SEARCH_THRESHOLD: usize = 6;
     const TERMINAL_ICON: &'static str = "utilities-terminal-symbolic";
     const PROVIDER_ICON: &'static str = "view-grid-symbolic";
@@ -51,11 +52,12 @@ impl PaneChooser {
     /// or uninstalled providers without leaving stale actions behind.
     pub(crate) fn button(window: &Rc<TermWin>) -> gtk::MenuButton {
         let button = gtk::MenuButton::new();
+        button.set_widget_name(Self::NAME);
         button.set_icon_name(Self::TERMINAL_ICON);
         button.set_tooltip_text(Some("Choose what this pane displays"));
         button.set_focusable(true);
         button.update_property(&[gtk::accessible::Property::Label("Choose pane content")]);
-        button.add_css_class("flat");
+        button.add_css_class("hl-pane-chooser");
         button.set_halign(gtk::Align::End);
         button.set_valign(gtk::Align::Start);
         let weak = Rc::downgrade(window);
@@ -84,6 +86,66 @@ impl PaneChooser {
             Self::populate(&window, button);
         });
         button
+    }
+
+    /// Reconciles every pane's affordance with the live provider inventory.
+    ///
+    /// A hidden terminal-only chooser cannot refresh itself by being opened,
+    /// so extension readiness and withdrawal call this explicitly.
+    pub(crate) fn refresh(window: &Rc<TermWin>) {
+        for pane in Panes::all(window) {
+            if let Some(button) = Self::in_chrome(&pane.widget) {
+                Self::populate(window, &button);
+            }
+        }
+    }
+
+    fn in_chrome(chrome: &gtk::Widget) -> Option<gtk::MenuButton> {
+        let mut child = chrome.first_child();
+        while let Some(current) = child {
+            if current.widget_name() == Self::NAME {
+                return current.downcast::<gtk::MenuButton>().ok();
+            }
+            child = current.next_sibling();
+        }
+        None
+    }
+
+    fn choice(label: &str, icon: &str, selected: bool) -> gtk::Button {
+        let choice = gtk::Button::new();
+        choice.add_css_class("pane-choice");
+        choice.set_accessible_role(gtk::AccessibleRole::MenuItem);
+        choice.set_halign(gtk::Align::Fill);
+        choice.set_hexpand(true);
+
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let emblem = gtk::Image::from_icon_name(icon);
+        emblem.add_css_class("pane-choice-icon");
+        content.append(&emblem);
+        let caption = gtk::Label::new(Some(label));
+        caption.set_xalign(0.0);
+        caption.set_hexpand(true);
+        content.append(&caption);
+        let check = gtk::Image::from_icon_name("object-select-symbolic");
+        check.add_css_class("pane-choice-check");
+        check.set_visible(selected);
+        content.append(&check);
+        choice.set_child(Some(&content));
+
+        if selected {
+            choice.add_css_class("current");
+        }
+        let accessible = if selected {
+            format!("{label}, selected")
+        } else {
+            label.to_owned()
+        };
+        choice.update_property(&[
+            gtk::accessible::Property::Label(&accessible),
+            gtk::accessible::Property::ReadOnly(selected),
+        ]);
+        choice.set_sensitive(!selected);
+        choice
     }
 
     pub(crate) fn populate(window: &Rc<TermWin>, button: &gtk::MenuButton) {
@@ -128,18 +190,27 @@ impl PaneChooser {
                 Self::PROVIDER_ICON
             });
         button.set_icon_name(current_icon);
+        let meaningful_choice = identity.is_some() || !providers.is_empty();
+        button.set_visible(meaningful_choice);
+        if !meaningful_choice {
+            button.set_popover(None::<&gtk::Popover>);
+            button.update_property(&[gtk::accessible::Property::Label("Terminal pane")]);
+            button.set_tooltip_text(None);
+            return;
+        }
         let accessible = format!("Choose pane content; currently showing {current_label}");
         button.update_property(&[
             gtk::accessible::Property::Label("Choose pane content"),
             gtk::accessible::Property::Description(&accessible),
         ]);
         button.set_tooltip_text(Some(&accessible));
-        let choices = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        choices.set_margin_top(10);
-        choices.set_margin_bottom(10);
-        choices.set_margin_start(10);
-        choices.set_margin_end(10);
-        choices.set_size_request(200, -1);
+        let choices = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        choices.add_css_class("pane-choices");
+        choices.set_margin_top(6);
+        choices.set_margin_bottom(6);
+        choices.set_margin_start(6);
+        choices.set_margin_end(6);
+        choices.set_size_request(220, -1);
 
         let heading = gtk::Label::new(Some("Pane content"));
         heading.set_accessible_role(gtk::AccessibleRole::Heading);
@@ -147,20 +218,12 @@ impl PaneChooser {
         heading.set_xalign(0.0);
         choices.append(&heading);
 
-        let status = gtk::Label::new(Some(&format!("Currently showing {current_label}")));
-        status.add_css_class("dim-label");
-        status.set_xalign(0.0);
-        status.set_wrap(true);
-        status.set_max_width_chars(30);
-        choices.append(&status);
-
-        let terminal = gtk::Button::with_label("Terminal");
-        terminal.set_tooltip_text(Some("Show this pane's terminal"));
-        terminal.set_halign(gtk::Align::Fill);
-        if identity.is_none() {
-            terminal.add_css_class("suggested-action");
-            terminal.update_property(&[gtk::accessible::Property::Label("Terminal, selected")]);
-        }
+        let terminal = Self::choice("Terminal", Self::TERMINAL_ICON, identity.is_none());
+        terminal.set_tooltip_text(Some(if identity.is_none() {
+            "Currently showing this pane's terminal"
+        } else {
+            "Show this pane's terminal"
+        }));
         {
             let window = window.clone();
             let target = target.clone();
@@ -206,17 +269,13 @@ impl PaneChooser {
                     groups.push((label, Vec::new()));
                     current_extension = Some(provider.extension.clone());
                 }
-                let choice = gtk::Button::with_label(&provider.title);
+                let selected = selected_provider == Some((provider.extension.as_str(), provider.id.as_str()));
+                let choice = Self::choice(
+                    &provider.title,
+                    provider.icon.as_deref().unwrap_or(Self::PROVIDER_ICON),
+                    selected,
+                );
                 choice.set_tooltip_text(Some(&format!("{} · {}", provider.extension, provider.id)));
-                choice.set_halign(gtk::Align::Fill);
-                choice.set_hexpand(true);
-                if selected_provider == Some((provider.extension.as_str(), provider.id.as_str())) {
-                    choice.add_css_class("suggested-action");
-                    choice.update_property(&[gtk::accessible::Property::Label(&format!(
-                        "{}, selected",
-                        provider.title
-                    ))]);
-                }
                 let identity = format!("{}\n{} {}", provider.extension, provider.title, provider.id).to_lowercase();
                 let window = window.clone();
                 let target = target.clone();
@@ -259,6 +318,7 @@ impl PaneChooser {
             }
         }
         let popover = gtk::Popover::new();
+        popover.add_css_class("pane-chooser-popover");
         popover.set_child(Some(&choices));
         button.set_popover(Some(&popover));
     }
@@ -1226,6 +1286,7 @@ impl PaneReplacement {
 mod focus_ownership_tests {
     use super::*;
     use std::os::fd::{AsRawFd as _, FromRawFd as _};
+    use std::path::Path;
 
     fn symbolic_icons(widget: &gtk::Widget, names: &mut Vec<String>) {
         if let Some(image) = widget.downcast_ref::<gtk::Image>() {
@@ -1238,6 +1299,40 @@ mod focus_ownership_tests {
             symbolic_icons(&current, names);
             child = current.next_sibling();
         }
+    }
+
+    fn buttons(widget: &gtk::Widget, found: &mut Vec<gtk::Button>) {
+        if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+            found.push(button.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            buttons(&current, found);
+            child = current.next_sibling();
+        }
+    }
+
+    fn settle() {
+        let loop_ = glib::MainLoop::new(None, false);
+        let done = loop_.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(80), move || done.quit());
+        loop_.run();
+    }
+
+    fn capture(widget: &gtk::Widget, window: &gtk::Window, path: &Path) {
+        let paintable = gtk::WidgetPaintable::new(Some(widget));
+        let snapshot = gtk::Snapshot::new();
+        paintable.snapshot(
+            snapshot.upcast_ref::<gtk::gdk::Snapshot>(),
+            f64::from(widget.width()),
+            f64::from(widget.height()),
+        );
+        let node = snapshot.to_node().expect("chooser screenshot render node");
+        let texture = window
+            .renderer()
+            .expect("chooser screenshot renderer")
+            .render_texture(&node, None);
+        texture.save_to_png(path).expect("write chooser screenshot");
     }
 
     #[test]
@@ -1466,6 +1561,121 @@ mod focus_ownership_tests {
             let restored = Panes::at(&tw, &slot).expect("terminal restored into the pane slot");
             assert_eq!(restored.occupant, hl_extension::port::Occupant::Terminal);
             assert_eq!(restored.content, terminal.upcast::<gtk::Widget>());
+            tw.closing.set(true);
+        });
+        if !ran {
+            println!("skipped: no display connection");
+        }
+    }
+
+    #[test]
+    fn pane_chooser_is_only_actionable_for_meaningful_alternatives_and_tracks_provider_lifecycle() {
+        let screenshot = std::env::var_os("HL_PANE_CHOOSER_SHOT").map(std::path::PathBuf::from);
+        let ran = crate::test_support::on_the_toolkit_thread(move || {
+            let provider = gtk::CssProvider::new();
+            provider.load_from_data(&crate::components::theme::css());
+            let display = gtk::gdk::Display::default().expect("display");
+            gtk::style_context_add_provider_for_display(&display, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+
+            let workspace = WorkspaceConfig::new("chooser-lifecycle", "alpine:3.20", hl_ws::Arch::Amd64);
+            let tw = Window::bench(&workspace);
+            let (terminal, _slave) = terminal_with_pty();
+            let slot = Slots::new(&tw).allocate();
+            Slots::new(&tw).hold(&terminal, slot.clone());
+            let chrome = PaneChrome::wrap(&tw, &terminal);
+            let page = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            page.append(&chrome);
+            Tabs::new(&tw).add("terminal", None, &page, true);
+            PaneChooser::refresh(&tw);
+
+            let chooser = PaneChooser::in_chrome(&chrome).expect("pane chooser");
+            assert!(!chooser.is_visible(), "a terminal with no alternative needs no chooser");
+            assert!(chooser.popover().is_none());
+
+            let gallery = screens::workspace::extensions::Gallery::new();
+            Window::exhibit(&tw, gallery.clone());
+            let interface = gtk::Label::new(Some("Top resource view"));
+            let home = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            home.append(&interface);
+            let pane_provider = hl_extension::PaneProvider {
+                id: hl_extension::ExtensionName::new("resources").unwrap(),
+                title: "Resources".into(),
+                icon: Some("applications-system-symbolic".into()),
+            };
+            let generation = gallery.enrol("top", &interface, &home, &[pane_provider], Rc::new(|_| {}));
+            gallery.enrol_semantics(
+                "top",
+                Rc::new(|_| Err(hl_extension::HostError::Unsupported("test fixture".into()))),
+                Rc::new(|_, _| Ok(())),
+            );
+            gallery.ready("top", generation);
+            PaneChooser::refresh(&tw);
+
+            assert!(
+                chooser.is_visible(),
+                "a ready provider must reveal the chooser on an existing pane"
+            );
+            let popover = chooser.popover().expect("provider choices");
+            let mut actions = Vec::new();
+            buttons(&popover.child().expect("choice content"), &mut actions);
+            assert_eq!(actions.len(), 2);
+            assert!(actions
+                .iter()
+                .all(|action| action.accessible_role() == gtk::AccessibleRole::MenuItem));
+            assert!(!actions[0].is_sensitive(), "the current Terminal row is informational");
+            assert!(actions[0].has_css_class("current"));
+            assert!(actions[1].is_sensitive(), "the provider alternative is actionable");
+
+            if let Some(path) = screenshot.as_deref() {
+                let root = tw
+                    .stack
+                    .root()
+                    .expect("terminal window")
+                    .downcast::<gtk::Window>()
+                    .unwrap();
+                root.set_visible(false);
+                root.set_default_size(560, 360);
+                root.present();
+                chooser.popup();
+                settle();
+                capture(popover.upcast_ref(), &root, path);
+            }
+
+            actions[1].emit_clicked();
+            let pane = Panes::at(&tw, &slot).expect("provider pane");
+            assert_eq!(pane.occupant, hl_extension::port::Occupant::Surface);
+            PaneChooser::populate(&tw, &chooser);
+            let mut switched = Vec::new();
+            buttons(
+                &chooser
+                    .popover()
+                    .and_then(|popover| popover.child())
+                    .expect("switched choices"),
+                &mut switched,
+            );
+            assert!(
+                switched[0].is_sensitive(),
+                "Terminal becomes an action after switching away"
+            );
+            assert!(
+                !switched[1].is_sensitive(),
+                "the selected provider cannot be selected again"
+            );
+            assert!(switched[1].has_css_class("current"));
+
+            PaneChooser::withdraw(&tw, "top");
+            gallery.withdraw("top");
+            PaneChooser::refresh(&tw);
+            assert_eq!(
+                Panes::at(&tw, &slot).unwrap().occupant,
+                hl_extension::port::Occupant::Terminal
+            );
+            assert!(
+                !chooser.is_visible(),
+                "disabling the last provider removes the redundant chooser"
+            );
+            assert!(chooser.popover().is_none());
+            gtk::style_context_remove_provider_for_display(&display, &provider);
             tw.closing.set(true);
         });
         if !ran {
