@@ -6425,7 +6425,6 @@ test('container creation groups its compact form and uses a human label editor',
   invoke(stage, 'Create first container');
   await settled();
   for (const label of [
-    'Required',
     'Process overrides',
     'Resources and networking',
     'Mounts accept named volumes only. Published host ports may be left automatic.',
@@ -6469,8 +6468,10 @@ test('container creation groups its compact form and uses a human label editor',
   assert.deepEqual(taggedProperty(stage, 'Create and start', 'Button', 'Size'), {
     ControlSize: 'Small',
   });
-  assert.ok(labelled(stage, 'For example alpine:3.20 or a locally imported image.'));
-  assert.ok(labelled(stage, 'A stable name used by terminal and management extensions.'));
+  assert.ok(
+    ancestorTags(stage, 'New container').includes('Card'),
+    'required setup remains one grouped progressive card',
+  );
   assert.ok(
     placeholderProperty(stage, 'Working directory (optional)', 'Width'),
     'the working-directory control has an explicit readable width',

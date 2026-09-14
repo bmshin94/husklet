@@ -10,7 +10,6 @@ import {
   Expander,
   FormControl,
   FormLabel,
-  Heading,
   InlineMessage,
   RecoveryState,
   Row,
@@ -687,21 +686,19 @@ export function ContainerCreate({
           />
         </Row>
       ) : (
-        <Card variant="outline" width="fill">
+        <Card variant="filled" width="fill">
           <CardHeader
             label="New container"
-            detail="Choose an image and name. Husklet verifies creation before starting it."
+            detail="Image and stable name are required. Creation is verified before start."
             align="start"
             width="fill"
           />
           <CardContent gap={1}>
-            <Heading label="Required" scale="body" />
             <Row gap={2} wrap={true}>
               <EntryField
                 label="Image reference · required"
                 value={draft.image}
                 placeholder="Image reference"
-                helper="For example alpine:3.20 or a locally imported image."
                 enabled={editable}
                 onChange={(value) => update('image', value)}
               />
@@ -709,7 +706,6 @@ export function ContainerCreate({
                 label="Container name · required"
                 value={draft.name}
                 placeholder="Container name"
-                helper="A stable name used by terminal and management extensions."
                 enabled={editable}
                 onChange={(value) => update('name', value)}
               />

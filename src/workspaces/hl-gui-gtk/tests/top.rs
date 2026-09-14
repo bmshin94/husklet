@@ -467,6 +467,12 @@ mod unix {
                     "expanded setup used {}px instead of the available width",
                     card.width()
                 );
+                assert!(card.has_css_class("variant-filled"));
+                assert!(
+                    card.height() <= 340,
+                    "{width_name} required container setup consumed {}px before any optional section opened",
+                    card.height()
+                );
                 let submit = find_button(&root, "Create and start");
                 assert!(submit.has_css_class("size-small"));
                 assert!(submit.has_css_class("variant-filled"));
