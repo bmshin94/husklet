@@ -695,6 +695,85 @@ mod unix {
                     );
                 }
                 let name_entry = find_entry_placeholder(&root, "NAME");
+                let value_entry = find_entry_placeholder(&root, "value");
+                let name_label = find_label(&root, "Variable name");
+                let value_label = find_label(&root, "Value");
+                assert_eq!(
+                    name_label.mnemonic_widget(),
+                    Some(name_entry.clone().upcast()),
+                    "{width_name} Variable name visibly and accessibly labels its Entry"
+                );
+                assert_eq!(
+                    value_label.mnemonic_widget(),
+                    Some(value_entry.clone().upcast()),
+                    "{width_name} Value visibly and accessibly labels its Entry"
+                );
+                for (label, entry, field_name) in [
+                    (&name_label, &name_entry, "variable name"),
+                    (&value_label, &value_entry, "value"),
+                ] {
+                    let label_bounds = label
+                        .compute_bounds(&root)
+                        .unwrap_or_else(|| panic!("{field_name} label belongs to the Top root"));
+                    let entry_bounds = entry
+                        .compute_bounds(&root)
+                        .unwrap_or_else(|| panic!("{field_name} Entry belongs to the Top root"));
+                    let gap = entry_bounds.y() - label_bounds.y() - label_bounds.height();
+                    assert!(
+                        (0.0..=8.0).contains(&gap),
+                        "{width_name} {field_name} label gap was {gap}px instead of at most 8px"
+                    );
+                    assert!(
+                        (label_bounds.x() - entry_bounds.x()).abs() <= 1.0,
+                        "{width_name} {field_name} label is detached from its field: {label_bounds:?} / {entry_bounds:?}"
+                    );
+                    assert_eq!(label.accessible_role(), gtk::AccessibleRole::Label);
+                    assert_eq!(entry.accessible_role(), gtk::AccessibleRole::TextBox);
+                }
+                let remove_variable = find_tooltip_button(&root, "Remove NODE_ENV");
+                let remove_label = find_label(&root, "Remove");
+                assert_eq!(remove_variable.accessible_role(), gtk::AccessibleRole::Button);
+                assert_eq!(remove_label.accessible_role(), gtk::AccessibleRole::Label);
+                assert!(
+                    remove_variable.is_focusable(),
+                    "{width_name} remove environment variable is not focusable"
+                );
+                assert!(
+                    remove_variable.has_css_class("size-medium"),
+                    "{width_name} remove environment variable lost compact IconButton sizing"
+                );
+                assert_eq!(
+                    remove_variable.height(),
+                    36,
+                    "{width_name} remove environment variable must remain a compact row action"
+                );
+                let name_bounds = name_entry
+                    .compute_bounds(&root)
+                    .expect("credential name belongs to the Top root");
+                let remove_bounds = remove_variable
+                    .compute_bounds(&root)
+                    .expect("credential removal belongs to the Top root");
+                let remove_label_bounds = remove_label
+                    .compute_bounds(&root)
+                    .expect("credential removal heading belongs to the Top root");
+                assert!(
+                    (name_label
+                        .compute_bounds(&root)
+                        .expect("variable name label belongs to the Top root")
+                        .y()
+                        - remove_label_bounds.y())
+                    .abs()
+                        <= 1.0,
+                    "{width_name} removal heading is detached from the field labels: {remove_label_bounds:?}"
+                );
+                assert!(
+                    (remove_bounds.x() - remove_label_bounds.x()).abs() <= 1.0,
+                    "{width_name} removal heading is detached from its action: {remove_label_bounds:?} / {remove_bounds:?}"
+                );
+                assert!(
+                    (name_bounds.y() - remove_bounds.y()).abs() <= 1.0,
+                    "{width_name} row removal is not aligned with its fields: {name_bounds:?} / {remove_bounds:?}"
+                );
                 assert!(name_entry.grab_focus(), "{width_name} credential name accepts focus");
                 let _ = surface.reports().drain();
                 name_entry.set_text("TOKEN_NEXT");

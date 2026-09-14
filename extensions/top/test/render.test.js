@@ -943,12 +943,25 @@ test('Top owns workspace settings and extension management in the same tab', asy
   expand(stage, 'Environment variables');
   await settled();
   assert.equal(taggedProperty(stage, 'Environment variables', 'Accordion', 'Grow'), undefined);
+  assert.deepEqual(taggedProperty(stage, 'Variable name', 'FormLabel', 'Label'), {
+    Text: 'Variable name',
+  });
+  assert.deepEqual(taggedProperty(stage, 'Value', 'FormLabel', 'Label'), { Text: 'Value' });
+  assert.deepEqual(ancestorTags(stage, 'Variable name').slice(0, 1), ['FormControl']);
+  assert.deepEqual(ancestorTags(stage, 'Value').slice(0, 1), ['FormControl']);
+  assert.equal(formControlField(stage, 'Variable name', 'Entry'), placeholderNode(stage, 'NAME'));
+  assert.equal(formControlField(stage, 'Value', 'Entry'), placeholderNode(stage, 'value'));
   assert.equal(placeholderProperty(stage, 'value', 'Secret')?.Flag, true);
   assert.deepEqual(
     taggedProperty(stage, 'Remove TOKEN', 'IconButton', 'Icon'),
     { Text: 'user-trash-symbolic' },
     'row removal is a compact secondary action instead of a full text button',
   );
+  assert.ok(labelled(stage, 'Remove'), 'the destructive row action has a visible column heading');
+  assert.deepEqual(ancestorTags(stage, 'Remove TOKEN').slice(0, 2), ['Column', 'Row']);
+  assert.deepEqual(taggedProperty(stage, 'Remove TOKEN', 'IconButton', 'Justify'), {
+    Align: 'Start',
+  });
   assert.equal(
     ancestorProperty(stage, 'Remove TOKEN', 'Row', 'Wrap')?.Flag,
     true,

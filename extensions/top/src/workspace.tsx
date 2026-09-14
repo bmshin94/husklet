@@ -614,27 +614,38 @@ function Environment({
         </FormControlLabel>
       )}
       {values.map((row, index) => (
-        <Row key={`environment-${index}`} gap={1} width="fill" align="center" wrap>
-          <Entry
-            value={row[0]}
-            placeholder="NAME"
-            onChange={(event: Change) => replace(index, 0, event.value)}
-          />
-          <Entry
-            value={row[1]}
-            placeholder="value"
-            secret={!revealed}
-            grow
-            onChange={(event: Change) => replace(index, 1, event.value)}
-          />
-          <IconButton
-            icon="user-trash-symbolic"
-            label={`Remove ${row[0] || `variable ${index + 1}`}`}
-            tooltip={`Remove ${row[0] || `variable ${index + 1}`}`}
-            variant="ghost"
-            tone="danger"
-            onInvoke={() => onChange(values.filter((_, at) => at !== index))}
-          />
+        <Row key={`environment-${index}`} gap={1} width="fill" wrap>
+          <FormControl gap={1} width={{ chars: 20 }}>
+            <FormLabel label="Variable name" />
+            <Entry
+              value={row[0]}
+              placeholder="NAME"
+              width="fill"
+              onChange={(event: Change) => replace(index, 0, event.value)}
+            />
+          </FormControl>
+          <FormControl gap={1} grow width={{ minimum: { chars: 20 } }}>
+            <FormLabel label="Value" />
+            <Entry
+              value={row[1]}
+              placeholder="value"
+              secret={!revealed}
+              width="fill"
+              onChange={(event: Change) => replace(index, 1, event.value)}
+            />
+          </FormControl>
+          <Column gap={1}>
+            <Text label="Remove" />
+            <IconButton
+              icon="user-trash-symbolic"
+              label={`Remove ${row[0] || `variable ${index + 1}`}`}
+              tooltip={`Remove ${row[0] || `variable ${index + 1}`}`}
+              justify="start"
+              variant="ghost"
+              tone="danger"
+              onInvoke={() => onChange(values.filter((_, at) => at !== index))}
+            />
+          </Column>
         </Row>
       ))}
       <Row width="fill" justify="start">
