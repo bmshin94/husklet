@@ -3028,13 +3028,13 @@ export function extensionRemovalQuestion(name: string): string {
   return `Remove ${name}? Its private data and grants will be deleted. Created containers, images, volumes, and networks remain.`;
 }
 
-function lifecycleStateObserved(
+export function lifecycleStateObserved(
   action: LifecycleAction,
   expected: ExtensionSummary,
   current: ExtensionSummary | undefined,
 ): boolean {
   if (action === 'remove') {
-    return !current || current.image_digest !== expected.image_digest;
+    return !current;
   }
   if (!current || current.image_digest !== expected.image_digest) return false;
   if (action === 'disable') return current.enabled !== true;

@@ -7,7 +7,7 @@ import test from 'node:test';
 import { createElement as h } from 'react';
 import { connect, workspace } from '../../../extensions/base/react/dist/index.js';
 import { KIND, Reader, encode } from '../../../extensions/base/react/dist/wire.js';
-import { Extensions } from '../dist/app.js';
+import { Extensions, lifecycleStateObserved } from '../dist/app.js';
 import { host } from './host.js';
 
 test('digest-pinned same-version review rejects a substituted image over real Unix framing', async () => {
@@ -15,6 +15,15 @@ test('digest-pinned same-version review rejects a substituted image over real Un
   const socketPath = join(directory, 'host.sock');
   const oldDigest = `sha256:${'a'.repeat(64)}`;
   const nextDigest = `sha256:${'b'.repeat(64)}`;
+  assert.equal(
+    lifecycleStateObserved(
+      'remove',
+      { name: 'storybook', image_digest: oldDigest, enabled: true, status: 'duty' },
+      { name: 'storybook', image_digest: nextDigest, enabled: true, status: 'duty' },
+    ),
+    false,
+    'a replacement identity cannot satisfy removal reconciliation',
+  );
   const reference = `registry.example/storybook:2@sha256:${'c'.repeat(64)}`;
   const substitutedReference = `registry.example/storybook:2@sha256:${'d'.repeat(64)}`;
   const calls = [];
