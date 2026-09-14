@@ -203,6 +203,11 @@ const DEFINITIONS: &[Definition] = &[
         Flag
     ),
     launch!(
+        "HL_X86_BUS_THUNK",
+        "route the x86 guest BUS memory-guard slow path through one shared per-arena thunk",
+        Flag
+    ),
+    launch!(
         "HL_TRANSLIT_JCC_SELF_LINK",
         "link a same-ISA descriptor's own backward JCC edge straight to its entry",
         Flag

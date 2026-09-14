@@ -1085,6 +1085,11 @@ static int ea_record_observable(uint64_t size, uint32_t required) {
     return (required & X86_SOFT_WRITE) != 0 && size > 1;
 }
 
+/* Shared out-of-line BUS-guard slow path (HL_X86_BUS_THUNK); body laid at the region head,
+   see the obligation list beside emit_bus_thunk_body below.  0 -> caller emits the inline copy. */
+static int emit_bus_thunk_site(uint64_t size, uint64_t rip);
+static uint64_t g_bus_inline_sites, g_bus_inline_words, g_bus_thunk_sites, g_bus_thunk_words;
+
 void emit_memory_guard(int address_register, uint64_t size, uint64_t rip, uint32_t required) {
     /*
      * The post-store executable-alias observer consumes the original guest
@@ -1105,6 +1110,7 @@ void emit_memory_guard(int address_register, uint64_t size, uint64_t rip, uint32
     emit_direct_store_span_guard(address_register, size, rip, required);
     emit_soft_guard(address_register, size, rip, required);
     if (!jit_guest_bus_active()) return;
+    uint32_t *guard_begin = (uint32_t *)g_cp;
     /* Sticky guarded translations become nearly inert after the final BUS
        range is released: two loads plus this flag-free state branch, with no
        architectural stores or register spill. */
@@ -1131,6 +1137,22 @@ void emit_memory_guard(int address_register, uint64_t size, uint64_t rip, uint32
     emit32(0); /* tbz x9,#0,resume-filter-miss */
     uint8_t *slow = g_cp;
     *force_slow = 0x37000000u | (1u << 19) | (((uint32_t)((slow - (uint8_t *)force_slow) / 4) & 0x3FFFu) << 5) | 16u;
+    if (emit_bus_thunk_site(size, rip)) {
+        /* The thunk returns to the word after the literal triple, which is exactly the
+           `resume_fast` join below -- the same join the inline resume falls into. */
+        uint8_t *resume_fast_thunk = g_cp;
+        e_ldr(9, 28, OFF_BUS_SCRATCH);
+        e_ldr(address_register, 28, OFF_BUS_EA);
+        *filter_miss =
+            0x36000000u | (((uint32_t)((resume_fast_thunk - (uint8_t *)filter_miss) / 4) & 0x3FFFu) << 5) | 9u;
+        uint8_t *resume_inactive_thunk = g_cp;
+        *inactive_fast =
+            0x36000000u |
+            (((uint32_t)((resume_inactive_thunk - (uint8_t *)inactive_fast) / 4) & 0x3FFFu) << 5) | 16u;
+        g_bus_thunk_words += (uint64_t)((uint32_t *)g_cp - guard_begin);
+        return;
+    }
+    g_bus_inline_sites++;
     e_ldr(9, 28, OFF_BUS_SCRATCH);
     emit_spill();
     e_ldr(0, 28, OFF_BUS_EA);
@@ -1161,6 +1183,7 @@ void emit_memory_guard(int address_register, uint64_t size, uint64_t rip, uint32
     uint8_t *resume_inactive = g_cp;
     *inactive_fast =
         0x36000000u | (((uint32_t)((resume_inactive - (uint8_t *)inactive_fast) / 4) & 0x3FFFu) << 5) | 16u;
+    g_bus_inline_words += (uint64_t)((uint32_t *)g_cp - guard_begin);
 }
 
 void emit_guest_address_store(int address_register, int cpu_offset) {
@@ -1471,6 +1494,119 @@ static void emit_prologue(void) {
     }
     g_prologue_inline_sites++;
     emit_prologue_inline();
+}
+
+
+// ---------------- shared out-of-line BUS guard slow path (HL_X86_BUS_THUNK) ----------------
+// A guest run that asks for a persistent translation cache arms and LATCHES the guest BUS ledger
+// before its entry point (hl_guest_bus_arm_latched), because a persisted arena must carry guards in
+// every block and because a later 0 -> 1 activation edge would rotate the restored arena away.  So
+// with --translation-cache every guest memory operand takes emit_memory_guard's armed shape for the
+// whole run.  Its FAST path is 15 words; everything after the filter miss -- the 27-word spill, the
+// helper call, the BUS exit and the 26-word reload -- is INVARIANT at every site except for two
+// scalars (the access `size` and the guest `rip` to publish on a fault).  That invariant tail is
+// what takes the x86 guest's emitted code from ~782 to ~2,118 bytes per block.
+//
+// With this option on the tail collapses to
+//      bl   <bus thunk>
+//      .word rip_lo, .word rip_hi, .word size
+// and ONE copy of the tail lives per code arena.  Obligations, mirroring HL_X86_EXIT_THUNK and
+// HL_X86_PROLOGUE_THUNK:
+//   * Semantics.  The thunk performs exactly the inline tail's actions in exactly its order:
+//     restore guest x9 from cpu->bus_scratch (the filter probe borrowed it), full spill, call
+//     jit_guest_bus_fault(cpu->bus_ea, size), and either take the R_BUS exit through block_return
+//     with cpu->rip = the literal rip, or full-reload and resume.  The inline path's extra
+//     `ldr x9,[bus_scratch]; str x9,[R_OFF(9)]` repair before the BUS exit is dropped ONLY in the
+//     thunk, where it is provably dead: x9 is restored BEFORE the spill, so the spill has already
+//     written the architectural r9 into the saved cpu image.
+//   * ABI.  Guest GPRs are x0..x15, guest xmm v0..v15, guest flags the live NZCV, cpu pinned in x28,
+//     x16/x17 engine scratch, x20 the spill's flag scratch.  x30 is dead in emitted code (run_block
+//     saves the host x30 into cpu->host_save; emitted code already clobbers it at every `blr x16`
+//     helper call and every HL_X86_EXIT_THUNK site), so `bl` is free.  `blr x16` into the C helper
+//     clobbers x30, so the thunk stashes it in cpu->bus_scratch[1] across the call -- slot 0 is the
+//     guest-x9 save the guard already owns, slots 1 and 2 have no other reader in the engine, and
+//     using an EXISTING field keeps sizeof(struct cpu) -- and therefore the persistent cache
+//     header's cpu_sz identity -- unchanged.
+//   * Return point.  `bl` leaves x30 = the address of the first literal, so the resume arm returns
+//     to x30+12, which is exactly the `resume_fast` join the filter-miss branch also targets.  The
+//     three literals are only ever reached as data through that x30; nothing falls into them,
+//     because the word before them is an unconditional `bl`.
+//   * Reach.  `bl` is +/-128MB and the thunk lives in the SAME arena as its callers; the range is
+//     still checked and the site falls back to the inline tail if it ever could not.
+//   * Relocation.  The two baked host pointers (jit_guest_bus_fault and block_return) move from the
+//     site into the body, so a guarded arena records TWO PRELOC entries per arena instead of two per
+//     guarded memory operand -- a large reduction in PC_RELOC_CAP pressure, and the reason a warm
+//     cc1 stops poisoning its own save.  The `bl` is arena-internal and PC-relative and the literals
+//     are guest addresses (which the persistent cache pins, not slides), so a wholesale re-slid
+//     arena keeps every displacement valid.
+//   * Invalidation.  Tagged with the arena generation and required to lie inside the live arena, so
+//     a flush, an in-place rewind or a rotation makes the next region lay a fresh body instead of
+//     calling into dropped code.  A fork child inherits arena and entry together; exec replaces both.
+//   * Publication.  Laid from translate_block inside the dispatcher's jit_wprot(0) window and inside
+//     [g_emit_start, g_cp), so the existing jit_publish_code covers it with no new bracket.
+//   * Provenance.  The body is laid BEFORE `host`, so every recorded per-instruction host range and
+//     every region body/tail word census is unchanged, exactly as for the other two thunks.
+static int g_bus_thunk;              // 0 -> byte-identical to the historical inline emission
+static uint32_t *g_bus_thunk_entry;  // thunk entry in the CURRENT arena
+static uint64_t g_bus_thunk_gen;     // arena generation the entry belongs to
+static uint64_t g_bus_thunk_bodies, g_bus_thunk_body_words;
+
+void hl_x86_emit_set_bus_thunk(int enabled) {
+    g_bus_thunk = enabled != 0;
+}
+
+static int bus_thunk_live(void) {
+    return g_bus_thunk_entry != NULL && g_bus_thunk_gen == g_cache_gen &&
+           (uint8_t *)g_bus_thunk_entry >= (uint8_t *)g_cache && (uint8_t *)g_bus_thunk_entry < (uint8_t *)g_cp;
+}
+
+#define OFF_BUS_RETURN (OFF_BUS_SCRATCH + 8) /* bus_scratch[1]: the thunk's x30 save */
+
+static void emit_bus_thunk_body(void) {
+    if (!g_bus_thunk || bus_thunk_live()) return;
+    uint32_t *begin = (uint32_t *)g_cp;
+    g_bus_thunk_entry = begin;
+    g_bus_thunk_gen = g_cache_gen;
+    e_ldr(9, 28, OFF_BUS_SCRATCH); // the filter probe borrowed guest x9; restore it BEFORE the spill
+    emit_spill();                  // ... so the spill writes the architectural r9 into the cpu image
+    e_str(30, 28, OFF_BUS_RETURN); // the helper call below clobbers x30
+    emit32(0xB9400000u | (2u << 10) | (30 << 5) | 1u); // ldr w1,[x30,#8]  -> access size
+    e_ldr(0, 28, OFF_BUS_EA);                          // x0 = the guest effective address
+    emit_host_ptr(16, (uint64_t)(uintptr_t)&jit_guest_bus_fault, PRELOC_HOSTGLOBAL);
+    emit32(0xD63F0000u | (16 << 5)); // blr x16
+    uint32_t *fault = (uint32_t *)g_cp;
+    emit32(0); // cbnz x0, Lfault
+    e_ldr(30, 28, OFF_BUS_RETURN);
+    emit_reload_full();
+    e_addi(30, 30, 12, 1); // step over the literal triple
+    e_br(30);
+    uint8_t *Lfault = g_cp;
+    *fault = 0xB5000000u | (((uint32_t)((Lfault - (uint8_t *)fault) / 4) & 0x7FFFFu) << 5) | 0u;
+    e_str(0, 28, OFF_FAULT_ADDR);
+    e_ldr(30, 28, OFF_BUS_RETURN);
+    emit32(0x29400000u | (17 << 10) | (30 << 5) | 16); // ldp w16,w17,[x30]
+    e_rrr(A_ORR, 16, 16, 17, 1, 32);                   // orr x16,x16,x17,lsl #32  -> guest rip
+    e_str(16, 28, OFF_RIP);
+    e_movconst(16, R_BUS);
+    e_str(16, 28, OFF_RSN);
+    emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
+    e_br(16);
+    g_bus_thunk_bodies++;
+    g_bus_thunk_body_words += (uint64_t)((uint32_t *)g_cp - begin);
+}
+
+// The 4-word call site in place of the invariant inline tail.  0 -> caller must emit that tail
+// (option off, no live thunk, or out of `bl` reach).
+static int emit_bus_thunk_site(uint64_t size, uint64_t rip) {
+    if (!g_bus_thunk || !bus_thunk_live()) return 0;
+    int64_t d = ((uint8_t *)g_bus_thunk_entry - (uint8_t *)g_cp) / 4;
+    if (d < -(INT64_C(1) << 25) || d >= (INT64_C(1) << 25)) return 0;
+    emit32(0x94000000u | ((uint32_t)d & 0x3FFFFFFu)); // bl thunk; x30 == the literal triple
+    emit32((uint32_t)(rip & 0xFFFFFFFFu));
+    emit32((uint32_t)(rip >> 32));
+    emit32((uint32_t)size);
+    g_bus_thunk_sites++;
+    return 1;
 }
 
 // ---------------- S1: inline vDSO-style time fast path (cntvct-based) ----------------

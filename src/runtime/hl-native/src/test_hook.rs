@@ -205,6 +205,18 @@ pub fn x86_reserved_register_test() -> i32 {
 /// when a fixture overwrites it, `2` when a fixture emitted no load/store pair
 /// (a vacuous pass), `3` when the scan met an instruction class it cannot decode,
 /// and `4` on a host without the emitters.
+/// Reports the emitted host-word cost of one guest BUS memory guard.
+///
+/// `scenario` bits: 1 = ledger armed, 2 = `HL_X86_BUS_THUNK` on, 4 = persistent
+/// cache on.  Returns the word count, `-1` when no guard shape was emitted, and
+/// `-2` on a host without the x86-guest emitters.
+#[cfg(feature = "native-test-hooks")]
+#[doc(hidden)]
+#[must_use]
+pub fn x86_bus_guard_cost_test(scenario: u32) -> i32 {
+    bindings::x86_bus_guard_cost_test(scenario)
+}
+
 #[cfg(feature = "native-test-hooks")]
 #[doc(hidden)]
 #[must_use]

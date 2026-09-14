@@ -345,6 +345,15 @@ static int hl_x86_a64_route_report(char *out, size_t size) {
                        (unsigned long long)g_prologue_thunk_sites, (unsigned long long)g_prologue_thunk_sites,
                        (unsigned long long)g_prologue_thunk_bodies,
                        (unsigned long long)g_prologue_thunk_body_words);
+    /* BUS-guard accounting: inline guards (fast path + the invariant tail) vs 4-word thunk call
+       sites (fast path + `bl` + 3 literals), plus the per-arena thunk bodies (OUTSIDE the per-region
+       word census, like the exit and prologue thunk bodies above). */
+    hl_x86_a64_appendf(out, size, &written,
+                       "[prof] x86-a64-bus: inline_sites=%llu inline_words=%llu thunk_sites=%llu"
+                       " thunk_words=%llu bodies=%llu body_words=%llu\n",
+                       (unsigned long long)g_bus_inline_sites, (unsigned long long)g_bus_inline_words,
+                       (unsigned long long)g_bus_thunk_sites, (unsigned long long)g_bus_thunk_words,
+                       (unsigned long long)g_bus_thunk_bodies, (unsigned long long)g_bus_thunk_body_words);
     static const char *const other_name[HL_X86_A64_OTHER_COUNT] = {"stack", "move", "address", "system", "unknown"};
     for (unsigned other = 0; other < HL_X86_A64_OTHER_COUNT; ++other)
         hl_x86_a64_appendf(out, size, &written,
@@ -1659,6 +1668,8 @@ static void *translate_block(uint64_t gpc) {
     // Same seam for the shared out-of-line region prologue: laid before `host`, so `host` still
     // starts the region proper and every recorded body/provenance range is unchanged.
     emit_prologue_thunk_body();
+    // Same seam again for the shared out-of-line BUS guard tail.
+    emit_bus_thunk_body();
     void *host = g_cp;
     emit_prologue();
     void *body = g_cp;

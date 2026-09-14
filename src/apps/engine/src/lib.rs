@@ -142,6 +142,9 @@ struct LaunchArguments {
     /// Route the x86 region prologue through one shared per-arena trampoline (off by default).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
     x86_prologue_thunk: Option<TranslitFeatureControl>,
+    /// Route the x86 guest BUS memory-guard slow path through one shared per-arena thunk (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_bus_thunk: Option<TranslitFeatureControl>,
     /// Control the strict FS-load bridge (enabled by default for x86-64 transliteration).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, requires = "translit")]
     translit_fs_load_bridge: Option<TranslitFeatureControl>,
@@ -480,6 +483,11 @@ fn execute(guest: Guest, launch: &LaunchArguments) -> Result<hl_engine::engine::
             "--x86-prologue-thunk is available only in the x86-64 worker".to_owned(),
         ));
     }
+    if launch.x86_bus_thunk.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-bus-thunk is available only in the x86-64 worker".to_owned(),
+        ));
+    }
     if launch.x86_ea_record_elide.is_some() && guest != Guest::X86_64 {
         return Err(Failure::Request(
             "--x86-ea-record-elide is available only in the x86-64 worker".to_owned(),
@@ -635,6 +643,7 @@ fn rootfs_plan(
         (launch.translit_fs_load_bridge, "HL_TRANSLIT_FS_LOAD_BRIDGE"),
         (launch.x86_exit_thunk, "HL_X86_EXIT_THUNK"),
         (launch.x86_prologue_thunk, "HL_X86_PROLOGUE_THUNK"),
+        (launch.x86_bus_thunk, "HL_X86_BUS_THUNK"),
         (launch.exec_ibtc_lazy, "HL_EXEC_IBTC_LAZY"),
         (launch.pcache_libs, "HL_PCACHE_LIBS"),
         (launch.pcache_link_image, "HL_PCACHE_LINK_IMAGE"),
@@ -990,6 +999,7 @@ mod tests {
         assert_eq!(defaults.translit_fs_load_bridge, None);
         assert_eq!(defaults.x86_exit_thunk, None);
         assert_eq!(defaults.x86_prologue_thunk, None);
+        assert_eq!(defaults.x86_bus_thunk, None);
         assert_eq!(defaults.x86_ea_record_elide, None);
         assert_eq!(defaults.x86_rmload_fold, None);
         assert_eq!(defaults.x86_owner_index, None);
@@ -1007,6 +1017,7 @@ mod tests {
             "--translit-fs-load-bridge",
             "--x86-exit-thunk=on",
             "--x86-prologue-thunk=on",
+            "--x86-bus-thunk=on",
             "--x86-ea-record-elide=on",
             "--x86-rmload-fold=off",
             "--x86-owner-index=on",
@@ -1038,6 +1049,7 @@ mod tests {
         );
         assert_eq!(selected.x86_exit_thunk, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.x86_prologue_thunk, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_bus_thunk, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.x86_ea_record_elide, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.x86_rmload_fold, Some(super::TranslitFeatureControl::Off));
         assert_eq!(selected.x86_owner_index, Some(super::TranslitFeatureControl::On));
@@ -1548,6 +1560,7 @@ mod tests {
         assert_eq!(defaults.options.get("HL_TRANSLIT_RIPREL_LOAD_BRIDGE"), None);
         assert_eq!(defaults.options.get("HL_X86_EXIT_THUNK"), None);
         assert_eq!(defaults.options.get("HL_X86_PROLOGUE_THUNK"), None);
+        assert_eq!(defaults.options.get("HL_X86_BUS_THUNK"), None);
         assert_eq!(defaults.options.get("HL_X86_EA_RECORD_ELIDE"), None);
         assert_eq!(defaults.options.get("HL_X86_RMLOAD_FOLD"), None);
         assert_eq!(defaults.options.get("HL_X86_OWNER_INDEX"), None);

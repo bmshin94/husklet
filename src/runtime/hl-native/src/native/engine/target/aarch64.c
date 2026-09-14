@@ -67,6 +67,11 @@ HL_API __attribute__((weak)) int hl_x86_64_translit_displaced_test(uint32_t scen
     (void)scenario;
     return -1; /* the x86 same-ISA transliterator is absent on this host */
 }
+
+HL_API __attribute__((weak)) int hl_x86_64_bus_guard_cost_test(uint32_t scenario) {
+    (void)scenario;
+    return -2; /* the x86-guest emitters are absent in this target build */
+}
 #endif
 
 /* Instance-scoped host seam supplied by hl_engine. CLI launches retain their native-host path with NULL. */

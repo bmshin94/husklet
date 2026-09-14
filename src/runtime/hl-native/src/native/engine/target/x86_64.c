@@ -1586,6 +1586,9 @@ void hl_x86_emit_set_exit_thunk(int enabled) {
 void hl_x86_emit_set_prologue_thunk(int enabled) {
     (void)enabled;
 }
+void hl_x86_emit_set_bus_thunk(int enabled) {
+    (void)enabled;
+}
 #endif
 
 static int fastclk_fault_fixup(siginfo_t *info, void *native_context) {
@@ -2153,6 +2156,7 @@ int hl_run_linux_guest(const hl_host_services *host, hl_linux_abi *box, const ch
     /* Replace the inline 27-word region prologue with a `bl` to one shared per-arena trampoline.
        Unset -> the historical inline emission, byte for byte. */
     hl_x86_emit_set_prologue_thunk(hl_option_flag_value("HL_X86_PROLOGUE_THUNK", 0));
+    hl_x86_emit_set_bus_thunk(hl_option_flag_value("HL_X86_BUS_THUNK", 0));
     translit_profile_options_refresh();
     const char *rdir = hl_option_get("HL_RESTORE");
     if (rdir != NULL) return hl_vfs_cursor_state_finish(ckpt_restore_tree(rootfs));
@@ -2259,6 +2263,74 @@ HL_API int hl_x86_64_dispatch_profile_test(void) {
 
 HL_API int hl_x86_64_stw_cpu_slot_lifecycle_test(void) {
     return stw_translated_lifecycle_test();
+}
+
+/*
+ * Per-instruction cost of the guest BUS memory guard, in emitted host words.
+ *
+ * Enabling the persistent translation cache arms and LATCHES the guest BUS ledger for the whole run
+ * (hl_guest_bus_arm_latched, called from the launch path before pcache_load), so every guest memory
+ * operand takes emit_memory_guard's armed shape instead of its disarmed one.  This hook emits ONE
+ * representative operand -- an 8-byte read whose effective address is already in the reserved x17 --
+ * under each combination and reports the word count, so the arena-level bytes-per-block ratio has a
+ * per-instruction explanation rather than a correlation.
+ *
+ * `scenario` bits: 1 = ledger armed, 2 = HL_X86_BUS_THUNK on, 4 = persistent cache on (which makes
+ * emit_host_ptr lay a fixed 4-word relocatable slot instead of a compact movconst).  Returns the word
+ * count, or -1 when the guard shape could not be emitted and -2 on a host without the emitters.
+ *
+ * The hook owns a local arena: it moves g_cache/g_cp/g_cache_gen at the buffer, drops any thunk entry
+ * from an earlier call, and restores every global -- including the relocation table's count and the
+ * poison flag, which a cache-on emission would otherwise grow -- before returning.
+ */
+HL_API int hl_x86_64_bus_guard_cost_test(uint32_t scenario) {
+#if !defined(HL_HOST_CPU_AARCH64)
+    (void)scenario;
+    return -2;
+#else
+    static uint32_t code[8192];
+    uint8_t *saved_cache = g_cache;
+    uint8_t *saved_cp = g_cp;
+    uint64_t saved_gen = g_cache_gen;
+    uint32_t *saved_entry = g_bus_thunk_entry;
+    uint64_t saved_thunk_gen = g_bus_thunk_gen;
+    int saved_thunk = g_bus_thunk;
+    int saved_pcache = g_pcache;
+    int saved_poison = g_pcache_poison;
+    int saved_reloc = g_reloc_table.count;
+    int saved_recorded = g_address_recorded;
+    int saved_rwx = g_rwx_guest;
+    int saved_bus = jit_guest_bus_active();
+
+    g_address_recorded = 0;
+    g_rwx_guest = 0;
+    g_pcache = (scenario & 4u) ? 1 : 0;
+    g_bus_thunk = (scenario & 2u) ? 1 : 0;
+    g_bus_thunk_entry = NULL;
+    g_bus_thunk_gen = 0;
+    jit_guest_bus_test_set((scenario & 1u) ? 1 : 0);
+    g_cache = (uint8_t *)code;
+    g_cp = (uint8_t *)code;
+    g_cache_gen = saved_gen;
+    emit_bus_thunk_body(); /* laid at a region head in production; excluded from the site count */
+    uint32_t *site = (uint32_t *)g_cp;
+    emit_memory_guard(17, 8, UINT64_C(0x401000), X86_SOFT_READ);
+    int words = (int)((uint32_t *)g_cp - site);
+
+    g_cache = saved_cache;
+    g_cp = saved_cp;
+    g_cache_gen = saved_gen;
+    g_bus_thunk_entry = saved_entry;
+    g_bus_thunk_gen = saved_thunk_gen;
+    g_bus_thunk = saved_thunk;
+    g_pcache = saved_pcache;
+    g_pcache_poison = saved_poison;
+    g_reloc_table.count = saved_reloc;
+    g_address_recorded = saved_recorded;
+    g_rwx_guest = saved_rwx;
+    jit_guest_bus_test_set(saved_bus);
+    return words > 0 ? words : -1;
+#endif
 }
 
 /* See hl_linux_imported_path_guard_probe (linux_abi/syscall/fs.c): the pathname operand a handler

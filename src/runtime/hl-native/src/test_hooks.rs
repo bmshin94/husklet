@@ -302,6 +302,12 @@ pub(crate) fn x86_reserved_register_test() -> i32 {
 }
 
 #[cfg(feature = "native-test-hooks")]
+pub(crate) fn x86_bus_guard_cost_test(scenario: u32) -> i32 {
+    // SAFETY: the feature-gated hook owns its local emitter buffer and restores every global it moves.
+    unsafe { (test_api().x86_64_bus_guard_cost)(scenario) }
+}
+
+#[cfg(feature = "native-test-hooks")]
 pub(crate) fn x86_double_shift_memory_ea_test() -> i32 {
     // SAFETY: the feature-gated hook owns its local emitter buffer and restores every global it moves.
     unsafe { (test_api().x86_64_double_shift_memory_ea)() }

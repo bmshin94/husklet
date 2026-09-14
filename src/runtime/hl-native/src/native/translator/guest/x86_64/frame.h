@@ -41,6 +41,7 @@ void hl_x86_emit_set_exit_thunk(int enabled);
    one shared out-of-line trampoline per arena (which returns with `br x30`, the `bl`'s own link
    value, == the region's `body`). Same host-arch seam as the exit thunk above. */
 void hl_x86_emit_set_prologue_thunk(int enabled);
+void hl_x86_emit_set_bus_thunk(int enabled);
 
 uint64_t hl_x86_signal_nzcv_to_eflags(uint64_t nzcv);
 uint64_t hl_x86_signal_eflags_to_nzcv(uint64_t eflags);
