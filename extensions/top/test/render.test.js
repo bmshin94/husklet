@@ -4700,11 +4700,21 @@ test('terminal management exposes exact pin state and acts through immutable tab
       resource,
     }),
   );
-  assert.equal(placeholderProperty(stage, 'New tab title', 'Grow')?.Number, 0);
+  assert.equal(placeholderProperty(stage, 'Tab title', 'Grow')?.Number, 0);
   assert.ok(
-    placeholderProperty(stage, 'New tab title', 'Width'),
+    placeholderProperty(stage, 'Tab title', 'Width'),
     'tab creation stays compact instead of consuming the page height',
   );
+  assert.deepEqual(ancestorTags(stage, 'New terminal tab').slice(0, 2), ['FormControl', 'Column']);
+  assert.deepEqual(taggedProperty(stage, 'Create tab', 'Button', 'Size'), {
+    ControlSize: 'Small',
+  });
+  assert.deepEqual(taggedProperty(stage, 'Create tab', 'Button', 'Variant'), {
+    Variant: 'Filled',
+  });
+  assert.deepEqual(taggedProperty(stage, 'Create tab', 'Button', 'Tone'), {
+    Tone: 'Accent',
+  });
   assert.ok(labelled(stage, 'Pane 1'));
   assert.equal(
     stage.frames
@@ -4712,6 +4722,16 @@ test('terminal management exposes exact pin state and acts through immutable tab
       .filter((patch) => patch.Create?.tag === 'ListRow').length,
     2,
     'one compact row represents the tab and one represents its pane',
+  );
+  assert.deepEqual(ancestorProperty(stage, 'Build', 'Card', 'Width'), {
+    Length: 'Fill',
+  });
+  assert.deepEqual(ancestorProperty(stage, 'Build', 'CardContent', 'Pad'), {
+    Length: { Step: 2 },
+  });
+  assert.ok(
+    ancestorTags(stage, 'Pane 1').includes('Card'),
+    'one bounded tab surface owns its pane controls',
   );
   assert.equal(labelled(stage, 'Tab 1'), undefined, 'tab metadata is not a second billboard');
   invoke(stage, 'Pin tab');
@@ -5121,8 +5141,8 @@ test('terminal management opens tabs and spawns exact argv through observed oper
   stage.render(h(Terminals, { api: { terminal }, resource }));
   await settled();
   await settled();
-  change(stage, 'New tab title', ' Tests ');
-  invoke(stage, 'Create terminal tab');
+  change(stage, 'Tab title', ' Tests ');
+  invoke(stage, 'Create tab');
   await settled();
   await settled();
   change(stage, 'Program and arguments, e.g. make test', 'make test');

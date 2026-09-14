@@ -1579,6 +1579,9 @@ mod unix {
             if fixture == "populated" && name == "settings" {
                 assert_settings_group_layout(&root, width, width_name);
             }
+            if fixture == "populated" && name == "terminals" {
+                assert_terminal_management_layout(&root, width, width_name);
+            }
             capture_stable(&window, &format!("{capture_fixture}-{name}-{width_name}"), width, 800);
             if fixture == "error" && name == "workspace" {
                 let disclosure = find_expander(&root, "Technical details");
@@ -5392,6 +5395,76 @@ mod unix {
                     .into_iter()
                     .all(|group| group >= 900.0),
                 "{case} desktop settings summaries do not span the usable content width"
+            );
+        }
+    }
+
+    fn assert_terminal_management_layout(root: &gtk::Widget, width: i32, case: &str) {
+        let title_label = find_label(root, "New terminal tab");
+        let title = find_entry_placeholder(root, "Tab title");
+        assert_eq!(title_label.accessible_role(), gtk::AccessibleRole::Label);
+        assert_eq!(title.accessible_role(), gtk::AccessibleRole::TextBox);
+        let create = find_button(root, "Create tab");
+        assert!(create.has_css_class("size-small"));
+        assert!(create.has_css_class("variant-filled"));
+        assert!(create.has_css_class("tone-accent"));
+        assert_standard_action(&create, case, "terminal tab creation", 28);
+        assert!(
+            !create.is_sensitive(),
+            "{case} empty terminal title must keep creation disabled"
+        );
+        let title_bounds = title
+            .compute_bounds(root)
+            .expect("terminal title entry belongs to Top root");
+        let create_bounds = create
+            .compute_bounds(root)
+            .expect("terminal create action belongs to Top root");
+        assert!(
+            (title_bounds.y() + title_bounds.height() / 2.0 - create_bounds.y() - create_bounds.height() / 2.0).abs()
+                <= 4.0,
+            "{case} terminal creation field and action lost their shared row: title={title_bounds:?}, create={create_bounds:?}"
+        );
+
+        let cards = widgets_with_class(root, "hl-card")
+            .into_iter()
+            .filter(|card| has_label(card, "Daily work · Pinned"))
+            .collect::<Vec<_>>();
+        assert_eq!(cards.len(), 1, "{case} terminal tab must own one bounded surface");
+        let card = &cards[0];
+        assert!(card.has_css_class("variant-filled"));
+        for label in ["Pane 1", "Live terminal", "Input", "Layout", "Advanced"] {
+            assert!(has_label(card, label), "{case} terminal card omitted {label}");
+        }
+        let card_bounds = card.compute_bounds(root).expect("terminal card belongs to Top root");
+        let content_start = if width == 600 { 16.0 } else { 184.0 };
+        assert_eq!(
+            card_bounds.x(),
+            content_start,
+            "{case} terminal card lost the page inset"
+        );
+        assert_eq!(
+            card_bounds.x() + card_bounds.width(),
+            width as f32 - 16.0,
+            "{case} terminal card does not use the available page width"
+        );
+        assert!(
+            card_bounds.height() <= 360.0,
+            "{case} terminal card expanded to {}px instead of retaining compact rows",
+            card_bounds.height()
+        );
+        for label in ["Focus tab", "Unpin tab", "Refresh pane 1"] {
+            let action = find_button(card, label);
+            assert_eq!(action.accessible_role(), gtk::AccessibleRole::Button);
+            assert!(action.is_focusable(), "{case} {label} is not keyboard focusable");
+            let bounds = action
+                .compute_bounds(root)
+                .unwrap_or_else(|| panic!("{case} {label} belongs to Top root"));
+            assert!(
+                bounds.x() >= card_bounds.x()
+                    && bounds.x() + bounds.width() <= card_bounds.x() + card_bounds.width()
+                    && bounds.y() >= card_bounds.y()
+                    && bounds.y() + bounds.height() <= card_bounds.y() + card_bounds.height(),
+                "{case} {label} escaped the terminal card: action={bounds:?}, card={card_bounds:?}"
             );
         }
     }
