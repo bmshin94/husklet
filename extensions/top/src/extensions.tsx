@@ -2572,6 +2572,13 @@ export function Extensions({
                               const currentCompatibility = catalogueEntry
                                 ? catalogueCompatibility(catalogueEntry, workspaceArchitecture)
                                 : null;
+                              const identityTrust = catalogueEntry
+                                ? catalogueTrust(
+                                    catalogueAuthoritative
+                                      ? catalogueEntry
+                                      : { ...catalogueEntry, publisher_verified: false },
+                                  )
+                                : null;
                               const provider = extension.pane_providers?.[0];
                               const hasCardAction = Boolean(
                                 update ||
@@ -2591,15 +2598,15 @@ export function Extensions({
                                     <Row gap={1} width="fill" align="center" justify="start" wrap>
                                       <Column gap={0} grow>
                                         <Text
-                                          label={extension.name}
+                                          label={catalogueEntry?.title ?? extension.name}
                                           tooltip={extension.image_digest}
                                         />
                                         <Text
-                                          label={
+                                          label={`${catalogueEntry && catalogueEntry.title !== extension.name ? `${extension.name} · ` : ''}${
                                             extension.version
                                               ? `Version ${extension.version}`
                                               : 'Version unavailable'
-                                          }
+                                          }`}
                                           color="text-dim"
                                         />
                                       </Column>
@@ -2614,6 +2621,16 @@ export function Extensions({
                                         }
                                       />
                                       {builtIn ? <Badge label="Built-in" tone="accent" /> : null}
+                                      {catalogueEntry && identityTrust ? (
+                                        <Badge
+                                          {...identityTrust}
+                                          label={`${catalogueEntry.publisher} · ${
+                                            identityTrust.label === 'Verified publisher'
+                                              ? 'Verified'
+                                              : 'Unverified'
+                                          }`}
+                                        />
+                                      ) : null}
                                       {!update && extension.name !== 'top' && faulted ? (
                                         <Button
                                           key="lifecycle"

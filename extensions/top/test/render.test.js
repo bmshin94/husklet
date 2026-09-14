@@ -1768,6 +1768,12 @@ test('installed extension management searches, filters, pages, and clears fifty 
   assert.ok(labelled(stage, 'Healthy extensions'));
   assert.ok(labelled(stage, 'Show 12 more · 38 remaining'));
   assert.deepEqual(taggedProperty(stage, 'Disabled', 'Badge', 'Tone'), { Tone: 'Neutral' });
+  assert.ok(labelled(stage, 'Database Studio'));
+  assert.ok(labelled(stage, 'database · Version 1.0.0'));
+  assert.deepEqual(taggedProperty(stage, 'Acme Data · Unverified', 'Badge', 'Tone'), {
+    Tone: 'Warning',
+  });
+  assert.equal(labelled(stage, 'faulted-agent · Version 1.0.0'), undefined);
   invoke(stage, 'Show 12 more · 38 remaining');
   await settled();
   assert.ok(labelled(stage, 'Show 12 more · 26 remaining'));

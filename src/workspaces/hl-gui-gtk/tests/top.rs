@@ -783,6 +783,48 @@ mod unix {
                     find_image(pagination.upcast_ref()).icon_name().as_deref(),
                     Some("go-down-symbolic")
                 );
+                if !catalogue_empty {
+                    let installed_title = find_label(&root, "Developer Tool 01");
+                    let installed_card = ancestor_with_class(installed_title.upcast_ref(), "hl-card")
+                        .expect("installed catalogue title belongs to its card");
+                    assert!(
+                        !has_label(&installed_card, "developer-tool-01"),
+                        "{width_name} installed card must not present the implementation slug as its product title"
+                    );
+                    let installed_identity = find_label(&installed_card, "developer-tool-01 · Version 0.9.0");
+                    let installed_publisher = ancestor_with_class(
+                        &find_mapped_labelled(&installed_card, "Community · Unverified"),
+                        "hl-badge",
+                    )
+                    .expect("installed publisher trust is a semantic badge");
+                    assert!(
+                        installed_publisher.has_css_class("tone-warning"),
+                        "{width_name} unverified installed publisher lost its warning tone"
+                    );
+                    let title_bounds = installed_title
+                        .compute_bounds(&root)
+                        .expect("installed title belongs to Top root");
+                    let identity_bounds = installed_identity
+                        .compute_bounds(&root)
+                        .expect("installed identity belongs to Top root");
+                    let publisher_bounds = installed_publisher
+                        .compute_bounds(&root)
+                        .expect("installed publisher belongs to Top root");
+                    assert!(
+                        (title_bounds.x() - identity_bounds.x()).abs() <= 1.0,
+                        "{width_name} installed stable identity is detached from its product title: title={title_bounds:?}, identity={identity_bounds:?}"
+                    );
+                    assert!(
+                        identity_bounds.y() - title_bounds.y() - title_bounds.height() <= 4.0,
+                        "{width_name} installed identity metadata is not compact: title={title_bounds:?}, identity={identity_bounds:?}"
+                    );
+                    assert!(
+                        publisher_bounds.y() >= title_bounds.y() - 2.0
+                            && publisher_bounds.y() + publisher_bounds.height()
+                                <= identity_bounds.y() + identity_bounds.height() + 2.0,
+                        "{width_name} installed publisher trust is detached from its compact identity block: title={title_bounds:?}, identity={identity_bounds:?}, publisher={publisher_bounds:?}"
+                    );
+                }
                 let pagination_bounds = pagination
                     .compute_bounds(&root)
                     .expect("installed pagination belongs to Top root");
@@ -4023,7 +4065,8 @@ mod unix {
             has_label(&success_root, "Installed extensions"),
             "verified publication moves to the durable installed inventory"
         );
-        assert!(has_label(&success_root, "developer-tool-01"));
+        assert!(has_label(&success_root, "Developer Tool 01"));
+        assert!(has_label(&success_root, "developer-tool-01 · Version 1.0.0"));
         assert!(
             !has_label(&success_root, "Find extensions"),
             "success cannot leave the committed extension hidden in Discover"
