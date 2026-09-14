@@ -4561,7 +4561,18 @@ test('every empty operational page explains what is absent and how to proceed', 
       { Length: { Step: 4 } },
       `${section} uses the same 16px page inset as the manager surfaces`,
     );
-    if (['Processes', 'Executions', 'Terminals'].includes(section)) {
+    if (section === 'Processes') {
+      assert.deepEqual(taggedProperty(stage, 'Refresh', 'Button', 'Icon'), {
+        Text: 'view-refresh-symbolic',
+      });
+      assert.deepEqual(taggedProperty(stage, 'Refresh', 'Button', 'Size'), {
+        ControlSize: 'Small',
+      });
+      assert.deepEqual(taggedProperty(stage, 'Refresh', 'Button', 'Tooltip'), {
+        Text: 'Refresh processes',
+      });
+    }
+    if (['Executions', 'Terminals'].includes(section)) {
       assert.deepEqual(taggedProperty(stage, 'Refresh', 'IconButton', 'Icon'), {
         Text: 'view-refresh-symbolic',
       });
@@ -9203,8 +9214,9 @@ function taggedProperty(stage, label, tag, prop) {
         tagged.has(patch.SetProp.id),
     )
     .at(-1)?.SetProp.id;
-  return patches.filter((patch) => patch.SetProp?.id === node && patch.SetProp.prop === prop).at(-1)
-    ?.SetProp.value;
+  return patches
+    .filter((patch) => patch.SetProp?.id === node && patch.SetProp?.prop === prop)
+    .at(-1)?.SetProp.value;
 }
 
 function latestPropertyForTag(stage, tag, prop) {
