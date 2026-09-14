@@ -61,15 +61,17 @@ fn verify_client(manifest: &Path, recorded: &str) -> Result<(), String> {
     if !package.is_dir() {
         return Ok(());
     }
-    let client = package.join("src");
     let marker = format!("// Protocol artifact fnv1a64:{recorded}");
-    for name in ["generated-protocol.js", "generated-protocol.d.ts"] {
-        let generated = std::fs::read_to_string(client.join(name))
-            .map_err(|error| format!("cannot read generated TypeScript client {name}: {error}"))?;
-        if generated.lines().nth(1) != Some(marker.as_str()) {
-            return Err(format!(
-                "generated TypeScript client {name} is stale relative to protocol/v1.json; run `npm run protocol:generate --prefix extensions/base/client`"
-            ));
+    for directory in ["src", "dist"] {
+        for name in ["generated-protocol.js", "generated-protocol.d.ts"] {
+            let relative = format!("{directory}/{name}");
+            let generated = std::fs::read_to_string(package.join(&relative))
+                .map_err(|error| format!("cannot read generated TypeScript client {relative}: {error}"))?;
+            if generated.lines().nth(1) != Some(marker.as_str()) {
+                return Err(format!(
+                    "generated TypeScript client {relative} is stale relative to protocol/v1.json; run `npm run protocol:generate --prefix extensions/base/client` and rebuild the package"
+                ));
+            }
         }
     }
     Ok(())
@@ -125,26 +127,33 @@ mod tests {
     fn both_generated_client_artifacts_must_name_the_exact_protocol_fingerprint() {
         let scratch = std::env::temp_dir().join(format!("hl-extension-client-freshness-{}", std::process::id()));
         let manifest = scratch.join("src/workspaces/hl-extension");
-        let client = scratch.join("extensions/base/client/src");
+        let package = scratch.join("extensions/base/client");
         fs::create_dir_all(&manifest).unwrap();
-        fs::create_dir_all(&client).unwrap();
+        fs::create_dir_all(package.join("src")).unwrap();
+        fs::create_dir_all(package.join("dist")).unwrap();
         let marker = "// Protocol artifact fnv1a64:0123456789abcdef";
         let generated = format!("// Generated protocol.\n{marker}\n");
-        fs::write(client.join("generated-protocol.js"), &generated).unwrap();
-        fs::write(client.join("generated-protocol.d.ts"), &generated).unwrap();
+        for directory in ["src", "dist"] {
+            fs::write(package.join(directory).join("generated-protocol.js"), &generated).unwrap();
+            fs::write(package.join(directory).join("generated-protocol.d.ts"), &generated).unwrap();
+        }
         verify_client(&manifest, "0123456789abcdef").expect("matching generated pair");
 
-        fs::write(client.join("generated-protocol.d.ts"), "// stale\n").unwrap();
+        fs::write(package.join("src/generated-protocol.d.ts"), "// stale\n").unwrap();
         let error = verify_client(&manifest, "0123456789abcdef").unwrap_err();
-        assert!(error.contains("generated-protocol.d.ts is stale"));
+        assert!(error.contains("src/generated-protocol.d.ts is stale"));
 
         fs::write(
-            client.join("generated-protocol.d.ts"),
+            package.join("src/generated-protocol.d.ts"),
             format!("// stale\nconst decoy = {marker:?};\n"),
         )
         .unwrap();
         let error = verify_client(&manifest, "0123456789abcdef").unwrap_err();
-        assert!(error.contains("generated-protocol.d.ts is stale"));
+        assert!(error.contains("src/generated-protocol.d.ts is stale"));
+        fs::write(package.join("src/generated-protocol.d.ts"), &generated).unwrap();
+        fs::write(package.join("dist/generated-protocol.js"), "// stale\n").unwrap();
+        let error = verify_client(&manifest, "0123456789abcdef").unwrap_err();
+        assert!(error.contains("dist/generated-protocol.js is stale"));
         fs::remove_dir_all(scratch).unwrap();
     }
 
