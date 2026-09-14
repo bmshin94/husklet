@@ -408,10 +408,30 @@ const DEFINITIONS: &[Definition] = &[
         "test-only occupy the reusable fixed-image address",
         Flag
     ),
+    launch!(
+        "HL_PCACHE_LIBS",
+        "persist translations of content-keyed guest library mappings",
+        Flag
+    ),
+    launch!(
+        "HL_PCACHE_LINK_IMAGE",
+        "treat a non-PIE image at its deterministic link address as cache-revivable",
+        Flag
+    ),
+    launch!(
+        "HL_PCACHE_CONVERGE",
+        "let a warm run re-publish the cache within bounded growth",
+        Flag
+    ),
     internal!(
         "HL_PCACHE_OBSERVE",
         "emit structured persistent-cache diagnostics",
         Flag
+    ),
+    internal!(
+        "HL_XLAT_CENSUS",
+        "append a cross-process translation-provenance census to a path",
+        Path
     ),
     internal!(
         "HL_PCACHE_EXEC_AUTHORITY",

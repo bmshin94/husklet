@@ -925,6 +925,11 @@ static void exec_reload_image(struct cpu *cpu, exec_prepared *prepared) {
        exec_ibtc_lazy_selected() for the measurement and for why the eager write is still
        what an unset launch gets. */
     if (!exec_ibtc_lazy_selected()) memset(g_ibtc, 0, sizeof g_ibtc);
+#ifdef G_XLAT_CENSUS_EPOCH
+    /* Close the outgoing image's census epoch before the new identity is keyed: the exec boundary is
+       where "translations for THIS program" ends, and the census counts per exec epoch, not per pid. */
+    G_XLAT_CENSUS_EPOCH("exec");
+#endif
 #ifdef PCACHE_EXEC_HOOKS
     pcache_exec_reload(prepared->main_image.identity, prepared->program_interpreter.identity,
                        prepared->has_program_interpreter, prepared->cache_identity_authorized,

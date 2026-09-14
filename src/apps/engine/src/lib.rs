@@ -167,6 +167,18 @@ struct LaunchArguments {
     /// Keep the indirect-branch cache lazily cleared across a guest exec instead of rewriting it (off by default).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
     exec_ibtc_lazy: Option<TranslitFeatureControl>,
+    /// Let a warm run re-publish the translation cache within bounded growth (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    pcache_converge: Option<TranslitFeatureControl>,
+    /// Treat a non-PIE image at its deterministic link address as cache-revivable (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    pcache_link_image: Option<TranslitFeatureControl>,
+    /// Persist translations of content-keyed guest library mappings (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    pcache_libs: Option<TranslitFeatureControl>,
+    /// Append a cross-process translation-provenance census to PATH (measurement only).
+    #[arg(long, value_name = "PATH", hide = true)]
+    xlat_census: Option<PathBuf>,
     /// Existing container root used to resolve the guest entry and `PT_INTERP`.
     #[arg(long)]
     rootfs: Option<PathBuf>,
@@ -624,6 +636,9 @@ fn rootfs_plan(
         (launch.x86_exit_thunk, "HL_X86_EXIT_THUNK"),
         (launch.x86_prologue_thunk, "HL_X86_PROLOGUE_THUNK"),
         (launch.exec_ibtc_lazy, "HL_EXEC_IBTC_LAZY"),
+        (launch.pcache_libs, "HL_PCACHE_LIBS"),
+        (launch.pcache_link_image, "HL_PCACHE_LINK_IMAGE"),
+        (launch.pcache_converge, "HL_PCACHE_CONVERGE"),
     ] {
         if let Some(control) = control {
             let value = if control == TranslitFeatureControl::On {
@@ -689,6 +704,11 @@ fn rootfs_plan(
         options
             .set("HL_TRANSLIT_PERF_MAP", &path.to_string_lossy(), false)
             .map_err(|error| Failure::Request(format!("cannot set --translit-perf-map: {error:?}")))?;
+    }
+    if let Some(path) = &launch.xlat_census {
+        options
+            .set("HL_XLAT_CENSUS", &path.to_string_lossy(), false)
+            .map_err(|error| Failure::Request(format!("cannot set --xlat-census: {error:?}")))?;
     }
     if launch.translation_cache_observe {
         options

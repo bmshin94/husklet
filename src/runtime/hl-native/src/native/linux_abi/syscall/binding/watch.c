@@ -787,6 +787,12 @@ static int64_t bound_mmap_file(const hl_linux_fd_snapshot *file, uint64_t addres
         return -ENOMEM;
     }
     if (bus_prepared) gbus_prepare_release();
+#ifdef G_XLAT_CENSUS_EPOCH
+    /* Census provenance: this typed route is the ONLY way a guest shared library becomes executable
+       guest memory, so it is where a library's blocks acquire a cross-process name. */
+    if ((protection & 4u) != 0 && identity_valid)
+        pc_census_note_map(mapped.address, size, offset, stable_device, stable_object);
+#endif
 #ifdef PCACHE_MMAP_HINT
     /* A hint is advisory. Publish the identity only after the provider reports that exact
      * address, otherwise this run cannot safely restore translations for the mapping. */

@@ -324,7 +324,12 @@ static void load_elf(const char *path, struct loaded *out, const void *placement
     // base becomes out->base, deriving all guest PCs/addresses identically each run. One-shot per image.
     if (base != NULL) {
         g_force_base = 0; // one-shot, consumed by the link-address placement
-        pcache_note_fixed_img((uint64_t)base, span);
+#ifdef PCACHE_LINK_IMAGE_HOOK
+        // The link address is deterministic across runs, so this image IS revivable -- but only
+        // pcache_note_link_img can say so, because its base is nowhere near PC_IMG_BASE. Absent on the
+        // same-ISA host arm, whose translator owns its own image bookkeeping.
+        pcache_note_link_img((uint64_t)base, span);
+#endif
     } else if (g_force_base) {
         void *want = (void *)(g_force_base + basepage);
         int fixed_failed;
@@ -357,6 +362,11 @@ static void load_elf(const char *path, struct loaded *out, const void *placement
         exit(1);
     }
     hl_gmap_add((uint64_t)base, span);
+#ifdef G_XLAT_CENSUS_EPOCH
+    /* Census provenance for the two images the engine maps itself. They are anonymous memory with the
+       file read in, so no host mapping table names them; the path is their stable cross-process name. */
+    pc_census_note_map((uint64_t)base, span, 0, 0, hl_identity_name(path));
+#endif
     uint64_t bias = (uint64_t)base - basepage;
     // W6A item 1: a non-PIE ET_EXEC's un-relocated ABSOLUTE refs name its link vaddr, so whenever the
     // loader could not place it there (macOS __PAGEZERO) those refs land on an unmapped address. Record

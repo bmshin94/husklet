@@ -58,7 +58,7 @@
 #include "../../persist.h"
 
 #define PC_MAGIC 0x31304350544a4c48ull // "HLJTPC01" (LE)
-#define PC_VERSION 11                  // v11 disables persistence for mutable file-backed library mappings.
+#define PC_VERSION 12                  // v12 keys library mappings by mapped-file CONTENT digest.
 #define PC_VERSION_EFF PC_VERSION
 #define PC_TRANSLATOR_ABI HL_PCACHE_ABI_X86_64
 // Fixed guest VA bases (high, reliably free above the kernel-chosen heap/stack and below the dyld shared
@@ -69,6 +69,9 @@
 #define PC_LIB_BASE 0x0000050000000000ull // 5 TB
 #define PC_LIB_SPAN (1ull << 38)          // 256 GB window (beyond it: no hint, kernel placement)
 #define PC_LIB_MAX 512                    // manifest entries persisted (beyond: unhinted, not cached)
+// Cap on a library whose CONTENT we are willing to digest. A mapping bigger than this is simply not
+// cacheable (no hint, no manifest) rather than silently falling back to a weaker identity.
+#define PC_LIB_HASH_MAX (UINT64_C(512) << 20)
 
 static hl_persist_directory g_pc_directory;
 static char g_pc_directory_path[1024];
@@ -85,6 +88,7 @@ struct pc_hdr {
     uint64_t csum;            // v6: FNV-1a over every byte after this header (parity with the aarch64 pcache)
     uint64_t block_return_at; // block_return's host addr at save time -> the image-slide anchor on load
     uint64_t ibtc_at;         // g_ibtc host addr at save time (diagnostic)
+    uint64_t generation;      // v12: how many bounded warm re-saves this file has accumulated
 };
 
 struct pc_mapent {
@@ -97,7 +101,8 @@ struct pc_pend {
 };
 
 struct pc_lib {
-    uint64_t base, len, id; // manifest: a deterministic-hinted file map (id = fstat identity hash)
+    uint64_t base, len, id;     // manifest: a deterministic-hinted file map (id = fstat identity hash)
+    hl_identity_digest content; // v12: SHA-256 of the mapped file's bytes -- the activation AUTHORITY
 };
 
 // warm-stat sidecar ("<cachefile>.warm"): written by warm runs, read by the next load's
@@ -105,9 +110,23 @@ struct pc_lib {
 // restored, ignored (and the restore performed as usual) on any mismatch.
 struct pc_warm {
     uint64_t magic, arena_used, restored, waste; // waste = restored blocks that never became usable
+    uint64_t strikes;                            // v12: consecutive dead-weight verdicts, decaying
 };
 
-#define PC_WARM_MAGIC UINT64_C(0x324d525743504c48) // "HLPCWRM2" (LE)
+#define PC_WARM_MAGIC UINT64_C(0x334d525743504c48) // "HLPCWRM3" (LE) -- v12 adds the strike counter
+
+// ---- convergence bounds (HL_PCACHE_CONVERGE; default off) ----
+// The once-only save rule exists for a real reason: a warm run keeps translating -- notably tier-2
+// hot-block recompiles, which re-emit into the arena WITHOUT a map entry -- so arena_used grows every
+// run. Re-persisting that unboundedly snowballs the file across sequential runs until it overruns
+// CACHE_SZ, and before the next load's bounds check can turn that into a graceful miss the in-memory
+// arena has already run past its end (silent guest SIGSEGV). So a re-save is allowed only while BOTH
+// bounds hold: the arena still fits well inside the cap, and the file has not already re-saved too
+// many times. Within those bounds the file learns the steady-state working set instead of being frozen
+// at whatever the least representative run (the very first one) happened to touch.
+#define PC_RESAVE_ARENA_MAX (CACHE_SZ / 2) // hard ceiling on a re-saved arena
+#define PC_RESAVE_GEN_MAX 8                // stop growing the file after this many re-saves
+#define PC_WARM_STRIKE_MAX 3               // consecutive dead-weight verdicts before restores are skipped
 
 static int g_pcache_forked;          // set in a fork child (fresh arena, inherited bookkeeping) -> never save
 static int g_pcache_skip;            // this run intentionally skipped a dead-weight restore -> don't churn-resave
@@ -219,14 +238,56 @@ static void pcache_directory_close(void) {
 // ---- deterministic library-map hints + the identity manifest ----
 // load_elf (linux_abi/x86.c) records the two fixed images' spans when it consumes g_force_base;
 // everything else revivable must come from a manifest-validated library map.
-static void pcache_note_fixed_img(uint64_t base, uint64_t span) {
-    if (base >= PC_INTERP_BASE) {
+static int g_pc_converge = -1;      // -1 undecided; 0 off (default); 1 on
+static uint64_t g_pc_generation;    // generation of the file this epoch loaded (0 when cold)
+static uint64_t g_pc_warm_strikes;  // strike count carried in from the loaded file's sidecar
+
+static int pcache_converge_enabled(void) {
+    if (g_pc_converge < 0) g_pc_converge = hl_option_flag_value("HL_PCACHE_CONVERGE", 0);
+    return g_pc_converge;
+}
+
+static int g_pc_link_image = -1; // -1 undecided; 0 off (default); 1 on
+
+// A non-PIE ET_EXEC is mapped AT ITS LINK ADDRESS (nonpie_place_at_link_address returns exactly that
+// address or fails), so its guest PCs are already deterministic across runs -- which is the only
+// property g_force_base exists to manufacture for a PIE image. Treating it as a revivable fixed image
+// is therefore sound, and the cache key already pins the image's content identity, so a hit cannot
+// describe different bytes at those addresses.
+static int pcache_link_image_enabled(void) {
+    if (g_pc_link_image < 0) g_pc_link_image = hl_option_flag_value("HL_PCACHE_LINK_IMAGE", 0);
+    return g_pc_link_image;
+}
+
+// `role` names which image this is rather than inferring it from the address. The previous form
+// classified by comparing base against PC_INTERP_BASE / PC_IMG_BASE, which silently recorded NOTHING
+// for a non-PIE main image at its link address (e.g. 0x400000 < PC_IMG_BASE = 4 TB). Every block of
+// such an image then failed pc_gpc_fixed(), so pcache_save's revivability filter dropped all of them
+// and pcache_load had nothing to restore -- the cache "worked" while reviving almost nothing.
+#define PC_IMG_ROLE_MAIN 0
+#define PC_IMG_ROLE_INTERP 1
+
+static void pcache_note_fixed_img_role(uint64_t base, uint64_t span, int role) {
+    if (role == PC_IMG_ROLE_INTERP) {
         g_pc_interp_lo = base;
         g_pc_interp_hi = base + span;
-    } else if (base >= PC_IMG_BASE) {
+    } else {
         g_pc_img_lo = base;
         g_pc_img_hi = base + span;
     }
+}
+
+static void pcache_note_fixed_img(uint64_t base, uint64_t span) {
+    pcache_note_fixed_img_role(base, span, base >= PC_INTERP_BASE ? PC_IMG_ROLE_INTERP : PC_IMG_ROLE_MAIN);
+}
+
+// The deterministic-link-address main image. Default off: an unset launch keeps the old behaviour, in
+// which this image contributes nothing to the cache.
+#define PCACHE_LINK_IMAGE_HOOK 1
+
+static void pcache_note_link_img(uint64_t base, uint64_t span) {
+    if (!g_pcache || !pcache_link_image_enabled()) return;
+    pcache_note_fixed_img_role(base, span, PC_IMG_ROLE_MAIN);
 }
 
 static int pc_gpc_fixed(uint64_t gpc) {
@@ -239,41 +300,271 @@ static int pc_gpc_in_lib(uint64_t gpc) { // in the RECORDED (cold) / RESTORED (w
     return 0;
 }
 
+// ---- cross-process translation census (diagnostic; HL_XLAT_CENSUS=<path>) ----
+// Sizes the reuse prize WITHOUT disabling the cache: it hangs off its own option, not g_prof, so a run
+// can cache and be observed at the same time. Every genuine translation (dispatch.c's map-miss site)
+// records the PROVENANCE of the block it is about to emit -- the backing file's (dev, ino) plus the
+// block's byte offset WITHIN that file -- which is the only block name that is stable across processes
+// (the guest VA is not: libraries land wherever the kernel puts them). At each epoch boundary (guest
+// exit or in-process execve) the buffered keys are appended to the census file. Aggregating the file
+// over a whole multi-process workload answers the question directly: total translations vs DISTINCT
+// provenance keys = how much translation work is re-translation of bytes some earlier epoch already did.
+struct pc_census_key {
+    uint64_t dev, ino, off;
+};
+
+static struct pc_census_key *g_census_buf;
+static size_t g_census_n, g_census_cap;
+static uint64_t g_census_xlat;   // genuine translations this epoch
+static uint64_t g_census_anon;   // translations with no file backing (unnameable across processes)
+static int g_census_on = -1;     // -1 = undecided, 0 = off, 1 = on
+static unsigned g_census_epoch;  // exec epoch ordinal within this process
+
+// Guest text ranges whose bytes have a NAME that survives a process boundary. Populated from the two
+// places an executable guest range can come from: the engine's own ELF loader (main image + PT_INTERP,
+// mapped as anonymous memory with the file read in, so the kernel's file-mapping registry never sees
+// them) and the typed VFS file-mapping route in syscall/binding/watch.c (every shared library the guest
+// dynamic linker loads -- these never reach the raw mmap syscall path, which is why the census has to
+// hook the typed route rather than the host's own mapping tables).
+static int pc_census_enabled(void);
+
+#define PC_CENSUS_MAP_MAX 1024
+struct pc_census_map {
+    uint64_t lo, hi, off, dev, ino;
+};
+static struct pc_census_map g_census_map[PC_CENSUS_MAP_MAX];
+static int g_census_nmap;
+static pthread_mutex_t g_census_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void pc_census_note_map(uint64_t base, uint64_t len, uint64_t off, uint64_t dev, uint64_t ino) {
+    if (!pc_census_enabled() || !len || base > UINT64_MAX - len) return;
+    pthread_mutex_lock(&g_census_lock);
+    if (g_census_nmap < PC_CENSUS_MAP_MAX) {
+        g_census_map[g_census_nmap].lo = base;
+        g_census_map[g_census_nmap].hi = base + len;
+        g_census_map[g_census_nmap].off = off;
+        g_census_map[g_census_nmap].dev = dev;
+        g_census_map[g_census_nmap].ino = ino;
+        g_census_nmap++;
+    }
+    pthread_mutex_unlock(&g_census_lock);
+}
+
+// Newest-first: a MAP_FIXED segment laid over an earlier whole-file reservation is the authority for
+// its range, and it was recorded later.
+static int pc_census_provenance(uint64_t gpc, uint64_t *dev, uint64_t *ino, uint64_t *off) {
+    int found = 0;
+    pthread_mutex_lock(&g_census_lock);
+    for (int i = g_census_nmap - 1; i >= 0; i--) {
+        if (gpc < g_census_map[i].lo || gpc >= g_census_map[i].hi) continue;
+        *dev = g_census_map[i].dev;
+        *ino = g_census_map[i].ino;
+        *off = g_census_map[i].off + (gpc - g_census_map[i].lo);
+        found = 1;
+        break;
+    }
+    pthread_mutex_unlock(&g_census_lock);
+    return found;
+}
+
+static const char *pc_census_path(void) {
+    const char *p = hl_option_get("HL_XLAT_CENSUS");
+    return (p && p[0]) ? p : NULL;
+}
+
+static int pc_census_enabled(void) {
+    if (g_census_on < 0) g_census_on = pc_census_path() != NULL;
+    return g_census_on;
+}
+
+// Called from the dispatcher's map-miss translate site, i.e. once per genuine block translation.
+static void pc_census_note(uint64_t gpc) {
+    if (!pc_census_enabled()) return;
+    g_census_xlat++;
+    uint64_t dev = 0, ino = 0, off = 0;
+    if (!pc_census_provenance(gpc, &dev, &ino, &off)) {
+        g_census_anon++;
+        return;
+    }
+    if (g_census_n == g_census_cap) {
+        size_t cap = g_census_cap ? g_census_cap * 2 : 4096;
+        struct pc_census_key *grown = realloc(g_census_buf, cap * sizeof *grown);
+        if (!grown) return; // out of memory: drop the key, keep the counters honest via g_census_xlat
+        g_census_buf = grown;
+        g_census_cap = cap;
+    }
+    g_census_buf[g_census_n].dev = dev;
+    g_census_buf[g_census_n].ino = ino;
+    g_census_buf[g_census_n].off = off;
+    g_census_n++;
+}
+
+// Flush this epoch's keys and its summary line. Appends (O_APPEND) so every process and every exec
+// epoch of a multi-process workload lands in one file without coordination.
+static void pc_census_epoch_end(const char *outcome) {
+    if (!pc_census_enabled()) return;
+    const char *path = pc_census_path();
+    if (!path) {
+        g_census_n = 0;
+        g_census_xlat = g_census_anon = 0;
+        return;
+    }
+    size_t cap = 256 + g_census_n * 56;
+    char *out = malloc(cap);
+    if (out) {
+        int w = snprintf(out, cap, "EPOCH pid=%ld gen=%u outcome=%s xlat=%llu anon=%llu keyed=%zu restored_live=%llu activated=%llu deferred=%llu maps=%d flushed=%d\n",
+                         (long)getpid(), g_census_epoch, outcome, (unsigned long long)g_census_xlat,
+                         (unsigned long long)g_census_anon, g_census_n, (unsigned long long)g_pc_live_n,
+                         (unsigned long long)g_pc_activated, (unsigned long long)g_pc_ndefer, g_census_nmap, g_pc_flushed);
+        size_t used = (w > 0) ? (size_t)w : 0;
+        for (size_t i = 0; i < g_census_n && used + 56 < cap; i++) {
+            int k = snprintf(out + used, cap - used, "K %llx %llx %llx\n", (unsigned long long)g_census_buf[i].dev,
+                             (unsigned long long)g_census_buf[i].ino, (unsigned long long)g_census_buf[i].off);
+            if (k <= 0) break;
+            used += (size_t)k;
+        }
+        /* One file per (process, exec epoch): a forking workload has many engine processes writing
+           concurrently, and per-epoch files remove any interleaving question from the aggregate. */
+        char shard[1200];
+        int shard_written = snprintf(shard, sizeof shard, "%s.%ld.%u", path, (long)getpid(), g_census_epoch);
+        if (shard_written <= 0 || (size_t)shard_written >= sizeof shard) {
+            free(out);
+            goto census_done;
+        }
+        int fd = open(shard, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        if (fd >= 0) {
+            ssize_t ignored = write(fd, out, used);
+            (void)ignored;
+            close(fd);
+        }
+        free(out);
+    }
+census_done:
+    g_census_n = 0;
+    g_census_xlat = g_census_anon = 0;
+    g_census_epoch++;
+    pthread_mutex_lock(&g_census_lock);
+    g_census_nmap = 0; // execve replaces the address space; the next epoch re-registers its own ranges
+    pthread_mutex_unlock(&g_census_lock);
+}
+
+#define G_TRANSLATE_CENSUS(pc) pc_census_note(pc)
+#define G_XLAT_CENSUS_EPOCH(outcome) pc_census_epoch_end(outcome)
+
+// ---- deterministic library hinting + content-keyed manifest (HL_PCACHE_LIBS; default off) ----
+//
+// WHAT d28f70475 CLOSED, AND WHY THIS IS NOT A REVERT.
+// That commit reacted to a real hazard: a file-backed mapping is MUTABLE. A translation cached for the
+// guest VA range of "some library" is only sound if the bytes at that range are the bytes it was
+// translated from -- and the v11 manifest proved that with dev/ino/size/mtime alone. A stat tuple can
+// repeat across genuinely different content (mtime granularity, a restored backup, an overlay/bind
+// swapping the lower file, a rebuild landing in the same second), so a warm run could activate a
+// translation over different bytes. That is a silent wrong-code execution, not a miss.
+// Rather than delete the check, this keys activation on the mapped file's CONTENT: the manifest records
+// a SHA-256 over the file's bytes, and a warm run activates deferred blocks only when the file it
+// actually mapped hashes to the same value at the same base with the same length. Content equality is
+// exactly the property the cached translation depends on, so activation can no longer be wrong -- only
+// pessimistic (an unrecognised library simply re-translates). This is the identity the sibling same-ISA
+// implementation already uses (interp.c x64_pc_file_digest); the ARM-host cache was left on the weaker
+// stat identity, which is what made wholesale exclusion the only safe option at the time.
+//
+// d28f70475 also removed `#define PCACHE_MMAP_HINT 1` here, which compiled the ENTIRE library path out
+// of this translation unit -- the hint, the manifest, and the activation gate. That is why the
+// `h.n_lib != 0` load rejection it added never actually fires on this build: g_pc_nlib can no longer
+// become non-zero, so every file is written with n_lib == 0. The operative defect was never that cache
+// files are rejected; it is that library blocks are never recorded, persisted, or restored at all.
+#define PCACHE_MMAP_HINT 1
+
+static int g_pc_libcache = -1; // -1 undecided; 0 off (default); 1 on
+static int g_pc_lib_unsupported;
+
+static int pcache_libs_enabled(void) {
+    if (g_pc_libcache < 0) g_pc_libcache = hl_option_flag_value("HL_PCACHE_LIBS", 0);
+    return g_pc_libcache;
+}
+
+// SHA-256 over the mapped file's bytes: the manifest's activation authority. Read through host services
+// (the same route the main image's identity uses), never through the guest mapping -- the guest could
+// have written to a private copy already, and we want the FILE's identity, measured identically on the
+// cold run that records it and the warm run that checks it.
+static int pcache_file_digest(hl_host_handle handle, const hl_host_file_metadata *metadata,
+                              hl_identity_digest *digest) {
+    if (metadata == NULL || metadata->type != HL_HOST_FILE_TYPE_REGULAR || metadata->size == 0 ||
+        metadata->size > PC_LIB_HASH_MAX || metadata->size > SIZE_MAX || g_host_services == NULL ||
+        g_host_services->file == NULL || g_host_services->file->read_at == NULL)
+        return 0;
+    uint8_t *image = malloc((size_t)metadata->size);
+    if (image == NULL) return 0;
+    uint64_t done = 0;
+    while (done < metadata->size) {
+        hl_host_result read = g_host_services->file->read_at(g_host_services->context, handle, done,
+                                                             (hl_host_bytes){image + done,
+                                                                             (size_t)(metadata->size - done)});
+        if (read.status != HL_STATUS_OK || read.value == 0 || read.value > metadata->size - done) {
+            free(image);
+            return 0;
+        }
+        done += read.value;
+    }
+    *digest = hl_identity_image_digest(image, (size_t)metadata->size);
+    free(image);
+    return !hl_identity_digest_empty(digest);
+}
+
 // Bump-allocated deterministic hint for a file-backed non-fixed guest mmap. 2 MB-aligned spans with a
 // 2 MB hole between neighbours; deterministic because the SAME binary issues the SAME ordered sequence
-// of library maps. Beyond the window (or when the cache is off): 0 = no hint, kernel placement.
+// of library maps. Beyond the window (or when the cache/library caching is off): 0 = no hint, kernel
+// placement -- which is also the default build's behaviour, byte for byte.
 static uint64_t pcache_mmap_hint(uint64_t len) {
-    if (!g_pcache) return 0;
+    if (!g_pcache || !pcache_libs_enabled()) return 0;
     uint64_t span = ((len + 0x1fffffull) & ~0x1fffffull) + 0x200000ull;
     uint64_t a = __atomic_fetch_add(&g_pc_lib_next, span, __ATOMIC_RELAXED);
     if (a + span > PC_LIB_BASE + PC_LIB_SPAN) return 0;
     return a;
 }
 
-// Called by mem.c after a hinted file-backed mmap SUCCEEDED AT ITS HINT (r == hint). Cold epoch: record
-// the mapping in the manifest so its blocks persist. Warm epoch: this is the activation gate -- if the
-// mapped file's identity matches the manifest entry restored for this base, the deferred blocks in
-// [base, base+len) become live (map_put); otherwise they are dropped (different lib/layout -> a restored
-// translation must never shadow different guest bytes).
-static void pcache_note_libmap(uint64_t base, uint64_t len, const hl_host_file_metadata *metadata) {
-    if (!g_pcache) return;
-    /* hl_identity_file preserves the v7 five-field dev/ino/size/mtime-sec/mtime-nsec hash. */
+// Called after a hinted, file-backed, EXECUTABLE guest mmap succeeded at its hint. Cold epoch: record
+// {base, len, stat-id, content digest} in the manifest so this mapping's blocks persist. Warm epoch:
+// this is the activation gate -- deferred blocks in [base, base+len) go live only when base, length,
+// stat identity AND content digest all match the manifest entry restored for this base.
+static void pcache_note_libmap(uint64_t base, uint64_t len, hl_host_handle handle,
+                               const hl_host_file_metadata *metadata) {
+    if (!g_pcache || !pcache_libs_enabled() || !metadata || !len || base > UINT64_MAX - len) return;
+    /* hl_identity_file preserves the v7 five-field dev/ino/size/mtime-sec/mtime-nsec hash. It is a cheap
+     * pre-filter only; the content digest below is what authorizes an activation. */
     uint64_t id = hl_identity_file(metadata);
-    if (!id) return;
+    hl_identity_digest content;
+    if (!id || !pcache_file_digest(handle, metadata, &content)) {
+        // Unhashable (too large, unreadable, not a regular file) -> this mapping is simply not cacheable.
+        // Latch it so the save side does not persist a manifest that silently omits a mapping whose
+        // blocks it would otherwise have to claim were revivable.
+        g_pc_lib_unsupported = 1;
+        if (g_coldprof)
+            fprintf(stderr, "[pcache] library not cacheable base=%llx len=%llu\n", (unsigned long long)base,
+                    (unsigned long long)len);
+        return;
+    }
     if (!g_pcache_loaded) { // cold epoch: record for save
         if (g_pc_nlib < PC_LIB_MAX) {
             g_pc_libs[g_pc_nlib].base = base;
             g_pc_libs[g_pc_nlib].len = len;
             g_pc_libs[g_pc_nlib].id = id;
+            g_pc_libs[g_pc_nlib].content = content;
             g_pc_nlib++;
-        }
+        } else
+            g_pc_lib_unsupported = 1; // manifest full: the overflow mapping's blocks are not revivable
         return;
     }
     if (!g_pc_ndefer) return; // warm epoch, nothing deferred (or all activated/dropped already)
     for (int i = 0; i < g_pc_nlib; i++) {
         if (g_pc_libs[i].base != base) continue;
-        if (g_pc_libs[i].id != id || g_pc_libs[i].len != len)
+        if (g_pc_libs[i].id != id || g_pc_libs[i].len != len ||
+            !hl_identity_digest_equal(&g_pc_libs[i].content, &content)) {
+            if (g_coldprof)
+                fprintf(stderr, "[pcache] library identity drift at base=%llx -> deferred blocks dropped\n",
+                        (unsigned long long)base);
             return; // identity drifted: leave deferred (never activates)
+        }
         // Activate every deferred block in this range. map_put is a shared-map mutation: take the
         // translation lock when guest threads exist (same discipline as the dispatcher).
         if (g_threaded) pthread_mutex_lock(&g_jit_lock);
@@ -318,7 +609,13 @@ static int pcache_warm_should_skip(const struct pc_hdr *h) {
     if (!ok || w.magic != PC_WARM_MAGIC) return 0;
     if (w.arena_used != h->arena_used || w.restored != h->n_mapent) return 0; // different file generation
     if (w.waste > JIT_MAP_N || w.restored > JIT_MAP_N) return 0;              // implausible: ignore
-    return w.restored && w.waste * 2 >= w.restored;
+    g_pc_warm_strikes = w.strikes;
+    // A single bad warm run used to disable the restore FOREVER: the verdict was latched in the sidecar
+    // and every later run honoured it, so one unlucky layout permanently cost every subsequent run its
+    // cache. Require repeated agreement instead, and let a good run pay a strike back (pcache_warm_note),
+    // so the policy decays rather than latching.
+    if (!pcache_converge_enabled()) return w.restored && w.waste * 2 >= w.restored;
+    return w.strikes >= PC_WARM_STRIKE_MAX;
 }
 
 // Record this warm run's revival stats (called instead of a save when the epoch was loaded). waste =
@@ -331,7 +628,12 @@ static void pcache_warm_note(void) {
     if (hl_identity_digest_empty(&g_pc_binid) || !g_pc_restored_n || g_pcache_forked) return;
     uint64_t used = g_pc_live_n + g_pc_activated;
     uint64_t waste = (g_pc_flushed || used > g_pc_restored_n) ? g_pc_restored_n : g_pc_restored_n - used;
-    struct pc_warm w = {PC_WARM_MAGIC, g_pc_restored_arena, g_pc_restored_n, waste};
+    uint64_t strikes = g_pc_warm_strikes;
+    if (waste * 2 >= g_pc_restored_n) {
+        if (strikes < PC_WARM_STRIKE_MAX) strikes++;
+    } else if (strikes)
+        strikes--; // a productive warm run pays back a strike
+    struct pc_warm w = {PC_WARM_MAGIC, g_pc_restored_arena, g_pc_restored_n, waste, strikes};
     char wp[1200];
     pcache_warm_file(wp, sizeof wp);
     if (wp[0]) (void)hl_persist_store_at(&g_pc_directory, wp, &w, sizeof w);
@@ -378,7 +680,8 @@ static int pcache_load(uint64_t entry_jump) {
         h.cpu_sz != sizeof(struct cpu) || h.map_n != JIT_MAP_N || h.ibtc_n != IBTC_N || h.img_base != PC_IMG_BASE ||
         h.interp_base != PC_INTERP_BASE || !hl_identity_digest_equal(&h.bin_id, &g_pc_binid) ||
         h.entry_jump != entry_jump || h.arena_used > CACHE_SZ || h.n_mapent > JIT_MAP_N || h.n_pend > (1u << 16) ||
-        h.n_reloc > PC_RELOC_CAP || h.n_lib != 0) { // mutable file mappings are never persistent translation authority
+        h.n_reloc > PC_RELOC_CAP || h.n_lib > PC_LIB_MAX ||
+        (h.n_lib != 0 && !pcache_libs_enabled())) { // a manifest is only consumable by a run that validates it
         free(image);
         return 0;
     }
@@ -491,6 +794,7 @@ static int pcache_load(uint64_t entry_jump) {
     g_pcache_loaded = 1;
     g_pc_restored_n = nlive + g_pc_ndefer; // what the warm-stat measures waste against
     g_pc_restored_arena = h.arena_used;
+    g_pc_generation = h.generation;
     g_pc_live_n = nlive;
     g_pc_activated = 0;
     g_pc_flushed = 0;
@@ -526,9 +830,36 @@ static void pcache_save(void) {
     // instead of a no-op, a loaded epoch records its revival stats for the restore-or-skip policy.
     if (g_pcache_loaded) {
         pcache_warm_note();
-        return;
+        // Convergence: allow a BOUNDED re-save so the file learns the steady-state working set instead of
+        // being frozen at what the very first (least representative) run happened to translate. Both
+        // bounds below are what keep the documented snowball from returning; failing either leaves the
+        // published file exactly as it is, which is the old behaviour.
+        if (!pcache_converge_enabled()) return;
+        uint64_t live = 0;
+        for (uint32_t i = 0; i < map_capacity(); i++)
+            if (map_live(i) && (pc_gpc_fixed(g_map[i].gpc) || pc_gpc_in_lib(g_map[i].gpc))) live++;
+        if (live <= g_pc_restored_n) return;                    // learned nothing new: do not churn the file
+        if (g_pc_generation >= PC_RESAVE_GEN_MAX) return;       // bound the number of re-saves
+        if ((uint64_t)(g_cp - g_cache) > PC_RESAVE_ARENA_MAX) { // bound the arena the file can carry
+            if (g_coldprof)
+                fprintf(stderr, "[pcache] converge: arena %llu B over the re-save ceiling; keeping generation %llu\n",
+                        (unsigned long long)(g_cp - g_cache), (unsigned long long)g_pc_generation);
+            return;
+        }
+        if (g_coldprof)
+            fprintf(stderr, "[pcache] converge: re-saving generation %llu (live %llu > restored %llu)\n",
+                    (unsigned long long)(g_pc_generation + 1), (unsigned long long)live,
+                    (unsigned long long)g_pc_restored_n);
+        // fall through to the publication path below
     }
     if (g_pcache_skip) return; // we intentionally skipped the restore; re-saving would churn the file
+    // A library mapping we could not content-key (too large to hash, unreadable, manifest full) means the
+    // manifest does not describe every executable file mapping this arena translated. Persisting it would
+    // claim revivability for blocks whose bytes nothing authenticates, so refuse the whole publication.
+    if (g_pc_lib_unsupported) {
+        if (g_coldprof) fprintf(stderr, "[pcache] save refused: an executable file mapping is not content-keyable\n");
+        return;
+    }
     uint64_t _t0 = g_coldprof ? coldprof_now_ns(effective_host_services()) : 0;
     // count occupied map slots that are REVIVABLE (fixed images + manifest libs). Anything else is keyed
     // by a kernel-chosen address that the next run won't reproduce -- persisting it would be dead weight
@@ -555,6 +886,7 @@ static void pcache_save(void) {
     h.n_pend = (uint64_t)g_npend;
     h.n_reloc = (uint64_t)g_nreloc;
     h.n_lib = (uint64_t)g_pc_nlib;
+    h.generation = g_pcache_loaded ? g_pc_generation + 1 : 0;
     h.block_return_at = (uint64_t)block_return;
     h.ibtc_at = (uint64_t)g_ibtc;
     // Build the whole image in one heap buffer and write it with a single syscall (per-record write()s
@@ -616,6 +948,8 @@ static void pcache_after_fork(void) {
 #define PCACHE_FORK_HOOK pcache_after_fork()
 
 static void pcache_after_wholesale_flush(void) {
+    if (g_coldprof)
+        fprintf(stderr, "[pcache] wholesale arena flush: any restored block is gone\n");
     hl_reloc_reset(&g_reloc_table);
     g_pc_flushed = 1; // any restored blocks are gone; the warm-stat must report the restore dead
     g_pc_ndefer = 0;  // deferred entries pointed into the dropped arena content
@@ -665,6 +999,9 @@ static void pcache_exec_reload(hl_identity_digest program, hl_identity_digest in
     g_pc_defer = NULL;
     g_pc_ndefer = 0;
     g_pc_nlib = 0;
+    g_pc_lib_unsupported = 0;
+    g_pc_generation = 0;
+    g_pc_warm_strikes = 0;
     __atomic_store_n(&g_pc_lib_next, PC_LIB_BASE, __ATOMIC_RELAXED); // fresh image, fresh hint sequence
     g_pc_binid = pcache_exec_authorized_id(program, interpreter, interpreter_present, identity_authorized, argv0);
     g_pc_entry = jump;

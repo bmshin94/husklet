@@ -1710,6 +1710,7 @@ static uint64_t g_loaded_image_identity;
 #include "../../linux_abi/x86.c" // Linux x86-64 ELF loader + stack + fault handlers
 #include "../../linux_abi/checkpoint.c"
 
+
 // ---------------- entry ----------------
 static int g_engine_inited;
 
@@ -2224,6 +2225,11 @@ int hl_run_linux_guest(const hl_host_services *host, hl_linux_abi *box, const ch
         }
     }
     int ec = run_loaded(argc, argv, &lm, jump, at_base);
+#ifdef G_XLAT_CENSUS_EPOCH
+    /* Census epoch close for the final image. Deliberately OUTSIDE the g_pcache gate so a cache-OFF
+       baseline run is measured by exactly the same instrument as a cache-ON run. */
+    G_XLAT_CENSUS_EPOCH("exit");
+#endif
     if (__builtin_expect(g_pcache, 0) && hl_fatal_status(&g_jit_fatal) == HL_STATUS_OK)
         pcache_save(); // exit via syscall 93 returns here; syscall 94 saves before _exit (idempotent atomic rename)
     if (hl_fatal_status(&g_jit_fatal) != HL_STATUS_OK) {
