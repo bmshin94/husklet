@@ -100,7 +100,8 @@ entry.err {{ border-color:#ff6b6b; box-shadow:0 0 0 2px rgba(255,90,90,.22); }}
 .tab:hover {{ background-color:{BG3}; color:{TXT}; }}
 .tab.on {{ background-color:{BG2}; color:{TXT}; box-shadow: inset -1px 0 0 0 {LINE_S}, inset 0 -2px 0 0 {ACCENT}; }}
 .tab label {{ font-size:12px; font-weight:500; }}
-.tab .di {{ color:{ACCENT}; }}
+.tab .tab-icon {{ color:{DIM}; min-width:14px; min-height:14px; }}
+.tab.on .tab-icon {{ color:{ACCENT}; }}
 button.tabx {{ min-height:16px; min-width:16px; padding:0; margin-left:6px; background:transparent; border:none; box-shadow:none; opacity:0; color:{DIM}; }}
 .tab:hover button.tabx, .tab.on button.tabx {{ opacity:.6; }}
 button.tabx:hover {{ opacity:1; background-color:rgba(255,255,255,.14); border-radius:4px; }}

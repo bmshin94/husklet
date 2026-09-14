@@ -666,10 +666,11 @@ impl<'a> Tabs<'a> {
         let inner = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         inner.set_hexpand(true);
         inner.set_halign(gtk::Align::Center);
-        if let Some(ic) = icon {
-            let il = gtk::Label::new(Some(ic));
-            il.add_css_class("di");
-            inner.append(&il);
+        if let Some(icon_name) = icon {
+            let image = gtk::Image::from_icon_name(icon_name);
+            image.add_css_class("tab-icon");
+            image.set_pixel_size(14);
+            inner.append(&image);
         }
         let lbl = gtk::Label::new(Some(title));
         lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -699,6 +700,7 @@ impl<'a> Tabs<'a> {
             pin = Some(p);
             let x = gtk::Button::from_icon_name("window-close-symbolic");
             x.add_css_class("tabx");
+            x.set_tooltip_text(Some("Close tab"));
             x.set_visible(!pinned);
             let tw2 = tw.clone();
             let name2 = name.clone();
@@ -738,7 +740,14 @@ impl<'a> Tabs<'a> {
             .child(&dash)
             .build();
         viewport.set_propagate_natural_width(false);
-        self.add_with_persistence(&tw.ws.name, Some("◧"), &viewport, false, true, true);
+        self.add_with_persistence(
+            &tw.ws.name,
+            Some("preferences-system-symbolic"),
+            &viewport,
+            false,
+            true,
+            true,
+        );
     }
 
     /// Opens a shell tab and hands back its identity.
@@ -761,7 +770,12 @@ impl<'a> Tabs<'a> {
             .and_then(|terminal| Terminal::new(terminal).working_directory());
         let (term, pid) = make_terminal_ex(tw, cwd, None, &Slots::new(tw).allocate());
         paneroot.append(&PaneChrome::wrap(tw, &term));
-        let name = self.add(&format!("shell {n}"), None, &paneroot, true);
+        let name = self.add(
+            &format!("shell {n}"),
+            Some("utilities-terminal-symbolic"),
+            &paneroot,
+            true,
+        );
         tw.pids.borrow_mut().entry(name.clone()).or_default().push(pid);
         term.grab_focus();
         name
@@ -1212,6 +1226,44 @@ impl PaneReplacement {
 mod focus_ownership_tests {
     use super::*;
     use std::os::fd::{AsRawFd as _, FromRawFd as _};
+
+    fn symbolic_icons(widget: &gtk::Widget, names: &mut Vec<String>) {
+        if let Some(image) = widget.downcast_ref::<gtk::Image>() {
+            if let Some(name) = image.icon_name() {
+                names.push(name.to_string());
+            }
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            symbolic_icons(&current, names);
+            child = current.next_sibling();
+        }
+    }
+
+    #[test]
+    fn workspace_and_shell_tabs_use_semantic_symbolic_icons() {
+        let ran = crate::test_support::on_the_toolkit_thread(|| {
+            let workspace = WorkspaceConfig::new("tab-icons-test", "alpine:3.20", hl_ws::Arch::Amd64);
+            let tw = Window::bench(&workspace);
+            Tabs::new(&tw).overview();
+            let shell = gtk::Label::new(Some("shell"));
+            Tabs::new(&tw).add("shell 1", Some("utilities-terminal-symbolic"), &shell, true);
+
+            let entries = tw.entries.borrow();
+            let mut overview_icons = Vec::new();
+            symbolic_icons(entries[0].button.upcast_ref(), &mut overview_icons);
+            let mut shell_icons = Vec::new();
+            symbolic_icons(entries[1].button.upcast_ref(), &mut shell_icons);
+            assert_eq!(overview_icons, ["preferences-system-symbolic"]);
+            assert!(shell_icons.iter().any(|name| name == "utilities-terminal-symbolic"));
+            assert!(shell_icons.iter().any(|name| name == "view-pin-symbolic"));
+            assert!(shell_icons.iter().any(|name| name == "window-close-symbolic"));
+            tw.closing.set(true);
+        });
+        if !ran {
+            println!("skipped: no display connection");
+        }
+    }
 
     #[test]
     fn attached_container_tab_is_visible_closable_and_never_persisted() {
