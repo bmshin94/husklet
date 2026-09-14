@@ -49,7 +49,9 @@ use hl_extension::port::{
 
 pub use control::ContainerLifecycle;
 pub use conversation::{Conversation, Interface, Queue};
-pub use defaults::{install_defaults, DEFAULT_EXTENSIONS};
+#[cfg(debug_assertions)]
+pub use defaults::install_development_top;
+pub use defaults::{DEFAULT_EXTENSIONS, install_defaults};
 pub use extension_state::StateBlob;
 pub use files::WorkspaceDirectory;
 pub use host::{Audience, Events, Host, Order, Overrun, Plan, Report, Standing, Supply, WeakEvents, Workspace};
@@ -60,7 +62,7 @@ pub use management::ExtensionManagement;
 pub use registration::{Acquisition, Cancellation, Candidate};
 pub use resource::Resources;
 pub use revision::inventory_revision;
-pub use roster::{described, Entry, Refusal, Roster, UpdateRefusal};
+pub use roster::{Entry, Refusal, Roster, UpdateRefusal, described};
 pub use sidecar::{Image, Outcome, Sidecar, SidecarSpec};
 pub use state::{Fault, Records};
 pub use terminal::{Answer, Errand, Errands, Relay, Request, TerminalOrigin};

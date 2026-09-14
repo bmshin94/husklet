@@ -32,6 +32,29 @@ pub fn install_defaults(workspace: &WorkspaceConfig) -> Result<(), String> {
     })
 }
 
+/// Installs the checked-out Top build used by debug application launches.
+///
+/// Unlike an ordinary third-party install, this is trusted workspace
+/// provisioning and must be retryable: a rebuilt local bundle gets a new
+/// digest even when its manifest version is unchanged.
+#[cfg(debug_assertions)]
+pub fn install_development_top(workspace: &WorkspaceConfig, manifest: Manifest, digest: String) -> Result<(), String> {
+    let name = ExtensionName::new("top").map_err(|error| error.to_string())?;
+    if manifest.name != name || !provides_default_surface(&manifest) {
+        return Err("the local Top build must declare the top workspace interface".to_owned());
+    }
+    let mut roster = Roster::workspace_recovering_top(workspace).map_err(|error| error.to_string())?;
+    install_default(
+        &mut roster,
+        &name,
+        &Candidate {
+            reference: "husklet:development/top".to_owned(),
+            digest,
+            manifest,
+        },
+    )
+}
+
 fn immutable_release_reference(reference: &str) -> bool {
     reference.rsplit_once("@sha256:").is_some_and(|(_, digest)| {
         digest.len() == 64
@@ -665,5 +688,22 @@ mod tests {
         let repaired = Roster::workspace(&workspace).unwrap();
         assert!(repaired.matches_manifest(&trusted.name, &trusted));
         assert_eq!(repaired.stage(&trusted.name), Stage::Duty);
+    }
+
+    #[test]
+    fn rebuilt_development_top_replaces_a_same_version_digest_and_reaches_duty() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut workspace = WorkspaceConfig::new("demo", "alpine:3.20", hl_ws::Arch::Amd64);
+        workspace.storage = Some(directory.path().join("workspace"));
+        let manifest = top_manifest();
+
+        install_development_top(&workspace, manifest.clone(), "sha256:old-build".into()).unwrap();
+        install_development_top(&workspace, manifest, "sha256:new-build".into()).unwrap();
+
+        let roster = Roster::workspace(&workspace).unwrap();
+        let entries = roster.entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].image_digest, "sha256:new-build");
+        assert_eq!(entries[0].stage, Stage::Duty);
     }
 }

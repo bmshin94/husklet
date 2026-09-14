@@ -220,8 +220,6 @@ fn provision_workspace(workspace: WorkspaceConfig) -> std::io::Result<()> {
 /// only registry acquisition, which is unavailable on headless test hosts.
 #[cfg(debug_assertions)]
 fn install_local_top(workspace: &WorkspaceConfig, entrypoint: &str) -> Result<(), String> {
-    use sha2::Digest as _;
-
     let manifest_path = std::path::Path::new(entrypoint)
         .parent()
         .and_then(std::path::Path::parent)
@@ -237,22 +235,80 @@ fn install_local_top(workspace: &WorkspaceConfig, entrypoint: &str) -> Result<()
             manifest.name
         ));
     }
-    let digest = sha2::Sha256::digest(document.as_bytes())
-        .iter()
-        .fold(String::from("sha256:"), |mut text, byte| {
+    let dist = std::path::Path::new(entrypoint)
+        .parent()
+        .ok_or_else(|| "the local extension entrypoint has no distribution directory".to_owned())?;
+    let digest = development_extension_digest(document.as_bytes(), dist)?.iter().fold(
+        String::from("sha256:"),
+        |mut text, byte| {
             use std::fmt::Write as _;
             let _ = write!(text, "{byte:02x}");
             text
-        });
-    let installed_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX));
-    let mut roster = hl::extension::Roster::workspace(workspace).map_err(|error| error.to_string())?;
-    roster
-        .register(&manifest, &digest, &manifest.capabilities, installed_at)
-        .map_err(|error| error.to_string())?;
-    roster.enable(&manifest.name).map_err(|error| error.to_string())?;
-    Ok(())
+        },
+    );
+    hl::extension::install_development_top(workspace, manifest, digest)
+}
+
+#[cfg(debug_assertions)]
+fn development_extension_digest(manifest: &[u8], dist: &std::path::Path) -> Result<Vec<u8>, String> {
+    use sha2::Digest as _;
+
+    fn collect(
+        root: &std::path::Path,
+        directory: &std::path::Path,
+        files: &mut Vec<std::path::PathBuf>,
+    ) -> Result<(), String> {
+        for entry in std::fs::read_dir(directory).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let kind = entry.file_type().map_err(|error| error.to_string())?;
+            if kind.is_dir() {
+                collect(root, &entry.path(), files)?;
+            } else if kind.is_file() {
+                files.push(
+                    entry
+                        .path()
+                        .strip_prefix(root)
+                        .map_err(|error| error.to_string())?
+                        .to_owned(),
+                );
+            } else {
+                return Err(format!(
+                    "the local extension distribution contains an unsupported entry: {}",
+                    entry.path().display()
+                ));
+            }
+            if files.len() > 4_096 {
+                return Err("the local extension distribution contains more than 4096 files".to_owned());
+            }
+        }
+        Ok(())
+    }
+
+    fn field(digest: &mut sha2::Sha256, name: &[u8], contents: &[u8]) {
+        digest.update(name.len().to_le_bytes());
+        digest.update(name);
+        digest.update(contents.len().to_le_bytes());
+        digest.update(contents);
+    }
+
+    let mut files = Vec::new();
+    collect(dist, dist, &mut files)?;
+    files.sort();
+    let mut digest = sha2::Sha256::new();
+    field(&mut digest, b"extension.toml", manifest);
+    let mut total = 0_u64;
+    for relative in files {
+        let name = relative
+            .to_str()
+            .ok_or_else(|| "the local extension distribution contains a non-UTF-8 path".to_owned())?;
+        let contents = std::fs::read(dist.join(&relative)).map_err(|error| error.to_string())?;
+        total = total.saturating_add(contents.len() as u64);
+        if total > 128 * 1024 * 1024 {
+            return Err("the local extension distribution exceeds 128 MiB".to_owned());
+        }
+        field(&mut digest, name.as_bytes(), &contents);
+    }
+    Ok(digest.finalize().to_vec())
 }
 
 fn provision_workspace_with(
@@ -734,5 +790,30 @@ mod create_tests {
         assert_eq!(creation_receipt_text(Ok(())), "ok\n");
         let receipt = creation_receipt_text(Err(&"x".repeat(700)));
         assert_eq!(receipt, format!("error: {}\n", "x".repeat(500)));
+    }
+
+    #[test]
+    fn development_extension_identity_covers_every_bundled_module_not_only_the_manifest() {
+        let package = tempfile::tempdir().unwrap();
+        let dist = package.path().join("dist");
+        std::fs::create_dir_all(dist.join("assets")).unwrap();
+        std::fs::write(dist.join("main.js"), "import './assets/app.js';").unwrap();
+        std::fs::write(dist.join("assets/app.js"), "export const build = 1;").unwrap();
+        let manifest = b"name = \"top\"";
+        let first = development_extension_digest(manifest, &dist).unwrap();
+
+        std::fs::write(dist.join("assets/app.js"), "export const build = 2;").unwrap();
+        let rebuilt = development_extension_digest(manifest, &dist).unwrap();
+        assert_ne!(
+            first, rebuilt,
+            "a same-version application rebuild needs a new identity"
+        );
+
+        std::fs::write(dist.join("assets/theme.js"), "export const spacing = 4;").unwrap();
+        let added_module = development_extension_digest(manifest, &dist).unwrap();
+        assert_ne!(
+            rebuilt, added_module,
+            "new bundled modules must participate in identity"
+        );
     }
 }
