@@ -205,6 +205,15 @@ pub struct WorkspaceConfig {
     pub terminal: TerminalPreferences,
     /// Pane execution durability. Existing workspace files default to checkpointed persistence.
     pub execution_lifetime: ExecutionLifetime,
+    /// Host-only PostgreSQL transport profile. It contains no secret value,
+    /// only the TLS identity and the exact workspace credential key to use.
+    pub postgres: Option<PostgresProfile>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PostgresProfile {
+    pub tls_server_name: String,
+    pub password_key: String,
 }
 
 pub(super) const DEFAULT_SCROLLBACK_LINES: u64 = 100_000;
@@ -245,6 +254,7 @@ impl WorkspaceConfig {
             vpn: None,
             terminal: TerminalPreferences::default(),
             execution_lifetime: ExecutionLifetime::Persisted,
+            postgres: None,
         }
     }
     /// VTE scrollback-line count to apply. Unlimited (`None`/`0`) maps to a very large, file-backed cap
@@ -565,6 +575,10 @@ impl WorkspaceStore {
             }
             if w.execution_lifetime != ExecutionLifetime::Persisted {
                 out.field("execution_lifetime", w.execution_lifetime.as_str());
+            }
+            if let Some(postgres) = &w.postgres {
+                out.field("postgres_tls_server_name", &postgres.tls_server_name);
+                out.field("postgres_password_key", &postgres.password_key);
             }
             if let Some(value) = &w.terminal.font_family {
                 out.field("terminal_font", value);

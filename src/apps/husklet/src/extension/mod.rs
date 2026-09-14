@@ -107,6 +107,13 @@ impl Bridge {
         self.runtime.block_on(work)
     }
 
+    pub(super) fn spawn<F>(&self, work: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        self.runtime.spawn(work);
+    }
+
     pub(super) fn retain_execution_input(
         &self,
         id: String,

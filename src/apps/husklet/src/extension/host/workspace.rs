@@ -442,8 +442,9 @@ impl Supply for Workspace {
             current: self.config.name.clone(),
         };
         let notifications = conversation.notifications();
-        let resolver = super::super::resource::PostgresResolver::configured(extensions.resources())
-            .map_err(|error| error.to_string())?;
+        let resolver =
+            super::super::resource::PostgresResolver::configured(extensions.resources(), self.config.postgres.as_ref())
+                .map_err(|error| error.to_string())?;
         let installation = resolver
             .as_ref()
             .map(|_| super::super::postgres::WorkspaceInstallation::new(self.root(), plan.record.name.clone()));
@@ -462,7 +463,7 @@ impl Supply for Workspace {
                 Some(super::super::postgres::HostPostgres::new(
                     identity,
                     authority,
-                    super::super::postgres_worker::QueryWorker::new().map_err(|error| error.to_string())?,
+                    super::super::postgres_worker::QueryWorker::new(extensions.resources().bridge()),
                 ))
             }
             _ => None,

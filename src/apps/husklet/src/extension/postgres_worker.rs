@@ -17,6 +17,36 @@ use hl_extension::{
 use tokio_postgres::{Client, SimpleQueryMessage, SimpleQueryStream};
 
 use super::postgres::{DatabaseAuthentication, DatabaseCredential, DatabaseEndpoint, Peer};
+use super::Bridge;
+
+enum Executor {
+    Shared(std::sync::Arc<Bridge>),
+    #[cfg(test)]
+    Owned(tokio::runtime::Runtime),
+}
+
+impl Executor {
+    fn wait<F: std::future::Future>(&self, work: F) -> F::Output {
+        match self {
+            Self::Shared(bridge) => bridge.wait(work),
+            #[cfg(test)]
+            Self::Owned(runtime) => runtime.block_on(work),
+        }
+    }
+
+    fn spawn<F>(&self, work: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        match self {
+            Self::Shared(bridge) => bridge.spawn(work),
+            #[cfg(test)]
+            Self::Owned(runtime) => {
+                runtime.spawn(work);
+            }
+        }
+    }
+}
 
 struct PendingRow(Vec<Option<String>>);
 
@@ -44,12 +74,27 @@ enum Cancellation {
 /// One connection-owning worker. Production construction will require the TLS
 /// connector; plaintext construction exists only for the protocol fixture.
 pub(crate) struct QueryWorker {
-    runtime: tokio::runtime::Runtime,
+    executor: Executor,
     leases: Mutex<HashMap<String, Lease>>,
     next_identity: std::sync::atomic::AtomicU64,
 }
 
 impl QueryWorker {
+    #[cfg(test)]
+    fn owned() -> Self {
+        Self {
+            executor: Executor::Owned(
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .unwrap(),
+            ),
+            leases: Mutex::new(HashMap::new()),
+            next_identity: std::sync::atomic::AtomicU64::new(1),
+        }
+    }
+
     #[cfg(test)]
     fn plain(address: std::net::SocketAddr, timeout: Duration) -> Result<(Self, PostgresLeaseId), HostError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -75,7 +120,7 @@ impl QueryWorker {
         let lease = PostgresLeaseId::new("lease-1")?;
         let cancellation = Cancellation::Plain(client.cancel_token());
         let worker = Self {
-            runtime,
+            executor: Executor::Owned(runtime),
             leases: Mutex::new(HashMap::from([(
                 lease.as_str().into(),
                 Lease {
@@ -90,17 +135,12 @@ impl QueryWorker {
         Ok((worker, lease))
     }
 
-    pub(crate) fn new() -> Result<Self, HostError> {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .map_err(failed)?;
-        Ok(Self {
-            runtime,
+    pub(crate) fn new(bridge: std::sync::Arc<Bridge>) -> Self {
+        Self {
+            executor: Executor::Shared(bridge),
             leases: Mutex::new(HashMap::new()),
             next_identity: std::sync::atomic::AtomicU64::new(1),
-        })
+        }
     }
 
     fn identity(&self, prefix: &str) -> Result<String, HostError> {
@@ -124,8 +164,8 @@ impl QueryWorker {
             return Err(HostError::Conflict("postgres query identity is already live".into()));
         }
         let stream = self
-            .runtime
-            .block_on(async {
+            .executor
+            .wait(async {
                 tokio::time::timeout(lease.timeout, lease.client.simple_query_raw(&request.statement)).await
             })
             .map_err(|_| unavailable("postgres query start timed out"))?
@@ -164,8 +204,8 @@ impl QueryWorker {
                 Some(row.0)
             } else {
                 match self
-                    .runtime
-                    .block_on(async { tokio::time::timeout(timeout, query.stream.next()).await })
+                    .executor
+                    .wait(async { tokio::time::timeout(timeout, query.stream.next()).await })
                     .map_err(|_| unavailable("postgres page timed out"))?
                 {
                     Some(Ok(SimpleQueryMessage::RowDescription(columns))) => {
@@ -251,8 +291,8 @@ impl Peer for QueryWorker {
             .ssl_mode(tokio_postgres::config::SslMode::Require)
             .connect_timeout(Duration::from_millis(u64::from(connect_timeout_ms)));
         let (client, driver) = self
-            .runtime
-            .block_on(async {
+            .executor
+            .wait(async {
                 tokio::time::timeout(
                     Duration::from_millis(u64::from(connect_timeout_ms)),
                     config.connect(tls),
@@ -262,7 +302,7 @@ impl Peer for QueryWorker {
             .map_err(|_| unavailable("postgres TLS connection timed out"))?
             .map_err(unavailable_error)?;
         let cancellation = Cancellation::Tls(client.cancel_token());
-        self.runtime.spawn(async move {
+        self.executor.spawn(async move {
             if let Err(error) = driver.await {
                 hl_log::hl_error!(hl_log::tag::RUNTIME, "postgres connection ended: {error}");
             }
@@ -325,16 +365,14 @@ impl Peer for QueryWorker {
         match &lease.cancellation {
             #[cfg(test)]
             Cancellation::Plain(token) => self
-                .runtime
-                .block_on(async {
-                    tokio::time::timeout(lease.timeout, token.cancel_query(tokio_postgres::NoTls)).await
-                })
+                .executor
+                .wait(async { tokio::time::timeout(lease.timeout, token.cancel_query(tokio_postgres::NoTls)).await })
                 .map_err(|_| unavailable("postgres cancellation timed out"))?
                 .map_err(unavailable_error)?,
             Cancellation::Tls(token) => {
                 let tls = native_tls()?;
-                self.runtime
-                    .block_on(async { tokio::time::timeout(lease.timeout, token.cancel_query(tls)).await })
+                self.executor
+                    .wait(async { tokio::time::timeout(lease.timeout, token.cancel_query(tls)).await })
                     .map_err(|_| unavailable("postgres cancellation timed out"))?
                     .map_err(unavailable_error)?;
             }
@@ -520,7 +558,7 @@ mod tests {
             assert_eq!(u32::from_be_bytes(request[4..].try_into().unwrap()), 80_877_103);
             stream.write_all(b"N").unwrap();
         });
-        let worker = QueryWorker::new().unwrap();
+        let worker = QueryWorker::owned();
         let connection = PostgresConnection {
             container_id: "a".repeat(64),
             container_generation: 1,

@@ -1,4 +1,7 @@
-use super::{io, Arch, ExecutionLifetime, Mount, PathBuf, TerminalPreferences, VpnConfig, Workspace, WorkspaceConfig};
+use super::{
+    io, Arch, ExecutionLifetime, Mount, PathBuf, PostgresProfile, TerminalPreferences, VpnConfig, Workspace,
+    WorkspaceConfig,
+};
 
 #[derive(Default)]
 pub(super) struct WorkspaceDocument {
@@ -91,6 +94,8 @@ struct WsBuilder {
     vpn: Option<VpnConfig>,
     terminal: TerminalPreferences,
     execution_lifetime: ExecutionLifetime,
+    postgres_tls_server_name: Option<String>,
+    postgres_password_key: Option<String>,
 }
 
 #[derive(Default)]
@@ -140,6 +145,8 @@ impl WsBuilder {
                 self.execution_lifetime =
                     ExecutionLifetime::parse(v).ok_or_else(|| Value::new("execution_lifetime", v).invalid())?;
             }
+            "postgres_tls_server_name" if !v.is_empty() => self.postgres_tls_server_name = Some(v.to_owned()),
+            "postgres_password_key" if !v.is_empty() => self.postgres_password_key = Some(v.to_owned()),
             "terminal_font" if !v.is_empty() => self.terminal.font_family = Some(v.to_owned()),
             "terminal_size" => self.terminal.font_size = Some(Value::new("terminal_size", v).number()?),
             "terminal_foreground" if !v.is_empty() => self.terminal.foreground = Some(v.to_owned()),
@@ -231,6 +238,14 @@ impl WsBuilder {
         {
             return Err(Value::new("configuration_revision", &configuration_revision).invalid());
         }
+        let postgres = match (self.postgres_tls_server_name, self.postgres_password_key) {
+            (None, None) => None,
+            (Some(tls_server_name), Some(password_key)) => Some(PostgresProfile {
+                tls_server_name,
+                password_key,
+            }),
+            _ => return Err(Value::new("postgres profile", "incomplete").invalid()),
+        };
         Ok(WorkspaceConfig {
             ws: Workspace {
                 name,
@@ -255,6 +270,7 @@ impl WsBuilder {
             vpn: self.vpn,
             terminal: self.terminal,
             execution_lifetime: self.execution_lifetime,
+            postgres,
         })
     }
 

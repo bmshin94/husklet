@@ -26,26 +26,20 @@ pub(crate) struct PostgresResolver<'a> {
 }
 
 impl<'a> PostgresResolver<'a> {
-    pub(crate) fn configured(resources: &'a Resources) -> Result<Option<Self>, HostError> {
-        let server_name = std::env::var("HUSKLET_POSTGRES_TLS_SERVER_NAME").ok();
-        let password_key = std::env::var("HUSKLET_POSTGRES_PASSWORD_KEY").ok();
-        match (server_name, password_key) {
-            (None, None) => Ok(None),
-            (Some(server_name), Some(password_key)) => {
-                DatabaseTls::verify_full(server_name.clone())?;
-                if password_key.is_empty() || password_key.len() > 128 || password_key.contains('\0') {
-                    return Err(HostError::Conflict("postgres password key profile is invalid".into()));
-                }
-                Ok(Some(Self {
-                    resources,
-                    server_name,
-                    password_key,
-                }))
-            }
-            _ => Err(HostError::Conflict(
-                "postgres TLS server name and password key must be configured together".into(),
-            )),
+    pub(crate) fn configured(
+        resources: &'a Resources,
+        profile: Option<&crate::config::PostgresProfile>,
+    ) -> Result<Option<Self>, HostError> {
+        let Some(profile) = profile else { return Ok(None) };
+        DatabaseTls::verify_full(profile.tls_server_name.clone())?;
+        if profile.password_key.is_empty() || profile.password_key.len() > 128 || profile.password_key.contains('\0') {
+            return Err(HostError::Conflict("postgres password key profile is invalid".into()));
         }
+        Ok(Some(Self {
+            resources,
+            server_name: profile.tls_server_name.clone(),
+            password_key: profile.password_key.clone(),
+        }))
     }
 }
 
@@ -70,6 +64,10 @@ impl DatabaseResolver for PostgresResolver<'_> {
 impl Resources {
     pub(super) fn new(bridge: Arc<Bridge>) -> Self {
         Self { bridge }
+    }
+
+    pub(crate) fn bridge(&self) -> Arc<Bridge> {
+        Arc::clone(&self.bridge)
     }
 
     /// Resolves an authorized connection intent to a host-private route.

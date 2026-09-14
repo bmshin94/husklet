@@ -63,6 +63,30 @@ fn store_persists_across_reload() {
 }
 
 #[test]
+fn postgres_profile_is_typed_durable_and_contains_no_secret_value() {
+    let path = tmp_path("postgres-profile");
+    let _ = std::fs::remove_file(&path);
+    let mut workspace = WorkspaceConfig::new("database", "postgres:17", Arch::Arm64);
+    workspace.postgres = Some(PostgresProfile {
+        tls_server_name: "database.internal".into(),
+        password_key: "database.password".into(),
+    });
+    WorkspaceStore::load(&path).unwrap().upsert(workspace).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("postgres_tls_server_name = database.internal"));
+    assert!(text.contains("postgres_password_key = database.password"));
+    assert!(!text.to_ascii_lowercase().contains("secret"));
+    assert_eq!(
+        WorkspaceStore::load(&path).unwrap().get("database").unwrap().postgres,
+        Some(PostgresProfile {
+            tls_server_name: "database.internal".into(),
+            password_key: "database.password".into(),
+        })
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn workspace_generation_survives_updates_and_changes_after_recreation() {
     let path = tmp_path("generation");
     let _ = std::fs::remove_file(&path);
@@ -208,11 +232,13 @@ fn legacy_missing_scrollback_migrates_to_the_bounded_default() {
 fn translation_cache_is_backward_compatible_and_round_trips_only_when_opted_in() {
     let path = tmp_path("translation-cache-opt-in");
     std::fs::write(&path, "[workspace]\nname = legacy\ngeneration = 0123456789abcdef0123456789abcdef\nconfiguration_revision = 0123456789abcdef0123456789abcdef\nimage = alpine\narch = amd64\n").unwrap();
-    assert!(!WorkspaceStore::load(&path)
-        .unwrap()
-        .get("legacy")
-        .unwrap()
-        .translation_cache);
+    assert!(
+        !WorkspaceStore::load(&path)
+            .unwrap()
+            .get("legacy")
+            .unwrap()
+            .translation_cache
+    );
 
     let mut workspace = WorkspaceConfig::new("fast", "alpine", Arch::Amd64);
     workspace.translation_cache = true;
