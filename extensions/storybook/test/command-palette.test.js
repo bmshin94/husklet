@@ -4,6 +4,7 @@ import { createElement as h } from 'react';
 
 import { Playground } from '../dist/app.js';
 import { COMMAND_PALETTE_STORY, CommandPaletteStory } from '../dist/command-palette.js';
+import { spaced } from '../dist/defaults.js';
 import { host } from './host.js';
 
 function labels(patches) {
@@ -29,7 +30,7 @@ test('command palette story exposes grouped authority and destructive metadata',
   const browser = host();
   assert.ok(
     labels(browser.render(h(Playground, { initialStory: COMMAND_PALETTE_STORY })).patches).includes(
-      COMMAND_PALETTE_STORY,
+      spaced(COMMAND_PALETTE_STORY),
     ),
   );
 });

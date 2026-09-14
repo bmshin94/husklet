@@ -206,7 +206,7 @@ test('global navigation finds an unknown-family component without materializing 
     }),
   );
   const matches = stage.since(beforeSearch);
-  const dataTable = node(matches, 'ListItemButton', 'Component · DataTable');
+  const dataTable = node(matches, 'ListItemButton', 'Component · Data Table');
   assert.ok(dataTable, 'search still requires knowing the component family');
   assert.ok(
     !node(matches, 'ListItemButton', FLOW_STORIES[0]),
@@ -218,6 +218,12 @@ test('global navigation finds an unknown-family component without materializing 
     stage.surface.dispatch({ trigger: 'Invoke', node: dataTable, id: `${dataTable}:Invoke` }),
   );
   assert.ok(node(stage.since(beforeSelect), 'Heading', 'Data Table'));
+});
+
+test('component navigation displays readable names without changing route identifiers', () => {
+  const frame = host().render(h(Playground, { initialStory: 'NavigationMenuItem' }));
+  assert.ok(node(frame.patches, 'ListItemButton', 'Navigation Menu Item'));
+  assert.equal(node(frame.patches, 'ListItemButton', 'NavigationMenuItem'), null);
 });
 
 function labels(patches, tag) {

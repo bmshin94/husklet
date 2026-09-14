@@ -230,7 +230,7 @@ test('the shipped entrypoint connects and renders the complete playground over a
       searchFrame.with.frame.patches.length < 1_200,
       `<${tag.name}> search exceeded the patch budget`,
     );
-    const choice = liveNode(live, 'ListItemButton', `Component · ${tag.name}`);
+    const choice = liveNode(live, 'ListItemButton', `Component · ${spaced(tag.name)}`);
     assert.ok(choice, `<${tag.name}> is not selectable from live global navigation`);
 
     before = calls.filter((call) => call.call === 'interface_render_at').length;

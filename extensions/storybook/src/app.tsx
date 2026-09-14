@@ -250,7 +250,6 @@ export function Sidebar({
           width={'fill'}
           value={search}
           placeholder={'Search all pages'}
-          tooltip={'search every component and product pattern'}
           onChange={(event) => setSearch(String(event.value ?? '').slice(0, 80))}
         />
         {query.length > 0
@@ -263,7 +262,7 @@ export function Sidebar({
               ...results.map((result) => (
                 <ListItemButton
                   key={`${result.kind}:${result.name}`}
-                  label={`${modeLabel(result.kind)} · ${result.name}`}
+                  label={`${modeLabel(result.kind)} · ${spaced(result.name)}`}
                   tooltip={result.detail}
                   variant={selected === result.name ? 'filled' : 'ghost'}
                   onInvoke={() => onSelect(result.name)}
@@ -298,7 +297,7 @@ export function Sidebar({
                     ...family.tags.map((tag) => (
                       <ListItemButton
                         key={tag.name}
-                        label={tag.name}
+                        label={spaced(tag.name)}
                         variant={tag.name === selected ? 'filled' : 'ghost'}
                         onInvoke={() => onSelect(tag.name)}
                       />
@@ -313,7 +312,7 @@ export function Sidebar({
                     ...FLOW_STORIES.map((story) => (
                       <ListItemButton
                         key={story}
-                        label={story}
+                        label={spaced(story)}
                         variant={selected === story ? 'filled' : 'ghost'}
                         onInvoke={() => onSelect(story)}
                       />
@@ -331,12 +330,18 @@ export function searchResults(families: StoryFamily[], query: unknown): SearchRe
     .trim()
     .toLocaleLowerCase();
   if (normalized.length === 0) return [];
-  const flows = FLOW_STORIES.filter((name) => name.toLocaleLowerCase().includes(normalized)).map(
-    (name): SearchResult => ({ kind: 'pattern', name, detail: 'Product pattern', family: null }),
-  );
+  const matches = (name: string) =>
+    name.toLocaleLowerCase().includes(normalized) ||
+    spaced(name).toLocaleLowerCase().includes(normalized);
+  const flows = FLOW_STORIES.filter(matches).map((name): SearchResult => ({
+    kind: 'pattern',
+    name,
+    detail: 'Product pattern',
+    family: null,
+  }));
   const components = families.flatMap((family) =>
     family.tags
-      .filter((tag) => tag.name.toLocaleLowerCase().includes(normalized))
+      .filter((tag) => matches(tag.name))
       .map((tag): SearchResult => ({
         kind: 'component',
         name: tag.name,

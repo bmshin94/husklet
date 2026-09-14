@@ -1916,7 +1916,7 @@ mod unix {
                 .expect("Button is the selected component");
             let hovered = destinations
                 .iter()
-                .find(|button| button_caption(button).as_deref() == Some("IconButton"))
+                .find(|button| button_caption(button).as_deref() == Some("Icon Button"))
                 .expect("IconButton is the adjacent component");
             assert!(selected.has_css_class("variant-filled"));
             assert!(hovered.has_css_class("variant-ghost"));
@@ -3087,7 +3087,7 @@ mod unix {
             capture_story(&realized_window, "Button before IconButton navigation");
 
             let destination = find::<gtk::Button>(&root, |button| {
-                button.has_css_class("hl-listitembutton") && button_caption(button).as_deref() == Some("IconButton")
+                button.has_css_class("hl-listitembutton") && button_caption(button).as_deref() == Some("Icon Button")
             });
             let _ = surface.reports().drain();
             destination.emit_clicked();

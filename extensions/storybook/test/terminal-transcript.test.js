@@ -5,6 +5,7 @@ import { createElement as h } from 'react';
 import { Playground } from '../dist/app.js';
 import { TERMINAL_TRANSCRIPT_STORY, TerminalTranscriptStory } from '../dist/terminal-transcript.js';
 import { host } from './host.js';
+import { spaced } from '../dist/defaults.js';
 
 function labels(patches) {
   return patches
@@ -27,5 +28,5 @@ test('terminal transcript story composes a selectable cursor-bearing bounded ins
 
   const browser = host();
   const catalogue = browser.render(h(Playground, { initialStory: TERMINAL_TRANSCRIPT_STORY }));
-  assert.ok(labels(catalogue.patches).includes(TERMINAL_TRANSCRIPT_STORY));
+  assert.ok(labels(catalogue.patches).includes(spaced(TERMINAL_TRANSCRIPT_STORY)));
 });

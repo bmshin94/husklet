@@ -5,6 +5,7 @@ import React from 'react';
 import { Playground } from '../dist/app.js';
 import { CONFIRMATION_STORY, ConfirmationStory } from '../dist/confirmation.js';
 import { host } from './host.js';
+import { spaced } from '../dist/defaults.js';
 
 const h = React.createElement;
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -54,7 +55,7 @@ test('confirmation flow is selectable from the shipped playground', () => {
   const stage = host();
   stage.render(h(Playground, { initialStory: CONFIRMATION_STORY }));
   const patches = stage.frames.flatMap((frame) => frame.patches);
-  assert.ok(labelled(patches, CONFIRMATION_STORY));
+  assert.ok(labelled(patches, spaced(CONFIRMATION_STORY)));
   assert.ok(labelled(patches, 'Remove volume'));
 });
 
