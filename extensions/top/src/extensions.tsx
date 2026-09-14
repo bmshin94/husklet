@@ -873,7 +873,19 @@ export function Extensions({
           setAcquisition(status);
           setError('');
         } else if (status.state === 'installed' || status.state === 'updated') {
-          const listing = await api.extensions.list();
+          // The commit status is authoritative even when refreshing the
+          // installed inventory fails. Preserve it so the review cannot be
+          // replayed and the developer has an explicit reconciliation path.
+          setAcquisition(status);
+          let listing: Awaited<ReturnType<typeof api.extensions.list>>;
+          try {
+            listing = await api.extensions.list();
+          } catch (verificationCause) {
+            setError(
+              `${reviewed.name} reports ${status.state}, but installed extensions could not be verified. ${message(verificationCause)}`,
+            );
+            return;
+          }
           const committed = listing.find(
             (extension) =>
               extension.name === reviewed.name && extension.image_digest === reviewed.image_digest,
@@ -932,6 +944,13 @@ export function Extensions({
     dismissReview();
     setReference('');
     setMode('discover');
+  };
+  const verifyCommittedAcquisition = () => {
+    const name = acquisition?.candidate?.name;
+    if (!name || busy) return;
+    dismissReview();
+    revealInstalled(name);
+    void reload();
   };
   const cancel = async () => {
     if (
@@ -2375,7 +2394,17 @@ export function Extensions({
                           <Text label={acquisitionLabel(acquisition)} wrap />
                         </Row>
                       ) : ['installed', 'updated'].includes(acquisition.state) ? (
-                        <Text label={acquisitionLabel(acquisition)} wrap />
+                        <Column gap={1} align="start">
+                          <Text label={acquisitionLabel(acquisition)} wrap />
+                          <Button
+                            label="Verify in installed extensions"
+                            size="small"
+                            variant="filled"
+                            tone="accent"
+                            enabled={!busy && Boolean(acquisition.candidate)}
+                            onInvoke={verifyCommittedAcquisition}
+                          />
+                        </Column>
                       ) : (
                         <AcquisitionProgressAction
                           acquisition={acquisition}

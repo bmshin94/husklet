@@ -3435,13 +3435,15 @@ test('extension image entry submits from the keyboard and consent explains reque
   let acquisitionState = 'ready';
   let acquisitionRevision = 7;
   let committed = false;
+  let verificationUnavailable = true;
   const stage = host();
   stage.render(
     h(Extensions, {
       api: {
         extensions: {
-          list: async () =>
-            committed
+          list: async () => {
+            if (committed && verificationUnavailable) throw new Error('inventory socket closed');
+            return committed
               ? [
                   {
                     name: 'assistant',
@@ -3451,7 +3453,8 @@ test('extension image entry submits from the keyboard and consent explains reque
                     status: 'standby',
                   },
                 ]
-              : [],
+              : [];
+          },
           startAcquisition: async (reference) => {
             calls.push(['inspect', reference]);
             acquisitionState = 'ready';
@@ -3464,7 +3467,7 @@ test('extension image entry submits from the keyboard and consent explains reque
             state: acquisitionState,
             progress: null,
             candidate:
-              acquisitionState === 'ready'
+              acquisitionState !== 'failed'
                 ? {
                     name: 'assistant',
                     version: '1.2.0',
@@ -3571,9 +3574,19 @@ test('extension image entry submits from the keyboard and consent explains reque
   assert.ok(
     labelled(
       stage,
-      'assistant installed, but the confirmation reply was lost. Current extension state was verified by refresh.',
+      'assistant reports installed, but installed extensions could not be verified. inventory socket closed',
     ),
   );
+  assert.ok(labelled(stage, 'Extension installed.'));
+  assert.ok(labelled(stage, 'Verify in installed extensions'));
+  assert.deepEqual(property(stage, 'Verify in installed extensions', 'Size'), {
+    ControlSize: 'Small',
+  });
+  verificationUnavailable = false;
+  invoke(stage, 'Verify in installed extensions');
+  await settled();
+  await settled();
+  assert.ok(labelled(stage, 'Installed extensions'));
   assert.equal(fieldValue(stage, 'Search installed'), 'assistant');
   assert.ok(labelled(stage, 'assistant'));
 });
