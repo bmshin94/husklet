@@ -8348,6 +8348,17 @@
             "kind": "ref",
             "name": "WorkspaceTerminal"
           }
+        },
+        {
+          "name": "postgres",
+          "optional": true,
+          "schema": {
+            "kind": "optional",
+            "of": {
+              "kind": "ref",
+              "name": "WorkspacePostgresProfile"
+            }
+          }
         }
       ],
       "kind": "struct",
@@ -8852,6 +8863,26 @@
           "optional": false,
           "schema": {
             "kind": "boolean"
+          }
+        }
+      ],
+      "kind": "struct",
+      "serde": {}
+    },
+    "WorkspacePostgresProfile": {
+      "fields": [
+        {
+          "name": "tls_server_name",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "password_key",
+          "optional": false,
+          "schema": {
+            "kind": "string"
           }
         }
       ],
@@ -15787,7 +15818,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:7f24cbd97b448092",
+  "source_fingerprint": "fnv1a64:f118664a6ae12bde",
   "specification_version": 1,
   "topics": [
     {

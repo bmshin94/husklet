@@ -352,6 +352,48 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
                   </Column>
                 </SettingsGroup>
                 <SettingsGroup
+                  name="postgres"
+                  label="PostgreSQL service"
+                  detail={configuration.postgres ? 'TLS profile configured' : 'Not configured'}
+                  expanded={expanded}
+                  onExpand={setExpanded}
+                >
+                  <Text
+                    label="Host-only connection metadata. The password remains in the named workspace credential and is never returned here."
+                    color="text-dim"
+                    width={CONTROL_WIDTH}
+                    wrap
+                  />
+                  {field(
+                    'TLS server name',
+                    configuration.postgres?.tls_server_name ?? '',
+                    'database.example.internal',
+                    (event) =>
+                      change('postgres', {
+                        tls_server_name: String(event.value ?? '').trim(),
+                        password_key: configuration.postgres?.password_key ?? '',
+                      }),
+                  )}
+                  {field(
+                    'Password credential key',
+                    configuration.postgres?.password_key ?? '',
+                    'database.password',
+                    (event) =>
+                      change('postgres', {
+                        tls_server_name: configuration.postgres?.tls_server_name ?? '',
+                        password_key: String(event.value ?? '').trim(),
+                      }),
+                  )}
+                  {configuration.postgres && (
+                    <Button
+                      label="Clear PostgreSQL profile"
+                      size="small"
+                      variant="outline"
+                      onInvoke={() => change('postgres', null)}
+                    />
+                  )}
+                </SettingsGroup>
+                <SettingsGroup
                   name="advanced"
                   label="Resources & connectivity"
                   detail={resourceSummary(configuration)}
@@ -731,6 +773,12 @@ function withNumbers(value: WorkspaceConfiguration, numbers: Numbers): Workspace
 }
 function validate(value: WorkspaceConfiguration) {
   if (!value.image.trim()) throw new Error('Workspace image must not be empty.');
+  if (value.postgres) {
+    if (!/^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/.test(value.postgres.tls_server_name))
+      throw new Error('PostgreSQL TLS server name must be a valid DNS name.');
+    if (!value.postgres.password_key || value.postgres.password_key.length > 128 || value.postgres.password_key.includes('\0'))
+      throw new Error('PostgreSQL password credential key must contain 1 to 128 NUL-free characters.');
+  }
   for (const [label, color] of [
     ['Foreground', value.terminal.foreground],
     ['Background', value.terminal.background],

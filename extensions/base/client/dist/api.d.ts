@@ -280,6 +280,11 @@ export interface WorkspaceConfiguration extends WorkspaceInfo {
     vpn: string | null;
     execution_lifetime: 'persisted' | 'live' | 'ephemeral';
     terminal: WorkspaceTerminal;
+    postgres?: WorkspacePostgresProfile | null;
+}
+export interface WorkspacePostgresProfile {
+    tls_server_name: string;
+    password_key: string;
 }
 export interface ContainerSummary {
     id: string;

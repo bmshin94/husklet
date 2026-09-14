@@ -844,6 +844,10 @@ impl Store {
                 cursor_shape: workspace.terminal.cursor_shape.clone(),
                 cursor_blink: workspace.terminal.cursor_blink,
             },
+            postgres: workspace.postgres.as_ref().map(|profile| hl_extension::WorkspacePostgresProfile {
+                tls_server_name: profile.tls_server_name.clone(),
+                password_key: profile.password_key.clone(),
+            }),
         }
     }
 
@@ -888,6 +892,16 @@ impl Store {
         workspace.terminal.background.clone_from(&value.terminal.background);
         workspace.terminal.cursor_shape.clone_from(&value.terminal.cursor_shape);
         workspace.terminal.cursor_blink = value.terminal.cursor_blink;
+        workspace.postgres = value.postgres.as_ref().map(|profile| crate::config::PostgresProfile {
+            tls_server_name: profile.tls_server_name.clone(),
+            password_key: profile.password_key.clone(),
+        });
+        if let Some(profile) = &workspace.postgres {
+            super::super::postgres::DatabaseTls::verify_full(profile.tls_server_name.clone())?;
+            if profile.password_key.is_empty() || profile.password_key.len() > 128 || profile.password_key.contains('\0') {
+                return Err(HostError::Conflict("postgres password key profile is invalid".into()));
+            }
+        }
         Ok(workspace)
     }
 

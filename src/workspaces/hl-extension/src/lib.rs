@@ -62,6 +62,7 @@ pub use port::{
 };
 pub use port::{
     NetworkEndpointInventory, NetworkKind, NetworkSummary, VolumeSummary, WorkspaceConfiguration, WorkspaceMount,
+    WorkspacePostgresProfile,
     WorkspaceTerminal,
 };
 pub use port::{Notification, NotificationSink};

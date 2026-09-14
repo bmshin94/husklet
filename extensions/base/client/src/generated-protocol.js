@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:7f4a292d9840d9ef
+// Protocol artifact fnv1a64:0e051aa0c3a31458
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -8717,6 +8717,17 @@ const definitions = {
           "kind": "ref",
           "name": "WorkspaceTerminal"
         }
+      },
+      {
+        "name": "postgres",
+        "optional": true,
+        "schema": {
+          "kind": "optional",
+          "of": {
+            "kind": "ref",
+            "name": "WorkspacePostgresProfile"
+          }
+        }
       }
     ],
     "kind": "struct",
@@ -9221,6 +9232,26 @@ const definitions = {
         "optional": false,
         "schema": {
           "kind": "boolean"
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {}
+  },
+  "WorkspacePostgresProfile": {
+    "fields": [
+      {
+        "name": "tls_server_name",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "password_key",
+        "optional": false,
+        "schema": {
+          "kind": "string"
         }
       }
     ],

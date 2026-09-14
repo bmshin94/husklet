@@ -732,6 +732,12 @@ pub struct WorkspaceState {
 
 /// Complete extension-facing workspace configuration.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct WorkspacePostgresProfile {
+    pub tls_server_name: String,
+    pub password_key: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct WorkspaceConfiguration {
     #[serde(default)]
     pub generation: String,
@@ -754,6 +760,8 @@ pub struct WorkspaceConfiguration {
     pub vpn: Option<String>,
     pub execution_lifetime: String,
     pub terminal: WorkspaceTerminal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub postgres: Option<WorkspacePostgresProfile>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
