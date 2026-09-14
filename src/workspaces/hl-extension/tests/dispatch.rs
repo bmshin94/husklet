@@ -1513,6 +1513,7 @@ fn workspace_configuration() -> WorkspaceConfiguration {
         docker_socket: true,
         scrollback: Some(100_000),
         vpn: None,
+        postgres: None,
         execution_lifetime: "persisted".into(),
         terminal: WorkspaceTerminal::default(),
     }
