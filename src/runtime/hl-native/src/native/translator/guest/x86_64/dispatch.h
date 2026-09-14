@@ -107,7 +107,7 @@ static uint64_t g_prevpc, g_curpc;
 // Use the two-way set-associative g_xibtc insert.
 #define G_IBTC_FILL(c)                                                                                                 \
     if ((c)->ic_miss) {                                                                                                \
-        if (!g_threaded || g_x86_mtibtc) {                                                                             \
+        if (!g_threaded || g_x86_mtibtc || g_x86_ibtc8) {                                                              \
             void *body = map_body((c)->rip);                                                                           \
             if (body) {                                                                                                \
                 /* The emitted indirect probe (emit_ibranch) branches ABSOLUTELY to slot.body                          \
@@ -121,7 +121,15 @@ static uint64_t g_prevpc, g_curpc;
                 int w = (!g_xibtc[w0].target || g_xibtc[w0].target == (c)->rip)   ? w0                                 \
                         : (!g_xibtc[w1].target || g_xibtc[w1].target == (c)->rip) ? w1                                 \
                                                                                   : w0;                                \
-                if (g_threaded) {                                                                                      \
+                if (g_x86_ibtc8) {                                                                                     \
+                    /* HL_X86_IBTC8: publish the 8-byte body hint with a release store. The probe    \
+                     * re-validates the tag from the header at body-8 through an address dependency, \
+                     * so no 16-byte atom and no FEAT_LSE2 is involved on either side. Used on the   \
+                     * single-threaded path too, where it is simply a plain store with a compiler    \
+                     * barrier -- the emitted probe shape is a per-run property, not a per-fill one. \
+                     */                                                                                                \
+                    hl_x86_xibtc_publish8(&g_xibtc[w], (c)->rip, body);                                                \
+                } else if (g_threaded) {                                                                               \
                     /* threaded: one 128-bit atomic release publish, consumed by the `ldp` probe */                     \
                     hl_x86_xibtc_publish(&g_xibtc[w], (c)->rip, body);                                                 \
                 } else {                                                                                               \

@@ -169,10 +169,17 @@ static uint64_t pcache_id_of(const char *path) {
 // as a branch; restoring blocks emitted WITHOUT that shaping and then patching them under live peers
 // would rewrite an `stp` to a `b` concurrently, which is exactly the architecturally unpredictable case
 // the shaping exists to avoid. MT_IBTC changes the indirect probe to a 16-byte `ldp`.
+// HL_X86_IBTC8 changes the REGION LAYOUT: every region carries an 8-byte guest-PC header before its
+// `body`, and the indirect probe re-validates the tag by loading that header through the body pointer.
+// Restoring an arena WITHOUT headers into a run whose probes read body-8 would have the probe compare
+// against whatever emitted words happen to sit there, and a coincidental match would branch into the
+// wrong translation -- so it must key the identity.  HL_PCACHE_ABI_X86_64 is bumped X86PCA02 ->
+// X86PCA03 besides, because the block layout itself changed and no older arena may be reused at all.
 // Contributes ZERO when both options are off, so the identity of every existing persisted cache -- and
 // therefore its restorability -- is unchanged by default.
 static uint64_t pcache_mt_mode_bits(void) {
-    return ((uint64_t)(g_mtchain != 0) << 4) | ((uint64_t)(g_x86_mtibtc != 0) << 5);
+    return ((uint64_t)(g_mtchain != 0) << 4) | ((uint64_t)(g_x86_mtibtc != 0) << 5) |
+           ((uint64_t)(g_x86_ibtc8 != 0) << 6);
 }
 
 static uint64_t pcache_engine_id(void) {

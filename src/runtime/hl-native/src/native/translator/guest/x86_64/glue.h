@@ -47,6 +47,21 @@ static inline void hl_x86_xibtc_publish(hl_x86_ibtc_entry *e, uint64_t target, v
 #endif
 }
 
+// HL_X86_IBTC8 RELEASE PUBLISH of an 8-byte body hint.  The entry's `target` word is retained as
+// the single writer's own way-selection bookkeeping (it is read only under g_jit_lock, never by
+// emitted code); the ONLY word emitted code reads is `body`, and it is read as ONE naturally
+// aligned 8-byte load, which DDI 0487 B2.2.1 makes single-copy atomic on every Armv8 part with no
+// FEAT_LSE2 and no alignment beyond the access size.  The reader re-validates the tag from the
+// immutable header at body-8 through an address dependency (see emit_ibranch), so any whole pointer
+// it observes -- new or stale -- is either accepted for the right guest PC or rejected.  A release
+// store is used rather than a bare one so that everything that made `body` executable, and the
+// header write in particular, is ordered before the pointer becomes observable; the reader's
+// address dependency is the matching consume side.
+static inline void hl_x86_xibtc_publish8(hl_x86_ibtc_entry *e, uint64_t target, void *body) {
+    e->target = target; // writer-private; emitted code never loads it under HL_X86_IBTC8
+    __atomic_store_n(&e->body, body, __ATOMIC_RELEASE);
+}
+
 extern uint64_t g_emit_gpc;
 extern uint64_t g_disp_n;
 extern int g_dispatch_diagnostics;

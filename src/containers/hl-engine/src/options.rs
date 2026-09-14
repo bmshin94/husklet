@@ -218,6 +218,11 @@ const DEFINITIONS: &[Definition] = &[
         Flag
     ),
     launch!(
+        "HL_X86_IBTC8",
+        "fill the x86 indirect-branch target cache under threads through an 8-byte entry re-validated from a per-body header, with no FEAT_LSE2 dependency",
+        Flag
+    ),
+    launch!(
         "HL_TRANSLIT_JCC_SELF_LINK",
         "link a same-ISA descriptor's own backward JCC edge straight to its entry",
         Flag

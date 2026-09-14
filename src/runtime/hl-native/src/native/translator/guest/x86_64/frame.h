@@ -49,6 +49,8 @@ void hl_x86_emit_set_bus_thunk(int enabled);
    live in the AArch64 emitter and other hosts link the no-op stubs in engine/target/x86_64.c. */
 void hl_x86_emit_set_mt_chain(int enabled);
 void hl_x86_emit_set_mt_ibtc(int enabled);
+void hl_x86_emit_set_ibtc8(int enabled);
+int hl_x86_emit_ibtc8_enabled(void);
 /* HL_X86_MT_CHAIN, as seen by the SMC commit path: on, and not yet latched off by an SMC event. */
 int hl_x86_emit_mt_chain_enabled(void);
 void hl_x86_emit_mt_chain_smc_disable(void);

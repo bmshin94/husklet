@@ -258,6 +258,10 @@ static const hl_option_definition hl_option_definitions[] = {
     HL_LAUNCH_OPTION("HL_X86_MT_IBTC",
                      "fill the x86 indirect-branch target cache while a peer guest thread is live",
                      HL_OPTION_FLAG),
+    HL_LAUNCH_OPTION("HL_X86_IBTC8",
+                     "fill the x86 indirect-branch target cache under threads through an 8-byte entry "
+                     "re-validated from a per-body header, with no FEAT_LSE2 dependency",
+                     HL_OPTION_FLAG),
     /* Report the host as lacking FEAT_LSE2 (aarch64) / atomic aligned 16-byte SSE (x86-64), so the
        IBTC gate's refuse-and-fall-back path can be exercised on a host that HAS the feature. An
        injection, not a launch input: there is no legitimate reason for a deployment to claim a

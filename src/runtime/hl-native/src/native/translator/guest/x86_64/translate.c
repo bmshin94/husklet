@@ -1676,6 +1676,11 @@ static void *translate_block(uint64_t gpc) {
     emit_bus_thunk_body();
     void *host = g_cp;
     emit_prologue();
+    // HL_X86_IBTC8: the immutable {guest pc} header this region's body is re-validated through,
+    // laid BEFORE `body` and branched over, so `body` itself -- the target of every chain, every
+    // self-loop fold, every IBTC hit, tier-2's body[0]/body[2] rewrites and every recorded
+    // provenance range -- keeps exactly the meaning and the contents it has always had.
+    emit_ibtc8_header(start);
     void *body = g_cp;
     // poll cpu->irq at the body entry so a caught async signal reaches a no-syscall guest loop.
     emit_irq_check(start);
