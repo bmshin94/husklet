@@ -3713,6 +3713,79 @@ test('extension image entry submits from the keyboard and consent explains reque
   assert.ok(labelled(stage, 'assistant'));
 });
 
+test('a concurrent extension change refreshes inventory instead of offering a stale consent retry', async () => {
+  let installed = false;
+  let inspections = 0;
+  const stage = host();
+  stage.render(
+    h(Extensions, {
+      api: {
+        extensions: {
+          list: async () =>
+            installed
+              ? [
+                  {
+                    name: 'assistant',
+                    version: '1.1.0',
+                    image_digest: `sha256:${'b'.repeat(64)}`,
+                    enabled: true,
+                    status: 'duty',
+                  },
+                ]
+              : [],
+          startAcquisition: async () => {
+            inspections += 1;
+            return { job: 'candidate' };
+          },
+          acquisition: async () => ({
+            job: 'candidate',
+            reference: 'registry.example/assistant:2',
+            revision: installed ? 8 : 7,
+            state: 'ready',
+            progress: null,
+            candidate: {
+              name: 'assistant',
+              version: '2.0.0',
+              image_digest: `sha256:${'a'.repeat(64)}`,
+              installed_image_digest: null,
+              requested: [],
+            },
+            error: null,
+          }),
+          installAndWait: async () => {
+            installed = true;
+            const conflict = Object.assign(new Error('assistant is already installed'), {
+              kind: 'conflict',
+            });
+            throw new Error('extension install may have committed', { cause: conflict });
+          },
+        },
+        watchExtensions: async () => () => {},
+      },
+    }),
+  );
+  await settled();
+  selectExtensionMode(stage, 'Discover');
+  change(stage, 'registry.example/extension:version', 'registry.example/assistant:2');
+  invoke(stage, 'Inspect');
+  await settled();
+  await settled();
+  invoke(stage, 'Install with selected access');
+  await settled();
+  await settled();
+  await settled();
+
+  assert.ok(
+    labelled(
+      stage,
+      'assistant changed while this review was open. Current installed state was refreshed. Inspect the image again before changing access.',
+    ),
+  );
+  assert.ok(labelled(stage, 'assistant'));
+  assert.equal(fieldValue(stage, 'Search installed'), 'assistant');
+  assert.equal(inspections, 1, 'the stale candidate is not silently reacquired or replayed');
+});
+
 test('a ready extension review can be abandoned without granting authority', async () => {
   const calls = [];
   const stage = host();

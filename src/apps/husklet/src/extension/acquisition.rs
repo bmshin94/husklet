@@ -344,7 +344,7 @@ impl ExtensionAcquisitions {
         let _commit = self.commits.lock().unwrap_or_else(PoisonError::into_inner);
         let (candidate, visible) = self.take_ready(job, revision)?;
         let result = external_workspace_environment(&candidate.manifest)
-            .and_then(|()| Roster::workspace(&self.workspace).map_err(|error| HostError::Failed(error.to_string())))
+            .and_then(|()| Roster::workspace(&self.workspace).map_err(roster_failure))
             .and_then(|mut roster| {
                 roster
                     .register_enabled_resource_scoped(
@@ -360,7 +360,7 @@ impl ExtensionAcquisitions {
                         credentials,
                         moment(),
                     )
-                    .map_err(|error| HostError::Failed(error.to_string()))
+                    .map_err(roster_failure)
             });
         self.finish(job, result, AcquisitionState::Installed, candidate, visible)
     }
@@ -408,13 +408,14 @@ impl ExtensionAcquisitions {
         let (candidate, visible) = self.take_ready(job, revision)?;
         let installed_digest = visible.installed_digest.clone();
         let result = (|| {
-            external_workspace_environment(&candidate.manifest).map_err(|error| error.to_string())?;
-            let installed_digest = installed_digest
-                .ok_or_else(|| "the extension was not installed when consent was requested".to_owned())?;
-            let mut roster = Roster::workspace(&self.workspace).map_err(|error| error.to_string())?;
+            external_workspace_environment(&candidate.manifest)?;
+            let installed_digest = installed_digest.ok_or_else(|| {
+                HostError::Conflict("the extension was not installed when consent was requested".into())
+            })?;
+            let mut roster = Roster::workspace(&self.workspace).map_err(roster_failure)?;
             let update = roster
                 .prepare_update_if_digest(&candidate.manifest, &candidate.digest, &installed_digest)
-                .map_err(|error| error.to_string())?;
+                .map_err(roster_failure)?;
             roster
                 .commit_update_resource_scoped(
                     update,
@@ -428,9 +429,8 @@ impl ExtensionAcquisitions {
                     credentials,
                     moment(),
                 )
-                .map_err(|error| error.to_string())
-        })()
-        .map_err(HostError::Failed);
+                .map_err(update_failure)
+        })();
         self.finish(job, result, AcquisitionState::Updated, candidate, visible)
     }
 
@@ -492,6 +492,23 @@ impl ExtensionAcquisitions {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Registry> {
         self.registry.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Keeps an expected lifecycle race distinct from broken durable storage. The
+/// distinction crosses the extension socket: callers can reconcile a conflict
+/// against the current inventory, while retrying a host failure is appropriate.
+fn roster_failure(error: super::Refusal) -> HostError {
+    match error {
+        super::Refusal::Policy(objection) => HostError::Conflict(objection.to_string()),
+        super::Refusal::Record(fault) => HostError::Failed(fault.to_string()),
+    }
+}
+
+fn update_failure(error: super::UpdateRefusal) -> HostError {
+    match error {
+        super::UpdateRefusal::Policy(objection) => HostError::Conflict(objection.to_string()),
+        super::UpdateRefusal::Record(fault) => HostError::Failed(fault.to_string()),
     }
 }
 
@@ -724,6 +741,97 @@ mod tests {
         );
         service.cancel(job, restored.revision).unwrap();
         assert_eq!(service.status(job).unwrap().state, AcquisitionState::Cancelled);
+    }
+
+    #[test]
+    fn concurrent_install_is_a_reconcilable_conflict_not_a_host_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = workspace(root.path());
+        let candidate = manifest("1.0.0", &[Capability::Interface]);
+        let raced = candidate.clone();
+        let service = ExtensionAcquisitions::with_acquirer(&workspace, move |_, reference, progress, _, _refresh| {
+            let _ = progress.send(Acquisition::Ready(Candidate {
+                reference: reference.into(),
+                digest: "sha256:reviewed".into(),
+                manifest: candidate.clone(),
+            }));
+        });
+        let job = service.start("registry/sample:1", false).unwrap();
+        let reviewed = ready(&service, job);
+
+        Roster::workspace(&workspace)
+            .unwrap()
+            .register_enabled_resource_scoped(
+                &raced,
+                "sha256:concurrent",
+                &raced.capabilities,
+                &hl_extension::ContainerGrant::default(),
+                &hl_extension::ImageGrant::default(),
+                &hl_extension::NetworkGrant::default(),
+                &hl_extension::VolumeGrant::default(),
+                &hl_extension::FilesystemGrant::default(),
+                &hl_extension::WorkspaceEnvironmentGrant::default(),
+                &hl_extension::CredentialGrant::default(),
+                1,
+            )
+            .unwrap();
+
+        let refusal = service
+            .install(job, reviewed.revision, &Grant::new([Capability::Interface]))
+            .expect_err("the concurrent install owns this name now");
+        assert!(
+            matches!(&refusal, HostError::Conflict(detail) if detail.contains("already installed")),
+            "a caller must be told to reconcile inventory, not retry a broken host: {refusal:?}"
+        );
+        let restored = service.status(job).unwrap();
+        assert!(restored.revision > reviewed.revision);
+        assert_eq!(restored.state, reviewed.state, "reviewed consent remains inspectable");
+        let installed = Roster::workspace(&workspace).unwrap().entries().remove(0);
+        assert_eq!(installed.image_digest, "sha256:concurrent");
+    }
+
+    #[test]
+    fn concurrent_update_is_a_reconcilable_conflict_not_a_host_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = workspace(root.path());
+        let installed = manifest("1.0.0", &[Capability::Interface]);
+        Roster::workspace(&workspace)
+            .unwrap()
+            .register(&installed, "sha256:installed", &installed.capabilities, 1)
+            .unwrap();
+        let reviewed_manifest = manifest("2.0.0", &[Capability::Interface]);
+        let service = ExtensionAcquisitions::with_acquirer(
+            &workspace,
+            move |_, reference, progress, _, _refresh| {
+                let _ = progress.send(Acquisition::Ready(Candidate {
+                    reference: reference.into(),
+                    digest: "sha256:reviewed".into(),
+                    manifest: reviewed_manifest.clone(),
+                }));
+            },
+        );
+        let job = service.start("registry/sample:2", false).unwrap();
+        let reviewed = ready(&service, job);
+
+        let concurrent = manifest("1.1.0", &[Capability::Interface]);
+        let mut roster = Roster::workspace(&workspace).unwrap();
+        let update = roster
+            .prepare_update_if_digest(&concurrent, "sha256:concurrent", "sha256:installed")
+            .unwrap();
+        roster.commit_update(update, &concurrent.capabilities, 2).unwrap();
+
+        let refusal = service
+            .update(job, reviewed.revision, &Grant::new([Capability::Interface]))
+            .expect_err("the concurrent update owns this name now");
+        assert!(
+            matches!(&refusal, HostError::Conflict(detail) if detail.contains("changed while its update was pending")),
+            "a caller must refresh the installed generation, not diagnose the host: {refusal:?}"
+        );
+        let restored = service.status(job).unwrap();
+        assert!(restored.revision > reviewed.revision);
+        assert_eq!(restored.state, reviewed.state, "reviewed consent remains inspectable");
+        let current = Roster::workspace(&workspace).unwrap().entries().remove(0);
+        assert_eq!((current.version.as_str(), current.image_digest.as_str()), ("1.1.0", "sha256:concurrent"));
     }
 
     fn workspace(root: &std::path::Path) -> WorkspaceConfig {

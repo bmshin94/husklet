@@ -916,10 +916,34 @@ export function Extensions({
             'The install is still being saved after its confirmation reply was lost. Wait for completion before acting again.',
           );
         } else if (status.state === 'ready' && status.candidate) {
-          setAcquisition(status);
-          setError(
-            `The extension was not saved. Its reviewed image and selected access are retained for a safe retry. ${message(cause)}`,
-          );
+          if (extensionCommitConflict(cause)) {
+            try {
+              const listing = await api.extensions.list();
+              ++inventoryEpoch.current;
+              installedSnapshot.current = listing;
+              setInstalled(listing);
+              setInventoryState(listing.length === 0 ? 'empty' : 'ready');
+              setInventoryError('');
+              setAcquisition(null);
+              candidateKey.current = '';
+              const current = listing.find((extension) => extension.name === reviewed.name);
+              if (current) revealInstalled(current.name);
+              setNotice({
+                label: `${reviewed.name} changed while this review was open. Current installed state was refreshed. Inspect the image again before changing access.`,
+                uncertain: false,
+              });
+            } catch (refreshCause) {
+              setAcquisition(status);
+              setError(
+                `${reviewed.name} changed while this review was open, but current installed state could not be refreshed. Keep this review open, refresh extensions, then inspect the image again. ${message(refreshCause)}`,
+              );
+            }
+          } else {
+            setAcquisition(status);
+            setError(
+              `The extension was not saved. Its reviewed image and selected access are retained for a safe retry. ${message(cause)}`,
+            );
+          }
         } else {
           setAcquisition(status);
           setError(message(cause));
@@ -2945,6 +2969,12 @@ function AcquisitionProgressAction({
 
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message.slice(0, 500) : String(cause).slice(0, 500);
+}
+
+function extensionCommitConflict(cause: unknown): boolean {
+  if (!cause || typeof cause !== 'object') return false;
+  const failure = cause as { kind?: unknown; cause?: unknown };
+  return failure.kind === 'conflict' || extensionCommitConflict(failure.cause);
 }
 
 function selectorKey(selector: ContainerSelector): string {
