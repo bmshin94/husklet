@@ -9240,10 +9240,22 @@ test('real Unix writeAndWait subscribes and reads before bytes, then returns adv
             socket.write(advanced.subarray(0, 5));
             setImmediate(() => socket.write(advanced.subarray(5)));
           }
+        } else if (frame.payload.call === 'terminal_input_open') {
+          socket.write(
+            encode({
+              channel: 2,
+              kind: KIND.response,
+              payload: {
+                reply: 'terminal_input_writer',
+                with: { writer: 'a'.repeat(32), next_sequence: 0 },
+              },
+            }),
+          );
         } else if (frame.payload.call === 'terminal_write_pane') {
           writes += 1;
-          const { operation, ...write } = frame.payload.with;
-          assert.match(operation, /^[0-9a-f]{32}$/);
+          const { writer, sequence, ...write } = frame.payload.with;
+          assert.equal(writer, 'a'.repeat(32));
+          assert.equal(sequence, writes - 1);
           assert.deepEqual(write, {
             slot,
             generation: 4,
@@ -9271,7 +9283,8 @@ test('real Unix writeAndWait subscribes and reads before bytes, then returns adv
                   slot,
                   generation: 4,
                   revision: 7,
-                  operation,
+                  writer,
+                  sequence,
                   committed: write.contents.length,
                 },
               },
@@ -9310,6 +9323,7 @@ test('real Unix writeAndWait subscribes and reads before bytes, then returns adv
     assert.deepEqual(calls, [
       'event_subscribe',
       'terminal_read_pane',
+      'terminal_input_open',
       'terminal_write_pane',
       'terminal_read_pane',
       'terminal_read_pane',
@@ -9325,6 +9339,7 @@ test('real Unix writeAndWait subscribes and reads before bytes, then returns adv
     assert.deepEqual(calls, [
       'event_subscribe',
       'terminal_read_pane',
+      'terminal_input_open',
       'terminal_write_pane',
       'event_unsubscribe',
     ]);
@@ -9382,6 +9397,18 @@ test('observed terminal input keeps snapshot authority intact over one-byte Unix
       for (const frame of reader.take(chunk)) {
         if (frame.channel !== 2) continue;
         received.push(frame.payload);
+        if (frame.payload.call === 'terminal_input_open') {
+          const response = encode({
+            channel: 2,
+            kind: KIND.response,
+            payload: {
+              reply: 'terminal_input_writer',
+              with: { writer: 'b'.repeat(32), next_sequence: 0 },
+            },
+          });
+          for (const byte of response) socket.write(Uint8Array.of(byte));
+          continue;
+        }
         const response = encode({
           channel: 2,
           kind: KIND.response,
@@ -9394,7 +9421,8 @@ test('observed terminal input keeps snapshot authority intact over one-byte Unix
                     slot: frame.payload.with.slot,
                     generation: frame.payload.with.generation,
                     revision: frame.payload.with.revision,
-                    operation: frame.payload.with.operation,
+                    writer: frame.payload.with.writer,
+                    sequence: frame.payload.with.sequence,
                     committed: frame.payload.with.contents.length,
                   },
                 }
@@ -9424,10 +9452,12 @@ test('observed terminal input keeps snapshot authority intact over one-byte Unix
       { slot: 'pane-a', generation: 7, revision: 10, lines: ['$ '], truncated: false },
       Uint8Array.of(0, 3, 255),
     );
-    const { operation, ...firstWrite } = received[0].with;
-    assert.match(operation, /^[0-9a-f]{32}$/);
+    assert.deepEqual(received[0], { call: 'terminal_input_open' });
+    const { writer, sequence, ...firstWrite } = received[1].with;
+    assert.equal(writer, 'b'.repeat(32));
+    assert.equal(sequence, 0);
     assert.deepEqual(
-      { call: received[0].call, with: firstWrite },
+      { call: received[1].call, with: firstWrite },
       {
         call: 'terminal_write_pane',
         with: { slot: 'pane-a', generation: 7, revision: 10, contents: [0, 3, 255] },
@@ -9455,7 +9485,7 @@ test('fragmented Unix input reply loss preserves its exact recovery operation ac
   const input = [0, 3, 255, 10];
   let connection = 0;
   let revision = 7;
-  let operation;
+  const writer = 'c'.repeat(32);
   const screen = () => ({
     slot: 'agent-pane',
     generation: 4,
@@ -9481,14 +9511,17 @@ test('fragmented Unix input reply loss preserves its exact recovery operation ac
       for (const frame of reader.take(chunk)) {
         if (frame.channel !== 2) continue;
         let payload;
-        if (frame.payload.call === 'terminal_read_pane') {
+        if (frame.payload.call === 'terminal_input_open') {
+          payload = { reply: 'terminal_input_writer', with: { writer, next_sequence: 0 } };
+        } else if (frame.payload.call === 'terminal_read_pane') {
           payload = { reply: 'text', with: screen() };
         } else if (frame.payload.call === 'terminal_write_pane') {
           assert.equal(currentConnection, 1, 'ambiguous input must never be replayed');
-          ({ operation } = frame.payload.with);
-          assert.match(operation, /^[0-9a-f]{32}$/);
+          assert.equal(frame.payload.with.writer, writer);
+          assert.equal(frame.payload.with.sequence, 0);
           const write = { ...frame.payload.with };
-          delete write.operation;
+          delete write.writer;
+          delete write.sequence;
           assert.deepEqual(write, {
             slot: 'agent-pane',
             generation: 4,
@@ -9505,7 +9538,8 @@ test('fragmented Unix input reply loss preserves its exact recovery operation ac
                 slot: 'agent-pane',
                 generation: 4,
                 revision: 7,
-                operation,
+                writer,
+                sequence: 0,
                 committed: input.length,
               },
             },
@@ -9551,7 +9585,8 @@ test('fragmented Unix input reply loss preserves its exact recovery operation ac
           revision: 7,
           written: 'unknown',
           input,
-          operation,
+          writer,
+          sequence: 0,
         });
         return true;
       },
@@ -9655,10 +9690,22 @@ test('real Unix quiet terminal wait does not mistake local echo for an agent res
               },
             }),
           );
+        } else if (frame.payload.call === 'terminal_input_open') {
+          socket.write(
+            encode({
+              channel: 2,
+              kind: KIND.response,
+              payload: {
+                reply: 'terminal_input_writer',
+                with: { writer: 'd'.repeat(32), next_sequence: 0 },
+              },
+            }),
+          );
         } else if (frame.payload.call === 'terminal_write_pane') {
           writes += 1;
-          const { operation, ...write } = frame.payload.with;
-          assert.match(operation, /^[0-9a-f]{32}$/);
+          const { writer, sequence, ...write } = frame.payload.with;
+          assert.equal(writer, 'd'.repeat(32));
+          assert.equal(sequence, writes - 1);
           assert.deepEqual(write, {
             slot,
             generation: 4,
@@ -9681,7 +9728,8 @@ test('real Unix quiet terminal wait does not mistake local echo for an agent res
                   slot,
                   generation: 4,
                   revision: write.revision,
-                  operation,
+                  writer,
+                  sequence,
                   committed: write.contents.length,
                 },
               },
@@ -9825,9 +9873,21 @@ test('real Unix projected input refuses to attribute replacement pane text to se
               },
             }),
           );
+        } else if (frame.payload.call === 'terminal_input_open') {
+          socket.write(
+            encode({
+              channel: 2,
+              kind: KIND.response,
+              payload: {
+                reply: 'terminal_input_writer',
+                with: { writer: 'e'.repeat(32), next_sequence: 0 },
+              },
+            }),
+          );
         } else if (frame.payload.call === 'terminal_write_pane') {
-          const { operation, ...write } = frame.payload.with;
-          assert.match(operation, /^[0-9a-f]{32}$/);
+          const { writer, sequence, ...write } = frame.payload.with;
+          assert.equal(writer, 'e'.repeat(32));
+          assert.equal(sequence, 0);
           assert.deepEqual(write, {
             slot: 'pane-input',
             generation: 4,
@@ -9860,7 +9920,8 @@ test('real Unix projected input refuses to attribute replacement pane text to se
                   slot: 'pane-input',
                   generation: 4,
                   revision: 7,
-                  operation,
+                  writer,
+                  sequence,
                   committed: 1,
                 },
               },

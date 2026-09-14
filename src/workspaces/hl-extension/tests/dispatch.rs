@@ -2306,7 +2306,8 @@ fn calls() -> Vec<(Request, Capability)> {
                 slot: "s1".into(),
                 generation: 1,
                 revision: 2,
-                operation: "3333333333333333".into(),
+                writer: "33333333333333333333333333333333".into(),
+                sequence: 0,
                 contents: b"pwd\n".to_vec(),
             },
             Capability::TerminalInput,
@@ -3177,7 +3178,8 @@ fn terminal_input_and_grid_are_bounded_before_the_window_is_reached() {
         slot: "s1".into(),
         generation: 1,
         revision: 2,
-        operation: "3333333333333333".into(),
+        writer: "33333333333333333333333333333333".into(),
+        sequence: 0,
         contents: vec![0; hl_extension::port::PANE_INPUT_BYTES + 1],
     };
     assert!(matches!(
@@ -3202,40 +3204,66 @@ fn terminal_input_and_grid_are_bounded_before_the_window_is_reached() {
 fn terminal_pane_input_is_exactly_once_across_authenticated_reconnects() {
     let host = Host::new();
     let ownership = hl_extension::ExecutionOwnership::default();
-    let operation = "0123456789abcdef";
-    let request = Request::TerminalWritePane {
+    let mut opener = session(&[Capability::TerminalInput], &[]).with_execution_ownership(ownership.clone());
+    let Reply::TerminalInputWriter(writer) = opener
+        .dispatch(&Request::TerminalInputOpen, &services(&host))
+        .expect("open writer")
+    else {
+        panic!("writer receipt")
+    };
+    let write = |sequence, contents: &[u8]| Request::TerminalWritePane {
         slot: "agent".into(),
         generation: 7,
         revision: 11,
-        operation: operation.into(),
-        contents: b"deploy\n".to_vec(),
+        writer: writer.writer.clone(),
+        sequence,
+        contents: contents.to_vec(),
     };
-
-    let first = session(&[Capability::TerminalInput], &[])
-        .with_execution_ownership(ownership.clone())
-        .dispatch(&request, &services(&host))
+    let first_request = write(0, b"deploy\n");
+    let first = opener
+        .dispatch(&first_request, &services(&host))
         .expect("first write");
     let replay = session(&[Capability::TerminalInput], &[])
         .with_execution_ownership(ownership.clone())
-        .dispatch(&request, &services(&host))
+        .dispatch(&first_request, &services(&host))
         .expect("lost reply recovery");
     assert_eq!(first, replay);
-    assert_eq!(host.ledger.reached(), vec!["terminal.write"]);
 
-    let conflicting = Request::TerminalWritePane {
-        slot: "agent".into(),
-        generation: 7,
-        revision: 11,
-        operation: operation.into(),
-        contents: b"deploy --force\n".to_vec(),
-    };
+    for sequence in 1..=300 {
+        session(&[Capability::TerminalInput], &[])
+            .with_execution_ownership(ownership.clone())
+            .dispatch(&write(sequence, b"x"), &services(&host))
+            .expect("unbounded lifetime write");
+    }
+    assert_eq!(host.ledger.reached().len(), 301);
+    assert!(matches!(
+        session(&[Capability::TerminalInput], &[])
+            .with_execution_ownership(ownership.clone())
+            .dispatch(&first_request, &services(&host)),
+        Err(Failure::Conflict { detail }) if detail.contains("expired")
+    ));
+    assert_eq!(host.ledger.reached().len(), 301, "expired retry never reaches the PTY");
+
+    assert!(matches!(
+        session(&[Capability::TerminalInput], &[])
+            .with_execution_ownership(ownership.clone())
+            .dispatch(&write(302, b"future"), &services(&host)),
+        Err(Failure::Conflict { detail }) if detail.contains("must be 301")
+    ));
+    assert_eq!(host.ledger.reached().len(), 301, "out-of-order concurrency fails before the PTY");
+    session(&[Capability::TerminalInput], &[])
+        .with_execution_ownership(ownership.clone())
+        .dispatch(&write(301, b"next"), &services(&host))
+        .expect("ordered writes continue");
+
+    let conflicting = write(300, b"different");
     assert!(matches!(
         session(&[Capability::TerminalInput], &[])
             .with_execution_ownership(ownership)
             .dispatch(&conflicting, &services(&host)),
         Err(Failure::Conflict { detail }) if detail.contains("already used")
     ));
-    assert_eq!(host.ledger.reached(), vec!["terminal.write"]);
+    assert_eq!(host.ledger.reached().len(), 302);
 }
 
 #[test]

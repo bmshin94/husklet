@@ -1,5 +1,5 @@
 import type { Capability as GeneratedCapability, FilesystemSelector, ExtensionPreferences, PreferenceValue, Row as WireRow, WireCall, WireReplyFor, WireRequestFor, WireUiEvent, TerminalCommand, TerminalCommandInput, TerminalPaneInput, TerminalCommandOutput, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken, TerminalHistoryCursor, TerminalHistoryPage } from './generated-protocol.js';
-export type { ExtensionPreferences, FilesystemSelector, PreferenceValue, TerminalCommand, TerminalCommandInput, TerminalPaneInput, TerminalCommandOutput, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken, TerminalHistoryCursor, TerminalHistoryPage, } from './generated-protocol.js';
+export type { ExtensionPreferences, FilesystemSelector, PreferenceValue, TerminalCommand, TerminalCommandInput, TerminalPaneInput, TerminalInputWriter, TerminalCommandOutput, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken, TerminalHistoryCursor, TerminalHistoryPage, } from './generated-protocol.js';
 /** One row delivered to a virtualized interface data source. */
 export type DataRow = WireRow;
 /** Environment variable naming the extension's authenticated Unix socket. */
@@ -1000,9 +1000,10 @@ export declare class TerminalOperationError extends Error {
         generation: number;
         revision: number;
         written: true | 'unknown';
-        /** Present only when the write reply was lost; retry only with this operation. */
+        /** Present only when the write reply was lost; retry only with this writer cursor. */
         input?: readonly number[];
-        operation?: string;
+        writer?: string;
+        sequence?: number;
         after?: Readonly<{
             kind: 'terminal' | 'ui';
             generation: number;
@@ -2198,11 +2199,13 @@ export interface WorkspaceApi {
             before: SemanticTextObservation;
         }>;
         writeInput(slot: string, generation: number, revision: number, input: string | Iterable<number>, options?: {
-            operation?: string;
+            writer?: string;
+            sequence?: number;
         }): Promise<TerminalPaneInput>;
         /** Write exact bytes using one terminal snapshot as indivisible stale-pane authority. */
         writeObserved(before: PaneText, input: string | Iterable<number>, options?: {
-            operation?: string;
+            writer?: string;
+            sequence?: number;
         }): Promise<TerminalPaneInput>;
         /**
          * Retry the exact idempotent operation after its acknowledgement was lost. The host either

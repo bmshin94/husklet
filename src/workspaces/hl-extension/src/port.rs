@@ -198,8 +198,16 @@ pub struct TerminalPaneInput {
     pub slot: String,
     pub generation: u64,
     pub revision: u64,
-    pub operation: String,
+    pub writer: String,
+    pub sequence: u64,
     pub committed: u32,
+}
+
+/// One host-issued bounded terminal-input ordering epoch.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct TerminalInputWriter {
+    pub writer: String,
+    pub next_sequence: u64,
 }
 
 /// Bounded container creation authority with no host bind-mount path.

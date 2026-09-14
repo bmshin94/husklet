@@ -459,11 +459,13 @@ pub enum Request {
         slot: String,
         action: crate::port::PaneSemanticAction,
     },
+    TerminalInputOpen,
     TerminalWritePane {
         slot: String,
         generation: u64,
         revision: u64,
-        operation: String,
+        writer: String,
+        sequence: u64,
         contents: Vec<u8>,
     },
     TerminalResizeGrid {
@@ -751,7 +753,8 @@ impl Request {
             Self::NetworkDisconnect { .. } => Capability::NetworkDisconnect,
             Self::TerminalTabs | Self::TerminalTopology => Capability::TerminalRead,
             Self::PaneList => Capability::PaneObserve,
-            Self::TerminalWritePane { .. }
+            Self::TerminalInputOpen
+            | Self::TerminalWritePane { .. }
             | Self::TerminalCommandWrite { .. }
             | Self::TerminalCommandCloseInput { .. } => Capability::TerminalInput,
             Self::TerminalFocusTab { .. } | Self::TerminalFocusPane { .. } | Self::TerminalFocusPaneObserved { .. } => {
@@ -955,6 +958,7 @@ pub enum Reply {
     TerminalCommandOutput(crate::port::TerminalCommandOutput),
     TerminalCommandInput(crate::port::TerminalCommandInput),
     TerminalPaneInput(crate::port::TerminalPaneInput),
+    TerminalInputWriter(crate::port::TerminalInputWriter),
     Images(crate::port::ImageInventory),
     Image(ImageSummary),
     ImagePullJob(ImagePullJob),

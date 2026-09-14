@@ -3995,10 +3995,6 @@ test('terminal topology, bounded input, grid resize and retitle use exact typed 
   const tabFocus = terminal.focusTab('t1');
   const splitting = terminal.splitObserved('s1', 4, 7, 'below');
   const spawning = terminal.spawnObserved('s1', 4, 7, ['printf', '%s\n', 'ready']);
-  const inputOperation = '0123456789abcdef';
-  const writing = terminal.writeInput('s1', 4, 7, 'echo hello\n', {
-    operation: inputOperation,
-  });
   const resizing = terminal.resizeGridObserved('s1', 4, 7, 120, 40);
   const ratio = terminal.ratioObserved('s1', 4, 7, 0.6);
   const focusing = terminal.focusObserved('s1', 4, 7);
@@ -4020,16 +4016,6 @@ test('terminal topology, bounded input, grid resize and retitle use exact typed 
   assert.deepEqual((await next()).payload, {
     call: 'terminal_spawn_observed',
     with: { slot: 's1', generation: 4, revision: 7, command: ['printf', '%s\n', 'ready'] },
-  });
-  assert.deepEqual((await next()).payload, {
-    call: 'terminal_write_pane',
-    with: {
-      slot: 's1',
-      generation: 4,
-      revision: 7,
-      operation: inputOperation,
-      contents: [...new TextEncoder().encode('echo hello\n')],
-    },
   });
   assert.deepEqual((await next()).payload, {
     call: 'terminal_resize_grid_observed',
@@ -4061,23 +4047,6 @@ test('terminal topology, bounded input, grid resize and retitle use exact typed 
     encode({ channel: 2, kind: KIND.response, payload: { reply: 'identity', with: 's2' } }),
   );
   stage.host.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
-  stage.host.write(
-    encode({
-      channel: 2,
-      kind: KIND.response,
-      payload: {
-        reply: 'terminal_pane_input',
-        with: {
-          slot: 's1',
-          generation: 4,
-          revision: 7,
-          operation: inputOperation,
-          committed: 11,
-        },
-      },
-    }),
-  );
-  stage.host.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
   stage.host.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
   stage.host.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
   stage.host.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
@@ -4085,23 +4054,48 @@ test('terminal topology, bounded input, grid resize and retitle use exact typed 
   stage.host.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
   assert.deepEqual(await topology, tree);
   assert.equal(await splitting, 's2');
-  await Promise.all([
-    pinning,
-    tabFocus,
-    spawning,
-    writing,
-    resizing,
-    ratio,
-    focusing,
-    retitling,
-    closing,
-  ]);
+  await Promise.all([pinning, tabFocus, spawning, resizing, ratio, focusing, retitling, closing]);
+  const writer = '0123456789abcdef0123456789abcdef';
+  const writing = terminal.writeInput('s1', 4, 7, 'echo hello\n');
+  assert.deepEqual((await next()).payload, { call: 'terminal_input_open' });
+  stage.host.write(
+    encode({
+      channel: 2,
+      kind: KIND.response,
+      payload: { reply: 'terminal_input_writer', with: { writer, next_sequence: 0 } },
+    }),
+  );
+  assert.deepEqual((await next()).payload, {
+    call: 'terminal_write_pane',
+    with: {
+      slot: 's1',
+      generation: 4,
+      revision: 7,
+      writer,
+      sequence: 0,
+      contents: [...new TextEncoder().encode('echo hello\n')],
+    },
+  });
+  stage.host.write(
+    encode({
+      channel: 2,
+      kind: KIND.response,
+      payload: {
+        reply: 'terminal_pane_input',
+        with: { slot: 's1', generation: 4, revision: 7, writer, sequence: 0, committed: 11 },
+      },
+    }),
+  );
+  assert.equal((await writing).sequence, 0);
   assert.throws(() => terminal.spawn('s1', []), /1\.\.=64/);
   assert.throws(() => terminal.spawn('s1', ['sh', 'bad\0argument']), /NUL-free/);
   assert.throws(() => terminal.spawn('s1', ['x'.repeat(4097)]), /4096 bytes/);
   assert.throws(() => terminal.spawnObserved('s1', 4, -1, ['true']), /generation and revision/);
-  assert.throws(() => terminal.writeInput('s1', 4, 7, new Uint8Array(65_537)), /65536 byte limit/);
-  assert.throws(() => terminal.writeInput('s1', -1, 7, 'x'), /generation and revision/);
+  await assert.rejects(
+    terminal.writeInput('s1', 4, 7, new Uint8Array(65_537)),
+    /65536 byte limit/,
+  );
+  await assert.rejects(terminal.writeInput('s1', -1, 7, 'x'), /generation and revision/);
   assert.throws(() => terminal.closeObserved('s1', 4, -1), /generation and revision/);
   assert.throws(() => terminal.splitObserved('s1', 4, -1, 'below'), /generation and revision/);
   assert.throws(() => terminal.ratioObserved('s1', 4, -1, 0.6), /generation and revision/);

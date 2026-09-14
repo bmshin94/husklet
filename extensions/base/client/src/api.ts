@@ -11,6 +11,7 @@ import type {
   TerminalCommand,
   TerminalCommandInput,
   TerminalPaneInput,
+  TerminalInputWriter,
   TerminalCommandOutput,
   PostgresConnection,
   PostgresCursor,
@@ -32,6 +33,7 @@ export type {
   TerminalCommand,
   TerminalCommandInput,
   TerminalPaneInput,
+  TerminalInputWriter,
   TerminalCommandOutput,
   PostgresConnection,
   PostgresCursor,
@@ -998,9 +1000,10 @@ export declare class TerminalOperationError extends Error {
         generation: number;
         revision: number;
         written: true | 'unknown';
-        /** Present only when the write reply was lost; retry only with this operation. */
+        /** Present only when the write reply was lost; retry only with this writer cursor. */
         input?: readonly number[];
-        operation?: string;
+        writer?: string;
+        sequence?: number;
         after?: Readonly<{ kind: 'terminal' | 'ui'; generation: number; revision: number }>;
       }>;
   readonly cause: unknown;
@@ -2221,13 +2224,13 @@ export interface WorkspaceApi {
       generation: number,
       revision: number,
       input: string | Iterable<number>,
-      options?: { operation?: string },
+      options?: { writer?: string; sequence?: number },
     ): Promise<TerminalPaneInput>;
     /** Write exact bytes using one terminal snapshot as indivisible stale-pane authority. */
     writeObserved(
       before: PaneText,
       input: string | Iterable<number>,
-      options?: { operation?: string },
+      options?: { writer?: string; sequence?: number },
     ): Promise<TerminalPaneInput>;
     /**
      * Retry the exact idempotent operation after its acknowledgement was lost. The host either

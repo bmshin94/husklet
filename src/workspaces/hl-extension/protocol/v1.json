@@ -7781,6 +7781,30 @@
       "kind": "struct",
       "serde": {}
     },
+    "TerminalInputWriter": {
+      "fields": [
+        {
+          "name": "writer",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "next_sequence",
+          "optional": false,
+          "schema": {
+            "bits": 64,
+            "kind": "integer",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "signed": false
+          }
+        }
+      ],
+      "kind": "struct",
+      "serde": {}
+    },
     "TerminalLifecycle": {
       "kind": "enum",
       "serde": {
@@ -7867,10 +7891,21 @@
           }
         },
         {
-          "name": "operation",
+          "name": "writer",
           "optional": false,
           "schema": {
             "kind": "string"
+          }
+        },
+        {
+          "name": "sequence",
+          "optional": false,
+          "schema": {
+            "bits": 64,
+            "kind": "integer",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "signed": false
           }
         },
         {
@@ -9754,6 +9789,10 @@
     },
     {
       "capability": "terminals:input",
+      "request": "terminal_input_open"
+    },
+    {
+      "capability": "terminals:input",
       "request": "terminal_write_pane"
     },
     {
@@ -10335,6 +10374,10 @@
       "request": "pane_semantic_action"
     },
     {
+      "reply": "terminal_input_writer",
+      "request": "terminal_input_open"
+    },
+    {
       "reply": "terminal_pane_input",
       "request": "terminal_write_pane"
     },
@@ -10886,6 +10929,16 @@
             "of": {
               "kind": "ref",
               "name": "TerminalPaneInput"
+            }
+          }
+        },
+        {
+          "name": "terminal_input_writer",
+          "payload": {
+            "kind": "newtype",
+            "of": {
+              "kind": "ref",
+              "name": "TerminalInputWriter"
             }
           }
         },
@@ -13783,6 +13836,12 @@
           }
         },
         {
+          "name": "terminal_input_open",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
           "name": "terminal_write_pane",
           "payload": {
             "fields": [
@@ -13816,10 +13875,21 @@
                 }
               },
               {
-                "name": "operation",
+                "name": "writer",
                 "optional": false,
                 "schema": {
                   "kind": "string"
+                }
+              },
+              {
+                "name": "sequence",
+                "optional": false,
+                "schema": {
+                  "bits": 64,
+                  "kind": "integer",
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "signed": false
                 }
               },
               {
@@ -16258,7 +16328,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:c8971419c7f9a04e",
+  "source_fingerprint": "fnv1a64:bd0e4ec0334b265e",
   "specification_version": 1,
   "topics": [
     {

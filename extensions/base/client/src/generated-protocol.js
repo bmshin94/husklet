@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:135ccf91a3d28143
+// Protocol artifact fnv1a64:255e313b8c8ca538
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -431,6 +431,7 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "terminal_read_history": "terminal_history",
   "pane_semantic_read": "semantics",
   "pane_semantic_action": "done",
+  "terminal_input_open": "terminal_input_writer",
   "terminal_write_pane": "terminal_pane_input",
   "terminal_resize_grid": "done",
   "terminal_resize_grid_observed": "done",
@@ -578,6 +579,7 @@ export const PROTOCOL_REQUEST_CAPABILITIES = Object.freeze({
   "terminal_read_history": "terminals:output",
   "pane_semantic_read": "panes:semantic-read",
   "pane_semantic_action": "panes:semantic-control",
+  "terminal_input_open": "terminals:input",
   "terminal_write_pane": "terminals:input",
   "terminal_resize_grid": "terminals:layout-control",
   "terminal_resize_grid_observed": "terminals:layout-control",
@@ -8150,6 +8152,30 @@ const definitions = {
     "kind": "struct",
     "serde": {}
   },
+  "TerminalInputWriter": {
+    "fields": [
+      {
+        "name": "writer",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "next_sequence",
+        "optional": false,
+        "schema": {
+          "bits": 64,
+          "kind": "integer",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "signed": false
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {}
+  },
   "TerminalLifecycle": {
     "kind": "enum",
     "serde": {
@@ -8236,10 +8262,21 @@ const definitions = {
         }
       },
       {
-        "name": "operation",
+        "name": "writer",
         "optional": false,
         "schema": {
           "kind": "string"
+        }
+      },
+      {
+        "name": "sequence",
+        "optional": false,
+        "schema": {
+          "bits": 64,
+          "kind": "integer",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "signed": false
         }
       },
       {
@@ -10031,6 +10068,16 @@ const roots = {
           "of": {
             "kind": "ref",
             "name": "TerminalPaneInput"
+          }
+        }
+      },
+      {
+        "name": "terminal_input_writer",
+        "payload": {
+          "kind": "newtype",
+          "of": {
+            "kind": "ref",
+            "name": "TerminalInputWriter"
           }
         }
       },
@@ -12928,6 +12975,12 @@ const roots = {
         }
       },
       {
+        "name": "terminal_input_open",
+        "payload": {
+          "kind": "unit"
+        }
+      },
+      {
         "name": "terminal_write_pane",
         "payload": {
           "fields": [
@@ -12961,10 +13014,21 @@ const roots = {
               }
             },
             {
-              "name": "operation",
+              "name": "writer",
               "optional": false,
               "schema": {
                 "kind": "string"
+              }
+            },
+            {
+              "name": "sequence",
+              "optional": false,
+              "schema": {
+                "bits": 64,
+                "kind": "integer",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "signed": false
               }
             },
             {

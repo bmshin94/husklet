@@ -1832,6 +1832,31 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       throw new Error(`host replied ${reply?.reply ?? 'without a tag'}, expected ${kind}`);
     return ('with' in reply ? reply.with : undefined) as ReplyPayload<K>;
   };
+  let terminalInputWriter: Promise<{ writer: string; next: number }> | undefined;
+  const allocateTerminalInput = async (writer?: string, sequence?: number) => {
+    if ((writer === undefined) !== (sequence === undefined)) {
+      throw new TypeError('terminal input recovery requires both writer and sequence');
+    }
+    if (writer !== undefined && sequence !== undefined) {
+      if (!/^[0-9a-f]{32}$/.test(writer) || !Number.isSafeInteger(sequence) || sequence < 0) {
+        throw new TypeError(
+          'terminal input writer must be 32 lowercase hex characters and sequence nonnegative',
+        );
+      }
+      return { writer, sequence };
+    }
+    terminalInputWriter ??= session.call('terminal_input_open').then((reply) => {
+      const opened = expect(reply, 'terminal_input_writer');
+      if (!/^[0-9a-f]{32}$/.test(opened.writer) || !Number.isSafeInteger(opened.next_sequence)) {
+        throw new TypeError('host returned an invalid terminal input writer');
+      }
+      return { writer: opened.writer, next: opened.next_sequence };
+    });
+    const state = await terminalInputWriter;
+    const allocated = state.next;
+    state.next += 1;
+    return { writer: state.writer, sequence: allocated };
+  };
   const readTerminalHistory = async (
     observed: { slot: string; generation: number; revision: number },
     options: { cursor?: string; lines?: number } = {},
@@ -4327,12 +4352,15 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       act: (slot, action) => {
         return done('pane_semantic_action', { slot, action: exactSemanticAction(action) });
       },
-      writeInput: (
+      writeInput: async (
         slot,
         generation,
         revision,
         input,
-        { operation: askedOperation }: { operation?: string } = {},
+        {
+          writer: askedWriter,
+          sequence: askedSequence,
+        }: { writer?: string; sequence?: number } = {},
       ) => {
         if (
           !Number.isSafeInteger(generation) ||
@@ -4345,30 +4373,29 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           );
         }
         const contents = exactPaneInput(input);
-        const operation = terminalInputOperation(askedOperation);
-        return session
-          .call('terminal_write_pane', {
-            slot,
-            generation,
-            revision,
-            operation,
-            contents: [...contents],
-          })
-          .then((reply) => {
-            const receipt = expect(reply, 'terminal_pane_input');
-            if (
-              receipt.slot !== slot ||
-              receipt.generation !== generation ||
-              receipt.revision !== revision ||
-              receipt.operation !== operation ||
-              receipt.committed !== contents.length
-            ) {
-              throw new TypeError(
-                'host returned a terminal pane input receipt for a different operation',
-              );
-            }
-            return receipt;
-          });
+        const { writer, sequence } = await allocateTerminalInput(askedWriter, askedSequence);
+        const reply = await session.call('terminal_write_pane', {
+          slot,
+          generation,
+          revision,
+          writer,
+          sequence,
+          contents: [...contents],
+        });
+        const receipt = expect(reply, 'terminal_pane_input');
+        if (
+          receipt.slot !== slot ||
+          receipt.generation !== generation ||
+          receipt.revision !== revision ||
+          receipt.writer !== writer ||
+          receipt.sequence !== sequence ||
+          receipt.committed !== contents.length
+        ) {
+          throw new TypeError(
+            'host returned a terminal pane input receipt for a different operation',
+          );
+        }
+        return receipt;
       },
       writeObserved: (before, input, options) => {
         if (
@@ -6521,7 +6548,6 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       );
     }
     const contents = exactPaneInput(input);
-    const operation = terminalInputOperation();
     if (lines !== undefined && (!Number.isSafeInteger(lines) || lines < 0)) {
       throw new TypeError('terminal input wait lines must be a nonnegative safe integer');
     }
@@ -6549,13 +6575,15 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     let abort;
     let inputAttempted = false;
     let inputWritten = false;
+    let inputAuthority: { writer: string; sequence: number } | undefined;
     try {
       const before = await scoped.terminal.read(slot, lines);
       if (before.generation !== generation || before.revision !== revision) {
         throw new Error('terminal screen cursor changed before input authority');
       }
+      inputAuthority = await allocateTerminalInput();
       inputAttempted = true;
-      await scoped.terminal.writeInput(slot, generation, revision, contents, { operation });
+      await scoped.terminal.writeInput(slot, generation, revision, contents, inputAuthority);
       inputWritten = true;
       const deadline = Date.now() + timeoutMs;
       for (;;) {
@@ -6606,7 +6634,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
                 slot,
                 generation,
                 revision,
-                operation,
+                writer: inputAuthority!.writer,
+                sequence: inputAuthority!.sequence,
                 written: 'unknown',
                 input: Object.freeze([...contents]),
               },
@@ -6647,7 +6676,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       failure.operation !== 'write-input' ||
       !('written' in failure.result) ||
       failure.result.written !== 'unknown' ||
-      typeof failure.result.operation !== 'string' ||
+      typeof failure.result.writer !== 'string' ||
+      !Number.isSafeInteger(failure.result.sequence) ||
       !failure.result.input
     ) {
       throw new TypeError(
@@ -6664,7 +6694,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       before.generation,
       before.revision,
       failure.result.input,
-      { operation: failure.result.operation },
+      { writer: failure.result.writer, sequence: failure.result.sequence },
     );
     const current = await api.terminal.toText(before.slot, { lines });
     const cursor = current.snapshot;
@@ -8420,6 +8450,7 @@ const facadeOverrides = Object.freeze({
   pane_semantic_read: 'terminal.semantics',
   pane_semantic_action: 'terminal.act',
   terminal_read_pane: 'terminal.read',
+  terminal_input_open: 'terminal.writeInput',
   terminal_write_pane: 'terminal.writeInput',
   terminal_command_start: 'terminal.commandStart',
   terminal_command_inspect: 'terminal.commandInspect',

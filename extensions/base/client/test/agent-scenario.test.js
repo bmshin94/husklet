@@ -111,9 +111,21 @@ test('packaged external agent controls terminal bytes and semantic UI over real 
               },
             }),
           );
+        } else if (call === 'terminal_input_open') {
+          socket.write(
+            encode({
+              channel: 2,
+              kind: KIND.response,
+              payload: {
+                reply: 'terminal_input_writer',
+                with: { writer: 'a'.repeat(32), next_sequence: 0 },
+              },
+            }),
+          );
         } else if (call === 'terminal_write_pane') {
-          const { operation, ...write } = frame.payload.with;
-          assert.match(operation, /^[0-9a-f]{32}$/);
+          const { writer, sequence, ...write } = frame.payload.with;
+          assert.equal(writer, 'a'.repeat(32));
+          assert.equal(sequence, 0);
           assert.deepEqual(write, {
             slot: 'term-1',
             generation: 3,
@@ -146,7 +158,8 @@ test('packaged external agent controls terminal bytes and semantic UI over real 
                   slot: 'term-1',
                   generation: 3,
                   revision: 7,
-                  operation,
+                  writer,
+                  sequence,
                   committed: 3,
                 },
               },
@@ -249,6 +262,7 @@ test('packaged external agent controls terminal bytes and semantic UI over real 
       'pane_semantic_read',
       'event_subscribe',
       'terminal_read_pane',
+      'terminal_input_open',
       'terminal_write_pane',
       'terminal_read_pane',
       'event_unsubscribe',

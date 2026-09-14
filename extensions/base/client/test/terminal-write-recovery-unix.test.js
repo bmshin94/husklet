@@ -14,7 +14,7 @@ test('lost raw-input reply retries one idempotent operation without typing twice
   const connections = new Set();
   let accepted = 0;
   let connectionNumber = 0;
-  let committedOperation;
+  const writer = '0123456789abcdef0123456789abcdef';
   const screen = (revision, line) => ({
     slot: 'agent',
     generation: 9,
@@ -70,22 +70,24 @@ test('lost raw-input reply retries one idempotent operation without typing twice
               truncated: false,
             },
           });
+        } else if (frame.payload.call === 'terminal_input_open') {
+          reply({ reply: 'terminal_input_writer', with: { writer, next_sequence: 0 } });
         } else if (frame.payload.call === 'terminal_write_pane') {
           assert.deepEqual(frame.payload.with.contents, [0x03]);
-          assert.match(frame.payload.with.operation, /^[0-9a-f]{32}$/);
-          if (committedOperation === undefined) {
-            committedOperation = frame.payload.with.operation;
+          assert.equal(frame.payload.with.writer, writer);
+          assert.equal(frame.payload.with.sequence, 0);
+          if (accepted === 0) {
             accepted += 1;
             socket.destroy(); // The PTY accepted the byte; every reply byte is lost.
           } else {
-            assert.equal(frame.payload.with.operation, committedOperation);
             reply({
               reply: 'terminal_pane_input',
               with: {
                 slot: 'agent',
                 generation: 9,
                 revision: 4,
-                operation: committedOperation,
+                writer,
+                sequence: 0,
                 committed: 1,
               },
             });
@@ -126,7 +128,8 @@ test('lost raw-input reply retries one idempotent operation without typing twice
       slot: 'agent',
       generation: 9,
       revision: 4,
-      operation: committedOperation,
+      writer,
+      sequence: 0,
       committed: 1,
     });
     assert.equal(accepted, 1, 'the host receipt prevents a second PTY write');

@@ -68,7 +68,14 @@ test('fragmented Unix session discloses completed input authority when observati
               truncated: false,
             },
           });
+        } else if (frame.payload.call === 'terminal_input_open') {
+          reply({
+            reply: 'terminal_input_writer',
+            with: { writer: 'f'.repeat(32), next_sequence: 0 },
+          });
         } else if (frame.payload.call === 'terminal_write_pane') {
+          assert.equal(frame.payload.with.writer, 'f'.repeat(32));
+          assert.equal(frame.payload.with.sequence, 0);
           written = frame.payload.with.contents;
           revision = 8;
           send({
@@ -85,7 +92,8 @@ test('fragmented Unix session discloses completed input authority when observati
               slot: frame.payload.with.slot,
               generation: frame.payload.with.generation,
               revision: frame.payload.with.revision,
-              operation: frame.payload.with.operation,
+              writer: frame.payload.with.writer,
+              sequence: frame.payload.with.sequence,
               committed: written.length,
             },
           });

@@ -67,7 +67,7 @@ pub struct OwnedOperations {
     executions: std::collections::BTreeSet<String>,
     command_starts: std::collections::BTreeMap<String, CommandStartOperation>,
     command_inputs: std::collections::BTreeMap<String, CommandInputState>,
-    pane_inputs: std::collections::BTreeMap<String, PaneInputOperation>,
+    pane_input_writers: std::collections::VecDeque<PaneInputWriterState>,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -103,9 +103,16 @@ struct PaneInputOperation {
     committed: u32,
 }
 
+struct PaneInputWriterState {
+    writer: String,
+    high_water: Option<u64>,
+    recent: std::collections::VecDeque<(u64, PaneInputOperation)>,
+}
+
 const COMMAND_INPUT_OPERATIONS: usize = 4096;
 const COMMAND_START_OPERATIONS: usize = 4096;
-const PANE_INPUT_OPERATIONS: usize = 4096;
+const PANE_INPUT_WRITERS: usize = 32;
+const PANE_INPUT_RECEIPTS: usize = 256;
 
 fn command_input_operation(operation: &str) -> Result<(), Failure> {
     if (16..=128).contains(&operation.len())
@@ -917,6 +924,7 @@ impl Session {
             | Request::TerminalCommandCloseInput { .. }
             | Request::TerminalReadPane { .. }
             | Request::TerminalReadHistory { .. }
+            | Request::TerminalInputOpen
             | Request::TerminalWritePane { .. }
             | Request::TerminalResizeGrid { .. }
             | Request::TerminalResizeGridObserved { .. }
@@ -2274,6 +2282,25 @@ impl Session {
 
     fn command(&mut self, request: &Request, port: &dyn TerminalSurface) -> Result<Reply, Failure> {
         match request {
+            Request::TerminalInputOpen => {
+                let mut owned = self
+                    .owned_executions
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if owned.pane_input_writers.len() >= PANE_INPUT_WRITERS {
+                    owned.pane_input_writers.pop_front();
+                }
+                let writer = uuid::Uuid::new_v4().simple().to_string();
+                owned.pane_input_writers.push_back(PaneInputWriterState {
+                    writer: writer.clone(),
+                    high_water: None,
+                    recent: std::collections::VecDeque::new(),
+                });
+                Ok(Reply::TerminalInputWriter(crate::port::TerminalInputWriter {
+                    writer,
+                    next_sequence: 0,
+                }))
+            }
             Request::TerminalOpenTab { title } => {
                 validate_pane_title(title)?;
                 Ok(Reply::Identity(port.open_tab(title)?))
@@ -2309,7 +2336,8 @@ impl Session {
                 slot,
                 generation,
                 revision,
-                operation,
+                writer,
+                sequence,
                 contents,
             } => {
                 if contents.is_empty() || contents.len() > PANE_INPUT_BYTES {
@@ -2317,7 +2345,6 @@ impl Session {
                         detail: format!("terminal input must contain between 1 and {PANE_INPUT_BYTES} bytes"),
                     });
                 }
-                command_input_operation(operation)?;
                 let committed = u32::try_from(contents.len()).expect("pane input bound fits u32");
                 let asked = PaneInputOperation {
                     slot: slot.clone(),
@@ -2330,32 +2357,49 @@ impl Session {
                     .owned_executions
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if let Some(previous) = owned.pane_inputs.get(operation) {
+                let Some(state) = owned.pane_input_writers.iter_mut().find(|state| state.writer == *writer) else {
+                    return Err(Failure::Conflict {
+                        detail: "terminal input writer is unknown or expired; open a new writer and do not replay these bytes".into(),
+                    });
+                };
+                if state.high_water.is_some_and(|high_water| *sequence <= high_water) {
+                    let Some((_, previous)) = state.recent.iter().find(|(recent, _)| recent == sequence) else {
+                        return Err(Failure::Conflict {
+                            detail: "terminal pane input sequence is expired and cannot be replayed".into(),
+                        });
+                    };
                     if previous != &asked {
                         return Err(Failure::Conflict {
-                            detail: "terminal pane input operation was already used for a different pane, cursor, or bytes".into(),
+                            detail: "terminal pane input sequence was already used for a different pane, cursor, or bytes".into(),
                         });
                     }
                     return Ok(Reply::TerminalPaneInput(crate::port::TerminalPaneInput {
                         slot: slot.clone(),
                         generation: *generation,
                         revision: *revision,
-                        operation: operation.clone(),
+                        writer: writer.clone(),
+                        sequence: *sequence,
                         committed,
                     }));
                 }
-                if owned.pane_inputs.len() >= PANE_INPUT_OPERATIONS {
+                let expected = state.high_water.map_or(0, |high_water| high_water.saturating_add(1));
+                if *sequence != expected {
                     return Err(Failure::Conflict {
-                        detail: "terminal pane input is limited to 4096 idempotent operations".into(),
+                        detail: format!("terminal pane input sequence must be {expected}, received {sequence}"),
                     });
                 }
                 port.write(slot, *generation, *revision, contents)?;
-                owned.pane_inputs.insert(operation.clone(), asked);
+                state.high_water = Some(*sequence);
+                state.recent.push_back((*sequence, asked));
+                if state.recent.len() > PANE_INPUT_RECEIPTS {
+                    state.recent.pop_front();
+                }
                 Ok(Reply::TerminalPaneInput(crate::port::TerminalPaneInput {
                     slot: slot.clone(),
                     generation: *generation,
                     revision: *revision,
-                    operation: operation.clone(),
+                    writer: writer.clone(),
+                    sequence: *sequence,
                     committed,
                 }))
             }
