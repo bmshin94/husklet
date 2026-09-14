@@ -1180,7 +1180,12 @@ impl Session {
                             });
                         }
                         if let Some(id) = record.id {
-                            return Ok(Reply::Identity(id));
+                            return Ok(Reply::ContainerCreateOnce(
+                                crate::port::ContainerCreateOnceReceipt {
+                                    token: token.clone(),
+                                    id,
+                                },
+                            ));
                         }
                         let matches = port.reconcile_spec_once(spec, &self.extension_identity, token)?;
                         if matches.len() != 1 {
@@ -1198,7 +1203,12 @@ impl Session {
                 services
                     .state
                     .commit_container_creation(&self.extension_identity, token, spec, &id)?;
-                Ok(Reply::Identity(id))
+                Ok(Reply::ContainerCreateOnce(
+                    crate::port::ContainerCreateOnceReceipt {
+                        token: token.clone(),
+                        id,
+                    },
+                ))
             }
             Request::ContainerStart { id, generation } => {
                 let target = self.resolve_mutation_container(id, services.containers)?;

@@ -84,7 +84,7 @@ const REQUEST_TO_REPLY: &[(&str, &str)] = &[
     ("execution_write", "done"),
     ("execution_close_input", "done"),
     ("container_create", "identity"),
-    ("container_create_once", "identity"),
+    ("container_create_once", "container_create_once"),
     ("container_start", "done"),
     ("container_stop", "done"),
     ("container_remove", "done"),

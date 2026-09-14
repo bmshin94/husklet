@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:83117eab79c5d339
+// Protocol artifact fnv1a64:0eddf74f2b48e762
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -380,7 +380,7 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "execution_write": "done",
   "execution_close_input": "done",
   "container_create": "identity",
-  "container_create_once": "identity",
+  "container_create_once": "container_create_once",
   "container_start": "done",
   "container_stop": "done",
   "container_remove": "done",
@@ -1181,6 +1181,26 @@ const definitions = {
         }
       }
     ]
+  },
+  "ContainerCreateOnceReceipt": {
+    "fields": [
+      {
+        "name": "token",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "id",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {}
   },
   "ContainerCreateSpec": {
     "fields": [
@@ -10249,6 +10269,16 @@ const roots = {
           "of": {
             "kind": "ref",
             "name": "CredentialWriteReceipt"
+          }
+        }
+      },
+      {
+        "name": "container_create_once",
+        "payload": {
+          "kind": "newtype",
+          "of": {
+            "kind": "ref",
+            "name": "ContainerCreateOnceReceipt"
           }
         }
       },

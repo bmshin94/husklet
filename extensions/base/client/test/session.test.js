@@ -8,6 +8,7 @@ import test from 'node:test';
 import { queryObjects } from 'node:v8';
 import {
   connect,
+  ContainerCreateOnceProtocolError,
   CredentialWriteProtocolError,
   ExecutionDeadlineError,
   ExecutionOperationError,
@@ -12077,6 +12078,18 @@ test('fragmented Unix create-once reconnects to one immutable identity and rejec
       for (const frame of reader.take(chunk)) {
         if (frame.payload.call !== 'container_create_once') continue;
         const request = frame.payload.with;
+        if (request.token === 'fedcba9876543210fedcba9876543210') {
+          const reply = encode({
+            channel: 2,
+            kind: KIND.response,
+            payload: {
+              reply: 'container_create_once',
+              with: { token: '11111111111111111111111111111111', id },
+            },
+          });
+          for (const byte of reply) socket.write(Uint8Array.of(byte));
+          continue;
+        }
         if (committed && JSON.stringify(committed) !== JSON.stringify(request.spec)) {
           socket.write(
             encode({
@@ -12096,7 +12109,7 @@ test('fragmented Unix create-once reconnects to one immutable identity and rejec
             const reply = encode({
               channel: 2,
               kind: KIND.response,
-              payload: { reply: 'identity', with: id },
+              payload: { reply: 'container_create_once', with: { token, id } },
             });
             for (const byte of reply) socket.write(Uint8Array.of(byte));
           }
@@ -12126,6 +12139,18 @@ test('fragmented Unix create-once reconnects to one immutable identity and rejec
       [id, id],
     );
     assert.equal(creates, 1);
+    await assert.rejects(
+      workspace(second).containers.createOnce(
+        'fedcba9876543210fedcba9876543210',
+        spec,
+      ),
+      (error) => {
+        assert(error instanceof ContainerCreateOnceProtocolError);
+        assert.equal(error.expectedToken, 'fedcba9876543210fedcba9876543210');
+        assert.equal(error.receivedToken, '11111111111111111111111111111111');
+        return true;
+      },
+    );
     await assert.rejects(
       workspace(second).containers.createOnce(token, { ...spec, name: 'replacement' }),
       /another specification/,

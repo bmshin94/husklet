@@ -983,6 +983,7 @@ pub enum Reply {
     Preferences(crate::port::ExtensionPreferences),
     Credential(crate::port::ExtensionCredential),
     CredentialWrite(crate::port::CredentialWriteReceipt),
+    ContainerCreateOnce(crate::port::ContainerCreateOnceReceipt),
     PostgresOpen(crate::PostgresOpenOutcome),
     PostgresStart(crate::PostgresStartOutcome),
     PostgresState(crate::PostgresQueryState),
@@ -1032,9 +1033,27 @@ impl From<hl_rpc::Denial> for Failure {
 
 #[cfg(test)]
 mod tests {
-    use super::{Request, Topic};
+    use super::{Reply, Request, Topic};
     use crate::capability::Capability;
     use hl_rpc::RelativePath;
+
+    #[test]
+    fn container_create_once_reply_binds_the_operation_token() {
+        let reply = Reply::ContainerCreateOnce(crate::port::ContainerCreateOnceReceipt {
+            token: "0123456789abcdef0123456789abcdef".into(),
+            id: "a".repeat(64),
+        });
+        assert_eq!(
+            serde_json::to_value(reply).unwrap(),
+            serde_json::json!({
+                "reply": "container_create_once",
+                "with": {
+                    "token": "0123456789abcdef0123456789abcdef",
+                    "id": "a".repeat(64),
+                },
+            })
+        );
+    }
 
     #[test]
     fn reading_and_writing_calls_require_different_capabilities() {

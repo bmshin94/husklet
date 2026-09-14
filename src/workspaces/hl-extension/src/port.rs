@@ -1743,6 +1743,13 @@ pub struct ContainerCreationRecord {
     pub id: Option<String>,
 }
 
+/// Non-secret receipt binding an idempotent container result to its operation token.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct ContainerCreateOnceReceipt {
+    pub token: String,
+    pub id: String,
+}
+
 /// Result of durably reserving a create token.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContainerCreationReservation {

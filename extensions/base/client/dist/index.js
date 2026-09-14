@@ -124,6 +124,17 @@ export class CredentialWriteProtocolError extends Error {
         this.received = Object.freeze({ ...received });
     }
 }
+/** The host returned an idempotent container result for another operation token. */
+export class ContainerCreateOnceProtocolError extends Error {
+    expectedToken;
+    receivedToken;
+    constructor(expectedToken, receivedToken) {
+        super('host returned a container create-once receipt for another operation token');
+        this.name = 'ContainerCreateOnceProtocolError';
+        this.expectedToken = expectedToken;
+        this.receivedToken = receivedToken;
+    }
+}
 /** A credential removal may have committed before its reply was lost. */
 export class CredentialRemoveOperationError extends Error {
     key;
@@ -2154,7 +2165,10 @@ export function workspace(session, { signal } = {}) {
                     ...spec,
                     mounts: spec.mounts.map((mount) => ({ read_only: false, ...mount })),
                 };
-                return expect(await session.call('container_create_once', { token, spec: normalized }), 'identity');
+                const receipt = expect(await session.call('container_create_once', { token, spec: normalized }), 'container_create_once');
+                if (receipt.token !== token)
+                    throw new ContainerCreateOnceProtocolError(token, receipt.token);
+                return immutableIdentity(receipt.id, [32, 64], 'container');
             },
             start: (id, generation) => done('container_start', containerMutation(id, generation)),
             stop: (id, generation) => done('container_stop', containerMutation(id, generation)),

@@ -59,6 +59,12 @@ export declare class CredentialWriteProtocolError extends Error {
     readonly received: any;
     constructor(expected: any, received: any);
 }
+/** The host returned an idempotent container result for another operation token. */
+export declare class ContainerCreateOnceProtocolError extends Error {
+    readonly expectedToken: any;
+    readonly receivedToken: any;
+    constructor(expectedToken: any, receivedToken: any);
+}
 /** A credential removal may have committed before its reply was lost. */
 export declare class CredentialRemoveOperationError extends Error {
     readonly key: any;

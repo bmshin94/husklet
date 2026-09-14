@@ -4359,7 +4359,13 @@ fn create_once_is_shared_across_reconnect_and_binds_token_to_specification() {
             &services_with_state(&host, &state),
         )
         .unwrap();
-    assert_eq!(recovered, Reply::Identity("lost-reply-id".into()));
+    assert_eq!(
+        recovered,
+        Reply::ContainerCreateOnce(hl_extension::port::ContainerCreateOnceReceipt {
+            token: recovered_token,
+            id: "lost-reply-id".into(),
+        })
+    );
 
     for (token, matches) in [
         ("22222222222222222222222222222222", Vec::new()),

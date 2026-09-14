@@ -746,6 +746,12 @@ export declare class CredentialWriteProtocolError extends Error {
   readonly received: Readonly<{ key: string; observed: number; revision: number }>;
 }
 
+/** The host returned an idempotent container result for another operation token. */
+export declare class ContainerCreateOnceProtocolError extends Error {
+  readonly expectedToken: string;
+  readonly receivedToken: string;
+}
+
 /** A credential removal may have committed before its reply was lost. */
 export declare class CredentialRemoveOperationError extends Error {
   readonly key: string;

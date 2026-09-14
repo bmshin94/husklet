@@ -10,7 +10,8 @@ if (!configuration?.path || !configuration.token || !configuration.spec)
 // Persist `token` before this call. If the socket closes after creation but before
 // its reply, reconnect—even after a workspace-host restart—and repeat this exact call:
 // the host returns only the original immutable ID and rejects a token paired
-// with a different spec. Persisted tombstones also survive container removal and name reuse.
+// with a different spec. The client also rejects a stale socket receipt carrying
+// another token before exposing its container ID. Persisted tombstones survive removal.
 const session = await connect({ path: configuration.path, pendingLimit: 1, timeout: 5_000 });
 try {
   const id = await workspace(session).containers.createOnce(

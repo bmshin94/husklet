@@ -813,6 +813,26 @@
         }
       ]
     },
+    "ContainerCreateOnceReceipt": {
+      "fields": [
+        {
+          "name": "token",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "id",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        }
+      ],
+      "kind": "struct",
+      "serde": {}
+    },
     "ContainerCreateSpec": {
       "fields": [
         {
@@ -10044,7 +10064,7 @@
       "request": "container_create"
     },
     {
-      "reply": "identity",
+      "reply": "container_create_once",
       "request": "container_create_once"
     },
     {
@@ -11104,6 +11124,16 @@
             "of": {
               "kind": "ref",
               "name": "CredentialWriteReceipt"
+            }
+          }
+        },
+        {
+          "name": "container_create_once",
+          "payload": {
+            "kind": "newtype",
+            "of": {
+              "kind": "ref",
+              "name": "ContainerCreateOnceReceipt"
             }
           }
         },
@@ -16144,7 +16174,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:6404669535e5719f",
+  "source_fingerprint": "fnv1a64:bdd510b0762e726e",
   "specification_version": 1,
   "topics": [
     {
