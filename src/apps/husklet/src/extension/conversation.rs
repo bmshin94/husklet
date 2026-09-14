@@ -1506,6 +1506,7 @@ mod tests {
                 return Err(HostError::Conflict("postgres page cursor is stale".into()));
             }
             Ok(PostgresPage {
+                lease: lease.clone(),
                 query: query.clone(),
                 cursor: cursor.cloned(),
                 columns: vec!["answer".into()],

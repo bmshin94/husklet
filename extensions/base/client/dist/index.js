@@ -87,17 +87,21 @@ export class TerminalCommandStartProtocolError extends Error {
         this.received = received;
     }
 }
-/** The host returned a PostgreSQL page for a different query or cursor. */
+/** The host returned a PostgreSQL page for a different lease, query, or cursor. */
 export class PostgresPageProtocolError extends Error {
+    lease;
     query;
     cursor;
+    receivedLease;
     receivedQuery;
     receivedCursor;
-    constructor(query, cursor, receivedQuery, receivedCursor) {
-        super(`postgres page receipt does not match query ${query} and its requested cursor`);
+    constructor(lease, query, cursor, receivedLease, receivedQuery, receivedCursor) {
+        super(`postgres page receipt does not match lease ${lease}, query ${query}, and its requested cursor`);
         this.name = 'PostgresPageProtocolError';
+        this.lease = lease;
         this.query = query;
         this.cursor = cursor;
+        this.receivedLease = receivedLease;
         this.receivedQuery = receivedQuery;
         this.receivedCursor = receivedCursor;
     }
@@ -4617,8 +4621,8 @@ export function workspace(session, { signal } = {}) {
                 const page = expect(await session.call('postgres_query_page', { lease, query, cursor: cursor ?? null }), 'postgres_page');
                 const requestedCursor = cursor ?? null;
                 const receivedCursor = page.cursor ?? null;
-                if (page.query !== query || receivedCursor !== requestedCursor) {
-                    throw new PostgresPageProtocolError(query, requestedCursor, page.query, receivedCursor);
+                if (page.lease !== lease || page.query !== query || receivedCursor !== requestedCursor) {
+                    throw new PostgresPageProtocolError(lease, query, requestedCursor, page.lease, page.query, receivedCursor);
                 }
                 return page;
             },

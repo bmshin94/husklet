@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:8e51086d10b1f0d4
+// Protocol artifact fnv1a64:a809fd1290aec55c
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -5426,6 +5426,14 @@ const definitions = {
   },
   "PostgresPage": {
     "fields": [
+      {
+        "name": "lease",
+        "optional": false,
+        "schema": {
+          "kind": "ref",
+          "name": "PostgresLeaseId"
+        }
+      },
       {
         "name": "query",
         "optional": false,

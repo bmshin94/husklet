@@ -5056,6 +5056,14 @@
     "PostgresPage": {
       "fields": [
         {
+          "name": "lease",
+          "optional": false,
+          "schema": {
+            "kind": "ref",
+            "name": "PostgresLeaseId"
+          }
+        },
+        {
           "name": "query",
           "optional": false,
           "schema": {
@@ -16360,7 +16368,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:25de50d7c8313e71",
+  "source_fingerprint": "fnv1a64:cfe9d3f88a5d63b6",
   "specification_version": 1,
   "topics": [
     {

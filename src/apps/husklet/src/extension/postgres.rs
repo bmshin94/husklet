@@ -699,7 +699,7 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
             ));
         }
         let page = self.peer.page(lease, query, cursor)?;
-        page.validate(&query_record.request, query, cursor)?;
+        page.validate(&query_record.request, lease, query, cursor)?;
         query_record.cursor.clone_from(&page.next_cursor);
         if page.next_cursor.is_none() {
             query_record.state = PostgresQueryState::Completed;
@@ -860,6 +860,7 @@ mod tests {
         ) -> Result<PostgresPage, HostError> {
             self.pages.fetch_add(1, Ordering::SeqCst);
             Ok(PostgresPage {
+                lease: PostgresLeaseId::new("lease-1").unwrap(),
                 query: PostgresQueryId::new("query-1").unwrap(),
                 cursor: cursor.cloned(),
                 columns: vec!["answer".into()],

@@ -13,6 +13,7 @@ test('Postgres page retry preserves its query and cursor receipt over fragmented
   const peers = new Set();
   const requests = [];
   const firstPage = {
+    lease: 'lease-1',
     query: 'query-1',
     cursor: null,
     columns: ['id', 'email'],
@@ -21,6 +22,7 @@ test('Postgres page retry preserves its query and cursor receipt over fragmented
     bytes: 19,
   };
   const wrongPage = {
+    lease: 'lease-1',
     query: 'another-query',
     cursor: 'page-2',
     columns: ['id', 'email'],
@@ -42,7 +44,12 @@ test('Postgres page retry preserves its query and cursor receipt over fragmented
           flags: 1,
           payload: {
             reply: 'postgres_page',
-            with: requests.length < 3 ? firstPage : wrongPage,
+            with:
+              requests.length === 2
+                ? { ...firstPage, lease: 'another-lease' }
+                : requests.length < 4
+                  ? firstPage
+                  : wrongPage,
           },
         });
         if (requests.length === 1) {
@@ -73,6 +80,14 @@ test('Postgres page retry preserves its query and cursor receipt over fragmented
 
     const session = await connect({ path: socketPath });
     const postgres = workspace(session).postgres;
+    await assert.rejects(
+      postgres.page('lease-1', 'query-1'),
+      (error) =>
+        error instanceof PostgresPageProtocolError &&
+        error.lease === 'lease-1' &&
+        error.receivedLease === 'another-lease' &&
+        error.query === 'query-1',
+    );
     const first = await postgres.page('lease-1', 'query-1');
     assert.equal(first.cursor, null);
     assert.equal(first.next_cursor, 'page-2');
@@ -80,11 +95,17 @@ test('Postgres page retry preserves its query and cursor receipt over fragmented
       postgres.page('lease-1', 'query-1', first.next_cursor),
       (error) =>
         error instanceof PostgresPageProtocolError &&
+        error.lease === 'lease-1' &&
+        error.receivedLease === 'lease-1' &&
         error.query === 'query-1' &&
         error.cursor === 'page-2' &&
         error.receivedQuery === 'another-query',
     );
     assert.deepEqual(requests, [
+      {
+        call: 'postgres_query_page',
+        with: { lease: 'lease-1', query: 'query-1', cursor: null },
+      },
       {
         call: 'postgres_query_page',
         with: { lease: 'lease-1', query: 'query-1', cursor: null },

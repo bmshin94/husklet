@@ -185,7 +185,7 @@ impl QueryWorker {
 
     fn query_page(
         &self,
-        lease_id: &str,
+        lease_id: &PostgresLeaseId,
         id: &PostgresQueryId,
         cursor: Option<&PostgresCursor>,
         request: &PostgresQuery,
@@ -195,7 +195,7 @@ impl QueryWorker {
             .lock()
             .map_err(|_| failed("postgres query worker lock poisoned"))?;
         let lease = leases
-            .get_mut(lease_id)
+            .get_mut(lease_id.as_str())
             .ok_or_else(|| HostError::Absent("postgres lease is not live".into()))?;
         let timeout = lease.timeout;
         let query = lease
@@ -255,6 +255,7 @@ impl QueryWorker {
         let next_cursor = (!complete)
             .then(|| hl_extension::PostgresCursor::new(format!("page-{}", query.ordinal)).expect("bounded cursor"));
         Ok(PostgresPage {
+            lease: lease_id.clone(),
             query: id.clone(),
             cursor: cursor.cloned(),
             columns: query.columns.clone(),
@@ -358,7 +359,7 @@ impl Peer for QueryWorker {
             .map(|query| query.request.clone());
         drop(leases);
         self.query_page(
-            lease.as_str(),
+            lease,
             query,
             cursor,
             &request.ok_or_else(|| HostError::Absent("postgres query is not live".into()))?,
@@ -632,11 +633,11 @@ mod tests {
         let request = PostgresQuery::new(QueryOperationToken::new("query-op").unwrap(), "select value", 2, 16).unwrap();
         worker.start_query(lease.as_str(), "query-1".into(), &request).unwrap();
         let query = PostgresQueryId::new("query-1").unwrap();
-        let first = worker.query_page(lease.as_str(), &query, None, &request).unwrap();
+        let first = worker.query_page(&lease, &query, None, &request).unwrap();
         assert_eq!(first.rows, vec![vec![Some("one".into())], vec![Some("two".into())]]);
         let cursor = first.next_cursor.clone().unwrap();
         let second = worker
-            .query_page(lease.as_str(), &query, Some(&cursor), &request)
+            .query_page(&lease, &query, Some(&cursor), &request)
             .unwrap();
         assert_eq!(second.rows, vec![vec![Some("three".into())]]);
         assert!(second.next_cursor.is_none());
@@ -655,7 +656,7 @@ mod tests {
         let mut cursor = None;
         for (expected, complete) in [("one", false), ("two", false), ("three", true)] {
             let page = worker
-                .query_page(lease.as_str(), &query, cursor.as_ref(), &request)
+                .query_page(&lease, &query, cursor.as_ref(), &request)
                 .unwrap();
             assert_eq!(page.rows, vec![vec![Some(expected.into())]]);
             assert_eq!(page.next_cursor.is_none(), complete);
@@ -678,7 +679,7 @@ mod tests {
         assert_eq!(worker.cancel(&lease, &query).unwrap(), PostgresQueryState::Cancelled);
         assert_eq!(cancellation.recv_timeout(Duration::from_secs(2)).unwrap(), 7);
         assert!(matches!(
-            worker.query_page(lease.as_str(), &query, None, &request),
+            worker.query_page(&lease, &query, None, &request),
             Err(HostError::Absent(_))
         ));
     }

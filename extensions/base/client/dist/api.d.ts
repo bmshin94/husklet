@@ -1071,10 +1071,12 @@ export declare class TerminalCommandStartProtocolError extends Error {
     }>;
     readonly received: Readonly<TerminalCommand>;
 }
-/** The host returned a PostgreSQL page for a different query or cursor. */
+/** The host returned a PostgreSQL page for a different lease, query, or cursor. */
 export declare class PostgresPageProtocolError extends Error {
+    readonly lease: PostgresLeaseId;
     readonly query: PostgresQueryId;
     readonly cursor: PostgresCursor | null;
+    readonly receivedLease: PostgresLeaseId;
     readonly receivedQuery: PostgresQueryId;
     readonly receivedCursor: PostgresCursor | null;
 }

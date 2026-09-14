@@ -281,6 +281,8 @@ pub enum PostgresOpenOutcome {
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostgresPage {
+    /// Exact connection lease this receipt belongs to.
+    pub lease: PostgresLeaseId,
     /// Exact query this receipt belongs to.
     pub query: PostgresQueryId,
     /// Cursor presented to produce this page. `None` identifies the first page.
@@ -296,10 +298,12 @@ impl PostgresPage {
     pub fn validate(
         &self,
         requested: &PostgresQuery,
+        lease: &PostgresLeaseId,
         query: &PostgresQueryId,
         cursor: Option<&PostgresCursor>,
     ) -> Result<(), HostError> {
-        if &self.query != query
+        if &self.lease != lease
+            || &self.query != query
             || self.cursor.as_ref() != cursor
             || self.next_cursor.as_ref().is_some_and(|next| Some(next) == cursor)
             || self.rows.len() > requested.page_rows as usize
@@ -464,6 +468,7 @@ mod tests {
         assert!(PostgresQuery::new(QueryOperationToken::new("op-2").unwrap(), "", 2, 128).is_err());
         assert!(PostgresQuery::new(QueryOperationToken::new("op-3").unwrap(), "select 1", 1_001, 128).is_err());
         let page = PostgresPage {
+            lease: PostgresLeaseId::new("lease-1").unwrap(),
             query: PostgresQueryId::new("query-1").unwrap(),
             cursor: None,
             columns: vec!["n".into()],
@@ -471,15 +476,35 @@ mod tests {
             next_cursor: Some(PostgresCursor::new("next").unwrap()),
             bytes: 64,
         };
-        page.validate(&query, &PostgresQueryId::new("query-1").unwrap(), None)
+        page.validate(
+            &query,
+            &PostgresLeaseId::new("lease-1").unwrap(),
+            &PostgresQueryId::new("query-1").unwrap(),
+            None,
+        )
             .unwrap();
         assert!(
-            page.validate(&query, &PostgresQueryId::new("another-query").unwrap(), None)
+            page.validate(
+                &query,
+                &PostgresLeaseId::new("lease-1").unwrap(),
+                &PostgresQueryId::new("another-query").unwrap(),
+                None,
+            )
                 .is_err()
         );
         assert!(
             page.validate(
                 &query,
+                &PostgresLeaseId::new("another-lease").unwrap(),
+                &PostgresQueryId::new("query-1").unwrap(),
+                None,
+            )
+            .is_err()
+        );
+        assert!(
+            page.validate(
+                &query,
+                &PostgresLeaseId::new("lease-1").unwrap(),
                 &PostgresQueryId::new("query-1").unwrap(),
                 Some(&PostgresCursor::new("wrong-page").unwrap()),
             )
@@ -494,6 +519,7 @@ mod tests {
             stalled
                 .validate(
                     &query,
+                    &PostgresLeaseId::new("lease-1").unwrap(),
                     &PostgresQueryId::new("query-1").unwrap(),
                     Some(&PostgresCursor::new("page-2").unwrap()),
                 )
@@ -505,7 +531,12 @@ mod tests {
         };
         assert!(
             too_many
-                .validate(&query, &PostgresQueryId::new("query-1").unwrap(), None)
+                .validate(
+                    &query,
+                    &PostgresLeaseId::new("lease-1").unwrap(),
+                    &PostgresQueryId::new("query-1").unwrap(),
+                    None,
+                )
                 .is_err()
         );
         let outcome = PostgresStartOutcome::Reconciled {

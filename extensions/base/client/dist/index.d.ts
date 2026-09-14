@@ -29,13 +29,15 @@ export declare class TerminalCommandStartProtocolError extends Error {
     readonly received: any;
     constructor(expected: any, received: any);
 }
-/** The host returned a PostgreSQL page for a different query or cursor. */
+/** The host returned a PostgreSQL page for a different lease, query, or cursor. */
 export declare class PostgresPageProtocolError extends Error {
+    readonly lease: any;
     readonly query: any;
     readonly cursor: any;
+    readonly receivedLease: any;
     readonly receivedQuery: any;
     readonly receivedCursor: any;
-    constructor(query: any, cursor: any, receivedQuery: any, receivedCursor: any);
+    constructor(lease: any, query: any, cursor: any, receivedLease: any, receivedQuery: any, receivedCursor: any);
 }
 /** The host returned database state for another lease or query. */
 export declare class PostgresStateProtocolError extends Error {
