@@ -2242,7 +2242,7 @@ export interface WorkspaceApi {
             changed: false;
             before: PaneText;
         }>;
-        /** Write against an observed terminal and project a replacement as terminal or semantic text. */
+        /** Write against an observed terminal and return bounded text only from that pane generation. */
         writeObservedAndWaitForText(before: PaneText, input: string | Iterable<number>, options?: {
             lines?: number;
             timeoutMs?: number;

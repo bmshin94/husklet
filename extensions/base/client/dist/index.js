@@ -5215,7 +5215,7 @@ export function workspace(session, { signal } = {}) {
                 const after = readable?.snapshot ?? (await scoped.terminal.read(slot, lines));
                 if (after.generation === generation && after.revision === revision)
                     continue;
-                if (!projectReadable && after.generation !== generation) {
+                if (after.generation !== generation) {
                     throw new Error('terminal pane was replaced before input result could be verified');
                 }
                 return { changed: true, before, after: readable ?? after };
