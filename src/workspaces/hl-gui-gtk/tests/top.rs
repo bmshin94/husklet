@@ -356,6 +356,13 @@ mod unix {
                     "{fixture}/{name} clipped the compact Section label at {bounds:?}"
                 );
                 let chooser = find_combobox(&root);
+                let chooser_bounds = chooser
+                    .compute_bounds(&root)
+                    .expect("compact section chooser belongs to the rendered root");
+                assert!(
+                    chooser_bounds.x() - (bounds.x() + bounds.width()) >= 8.0,
+                    "{fixture}/{name} compact section label and chooser overlap or lose their 8px gap: label={bounds:?} chooser={chooser_bounds:?}"
+                );
                 assert!(chooser.grab_focus(), "compact section chooser is keyboard reachable");
             }
             if fixture == "populated" && name == "processes" && width == 1_200 {

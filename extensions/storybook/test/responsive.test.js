@@ -35,4 +35,21 @@ test('Responsive documents explicit compact and wide alternate subtrees', () => 
     0,
     'alternate layout must not invent divider semantics',
   );
+  const labels = frame.patches
+    .filter((patch) => patch.SetProp?.prop === 'Label')
+    .map((patch) => patch.SetProp.value?.Text);
+  assert(labels.includes('Section'));
+  assert(labels.some((label) => label?.includes('keep an 8px gap')));
+  const rows = new Set(
+    frame.patches.filter((patch) => patch.Create?.tag === 'Row').map((patch) => patch.Create.id),
+  );
+  assert(
+    frame.patches.some(
+      (patch) =>
+        rows.has(patch.SetProp?.id) &&
+        patch.SetProp.prop === 'Gap' &&
+        patch.SetProp.value?.Length?.Step === 2,
+    ),
+    'compact label/control toolbar uses the shared 8px gap token',
+  );
 });

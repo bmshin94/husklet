@@ -25,7 +25,14 @@ export function ResponsiveWorkbench() {
           <Column gap={2} width="fill">
             <Badge label="Compact · below 720px" tone="accent" />
             <Search placeholder="Search components" width="fill" />
-            <Select width="fill" value="all" choices={[{ value: 'all', label: 'All families' }]} />
+            <Row gap={2} align="center" width="fill">
+              <Text label="Section" color="text-dim" />
+              <Select
+                width={{ minimum: { chars: 14 }, maximum: { chars: 24 } }}
+                value="all"
+                choices={[{ value: 'all', label: 'All families' }]}
+              />
+            </Row>
           </Column>
           <Row gap={2} width="fill" align="center">
             <Badge label="Wide · 720px and above" tone="accent" />
@@ -44,6 +51,11 @@ export function ResponsiveWorkbench() {
             <Text label="Child 1 is the compact layout; child 2 is the wide layout." />
             <Text
               label="Resizing is deterministic. The inactive branch is hidden from drawing, focus, and accessibility traversal."
+              color="text-dim"
+              wrap
+            />
+            <Text
+              label="Compact label-and-control toolbars keep an 8px gap so labels remain distinct when the host narrows the surface."
               color="text-dim"
               wrap
             />

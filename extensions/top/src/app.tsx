@@ -363,7 +363,7 @@ export function Top({
         }
       }}
     >
-      <Row width="fill" pad={1} gap={1} align="center" justify="start">
+      <Row width="fill" pad={1} gap={2} align="center" justify="start">
         <Text label="Section" color="text-dim" />
         <Select
           width={{ minimum: { chars: 14 }, maximum: { chars: 24 } }}
