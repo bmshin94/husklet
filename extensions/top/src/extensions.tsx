@@ -210,7 +210,7 @@ function catalogueEntryMatches(
 ) {
   const installedExtension = installed.find((extension) => extension.name === entry.id);
   const updateAvailable = Boolean(
-    installedExtension && newerVersion(entry.version, installedExtension.version),
+    installedExtension && catalogueUpdateAvailable(entry, installedExtension),
   );
   const incompatible = catalogueCompatibility(entry, architecture).compatible === false;
   const statusMatches =
@@ -258,8 +258,24 @@ function installedUpdate(
   catalogue: ExtensionCatalogueEntry[],
 ): ExtensionCatalogueEntry | undefined {
   return catalogue.find(
-    (entry) => entry.id === extension.name && newerVersion(entry.version, extension.version),
+    (entry) => entry.id === extension.name && catalogueUpdateAvailable(entry, extension),
   );
+}
+
+/** A pinned catalogue digest is part of release identity, even when a daily
+ * development build intentionally keeps the manifest version unchanged. */
+export function catalogueUpdateAvailable(
+  entry: ExtensionCatalogueEntry,
+  installed: ExtensionSummary,
+): boolean {
+  if (entry.id !== installed.name) return false;
+  if (newerVersion(entry.version, installed.version)) return true;
+  if (entry.version !== installed.version) return false;
+  const match = /@((?:sha256):[0-9a-fA-F]{64})$/.exec(entry.reference);
+  const installedDigest = /^sha256:[0-9a-fA-F]{64}$/.test(installed.image_digest)
+    ? installed.image_digest.toLowerCase()
+    : null;
+  return Boolean(match && installedDigest && match[1].toLowerCase() !== installedDigest);
 }
 
 function installedPriority(
@@ -1486,7 +1502,7 @@ export function Extensions({
                         const updateAvailable = Boolean(
                           installedExtension &&
                           !builtIn &&
-                          newerVersion(entry.version, installedExtension.version),
+                          catalogueUpdateAvailable(entry, installedExtension),
                         );
                         const provider = installedExtension?.pane_providers?.[0];
                         return (
@@ -2496,7 +2512,7 @@ export function Extensions({
                               const update =
                                 !builtIn &&
                                 catalogueEntry &&
-                                newerVersion(catalogueEntry.version, extension.version)
+                                catalogueUpdateAvailable(catalogueEntry, extension)
                                   ? catalogueEntry
                                   : undefined;
                               const updateCompatibility = update

@@ -32,6 +32,7 @@ import {
   availableSections,
   catalogueTrust,
   catalogueCandidateMismatch,
+  catalogueUpdateAvailable,
   compactImageReference,
   extensionRemovalQuestion,
   capabilityLabel,
@@ -119,6 +120,39 @@ test('an acquired image must retain the catalogue identity the developer selecte
   assert.equal(
     compactImageReference(selected.reference),
     `registry/database:2 · sha256:${'a'.repeat(12)}…${'a'.repeat(8)}`,
+  );
+});
+
+test('a same-version pinned rebuild remains an observable update', () => {
+  const installed = {
+    name: 'storybook',
+    version: '2.0.0',
+    image_digest: `sha256:${'a'.repeat(64)}`,
+    enabled: true,
+    status: 'duty',
+  };
+  const entry = {
+    id: 'storybook',
+    version: '2.0.0',
+    reference: `registry/storybook:2@sha256:${'b'.repeat(64)}`,
+  };
+  assert.equal(catalogueUpdateAvailable(entry, installed), true);
+  assert.equal(
+    catalogueUpdateAvailable(
+      { ...entry, reference: `registry/storybook:2@sha256:${'a'.repeat(64)}` },
+      installed,
+    ),
+    false,
+  );
+  assert.equal(
+    catalogueUpdateAvailable({ ...entry, version: '1.9.0' }, installed),
+    false,
+    'a different digest never turns an older release into a downgrade action',
+  );
+  assert.deepEqual(
+    filterCatalogueEntries([entry], [installed], 'amd64', '', 'updates'),
+    [entry],
+    'the Updates filter exposes the replacement instead of hiding it as current',
   );
 });
 import {
@@ -1928,7 +1962,7 @@ test('an up-to-date built-in is hidden by default and available through the inst
           list: async () => [
             {
               name: 'storybook',
-              image_digest: `sha256:${'a'.repeat(64)}`,
+              image_digest: `sha256:${'c'.repeat(64)}`,
               version: '2.0.0',
               enabled: true,
               status: 'duty',
@@ -1949,8 +1983,8 @@ test('an up-to-date built-in is hidden by default and available through the inst
             candidate: {
               name: 'storybook',
               version: '2.0.0',
-              image_digest: `sha256:${'a'.repeat(64)}`,
-              installed_image_digest: `sha256:${'a'.repeat(64)}`,
+              image_digest: `sha256:${'c'.repeat(64)}`,
+              installed_image_digest: `sha256:${'c'.repeat(64)}`,
               requested: [],
               required: [],
             },
@@ -2000,7 +2034,7 @@ test('an up-to-date built-in is hidden by default and available through the inst
   assert.ok(labelled(stage, 'Installed · current'));
   assert.ok(labelled(stage, '1 extension · all installed'));
   assert.ok(
-    labelled(stage, `Installed image · Enabled · sha256:${'a'.repeat(12)}…${'a'.repeat(8)}`),
+    labelled(stage, `Installed image · Enabled · sha256:${'c'.repeat(12)}…${'c'.repeat(8)}`),
   );
   assert.equal(
     labelled(stage, 'Installed image'),
@@ -2062,7 +2096,7 @@ test('opening an extension reports a retained tab when occupant switching fails'
           list: async () => [
             {
               name: 'storybook',
-              image_digest: `sha256:${'a'.repeat(64)}`,
+              image_digest: `sha256:${'c'.repeat(64)}`,
               version: '2.0.0',
               enabled: true,
               status: 'duty',
@@ -2108,7 +2142,7 @@ test('opening an extension restores its idle action after tab creation fails', a
           list: async () => [
             {
               name: 'storybook',
-              image_digest: `sha256:${'a'.repeat(64)}`,
+              image_digest: `sha256:${'c'.repeat(64)}`,
               version: '2.0.0',
               enabled: true,
               status: 'duty',
@@ -2194,7 +2228,7 @@ test('reviewing an unchanged installed digest is an explicit no-op', async () =>
   assert.equal(updates, 0);
 });
 
-test('catalogue does not advertise an update at the installed version', async () => {
+test('catalogue does not advertise an update for the installed pinned identity', async () => {
   const stage = host();
   stage.render(
     h(Extensions, {
@@ -2203,7 +2237,7 @@ test('catalogue does not advertise an update at the installed version', async ()
           list: async () => [
             {
               name: 'storybook',
-              image_digest: `sha256:${'a'.repeat(64)}`,
+              image_digest: `sha256:${'c'.repeat(64)}`,
               version: '2.0.0',
               enabled: true,
               status: 'duty',
@@ -2269,12 +2303,11 @@ test('installed management can detect a republished image at the same release ve
   await settled();
   await settled();
 
-  assert.equal(labelled(stage, 'Review update'), undefined);
-  assert.deepEqual(taggedProperty(stage, 'Check for changes', 'Button', 'Size'), {
+  assert.deepEqual(taggedProperty(stage, 'Review update', 'Button', 'Size'), {
     ControlSize: 'Small',
   });
-  assert.deepEqual(ancestorTags(stage, 'Check for changes').slice(0, 2), ['Row', 'CardContent']);
-  invokeByTooltip(stage, 'Check storybook image for changes');
+  assert.deepEqual(ancestorTags(stage, 'Review update').slice(0, 2), ['Row', 'CardContent']);
+  invoke(stage, 'Review update');
   await settled();
   await settled();
 

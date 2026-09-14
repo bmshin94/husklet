@@ -107,8 +107,9 @@ test('digest-pinned same-version review rejects a substituted image over real Un
     session = await connect({ path: socketPath });
     stage = host();
     stage.render(h(Extensions, { api: workspace(session) }));
-    await until(() => labelled(stage, 'Check for changes'));
-    invokeByTooltip(stage, 'Check storybook image for changes');
+    await until(() => labelled(stage, 'Review update'));
+    assert.ok(labelled(stage, 'Update to Version 2.0.0 · Compatibility not declared'));
+    invokeByLabel(stage, 'Review update');
     await until(() => labelled(stage, 'Catalogue verification could not be completed.'));
     assert.ok(
       labelled(

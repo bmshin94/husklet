@@ -3129,7 +3129,7 @@ mod unix {
     ) {
         let reference = "ghcr.io/example/developer-tool-01:1.0.0@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
         let old_digest = format!("sha256:{}", "4".repeat(64));
-        let next_digest = format!("sha256:{}", "b".repeat(64));
+        let next_digest = format!("sha256:{}", "c".repeat(64));
         let root = surface.widget().clone().upcast::<gtk::Widget>();
         find_tooltip_button(&root, "Review the 1.0.0 update for Developer Tool 01").emit_clicked();
         settle_toolkit();
@@ -3526,7 +3526,7 @@ mod unix {
         );
         assert!(has_label(
             &review_root,
-            "Verified digest · sha256:bbbbbbbbbbbb…bbbbbbbb"
+            "Verified digest · sha256:cccccccccccc…cccccccc"
         ));
         assert!(has_label(&review_root, "Update extension · version 1.0.0"));
         assert!(has_label(
@@ -4534,7 +4534,11 @@ mod unix {
             .enumerate()
             .map(|(index, name)| ExtensionSummary {
                 name: name.clone(),
-                image_digest: format!("sha256:{}", format!("{:x}", index % 16).repeat(64)),
+                image_digest: if name == "storybook" {
+                    format!("sha256:{}", "a".repeat(64))
+                } else {
+                    format!("sha256:{}", format!("{:x}", index % 16).repeat(64))
+                },
                 status: if name == "faulted-agent" {
                     "fault:extension process exited".into()
                 } else if name == "disabled-linter" {

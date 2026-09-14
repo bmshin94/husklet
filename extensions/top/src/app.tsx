@@ -67,6 +67,7 @@ export {
   capabilityLabel,
   catalogueTrust,
   catalogueCandidateMismatch,
+  catalogueUpdateAvailable,
   compactImageReference,
   extensionRemovalQuestion,
   filterCatalogueEntries,
