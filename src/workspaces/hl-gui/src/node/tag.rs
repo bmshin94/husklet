@@ -336,7 +336,7 @@ catalogue! {
     JsonView: leaf, props[Value], triggers[],
     LogView: leaf, props[Value, Monospace], triggers[],
     Video: leaf, props[Uri], triggers[],
-    Chart: leaf, props[Label, Tone], triggers[],
+    Chart: leaf, props[Label, Series, Tone], triggers[],
     Sparkline: leaf, props[Value, Tone], triggers[],
     FlameGraph: leaf, props[Value, Tone], triggers[],
     MemoryMap: leaf, props[Value, Tone], triggers[],

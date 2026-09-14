@@ -12,6 +12,7 @@ pub(crate) fn apply(widget: &gtk::Widget, node: &Node, prop: Prop, value: &PropV
     match prop {
         Prop::Label => text::caption(widget, node.tag, value),
         Prop::Value if node.tag == Tag::Select => select_value(widget, node),
+        Prop::Series => crate::component::content::series(widget, value),
         Prop::Value => text::body(widget, node.tag, value),
         Prop::Detail => text::detail(widget, value),
         Prop::Help | Prop::Tooltip => tooltip(widget, value),

@@ -139,7 +139,10 @@ fn prop_notes(tag: Tag) -> String {
                 "Label",
                 "Required accessible action name; it is announced even when only the icon is visible.",
             ),
-            ("Icon", "Required non-empty named icon rendered as the button's visible content."),
+            (
+                "Icon",
+                "Required non-empty named icon rendered as the button's visible content.",
+            ),
             (
                 "Variant",
                 "Visual emphasis around the icon; outline exposes the hit-area boundary most clearly.",
@@ -173,6 +176,14 @@ fn prop_notes(tag: Tag) -> String {
                 "Choices",
                 "Ordered value and label pairs. Values are stable identities; labels are user-facing text.",
             ),
+        ],
+        Tag::Chart => &[
+            ("Label", "Short caption shown inside the plot."),
+            (
+                "Series",
+                "Ordered finite numeric samples. The plot scales them to its own bounds without requiring pixel coordinates.",
+            ),
+            ("Tone", "Semantic line and area colour inherited from the theme."),
         ],
         Tag::Switch => &[
             (
@@ -642,6 +653,13 @@ const PROPS: &[Entry] = &[
         note: "what a field holds or a display shows; numeric for a slider, a number entry and a rating",
     },
     Entry {
+        prop: Prop::Series,
+        group: "content",
+        editor: "series",
+        values: &["Series"],
+        note: "ordered finite numeric samples for a plot",
+    },
+    Entry {
         prop: Prop::Placeholder,
         group: "content",
         editor: "text",
@@ -994,6 +1012,7 @@ impl Entry {
             Prop::Label
             | Prop::Detail
             | Prop::Value
+            | Prop::Series
             | Prop::Placeholder
             | Prop::Help
             | Prop::Icon
@@ -1105,7 +1124,7 @@ fn quoted(item: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{catalogue, escaped, family, text, FAMILIES, PROPS};
+    use super::{FAMILIES, PROPS, catalogue, escaped, family, text};
     use hl_gui::Tag;
 
     /// The document is JSON at all: quotes pair up outside of escapes and no

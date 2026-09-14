@@ -5428,6 +5428,12 @@
           }
         },
         {
+          "name": "Series",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
           "name": "Placeholder",
           "payload": {
             "kind": "unit"
@@ -5877,6 +5883,19 @@
             "of": {
               "kind": "ref",
               "name": "SourceId"
+            }
+          }
+        },
+        {
+          "name": "Series",
+          "payload": {
+            "kind": "newtype",
+            "of": {
+              "kind": "array",
+              "of": {
+                "bits": 64,
+                "kind": "float"
+              }
             }
           }
         },
@@ -16073,7 +16092,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:2bc34ef4c46fd25f",
+  "source_fingerprint": "fnv1a64:4c1b8e56239b2eab",
   "specification_version": 1,
   "topics": [
     {

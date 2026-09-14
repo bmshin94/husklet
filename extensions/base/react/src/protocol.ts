@@ -23,6 +23,7 @@ const KIND = {
   Label: 'text',
   Detail: 'text',
   Value: 'infer',
+  Series: 'series',
   Placeholder: 'text',
   Help: 'text',
   Icon: 'text',
@@ -220,6 +221,15 @@ export function value(prop: PropName, given: unknown): unknown {
       };
     case 'schema':
       return { Schema: schema(given) };
+    case 'series': {
+      if (!Array.isArray(given)) throw new Error('a numeric series must be an array');
+      if (given.length > 4096)
+        throw new Error(`a numeric series contains at most 4096 samples, not ${given.length}`);
+      const samples = given.map(Number);
+      if (samples.some((sample) => !Number.isFinite(sample)))
+        throw new Error('a numeric series contains only finite numbers');
+      return { Series: samples };
+    }
     case 'infer':
       return infer(given);
     default:

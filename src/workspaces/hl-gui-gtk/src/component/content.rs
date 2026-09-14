@@ -1,7 +1,9 @@
 //! Long-form content: source text, a running log, media and plots.
 
 use gtk::prelude::*;
-use hl_gui::{LOG_VIEW_CHARACTER_LIMIT, Tag};
+use hl_gui::{LOG_VIEW_CHARACTER_LIMIT, PropValue, Tag};
+
+const MAX_SERIES_SAMPLES: usize = 4096;
 
 use super::field;
 
@@ -452,20 +454,36 @@ fn follow(widget: &gtk::Widget, view: &gtk::TextView) {
 
 /// Charts have no toolkit equivalent, so the adapter paints them itself.
 ///
-/// What it paints is a framed, labelled plot area and nothing more. A series
-/// is a list of numbers, and the property vocabulary has no such value:
-/// `PropValue` carries one number, one length, or a list of label/value
-/// *strings*, and the windowed row protocol reaches a `gtk::ColumnView`, not a
-/// drawing area. Reading a series out of `Prop::Choices` would widen the
-/// meaning of a wire type without widening the type, which is the same change
-/// with worse documentation — so the frame is drawn honestly and the data
-/// awaits a series value on the wire.
+/// The series is numeric on the wire. The plot scales it to the allocated area,
+/// so extensions describe measurements rather than host pixels.
 fn chart() -> gtk::DrawingArea {
     let widget = gtk::DrawingArea::new();
     widget.set_content_height(120);
     widget.set_hexpand(true);
-    widget.set_draw_func(|area, context, width, height| plot(area, context, f64::from(width), f64::from(height)));
+    install_plot(&widget, Vec::new());
     widget
+}
+
+pub(crate) fn series(widget: &gtk::Widget, value: &PropValue) {
+    let Some(area) = widget.downcast_ref::<gtk::DrawingArea>() else {
+        return;
+    };
+    let samples = value
+        .as_series()
+        .unwrap_or_default()
+        .iter()
+        .copied()
+        .filter(|sample| sample.is_finite())
+        .take(MAX_SERIES_SAMPLES)
+        .collect();
+    install_plot(area, samples);
+    area.queue_draw();
+}
+
+fn install_plot(area: &gtk::DrawingArea, samples: Vec<f64>) {
+    area.set_draw_func(move |area, context, width, height| {
+        plot(area, context, f64::from(width), f64::from(height), &samples);
+    });
 }
 
 fn sparkline() -> gtk::DrawingArea {
@@ -851,7 +869,7 @@ fn trend(area: &gtk::DrawingArea, context: &gtk::cairo::Context, width: f64, hei
 
 /// Paints the plot frame in the widget's own inherited colour, so the sheet
 /// still owns the palette and no per-widget provider is attached.
-fn plot(area: &gtk::DrawingArea, context: &gtk::cairo::Context, width: f64, height: f64) {
+fn plot(area: &gtk::DrawingArea, context: &gtk::cairo::Context, width: f64, height: f64, samples: &[f64]) {
     let ink = area.color();
     let inset = 8.0_f64;
     context.set_line_width(1.0);
@@ -863,20 +881,78 @@ fn plot(area: &gtk::DrawingArea, context: &gtk::cairo::Context, width: f64, heig
         (height - inset * 2.0).max(0.0),
     );
     let _ = context.stroke();
+    series_path(context, width, height, inset, samples);
+    if samples.len() > 1 {
+        context.set_source_rgba(ink.red().into(), ink.green().into(), ink.blue().into(), 0.16);
+        context.line_to(width - inset, height - inset);
+        context.line_to(inset, height - inset);
+        context.close_path();
+        let _ = context.fill();
+        series_path(context, width, height, inset, samples);
+        context.set_source_rgba(ink.red().into(), ink.green().into(), ink.blue().into(), 0.92);
+        context.set_line_width(2.0);
+        let _ = context.stroke();
+    }
     caption(area, context, width, height);
 }
 
-/// The chart's label, centred in the plot area. `Prop::Label` reaches the
+fn series_path(context: &gtk::cairo::Context, width: f64, height: f64, inset: f64, samples: &[f64]) {
+    if samples.len() < 2 {
+        return;
+    }
+    let minimum = samples.iter().copied().fold(f64::INFINITY, f64::min);
+    let maximum = samples.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let span = (maximum - minimum).max(f64::EPSILON);
+    let plot_width = (width - inset * 2.0).max(0.0);
+    let plot_top = inset + 20.0;
+    let plot_height = (height - plot_top - inset).max(0.0);
+    for (index, sample) in samples.iter().enumerate() {
+        let x = inset + plot_width * index as f64 / (samples.len() - 1) as f64;
+        let y = plot_top + plot_height * (1.0 - (*sample - minimum) / span);
+        if index == 0 {
+            context.move_to(x, y);
+        } else {
+            context.line_to(x, y);
+        }
+    }
+}
+
+/// The chart's label, aligned to the plot's reading edge. `Prop::Label` reaches the
 /// drawing area as its tooltip — a drawing area holds no text of its own — so
 /// that is where the caption is read from.
-fn caption(area: &gtk::DrawingArea, context: &gtk::cairo::Context, width: f64, height: f64) {
+fn caption(area: &gtk::DrawingArea, context: &gtk::cairo::Context, _width: f64, _height: f64) {
     let ink = area.color();
     let text = area.tooltip_text().unwrap_or_else(|| "Chart".into());
-    context.set_source_rgba(ink.red().into(), ink.green().into(), ink.blue().into(), 0.7);
-    context.set_font_size(12.0);
-    let Ok(extents) = context.text_extents(&text) else {
-        return;
-    };
-    context.move_to((width - extents.width()) / 2.0, f64::midpoint(height, extents.height()));
+    context.set_source_rgba(ink.red().into(), ink.green().into(), ink.blue().into(), 0.82);
+    context.set_font_size(11.0);
+    context.move_to(16.0, 22.0);
     let _ = context.show_text(&text);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::series_path;
+
+    fn context() -> gtk::cairo::Context {
+        let surface = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 200, 100).unwrap();
+        gtk::cairo::Context::new(&surface).unwrap()
+    }
+
+    #[test]
+    fn chart_series_occupies_the_plot_width_and_scales_its_range() {
+        let context = context();
+        series_path(&context, 200.0, 100.0, 8.0, &[18.0, 42.0, 24.0]);
+        let (x1, y1, x2, y2) = context.path_extents().unwrap();
+        assert!((x1 - 8.0).abs() < 0.01 && (x2 - 192.0).abs() < 0.01);
+        assert!((y1 - 28.0).abs() < 0.01 && (y2 - 92.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn constant_series_remains_finite_and_visible() {
+        let context = context();
+        series_path(&context, 200.0, 100.0, 8.0, &[4.0, 4.0, 4.0]);
+        let (x1, y1, x2, y2) = context.path_extents().unwrap();
+        assert!([x1, y1, x2, y2].into_iter().all(f64::is_finite));
+        assert!(x2 > x1);
+    }
 }

@@ -30,6 +30,7 @@ const SHAPES = {
   Choices: 'Choice[]',
   Schema: 'readonly ColumnSpec[]',
   Source: 'number',
+  Series: 'readonly number[]',
 };
 
 /** `Label` is the wire spelling; `label` is what a component is given. */

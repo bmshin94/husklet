@@ -16,6 +16,7 @@ const SAMPLE = {
   choices: [{ value: 'one', label: 'One' }],
   schema: [{ key: 'name' }],
   source: 1,
+  series: [1, 2, 3],
 };
 
 /** The control that matches a wire shape, when the catalogue's hint does not. */
@@ -25,6 +26,7 @@ const CONTROL = {
   Number: 'number',
   Integer: 'number',
   Length: 'length',
+  Series: 'series',
 };
 
 /**

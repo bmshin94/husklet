@@ -30,7 +30,7 @@ test('the catalogue describes the whole library', () => {
     tags.length >= 120,
     `only ${tags.length} components; the catalogue is the whole library`,
   );
-  assert.equal(props.length, 48);
+  assert.equal(props.length, 49);
   assert.ok(families.length > 0);
 });
 
@@ -91,6 +91,7 @@ test('core controls override transport vocabulary with component-specific contra
   assert.match(note('Entry', 'Value'), /complete new string/);
   assert.match(note('Select', 'Choices'), /stable identities/);
   assert.match(note('Switch', 'Selected'), /Checked is absent/);
+  assert.match(note('Chart', 'Series'), /numeric samples/);
 });
 
 test('the sidebar covers every component exactly once', () => {

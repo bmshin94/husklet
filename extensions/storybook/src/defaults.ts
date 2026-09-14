@@ -8,7 +8,8 @@
 
 import { component, nativeTags } from './catalogue.js';
 
-type StoryValue = string | number | boolean | { value: string; label: string }[];
+type StoryValue =
+  string | number | boolean | readonly number[] | { value: string; label: string }[];
 export type StoryChild = { tag: string; props: Record<string, StoryValue> };
 export type StoryDefaults = { props: Record<string, unknown>; children: StoryChild[] };
 
@@ -89,7 +90,7 @@ const BY_TAG: Record<string, Record<string, StoryValue>> = {
     monospace: true,
   },
   LogView: { label: 'starting…', monospace: true },
-  Chart: { label: 'Load' },
+  Chart: { label: 'Build duration', series: [18, 22, 19, 31, 28, 35, 42, 39] },
   Sparkline: { value: '18,22,19,31,28,35,42,39' },
   FlameGraph: { value: '120\tcompiler::parse\n74\tcompiler::check\n31\tcompiler::emit' },
   MemoryMap: { value: '0000000000400000-0000000000410000\tr-xp\t65536\t/bin/app' },

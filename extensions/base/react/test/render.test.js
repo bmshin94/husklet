@@ -239,6 +239,13 @@ test('a growth factor is sent as a number, because a flag decodes as nothing', (
   assert.throws(() => value('Size', 'tiny'), /control size is one of small, medium, large/);
 });
 
+test('chart series stay numeric and reject unbounded or invalid samples', () => {
+  assert.deepEqual(value('Series', [18, 22.5, '19']), { Series: [18, 22.5, 19] });
+  assert.throws(() => value('Series', '18,22'), /must be an array/);
+  assert.throws(() => value('Series', [1, Number.NaN]), /only finite numbers/);
+  assert.throws(() => value('Series', Array.from({ length: 4097 }, () => 1)), /at most 4096/);
+});
+
 test('a compact list explicitly clears the host default growth', () => {
   const host = surface();
   const frame = host.render(

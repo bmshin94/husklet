@@ -10,6 +10,8 @@ pub enum Prop {
     Label,
     Detail,
     Value,
+    /// Ordered numeric samples for a plot.
+    Series,
     Placeholder,
     Help,
     Icon,
@@ -132,6 +134,9 @@ pub enum PropValue {
     Choices(Vec<Choice>),
     Schema(#[cfg_attr(feature = "wire", serde(deserialize_with = "crate::data::deserialize_columns"))] Vec<Column>),
     Source(SourceId),
+    /// Ordered numeric samples for plots. A distinct wire shape keeps chart
+    /// data numeric instead of asking every renderer to parse display text.
+    Series(Vec<f64>),
     Nothing,
 }
 
@@ -162,6 +167,14 @@ impl PropValue {
         match self {
             Self::Number(value) => Some(*value),
             Self::Integer(value) => Some(*value as f64),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn as_series(&self) -> Option<&[f64]> {
+        match self {
+            Self::Series(value) => Some(value),
             _ => None,
         }
     }
