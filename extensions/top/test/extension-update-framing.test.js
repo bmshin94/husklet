@@ -17,6 +17,20 @@ test('digest-pinned same-version review rejects a substituted image over real Un
   const nextDigest = `sha256:${'b'.repeat(64)}`;
   assert.equal(
     lifecycleStateObserved(
+      'enable',
+      { name: 'storybook', image_digest: oldDigest, enabled: false, status: 'standby' },
+      {
+        name: 'storybook',
+        image_digest: oldDigest,
+        enabled: true,
+        status: 'fault:extension process exited',
+      },
+    ),
+    false,
+    'a faulted runtime cannot satisfy enable reconciliation',
+  );
+  assert.equal(
+    lifecycleStateObserved(
       'remove',
       { name: 'storybook', image_digest: oldDigest, enabled: true, status: 'duty' },
       { name: 'storybook', image_digest: nextDigest, enabled: true, status: 'duty' },

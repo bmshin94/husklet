@@ -3038,7 +3038,7 @@ export function lifecycleStateObserved(
   }
   if (!current || current.image_digest !== expected.image_digest) return false;
   if (action === 'disable') return current.enabled !== true;
-  if (action === 'enable') return current.enabled === true;
+  if (action === 'enable') return current.enabled === true && !current.status.startsWith('fault:');
   return current.enabled === true && current.status === 'duty';
 }
 

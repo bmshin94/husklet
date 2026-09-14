@@ -3812,6 +3812,45 @@ test('installed extension lifecycle reconciles a lost reply without masking a re
   );
 });
 
+test('lost enable reply keeps an authoritatively faulted extension in recovery', async () => {
+  let extension = {
+    name: 'assistant',
+    image_digest: `sha256:${'c'.repeat(64)}`,
+    version: '1.2.0',
+    enabled: false,
+    status: 'standby',
+  };
+  const stage = host();
+  stage.render(
+    h(Extensions, {
+      api: {
+        extensions: {
+          list: async () => [extension],
+          enableAndWait: async () => {
+            extension = { ...extension, enabled: true, status: 'fault:extension process exited' };
+            throw new Error('connection closed before enable reply');
+          },
+        },
+        watchExtensions: async () => () => {},
+      },
+    }),
+  );
+  await settled();
+  invoke(stage, 'Enable');
+  await settled();
+  await settled();
+
+  assert.ok(labelled(stage, 'Faulted'));
+  assert.ok(labelled(stage, 'Retry'));
+  assert.equal(
+    labelled(
+      stage,
+      'assistant enabled, but the confirmation reply was lost. Current extension state was verified by refresh.',
+    ),
+    undefined,
+  );
+});
+
 test('fault retry keeps its primary slot while the lifecycle request is pending', async () => {
   let finish;
   const pending = new Promise((resolve) => {
