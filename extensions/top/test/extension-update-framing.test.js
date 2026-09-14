@@ -18,6 +18,7 @@ test('digest-pinned same-version review rejects a substituted image over real Un
   const reference = `registry.example/storybook:2@sha256:${'c'.repeat(64)}`;
   const substitutedReference = `registry.example/storybook:2@sha256:${'d'.repeat(64)}`;
   const calls = [];
+  const visibleReferences = [];
   let starts = 0;
   const server = net.createServer((socket) => {
     const reader = new Reader();
@@ -108,7 +109,12 @@ test('digest-pinned same-version review rejects a substituted image over real Un
   try {
     session = await connect({ path: socketPath });
     stage = host();
-    stage.render(h(Extensions, { api: workspace(session) }));
+    stage.render(
+      h(Extensions, {
+        api: workspace(session),
+        onReferenceChange: (value) => visibleReferences.push(value),
+      }),
+    );
     await until(() => labelled(stage, 'Review update'));
     assert.ok(labelled(stage, 'Open'));
     assert.ok(labelled(stage, 'Update to Version 2.0.0 · Compatibility not declared'));
@@ -161,6 +167,16 @@ test('digest-pinned same-version review rejects a substituted image over real Un
     assert.equal(
       labelled(stage, 'Direct OCI image · no catalogue publisher verification.'),
       undefined,
+    );
+    invokeByLabel(stage, 'Back to catalogue');
+    await until(() => visibleReferences.at(-1) === '');
+    assert.deepEqual(
+      calls.filter(({ call }) => call.startsWith('extension_acquisition')),
+      [
+        { call: 'extension_acquisition_start', with: { reference, refresh: true } },
+        { call: 'extension_acquisition_status', with: { job: 'update-job' } },
+      ],
+      'returning to the catalogue never retries the substituted reference as a direct image',
     );
   } finally {
     stage?.render(null);

@@ -928,6 +928,11 @@ export function Extensions({
     candidateKey.current = '';
     setError('');
   };
+  const backToCatalogue = () => {
+    dismissReview();
+    setReference('');
+    setMode('discover');
+  };
   const cancel = async () => {
     if (
       !acquisition ||
@@ -1791,7 +1796,7 @@ export function Extensions({
                           operation="Catalogue verification"
                           error={`${catalogueMismatch} Return to the catalogue and review its latest entry before installing.`}
                           retryLabel="Back to catalogue"
-                          onRetry={dismissReview}
+                          onRetry={backToCatalogue}
                         />
                       ) : null}
                       <RequestedPermissionSummary groups={requestedPermissionGroups} />
@@ -2333,7 +2338,7 @@ export function Extensions({
                               size="small"
                               variant="ghost"
                               enabled={!busy}
-                              onInvoke={dismissReview}
+                              onInvoke={backToCatalogue}
                             />
                           </Row>
                           <Expander label="Technical details" expanded={false} width="fill">
@@ -2353,7 +2358,7 @@ export function Extensions({
                             size="small"
                             variant="ghost"
                             enabled={!busy}
-                            onInvoke={dismissReview}
+                            onInvoke={backToCatalogue}
                           />
                         </Column>
                       ) : acquisition.state === 'committing' ? (
