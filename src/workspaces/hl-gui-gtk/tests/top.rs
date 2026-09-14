@@ -448,6 +448,29 @@ mod unix {
                         "{width_name} {purpose} refresh lost its scanning cue"
                     );
                 }
+                let creation_context = match name {
+                    "images" => Some(("Pull image", "Cancel pull", "registry/image:tag", 12_000)),
+                    "volumes" => Some(("Create volume", "Cancel volume", "Volume name", 12_100)),
+                    "networks" => Some(("Create network", "Cancel network", "Network name", 12_200)),
+                    "terminals" => Some(("New terminal tab", "Cancel new tab", "Tab title", 12_300)),
+                    _ => None,
+                };
+                if let Some((action, cancel, field, channel)) = creation_context {
+                    exercise_creation_panel(
+                        &mut wire,
+                        &mut tree,
+                        &mut surface,
+                        &window,
+                        &root,
+                        width,
+                        width_name,
+                        name,
+                        action,
+                        cancel,
+                        field,
+                        channel + if width == 600 { 50 } else { 0 },
+                    );
+                }
             }
             if fixture == "populated" && name == "processes" && width == 1_200 {
                 let refresh = find_tooltip_button(&root, "Refresh processes");
@@ -828,6 +851,16 @@ mod unix {
                 capture(&window, &format!("settings-credential-edit-{width_name}"), width, 800);
             }
             if fixture == "populated" && name == "images" {
+                toggle_creation_panel(
+                    &mut wire,
+                    &mut tree,
+                    &mut surface,
+                    &root,
+                    "Pull image",
+                    "Cancel pull",
+                    if width == 600 { 12_551 } else { 12_501 },
+                    width,
+                );
                 let reference = find_entry_placeholder(&root, "registry/image:tag");
                 let pull = find_button(&root, "Pull");
                 assert_standard_action(&pull, width_name, "image pull", 36);
@@ -841,12 +874,14 @@ mod unix {
                 let refresh_bounds = refresh
                     .compute_bounds(&root)
                     .expect("image refresh belongs to the rendered root");
-                for (label, bounds) in [("Pull", pull_bounds), ("Refresh", refresh_bounds)] {
-                    assert!(
-                        (bounds.y() - reference_bounds.y()).abs() <= 2.0,
-                        "{width_name} image {label} detached from its field row: field={reference_bounds:?}, action={bounds:?}"
-                    );
-                }
+                assert!(
+                    (pull_bounds.y() - reference_bounds.y()).abs() <= 2.0,
+                    "{width_name} image Pull detached from its field row: field={reference_bounds:?}, action={pull_bounds:?}"
+                );
+                assert!(
+                    refresh_bounds.y() < reference_bounds.y(),
+                    "{width_name} image Refresh did not remain in the persistent inventory action row"
+                );
                 assert!(
                     has_label(&root, "Use a registry reference such as alpine:3.20."),
                     "{width_name} image field keeps concise format guidance"
@@ -858,6 +893,16 @@ mod unix {
                 assert!(
                     guidance_bounds.y() - reference_bounds.y() - reference_bounds.height() <= 20.0,
                     "{width_name} image FormControl stretched between its field and guidance: field={reference_bounds:?}, guidance={guidance_bounds:?}"
+                );
+                toggle_creation_panel(
+                    &mut wire,
+                    &mut tree,
+                    &mut surface,
+                    &root,
+                    "Cancel pull",
+                    "Pull image",
+                    if width == 600 { 12_552 } else { 12_502 },
+                    width,
                 );
             }
             if fixture == "populated" && name == "extensions" {
@@ -1054,6 +1099,16 @@ mod unix {
                 );
             }
             if fixture == "populated" && name == "networks" {
+                toggle_creation_panel(
+                    &mut wire,
+                    &mut tree,
+                    &mut surface,
+                    &root,
+                    "Create network",
+                    "Cancel network",
+                    if width == 600 { 12_751 } else { 12_701 },
+                    width,
+                );
                 let title = find_heading(&root, "Networks");
                 assert!(title.has_css_class("scale-display"));
                 assert_eq!(title.accessible_role(), gtk::AccessibleRole::Heading);
@@ -1107,7 +1162,6 @@ mod unix {
                 let widgets = [
                     entry.clone().upcast::<gtk::Widget>(),
                     create.clone().upcast(),
-                    refresh.clone().upcast(),
                 ];
                 let tops = widgets.iter().map(|widget| widget.allocation().y()).collect::<Vec<_>>();
                 assert!(
@@ -1123,7 +1177,10 @@ mod unix {
                     "{width_name} network creation controls have mismatched heights: {heights:?}"
                 );
                 assert!(entry.allocation().x() < create.allocation().x());
-                assert!(create.allocation().x() < refresh.allocation().x());
+                assert!(
+                    refresh.compute_bounds(&root).expect("network Refresh belongs to Top").y()
+                        < entry.compute_bounds(&root).expect("network name belongs to Top").y()
+                );
                 assert!(vertical_end(&root, refresh.upcast_ref()) <= 240);
                 if width == 1_200 {
                     assert!(!danger.is_expanded(), "network danger disclosure starts collapsed");
@@ -1164,6 +1221,16 @@ mod unix {
                         1,
                     );
                 }
+                toggle_creation_panel(
+                    &mut wire,
+                    &mut tree,
+                    &mut surface,
+                    &root,
+                    "Cancel network",
+                    "Create network",
+                    if width == 600 { 12_752 } else { 12_702 },
+                    width,
+                );
             }
             if fixture == "populated" && name == "volumes" {
                 let card = widgets_with_class(&root, "hl-card")
@@ -1669,7 +1736,27 @@ mod unix {
                 assert_settings_group_layout(&root, width, width_name);
             }
             if fixture == "populated" && name == "terminals" {
+                toggle_creation_panel(
+                    &mut wire,
+                    &mut tree,
+                    &mut surface,
+                    &root,
+                    "New terminal tab",
+                    "Cancel new tab",
+                    if width == 600 { 12_851 } else { 12_801 },
+                    width,
+                );
                 assert_terminal_management_layout(&root, width, width_name);
+                toggle_creation_panel(
+                    &mut wire,
+                    &mut tree,
+                    &mut surface,
+                    &root,
+                    "Cancel new tab",
+                    "New terminal tab",
+                    if width == 600 { 12_852 } else { 12_802 },
+                    width,
+                );
             }
             capture_stable(&window, &format!("{capture_fixture}-{name}-{width_name}"), width, 800);
             if fixture == "error" && name == "workspace" {
@@ -3248,15 +3335,23 @@ mod unix {
                 resize_window(&recovery_window, width, 820);
                 recovery_window.present();
                 settle_toolkit();
+                if find_button_optional(&recovery_root, "Create volume").is_some() {
+                    toggle_creation_panel(
+                        &mut wire,
+                        &mut tree,
+                        &mut surface,
+                        &recovery_root,
+                        "Create volume",
+                        "Cancel volume",
+                        12_901,
+                        width,
+                    );
+                }
                 assert_contained(&recovery_root, &format!("volume-recovery/{width_name}"));
                 let entry = find_entry_placeholder(&recovery_root, "Volume name");
                 let create = find_button(&recovery_root, "Create");
                 let refresh = find_tooltip_button(&recovery_root, "Refresh volumes");
-                let controls = [
-                    entry.clone().upcast::<gtk::Widget>(),
-                    create.clone().upcast(),
-                    refresh.clone().upcast(),
-                ];
+                let controls = [entry.clone().upcast::<gtk::Widget>(), create.clone().upcast()];
                 let tops = controls
                     .iter()
                     .map(|control| control.allocation().y())
@@ -3283,7 +3378,16 @@ mod unix {
                     entry_bounds.x()
                 );
                 assert!(entry.allocation().x() < create.allocation().x());
-                assert!(create.allocation().x() < refresh.allocation().x());
+                assert!(
+                    refresh
+                        .compute_bounds(&recovery_root)
+                        .expect("volume Refresh belongs to Top")
+                        .y()
+                        < entry
+                            .compute_bounds(&recovery_root)
+                            .expect("volume name belongs to Top")
+                            .y()
+                );
                 assert!(entry.grab_focus());
                 assert!(refresh.grab_focus());
                 assert!(open.has_css_class("size-small"));
@@ -5387,6 +5491,67 @@ mod unix {
         .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn exercise_creation_panel(
+        wire: &mut Wire<UnixStream>,
+        tree: &mut Tree,
+        surface: &mut Surface,
+        window: &gtk::Window,
+        root: &gtk::Widget,
+        width: i32,
+        width_name: &str,
+        page: &str,
+        action: &str,
+        cancel: &str,
+        field: &str,
+        channel: u32,
+    ) {
+        if find_button_optional(root, cancel).is_some() {
+            invoke_and_apply_until_button(wire, tree, surface, root, cancel, action, channel);
+        }
+        let entry = find_entry_placeholder(root, field);
+        settle_frame();
+        assert!(!entry.is_mapped(), "{width_name} {page} creation fields are visible by default");
+        let trigger = find_button(root, action);
+        assert_standard_action(&trigger, width_name, &format!("{page} create trigger"), 28);
+        assert!(trigger.has_css_class("variant-outline"));
+        assert!(trigger.grab_focus(), "{width_name} {page} create trigger accepts focus");
+        capture_stable(window, &format!("creation-closed-{page}-{width_name}"), width, 800);
+
+        invoke_and_apply_until_button(wire, tree, surface, root, action, cancel, channel + 1);
+        root.measure(gtk::Orientation::Horizontal, -1);
+        root.measure(gtk::Orientation::Vertical, width);
+        root.allocate(width, 1_600, -1, None);
+        settle_frame();
+        assert!(entry.is_mapped(), "{width_name} {page} create action did not reveal its fields");
+        let close = find_button(root, cancel);
+        assert!(close.has_css_class("variant-ghost"));
+        assert_standard_action(&close, width_name, &format!("{page} create cancel"), 28);
+        capture_stable(window, &format!("creation-open-{page}-{width_name}"), width, 800);
+
+        invoke_and_apply_until_button(wire, tree, surface, root, cancel, action, channel + 2);
+        settle_frame();
+        assert!(!entry.is_mapped(), "{width_name} {page} cancel did not hide its fields");
+        assert!(find_button(root, action).is_mapped(), "{width_name} {page} action did not return");
+    }
+
+    fn toggle_creation_panel(
+        wire: &mut Wire<UnixStream>,
+        tree: &mut Tree,
+        surface: &mut Surface,
+        root: &gtk::Widget,
+        action: &str,
+        wanted: &str,
+        channel: u32,
+        width: i32,
+    ) {
+        invoke_and_apply_until_button(wire, tree, surface, root, action, wanted, channel);
+        root.measure(gtk::Orientation::Horizontal, -1);
+        root.measure(gtk::Orientation::Vertical, width);
+        root.allocate(width, 1_600, -1, None);
+        settle_frame();
+    }
+
     fn assert_settings_stack(root: &gtk::Widget, width: i32, case: &str, open: Option<usize>) {
         let groups = settings_groups(root);
         for (index, group) in groups.iter().enumerate() {
@@ -5642,7 +5807,7 @@ mod unix {
     }
 
     fn assert_terminal_management_layout(root: &gtk::Widget, width: i32, case: &str) {
-        let title_label = find_label(root, "New terminal tab");
+        let title_label = find_label(root, "Tab title");
         let title = find_entry_placeholder(root, "Tab title");
         assert_eq!(title_label.accessible_role(), gtk::AccessibleRole::Label);
         assert_eq!(title.accessible_role(), gtk::AccessibleRole::TextBox);

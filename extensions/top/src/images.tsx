@@ -29,6 +29,7 @@ import {
 import { ImageDetailsSource, bounded, boundedMessage, bytes, shortId } from './model.js';
 import type { Resource } from './overview.js';
 import { ResourceSummary } from './resource-summary.js';
+import { CreationPanel } from './creation-panel.js';
 
 const TERMINAL_PULL_STATES = new Set(['complete', 'failed', 'cancelled']);
 type Inspection = {
@@ -55,6 +56,7 @@ export function Images({
   const [busy, setBusy] = React.useState('');
   const [error, setError] = React.useState<unknown>(null);
   const [notice, setNotice] = React.useState('');
+  const [creating, setCreating] = React.useState(false);
   const inspectionRevision = React.useRef(0);
   const inventoryRevision = React.useRef(resource.data);
   const currentImages = React.useRef(new Set<string>());
@@ -233,16 +235,33 @@ export function Images({
         : 'ready';
   return (
     <Page title="Images" subtitle="Images available to this workspace.">
-      <FormControl gap={1} width={{ minimum: { chars: 20 }, maximum: { chars: 64 } }}>
-        <FormLabel label="Image reference" />
-        <Row gap={1} wrap width="fill" align="center" justify="start">
-          <Entry
-            value={reference}
-            placeholder="registry/image:tag"
-            width={{ minimum: { chars: 20 }, maximum: { chars: 40 } }}
-            onChange={(event) => setReference(String(event.value ?? ''))}
+      <CreationPanel
+        action="Pull image"
+        cancel="Cancel pull"
+        open={creating}
+        enabled={!busy}
+        onOpenChange={setCreating}
+        secondary={
+          <Button
+            label="Refresh"
+            tooltip="Refresh images"
+            icon="view-refresh-symbolic"
+            size="small"
+            variant="ghost"
+            enabled={!busy}
+            onInvoke={resource.reload}
           />
-          <Row gap={1} align="start" justify="center" height="content">
+        }
+      >
+        <FormControl gap={1} width={{ minimum: { chars: 20 }, maximum: { chars: 64 } }}>
+          <FormLabel label="Image reference" />
+          <Row gap={1} wrap width="fill" align="center" justify="start">
+            <Entry
+              value={reference}
+              placeholder="registry/image:tag"
+              width={{ minimum: { chars: 20 }, maximum: { chars: 40 } }}
+              onChange={(event) => setReference(String(event.value ?? ''))}
+            />
             <Button
               variant="filled"
               tone="accent"
@@ -258,21 +277,10 @@ export function Images({
               }
               onInvoke={startPull}
             />
-            <Button
-              label="Refresh"
-              tooltip="Refresh images"
-              icon="view-refresh-symbolic"
-              size="small"
-              height="content"
-              justify="start"
-              variant="ghost"
-              enabled={!busy}
-              onInvoke={resource.reload}
-            />
           </Row>
-        </Row>
-        <FormHelperText label="Use a registry reference such as alpine:3.20." />
-      </FormControl>
+          <FormHelperText label="Use a registry reference such as alpine:3.20." />
+        </FormControl>
+      </CreationPanel>
       {pull ? <PullStatus pull={pull} onCancel={cancelPull} /> : null}
       <ErrorText error={error} />
       {notice ? <Text label={notice} color="positive" /> : null}

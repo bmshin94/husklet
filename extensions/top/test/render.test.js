@@ -4712,12 +4712,39 @@ test('every empty operational page explains what is absent and how to proceed', 
         `${section} persistent refresh is not collapsed to a glyph-only action`,
       );
     }
+    const creation = {
+      Images: ['Pull image', 'Cancel pull', 'Image reference'],
+      Volumes: ['Create volume', 'Cancel volume', 'Volume name'],
+      Networks: ['Create network', 'Cancel network', 'Network name'],
+      Terminals: ['New terminal tab', 'Cancel new tab', 'Tab title'],
+    }[section];
+    if (creation) {
+      const [action, cancel, field] = creation;
+      assert.deepEqual(
+        ancestorProperty(stage, field, 'Paper', 'Visible'),
+        { Flag: false },
+        `${section} creation panel is hidden by default: ${ancestorTags(stage, field).join(' > ')}`,
+      );
+      assert.deepEqual(taggedProperty(stage, action, 'Button', 'Size'), {
+        ControlSize: 'Small',
+      });
+      assert.deepEqual(taggedProperty(stage, action, 'Button', 'Variant'), {
+        Variant: 'Outline',
+      });
+      invoke(stage, action);
+      await settled();
+      assert.deepEqual(ancestorProperty(stage, field, 'Paper', 'Visible'), { Flag: true });
+      assert.ok(labelled(stage, cancel));
+      invoke(stage, cancel);
+      await settled();
+      assert.deepEqual(ancestorProperty(stage, field, 'Paper', 'Visible'), { Flag: false });
+    }
     if (section === 'Images') {
       assert.equal(ancestorTags(stage, 'Pull')[0], 'Row');
       assert.deepEqual(
         ancestorTags(stage, 'Refresh').slice(0, 2),
-        ['Row', 'Row'],
-        'image actions stay together inside the labelled wrapping field row',
+        ['Row', 'Column'],
+        'image inventory actions remain visible while the pull form is disclosed separately',
       );
       assert.equal(
         ancestorProperty(stage, 'Pull', 'Row', 'Grow'),
@@ -4729,8 +4756,8 @@ test('every empty operational page explains what is absent and how to proceed', 
       assert.equal(ancestorTags(stage, 'Create')[0], 'Row');
       assert.deepEqual(
         ancestorTags(stage, 'Refresh').slice(0, 2),
-        ['Row', 'FormControl'],
-        'volume field and actions share one labelled responsive row',
+        ['Row', 'Column'],
+        'volume inventory actions remain visible while creation stays disclosed',
       );
       assert.equal(
         ancestorProperty(stage, 'Create', 'Row', 'Grow'),
@@ -4808,7 +4835,8 @@ test('terminal management exposes exact pin state and acts through immutable tab
     placeholderProperty(stage, 'Tab title', 'Width'),
     'tab creation stays compact instead of consuming the page height',
   );
-  assert.deepEqual(ancestorTags(stage, 'New terminal tab').slice(0, 2), ['FormControl', 'Column']);
+  assert.deepEqual(ancestorTags(stage, 'New terminal tab').slice(0, 2), ['Row', 'Column']);
+  assert.deepEqual(ancestorProperty(stage, 'Tab title', 'Paper', 'Visible'), { Flag: false });
   assert.deepEqual(taggedProperty(stage, 'Create tab', 'Button', 'Size'), {
     ControlSize: 'Small',
   });
@@ -8933,7 +8961,8 @@ test('network creation exposes pending failure and retained retry before claimin
     Bounds: { minimum: { Chars: 20 }, maximum: { Chars: 40 } },
   });
   const initialLabels = orderedLabels(stage);
-  assert.ok(initialLabels.indexOf('Create') < initialLabels.indexOf('Refresh'));
+  assert.ok(initialLabels.indexOf('Create network') < initialLabels.indexOf('Refresh'));
+  assert.ok(initialLabels.indexOf('Refresh') < initialLabels.indexOf('Create'));
   change(stage, 'Network name', ' private-net ');
   invoke(stage, 'Create');
   await settled();

@@ -34,6 +34,7 @@ import {
 } from '@husklet/react';
 import { bounded, boundedMessage } from './model.js';
 import type { Resource } from './overview.js';
+import { CreationPanel } from './creation-panel.js';
 
 type TerminalCursor = { generation: number; revision: number };
 
@@ -51,6 +52,7 @@ export function Terminals({
   const [input, setInput] = React.useState('');
   const [title, setTitle] = React.useState('');
   const [newTabTitle, setNewTabTitle] = React.useState('');
+  const [creatingTab, setCreatingTab] = React.useState(false);
   const [command, setCommand] = React.useState('');
   const [columns, setColumns] = React.useState('');
   const [rows, setRows] = React.useState('');
@@ -439,33 +441,41 @@ export function Terminals({
       subtitle="View pane contents, send input, switch tabs, and keep important tabs pinned."
       action={<Toolbar loading={resource.loading} onRefresh={resource.reload} />}
     >
-      <FormControl gap={1} align="start">
-        <FormLabel label="New terminal tab" />
-        <Row gap={1} wrap justify="start">
-          <Entry
-            value={newTabTitle}
-            placeholder="Tab title"
-            grow={false}
-            width={{ minimum: { chars: 24 }, maximum: { chars: 48 } }}
-            enabled={busy === ''}
-            onChange={(event) => setNewTabTitle(String(event.value ?? ''))}
-            onSubmit={() => {
-              void openTab();
-            }}
-          />
-          <Button
-            label={busy === 'open-tab' ? 'Creating…' : 'Create tab'}
-            size="small"
-            variant="filled"
-            tone="accent"
-            enabled={busy === '' && newTabTitle.trim().length > 0}
-            onInvoke={() => {
-              void openTab();
-            }}
-          />
-        </Row>
-        <FormHelperText label="Creates one terminal pane in a new workspace tab." />
-      </FormControl>
+      <CreationPanel
+        action="New terminal tab"
+        cancel="Cancel new tab"
+        open={creatingTab}
+        enabled={busy === ''}
+        onOpenChange={setCreatingTab}
+      >
+        <FormControl gap={1} align="start">
+          <FormLabel label="Tab title" />
+          <Row gap={1} wrap justify="start">
+            <Entry
+              value={newTabTitle}
+              placeholder="Tab title"
+              grow={false}
+              width={{ minimum: { chars: 24 }, maximum: { chars: 48 } }}
+              enabled={busy === ''}
+              onChange={(event) => setNewTabTitle(String(event.value ?? ''))}
+              onSubmit={() => {
+                void openTab();
+              }}
+            />
+            <Button
+              label={busy === 'open-tab' ? 'Creating…' : 'Create tab'}
+              size="small"
+              variant="filled"
+              tone="accent"
+              enabled={busy === '' && newTabTitle.trim().length > 0}
+              onInvoke={() => {
+                void openTab();
+              }}
+            />
+          </Row>
+          <FormHelperText label="Creates one terminal pane in a new workspace tab." />
+        </FormControl>
+      </CreationPanel>
       <ErrorText error={error} />
       <ErrorText error={providerError} />
       {providersTruncated ? (

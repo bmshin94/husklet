@@ -25,6 +25,7 @@ import { VolumeDetailsSource, bounded, boundedMessage } from './model.js';
 import type { Resource } from './overview.js';
 import { ResourceSummary } from './resource-summary.js';
 import { AuthorityRecovery } from './authority-recovery.js';
+import { CreationPanel } from './creation-panel.js';
 
 type Inspection = {
   name: string;
@@ -67,6 +68,7 @@ export function Volumes({
     error: null,
   });
   const [removalNotice, setRemovalNotice] = React.useState('');
+  const [creating, setCreating] = React.useState(false);
   const inspectionRevision = React.useRef(0);
   const inventoryRevision = React.useRef(resource.data);
   const currentVolumes = React.useRef(new Map<string, string>());
@@ -142,33 +144,13 @@ export function Volumes({
         : 'ready';
   return (
     <Page title="Volumes" subtitle="Bounded local volume inventory and safe, non-force lifecycle.">
-      <FormControl gap={1} align="start">
-        <FormLabel label="Volume name" />
-        <Row gap={1} align="start" justify="center" wrap>
-          <Entry
-            value={name}
-            placeholder="Volume name"
-            width={{ minimum: { chars: 10 }, maximum: { chars: 32 } }}
-            enabled={creation.state !== 'loading'}
-            onChange={(event) => {
-              setName(String(event.value ?? ''));
-              setCreation({ state: 'idle', name: '', error: null });
-            }}
-          />
-          <Button
-            variant="filled"
-            tone="accent"
-            label={
-              creation.state === 'loading'
-                ? 'Creating…'
-                : creation.state === 'error'
-                  ? 'Retry create'
-                  : 'Create'
-            }
-            size="small"
-            enabled={creation.state !== 'loading' && name.trim().length > 0}
-            onInvoke={() => void create()}
-          />
+      <CreationPanel
+        action="Create volume"
+        cancel="Cancel volume"
+        open={creating}
+        enabled={creation.state !== 'loading'}
+        onOpenChange={setCreating}
+        secondary={
           <Button
             label="Refresh"
             tooltip="Refresh volumes"
@@ -178,8 +160,38 @@ export function Volumes({
             enabled={creation.state !== 'loading'}
             onInvoke={resource.reload}
           />
-        </Row>
-      </FormControl>
+        }
+      >
+        <FormControl gap={1} align="start">
+          <FormLabel label="Volume name" />
+          <Row gap={1} align="start" justify="center" wrap>
+            <Entry
+              value={name}
+              placeholder="Volume name"
+              width={{ minimum: { chars: 10 }, maximum: { chars: 32 } }}
+              enabled={creation.state !== 'loading'}
+              onChange={(event) => {
+                setName(String(event.value ?? ''));
+                setCreation({ state: 'idle', name: '', error: null });
+              }}
+            />
+            <Button
+              variant="filled"
+              tone="accent"
+              label={
+                creation.state === 'loading'
+                  ? 'Creating…'
+                  : creation.state === 'error'
+                    ? 'Retry create'
+                    : 'Create'
+              }
+              size="small"
+              enabled={creation.state !== 'loading' && name.trim().length > 0}
+              onInvoke={() => void create()}
+            />
+          </Row>
+        </FormControl>
+      </CreationPanel>
       {creation.state === 'loading' ? (
         <Row gap={1} align="center">
           <Spinner />

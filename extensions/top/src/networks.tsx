@@ -39,6 +39,7 @@ import {
 import type { Resource } from './overview.js';
 import { ResourceSummary } from './resource-summary.js';
 import { AuthorityRecovery } from './authority-recovery.js';
+import { CreationPanel } from './creation-panel.js';
 
 type Inspection = {
   id: string;
@@ -89,6 +90,7 @@ export function Networks({
     error: null,
   });
   const [removalNotice, setRemovalNotice] = React.useState('');
+  const [creating, setCreating] = React.useState(false);
   const [disconnectRequest, setDisconnectRequest] = React.useState<EndpointRequest | null>(null);
   const inspectionRevision = React.useRef(0);
   const inventoryRevision = React.useRef(resource.data);
@@ -285,33 +287,13 @@ export function Networks({
         : 'ready';
   return (
     <Page title="Networks" subtitle="Create networks and connect stopped workspace containers.">
-      <Column gap={1} width={{ minimum: { chars: 20 }, maximum: { chars: 64 } }}>
-        <FormLabel label="Create a network" />
-        <Row gap={1} wrap width="fill" align="center" justify="start">
-          <Entry
-            value={name}
-            placeholder="Network name"
-            width={{ minimum: { chars: 20 }, maximum: { chars: 40 } }}
-            grow
-            enabled={creation.state !== 'loading'}
-            onChange={(event) => {
-              setName(String(event.value ?? ''));
-              setCreation({ state: 'idle', name: '', error: null });
-            }}
-          />
-          <Button
-            variant="filled"
-            tone="accent"
-            label={
-              creation.state === 'loading'
-                ? 'Creating…'
-                : creation.state === 'error'
-                  ? 'Retry create'
-                  : 'Create'
-            }
-            enabled={creation.state !== 'loading' && name.trim().length > 0}
-            onInvoke={() => void create()}
-          />
+      <CreationPanel
+        action="Create network"
+        cancel="Cancel network"
+        open={creating}
+        enabled={creation.state !== 'loading'}
+        onOpenChange={setCreating}
+        secondary={
           <Button
             label="Refresh"
             tooltip="Refresh networks"
@@ -321,9 +303,39 @@ export function Networks({
             enabled={creation.state !== 'loading'}
             onInvoke={resource.reload}
           />
-        </Row>
-        <FormHelperText label="Use a short name that describes what the connected services share." />
-      </Column>
+        }
+      >
+        <Column gap={1} width={{ minimum: { chars: 20 }, maximum: { chars: 64 } }}>
+          <FormLabel label="Network name" />
+          <Row gap={1} wrap width="fill" align="center" justify="start">
+            <Entry
+              value={name}
+              placeholder="Network name"
+              width={{ minimum: { chars: 20 }, maximum: { chars: 40 } }}
+              grow
+              enabled={creation.state !== 'loading'}
+              onChange={(event) => {
+                setName(String(event.value ?? ''));
+                setCreation({ state: 'idle', name: '', error: null });
+              }}
+            />
+            <Button
+              variant="filled"
+              tone="accent"
+              label={
+                creation.state === 'loading'
+                  ? 'Creating…'
+                  : creation.state === 'error'
+                    ? 'Retry create'
+                    : 'Create'
+              }
+              enabled={creation.state !== 'loading' && name.trim().length > 0}
+              onInvoke={() => void create()}
+            />
+          </Row>
+          <FormHelperText label="Use a short name that describes what the connected services share." />
+        </Column>
+      </CreationPanel>
       {creation.state === 'loading' ? (
         <Row gap={1} align="center">
           <Spinner />
