@@ -403,6 +403,7 @@ mod tests {
                 digest: "sha256:aaaa".to_owned(),
                 entrypoint: vec!["/usr/bin/extension".to_owned()],
                 command: Vec::new(),
+                environment: Vec::new(),
                 user: "1000:1000".to_owned(),
             },
             socket,

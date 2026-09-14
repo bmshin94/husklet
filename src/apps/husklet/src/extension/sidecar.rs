@@ -92,6 +92,8 @@ pub struct Image {
     pub entrypoint: Vec<String>,
     /// Arguments supplied by the image to its entrypoint.
     pub command: Vec<String>,
+    /// Environment defaults inherited from the immutable image.
+    pub environment: Vec<String>,
     /// The image's user, empty when the image names none.
     pub user: String,
 }
@@ -105,6 +107,7 @@ impl Image {
             digest: inspection.id.clone(),
             entrypoint: inspection.config.entrypoint.clone(),
             command: inspection.config.cmd.clone(),
+            environment: inspection.config.env.clone(),
             user: inspection.config.user.clone(),
         }
     }
@@ -622,8 +625,27 @@ fn lifecycle_matches(config: &hl_daemon::api::ContainerConfig, network: &hl_daem
 }
 
 fn environment_matches(spec: &SidecarSpec, actual: &[String]) -> bool {
-    let expected = spec.request().env.unwrap_or_default();
-    actual.len() == expected.len() && expected.iter().all(|value| actual.contains(value))
+    fn entries(values: impl IntoIterator<Item = String>) -> Option<BTreeMap<String, String>> {
+        let mut entries = BTreeMap::new();
+        for value in values {
+            let (name, value) = value.split_once('=')?;
+            if name.is_empty() || entries.insert(name.to_owned(), value.to_owned()).is_some() {
+                return None;
+            }
+        }
+        Some(entries)
+    }
+
+    let Some(mut expected) = entries(spec.image.environment.clone()) else {
+        return false;
+    };
+    let Some(overrides) = entries(spec.request().env.unwrap_or_default()) else {
+        return false;
+    };
+    for (name, value) in overrides {
+        expected.insert(name, value);
+    }
+    entries(actual.iter().cloned()).is_some_and(|actual| actual == expected)
 }
 
 fn replacement_target<'a>(
@@ -709,6 +731,7 @@ mod tests {
             digest: "sha256:aaaa".to_owned(),
             entrypoint: vec!["/usr/bin/extension".to_owned()],
             command: vec!["--serve".to_owned()],
+            environment: Vec::new(),
             user: "1000:1000".to_owned(),
         }
     }
@@ -863,6 +886,48 @@ mod tests {
                 "GET /v1.43/containers/extension%2Dsample/json?size=false",
             ],
             "one create/start wins and the other caller only reuses it"
+        );
+    }
+
+    #[test]
+    fn immutable_image_environment_does_not_recreate_a_healthy_sidecar() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let socket = temporary.path().join("docker.sock");
+        let listener = UnixListener::bind(&socket).expect("mock Docker socket");
+        let manifest = manifest(&[Capability::ContainerRead], Resources::default());
+        let mut image = image();
+        image.environment = vec![
+            "PATH=/usr/local/bin:/usr/bin".to_owned(),
+            "NODE_OPTIONS=--require=/opt/image-hook.js".to_owned(),
+            "NODE_VERSION=22.0.0".to_owned(),
+        ];
+        let wanted =
+            SidecarSpec::new(&manifest, &manifest.capabilities, &image, "/run/sample/extension.sock").generation(42);
+        let signature = wanted.signature();
+        let served = std::thread::spawn(move || {
+            let labels =
+                format!(r#"{{"{SIGNATURE_LABEL}":"{signature}","{NAME_LABEL}":"sample","{GENERATION_LABEL}":"42"}}"#);
+            let mut document: serde_json::Value =
+                serde_json::from_str(&inspection("existing-id", &labels)).expect("inspection document");
+            document["Config"]["Env"] = serde_json::json!([
+                "HUSKLET_EXTENSION_DATA=/var/lib/husklet-extension",
+                "HUSKLET_EXTENSION_SOCKET=/run/husklet/extension.sock",
+                "NODE_OPTIONS=--jitless",
+                "NODE_VERSION=22.0.0",
+                "PATH=/usr/local/bin:/usr/bin",
+            ]);
+            let mut stream = accept_bounded(&listener);
+            let request = read_request(&mut stream).expect("Docker request");
+            respond_close(&mut stream, "200 OK", document.to_string().as_bytes());
+            request
+        });
+        let bridge = Arc::new(super::super::Bridge::new(socket).expect("bridge"));
+
+        assert_eq!(Sidecar::new(bridge).ensure(&wanted), Ok(super::Outcome::Reuse));
+        assert_eq!(
+            served.join().expect("daemon joined"),
+            "GET /v1.43/containers/extension%2Dsample/json?size=false",
+            "an inherited image environment must not trigger delete/create/start"
         );
     }
 

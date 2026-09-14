@@ -138,6 +138,7 @@ impl Supply for LocalWorkspace {
             digest: record.image_digest.clone(),
             entrypoint: vec![self.entrypoint.display().to_string()],
             command: Vec::new(),
+            environment: Vec::new(),
             user: String::new(),
         };
         let spec = SidecarSpec::new(&manifest, &record.granted, &image, self.workspace.socket(&record.name))
@@ -304,6 +305,7 @@ impl Workspace {
                 digest: record.image_digest.clone(),
                 entrypoint: Vec::new(),
                 command: Vec::new(),
+                environment: Vec::new(),
                 user: String::new(),
             },
         };
@@ -699,6 +701,7 @@ mod halt_tests {
                 digest: record.image_digest.clone(),
                 entrypoint: vec!["/extension".to_owned()],
                 command: Vec::new(),
+                environment: Vec::new(),
                 user: "1000:1000".to_owned(),
             },
             socket,
