@@ -391,7 +391,8 @@ fn rebinding_a_table_retires_its_previous_source() {
             Tag::KeyValueTable,
             Tag::TreeTable,
             Tag::EventStream,
-            Tag::FileBrowser
+            Tag::FileBrowser,
+            Tag::TestReportView
         ],
         "every source-backed component is audited"
     );
