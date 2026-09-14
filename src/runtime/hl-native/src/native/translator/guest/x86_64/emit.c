@@ -1334,6 +1334,45 @@ void emit_exit_const(uint64_t rip, uint64_t reason) {
 //     so the next region lays a fresh thunk instead of calling into dropped code.
 static int g_exit_thunk;                // 0 -> byte-identical to the historical emission
 
+// ---------------- threaded block chaining and threaded IBTC fill ----------------
+// HL_X86_MT_CHAIN / HL_X86_MT_IBTC.  Both default OFF; unset, every emission path below is
+// byte-identical to the historical one and `g_threaded` keeps disabling chaining and IBTC fill.
+//
+// WHY THEY WERE DISABLED.  Chaining back-patches a branch word inside a block that a PEER guest
+// thread may be executing; IBTC fill writes a {target, body} pair that emitted code reads with two
+// independent 8-byte loads, so a peer could observe a NEW target beside a STALE body and branch to
+// the wrong translation.  The second is a real miscompile; the first is only a hazard because of
+// HOW the patch slot was shaped, not because patching is inherently unsafe.
+//
+// WHAT MAKES THEM SAFE.  See emit_chain_exit() (patch-slot shaping) and xibtc_publish() /
+// emit_ibranch() (16-byte atomic pair) below.  The aarch64-guest backend already ships the IBTC
+// half of this (translator/cache.c ibtc_publish + guest/aarch64/stubs.c's atomic ldp reader); this
+// is that same mechanism carried to the x86 backend, plus the patch-slot shaping the aarch64
+// backend does NOT do.
+static int g_mtchain;     // HL_X86_MT_CHAIN: chain direct edges while a peer guest thread is live
+static int g_x86_mtibtc;  // HL_X86_MT_IBTC:  fill the 2-way IBTC while a peer guest thread is live
+
+// Latched off by the first SMC event that removes a translation (jit86_smc_commit). From then on
+// every direct edge returns through the dispatcher, so no baked branch can outlive its target's
+// invalidation. Never re-armed: SMC authority, once seen, is permanent for the process.
+static int g_mtchain_smc_off;
+
+void hl_x86_emit_set_mt_chain(int enabled) {
+    g_mtchain = enabled != 0;
+}
+
+int hl_x86_emit_mt_chain_enabled(void) {
+    return g_mtchain && !g_mtchain_smc_off;
+}
+
+void hl_x86_emit_mt_chain_smc_disable(void) {
+    g_mtchain_smc_off = 1;
+}
+
+void hl_x86_emit_set_mt_ibtc(int enabled) {
+    g_x86_mtibtc = enabled != 0;
+}
+
 void hl_x86_emit_set_exit_thunk(int enabled) {
     g_exit_thunk = enabled != 0;
 }
@@ -1983,7 +2022,7 @@ static void emit_fast_syscall(uint64_t next) {
 // past the fixed 2-insn poll header -- every in-cache cycle still polls via its backward or
 // indirect edge (see the g_fwdskip invariant note in engine/cache.c).
 void emit_chain_exit(uint64_t target) {
-    if (g_threaded) {
+    if (g_threaded && !hl_x86_emit_mt_chain_enabled()) {
         emit_exit_const(target, R_BRANCH);
         return;
     }
@@ -1991,8 +2030,39 @@ void emit_chain_exit(uint64_t target) {
     uint32_t *slot = (uint32_t *)g_cp;
     int fwd = g_fwdskip && target > g_emit_gpc;
     if (body) {
+        // Resolved at emission time: no live code is ever rewritten, so this edge is safe under
+        // threads with no further argument -- this block has not been published yet and therefore
+        // cannot be executing anywhere.
         int64_t d = (((uint8_t *)body + (fwd ? g_fwdskip : 0)) - (uint8_t *)slot) / 4;
         emit32(0x14000000u | ((uint32_t)d & 0x3FFFFFFu));
+        return;
+    }
+    // MTCHAIN PATCH-SLOT SHAPING.  patch_links_to() later rewrites *slot to `b body` while a peer
+    // may be executing that very word.  ARM ARM (DDI 0487) B2.2.5 "Concurrent modification and
+    // execution of instructions" guarantees a concurrent executor observes either the old or the
+    // new encoding -- with no cache maintenance and no ISB on the executing PE -- ONLY when both
+    // the old and the new instruction come from a restricted set that includes B and BL.  The
+    // historical slot is the first word of emit_exit_const()'s spill (an `stp`/`str`), or `bl thunk`
+    // when HL_X86_EXIT_THUNK is on.  Rewriting a `str` to a `b` under a concurrent executor is
+    // outside that set and is architecturally CONSTRAINED UNPREDICTABLE.
+    //
+    // So when MTCHAIN is on the slot is ALWAYS a branch: lay `b .+4` -- a no-op forward branch over
+    // itself into the exit sequence that follows.  Before the patch the slot is `b`, after it is
+    // `b`, only the imm26 differs, which is squarely inside B2.2.5's set.  Both encodings are also
+    // semantically complete: the old one falls into the full dispatcher exit (correct, slow), the
+    // new one jumps straight to the successor body (correct, fast).  There is no intermediate
+    // state, because there is only ever one store.
+    //
+    // The shaping is unconditional once the option is on, NOT conditional on g_threaded: g_pend
+    // entries recorded before the guest's first clone() are patched after it, so a slot laid down
+    // while single-threaded can still be rewritten under live peers.
+    //
+    // Cost when unpatched: one extra retired instruction on an edge that is about to pay a full
+    // dispatcher round trip.  Cost when patched: zero -- the branch is the chain.
+    if (hl_x86_emit_mt_chain_enabled()) {
+        emit32(0x14000001u); // b .+4 (the patch slot; -> the exit sequence below)
+        add_pend3(slot, target, 0, fwd);
+        if (!emit_exit_thunk_site(target)) emit_exit_const(target, R_BRANCH);
         return;
     }
     add_pend3(slot, target, 0, fwd);
@@ -2010,6 +2080,54 @@ void emit_ibranch(void) {
     emit32(0xD3423800u | (16 << 5) | 17); // ubfx x17, x16, #2, #13  ((tgt>>2)&0x1FFF)
     e_ldr(19, 28, OFF_IBTC);
     emit32(0x8B000000u | (17 << 16) | (5 << 10) | (19 << 5) | 19);
+    if (g_x86_mtibtc) {
+        // MTIBTC READER.  The historical probe reads {target, body} as two independent 8-byte loads,
+        // so a concurrent fill can be observed TORN: new target beside stale body -> a branch into
+        // the wrong translation.  That, not the fill itself, is why G_IBTC_FILL is skipped under
+        // threads today.  Read the pair with ONE naturally-aligned 16-byte `ldp` instead, which is
+        // single-copy atomic under FEAT_LSE2 and therefore mutually atomic with the writer's `stp`
+        // in xibtc_publish().  FEAT_LSE2 IS GATED: engine/target/x86_64.c probes AT_HWCAP's
+        // HWCAP_USCAT once at init and refuses to set g_x86_mtibtc without it, so this reader is
+        // only ever emitted on a part where the 16-byte pair really is indivisible.  The gate is
+        // required rather than avoidable: the probe below re-validates only `target`, and a torn
+        // pair's danger is precisely a MATCHING new target beside a stale body, so no strengthening
+        // of this compare can detect it -- nothing in the 16 bytes ties the two halves together.
+        // Making a torn read benign would mean removing the pair (an 8-byte entry plus a guest-PC
+        // header the probe re-checks through the loaded body pointer), which is a block-layout
+        // change, not a check.  This is exactly the discipline the aarch64-guest backend already
+        // ships (guest/aarch64/stubs.c's "atomic 128-bit load {target,body} (LSE2)" probes against
+        // translator/cache.c's ibtc_publish), and cache.c's own comment there records the
+        // obligation: "A future emit_ibranch MUST use one aligned 16-byte load, not two 8-byte
+        // ones."  hl_x86_ibtc_entry carries __attribute__((aligned(16))) and the emitted set index is
+        // scaled by 32 (`add x19, x19, x17, lsl #5`), so both ways of every set are 16-byte aligned.
+        // It is also one instruction SHORTER per way than the two-load form.
+        emit32(0xA9400000u | (21 << 10) | (19 << 5) | 20); // ldp x20, x21, [x19, #0]   (way 0)
+        emit32(0xCB000000u | (16 << 16) | (20 << 5) | 20); // sub x20, x20, x16
+        uint32_t *p_w1 = (uint32_t *)g_cp;
+        emit32(0); // cbnz x20 -> Lway1
+        e_br(21);
+        uint32_t *Lway1 = (uint32_t *)g_cp;
+        emit32(0xA9400000u | (2u << 15) | (21 << 10) | (19 << 5) | 20); // ldp x20, x21, [x19, #16]
+        emit32(0xCB000000u | (16 << 16) | (20 << 5) | 20);              // sub x20, x20, x16
+        p_miss = (uint32_t *)g_cp;
+        emit32(0); // cbnz x20 -> Lmiss
+        e_br(21);
+        *p_w1 = 0xB5000000u | (((uint32_t)(((uint8_t *)Lway1 - (uint8_t *)p_w1) / 4) & 0x7FFFF) << 5) | 20;
+        uint32_t *miss_mt = (uint32_t *)g_cp;
+        if (!emit_ibranch_thunk_site()) {
+            e_str(16, 28, OFF_RIP);
+            emit_spill();
+            e_movconst(16, R_BRANCH);
+            e_str(16, 28, OFF_RSN);
+            e_movconst(16, 1);
+            e_str(16, 28, OFF_ICMISS);
+            emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
+            e_br(16);
+        }
+        *p_miss =
+            0xB5000000u | (((uint32_t)(((uint8_t *)miss_mt - (uint8_t *)p_miss) / 4) & 0x7FFFF) << 5) | 20;
+        return;
+    }
     e_ldr(20, 19, 0);
     emit32(0xCB000000u | (16 << 16) | (20 << 5) | 20);
     uint32_t *p_w1 = (uint32_t *)g_cp;

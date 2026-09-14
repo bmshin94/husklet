@@ -1993,8 +1993,14 @@ static void ibtc_drop_target(uint64_t target) {
 }
 
 // ---- W5C: race-free threaded IBTC fill ----
-// g_mtibtc: enable threaded shared-hash IBTC fill (NOMTIBTC=1 disables -> revert to the
-// locked-dispatcher path where threaded indirect branches always miss to the C dispatcher).
+// g_mtibtc: enable threaded shared-hash IBTC fill. Defaults on, and is cleared at engine init
+// (engine/target/aarch64.c) when the host lacks FEAT_LSE2, because the `stp` publish below and the
+// `ldp` probes in guest/aarch64/stubs.c are only mutually atomic on an LSE2 part -- see the gate's
+// comment there for the ARM ARM citations and the stated tradeoff. Clearing it is a complete
+// mitigation: with no threaded fill there is no writer racing the emitted `ldp` readers, and every
+// other writer here runs behind the existing STW/quiescent gate.
+// (The "NOMTIBTC=1 disables" this comment used to claim was never implemented -- nothing in the
+// tree read that name -- so until the LSE2 gate there was no off switch at all.)
 // g_mtfill: PROF count of threaded shared-hash publishes.
 static int g_mtibtc = 1;
 static uint64_t g_mtfill;
@@ -3503,6 +3509,14 @@ static int jit_flush_to_fresh(int retain_map_generations) {
     translit_external_absolute_generation_reset();
     if (!retain_generations) map_clear();
     if (!retain_generations) memset(g_ibtc, 0, sizeof g_ibtc);
+    /* The x86 backend's 2-way IBTC holds RX pointers INTO the arena we have just retired. The map and
+       the shared g_ibtc are dropped above, but this table is a frontend global the shared flush could
+       not see, so it was never cleared here -- harmless only for as long as G_IBTC_FILL refused to
+       fill under threads, which made the table provably empty for the whole threaded lifetime. Once
+       HL_X86_MT_IBTC fills it, a surviving entry would outlive reclaim_retired()'s cache_unmap() of
+       that generation and send an emitted `br` into unmapped VA. Every caller of this function has
+       peers parked at a dispatcher safepoint, so the clear is not racing a probe. No-op on aarch64. */
+    G_ACTIVATION_CLEAR_GLOBAL();
     pend_reset();
 #ifdef G_PENDING_RESET
     G_PENDING_RESET(HL_PENDING_RESET_CACHE);

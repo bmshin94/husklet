@@ -1640,6 +1640,10 @@ advance:
 }
 
 // Translate the basic block at guest address gpc; returns host entry pointer.
+// HL_X86_MT_CHAIN: guest PC awaiting post-publication chaining (0 = none). See
+// hl_x86_mt_chain_after_publish() below.
+static uint64_t g_mtchain_pending;
+
 static void *translate_block(uint64_t gpc) {
     /* Observe writes made through another MAP_SHARED alias before decoding
        an executable view backed by an emulated host-page snapshot. */
@@ -1807,10 +1811,42 @@ static void *translate_block(uint64_t gpc) {
             (void)jit_fail(HL_STATUS_OUT_OF_MEMORY, message, sizeof message - 1u);
             return NULL;
         }
-        if (!g_threaded) patch_links_to(start, body); // chaining mutates live blocks -> off when threaded
+        if (!g_threaded)
+            patch_links_to(start, body); // single-threaded: nobody else can be executing the patch slot
+        else if (hl_x86_emit_mt_chain_enabled())
+            // MTCHAIN: DEFER the patch to the dispatcher's G_DISPATCH_CHAIN hook, which runs after
+            // jit_publish_code() has made this new block instruction-cache coherent across the inner
+            // shareable domain.  Chaining a live predecessor to it here, before publication, would let
+            // a peer core branch into bytes its I-cache has not seen.  `start` is all the hook needs;
+            // it re-resolves the body from the map.
+            g_mtchain_pending = start;
     }
     return host;
 #undef STITCH_OK
+}
+
+// ---------------- HL_X86_MT_CHAIN: post-publication chaining hook ----------------
+// translate_block() records the guest PC it just translated here when the guest is threaded and the
+// option is on; the dispatcher calls hl_x86_mt_chain_after_publish() (via G_DISPATCH_CHAIN) once the
+// new block has been published, and only then are existing blocks back-patched to point at it.
+//
+// Ordering obligation, in full:
+//   1. translate_block() emits the new block.                     (writer alias, not yet coherent)
+//   2. dispatcher: jit_publish_code() -> dc cvau / dsb ish / ic ivau / dsb ish / isb.
+//   3. HERE: patch_links_to() rewrites each pending predecessor's `b .+4` patch slot to `b body`.
+//      Each rewrite is a single naturally-aligned 4-byte store of a B over a B (see the B2.2.5
+//      argument at emit_chain_exit), followed by its own jit_publish_code() of those 4 bytes.
+// Step 3 can only make a peer reach the new block AFTER step 2 has made it fetchable.  A peer that
+// still observes the pre-patch `b .+4` takes the dispatcher round trip -- correct, just slow -- and
+// picks the chain up whenever its own fetch sees the new word.
+//
+// The whole sequence runs with g_jit_lock held and inside the dispatcher's jit_wprot(0) window, so
+// there is exactly one patcher at a time.
+static void hl_x86_mt_chain_after_publish(void) {
+    uint64_t gpc = g_mtchain_pending;
+    if (!gpc) return;
+    g_mtchain_pending = 0;
+    patch_links_to(gpc, map_body(gpc));
 }
 
 // W5B tier-2: promote a hot self-loop (its in-cache counter hit threshold and exited R_TIER2 with

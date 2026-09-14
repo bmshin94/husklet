@@ -73,8 +73,15 @@ static uint64_t g_prevpc, g_curpc;
 #define G_BLOCK_ALIGN (g_fwdskip != 0)
 
 // Post-translate chaining. x86's translate_block() already calls patch_links_to() internally in translate.c
-// when !g_threaded, so the dispatcher must not chain again.
-#define G_DISPATCH_CHAIN(c) ((void)0)
+// when !g_threaded, so the dispatcher must not chain again in that case.
+//
+// HL_X86_MT_CHAIN moves the patch for a THREADED guest to here, which is the only correct place for
+// it: this hook runs AFTER the dispatcher's jit_publish_code() on the freshly emitted block, so no
+// existing block is ever chained to code that is not yet instruction-cache coherent on a peer core.
+// (guest/aarch64/translate/block.c makes the same point for the aarch64 backend, which moved its
+// patch to this hook for exactly this reason.)  Single-threaded, and with the option off, the call
+// is a no-op and translate.c keeps chaining inline as before.
+#define G_DISPATCH_CHAIN(c) hl_x86_mt_chain_after_publish()
 
 // After translating a block, write-protect its 16KB source page so a JIT (RWX-mmap) guest's
 // later overwrite traps in jit86_lazyguard -> smc_on_write() drops the stale translation. Inert unless
@@ -84,11 +91,23 @@ static uint64_t g_prevpc, g_curpc;
 #define G_TRACE_DUMP(c) ((void)0)
 
 // IBTC miss fill. x86 keys off c->ic_miss (0/1), stores the plain body (no body-8 stub; x16-x21 are
-// free scratch, no stash/restore), and is skipped under threads (the indirect probe reads g_ibtc/g_xibtc
-// unlocked -> a torn fill would dispatch the wrong body). Use the two-way set-associative g_xibtc insert.
+// free scratch, no stash/restore), and was historically skipped under threads: the emitted indirect
+// probe reads the {target, body} pair unlocked with two separate 8-byte loads, so a concurrent fill
+// could be observed TORN -- a new target beside the previous occupant's body -- and the probe would
+// branch into the wrong translation. That is a silent miscompile, which is why the fill was disabled
+// rather than locked.
+//
+// HL_X86_MT_IBTC removes the tear instead of removing the fill: the writer publishes the pair with a
+// single release `stp` (hl_x86_xibtc_publish) and the probe consumes it with a single `ldp`
+// (emit_ibranch), both naturally aligned and mutually single-copy atomic under FEAT_LSE2. The
+// aarch64-guest backend already ships this exact mechanism (translator/cache.c ibtc_publish). The
+// fill itself has a single writer -- the dispatcher holds g_jit_lock -- so the way-selection reads
+// below are not racy; only publication is, and publication is now atomic. A reader that observes the
+// OLD pair simply misses and takes the dispatcher round trip, which is correct and merely slow.
+// Use the two-way set-associative g_xibtc insert.
 #define G_IBTC_FILL(c)                                                                                                 \
     if ((c)->ic_miss) {                                                                                                \
-        if (!g_threaded) {                                                                                             \
+        if (!g_threaded || g_x86_mtibtc) {                                                                             \
             void *body = map_body((c)->rip);                                                                           \
             if (body) {                                                                                                \
                 /* The emitted indirect probe (emit_ibranch) branches ABSOLUTELY to slot.body                          \
@@ -102,8 +121,13 @@ static uint64_t g_prevpc, g_curpc;
                 int w = (!g_xibtc[w0].target || g_xibtc[w0].target == (c)->rip)   ? w0                                 \
                         : (!g_xibtc[w1].target || g_xibtc[w1].target == (c)->rip) ? w1                                 \
                                                                                   : w0;                                \
-                g_xibtc[w].target = (c)->rip;                                                                          \
-                g_xibtc[w].body = body;                                                                                \
+                if (g_threaded) {                                                                                      \
+                    /* threaded: one 128-bit atomic release publish, consumed by the `ldp` probe */                     \
+                    hl_x86_xibtc_publish(&g_xibtc[w], (c)->rip, body);                                                 \
+                } else {                                                                                               \
+                    g_xibtc[w].target = (c)->rip;                                                                      \
+                    g_xibtc[w].body = body;                                                                            \
+                }                                                                                                      \
                 g_ibtc_fill++;                                                                                         \
             }                                                                                                          \
         }                                                                                                              \

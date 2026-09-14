@@ -164,6 +164,17 @@ static uint64_t pcache_id_of(const char *path) {
 // The explicit translator ABI is authoritative for embedded engines, where g_self_path identifies the
 // outer application rather than the translator archive. The executable identity and compile-time tag remain
 // useful mix-ins, but neither replaces bumping PC_TRANSLATOR_ABI after an incompatible codegen change.
+// HL_X86_MT_CHAIN / HL_X86_MT_IBTC change EMITTED CODE, so an arena persisted by a run with different
+// settings must not be restored into this one. MT_CHAIN shapes every unresolved chain exit's patch slot
+// as a branch; restoring blocks emitted WITHOUT that shaping and then patching them under live peers
+// would rewrite an `stp` to a `b` concurrently, which is exactly the architecturally unpredictable case
+// the shaping exists to avoid. MT_IBTC changes the indirect probe to a 16-byte `ldp`.
+// Contributes ZERO when both options are off, so the identity of every existing persisted cache -- and
+// therefore its restorability -- is unchanged by default.
+static uint64_t pcache_mt_mode_bits(void) {
+    return ((uint64_t)(g_mtchain != 0) << 4) | ((uint64_t)(g_x86_mtibtc != 0) << 5);
+}
+
 static uint64_t pcache_engine_id(void) {
     uint64_t h = 1469598103934665603ull;
     uint64_t modes;
@@ -177,14 +188,15 @@ static uint64_t pcache_engine_id(void) {
     h ^= PC_TRANSLATOR_ABI;
     h *= 1099511628211ull;
     modes = (uint64_t)(g_fastsys != 0) | ((uint64_t)(g_fastclk != 0) << 1) | ((uint64_t)(g_siginline != 0) << 2) |
-            ((uint64_t)(slimsys_on() != 0) << 3);
+            ((uint64_t)(slimsys_on() != 0) << 3) | pcache_mt_mode_bits();
     return hl_identity_configuration(h, 2, HL_HOST_CPU_ISA, modes);
 }
 
 static hl_identity_digest pcache_translator_identity(void) {
     static const char tag[] = __DATE__ " " __TIME__;
     uint64_t modes = (uint64_t)(g_fastsys != 0) | ((uint64_t)(g_fastclk != 0) << 1) |
-                     ((uint64_t)(g_siginline != 0) << 2) | ((uint64_t)(slimsys_on() != 0) << 3);
+                     ((uint64_t)(g_siginline != 0) << 2) | ((uint64_t)(slimsys_on() != 0) << 3) |
+                     pcache_mt_mode_bits();
     return hl_identity_engine_digest(tag, sizeof tag - 1, PC_TRANSLATOR_ABI, 2, HL_HOST_CPU_ISA, modes,
                                      hl_c_backend_build_fingerprint());
 }

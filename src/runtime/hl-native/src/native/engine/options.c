@@ -252,6 +252,20 @@ static const hl_option_definition hl_option_definitions[] = {
     HL_LAUNCH_OPTION("HL_X86_BUS_THUNK",
                      "route the x86 guest BUS memory-guard slow path through one shared per-arena thunk",
                      HL_OPTION_FLAG),
+    HL_LAUNCH_OPTION("HL_X86_MT_CHAIN",
+                     "chain direct x86 block edges while a peer guest thread is live",
+                     HL_OPTION_FLAG),
+    HL_LAUNCH_OPTION("HL_X86_MT_IBTC",
+                     "fill the x86 indirect-branch target cache while a peer guest thread is live",
+                     HL_OPTION_FLAG),
+    /* Report the host as lacking FEAT_LSE2 (aarch64) / atomic aligned 16-byte SSE (x86-64), so the
+       IBTC gate's refuse-and-fall-back path can be exercised on a host that HAS the feature. An
+       injection, not a launch input: there is no legitimate reason for a deployment to claim a
+       weaker host than it runs on, and the opposite direction -- claiming the feature on a part
+       that lacks it -- is deliberately not offered at all. */
+    HL_INJECTION_OPTION("HL_HOST_ASSUME_NO_LSE2",
+                        "test-only host reported as lacking single-copy-atomic 16-byte pair access",
+                        HL_OPTION_FLAG),
     HL_DEBUG_OPTION("HL_LOG", "debug-build logging tag selector", HL_OPTION_TEXT),
     HL_DEBUG_OPTION("HL_FATAL_DIAGNOSTICS", "fatal guest register publication", HL_OPTION_FLAG),
 };

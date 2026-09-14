@@ -9,7 +9,12 @@
  * still contain code emitted under incompatible lowering or relocation rules.
  * Bump the matching ABI whenever those rules change.
  */
-#define HL_PCACHE_ABI_AARCH64 UINT64_C(0x4136345043413032) /* "A64PCA02" */
+/* A64PCA03: the aarch64 chain-exit patch slot is now shaped `b .+4` (guest/aarch64/stubs.c
+   emit_chain_exit_from), so a persisted arena from an A64PCA02 build has an unshaped slot -- a
+   `movz`/`stp` -- that this build's patch_links_to would rewrite into a `b` under live peers, which
+   is exactly the architecturally unpredictable rewrite the shaping exists to remove. Layout is
+   unchanged; the emitted-code contract is not. */
+#define HL_PCACHE_ABI_AARCH64 UINT64_C(0x4136345043413033) /* "A64PCA03" */
 #define HL_PCACHE_ABI_X86_64 UINT64_C(0x5838365043413032)  /* "X86PCA02" */
 
 static inline int hl_pcache_compatible(uint64_t stored_format, uint64_t stored_abi, uint64_t current_format,

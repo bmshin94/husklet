@@ -595,8 +595,32 @@ static void emit_chain_exit_from(uint64_t target, uint64_t source_gpc) {
         emit32(0x14000000u | ((uint32_t)d & 0x3FFFFFFu));
         return;
     }
+    /* PATCH-SLOT SHAPING.  patch_links_to() rewrites *slot into `b body` from the dispatcher while
+       peer guest threads may be executing that very word: unlike the x86 backend, this one has no
+       g_threaded guard on chaining at all, having moved patch_links_to after jit_publish_code (see
+       translate/block.c:890) precisely so that it could run under live peers.  ARM ARM (DDI 0487)
+       B2.2.5 "Concurrent modification and execution of instructions" makes such a rewrite safe --
+       the executing PE observes either the old or the new encoding, with no cache maintenance and no
+       ISB on its side -- ONLY when the instruction BEFORE and AFTER modification are both drawn from
+       a restricted set that includes B and BL.  Unshaped, *slot is the first word of whatever exit
+       sequence follows: a `movz x16, #imm` on the g_steal1617 dedup path, or the first `stp`/`str`
+       of emit_exit_const()'s spill otherwise.  Rewriting either of those into a `b` under a
+       concurrent executor is OUTSIDE that set and is architecturally CONSTRAINED UNPREDICTABLE.
+       So make the slot a branch before it is a branch: lay `b .+4`, a no-op forward branch into the
+       exit sequence that follows, and record THAT word.  Before the patch it is a B, after the patch
+       it is a B, and only imm26 differs -- squarely inside B2.2.5's set, and a single naturally
+       aligned 4-byte store is the whole update, so there is no partial state to observe.  Both
+       encodings are semantically complete: the old one falls through into the full dispatcher exit
+       (correct, merely slow), the new one branches straight to the successor body (correct, fast).
+       A peer that keeps fetching the stale word forever is CORRECT; it just does not get chained.
+       Unconditional, NOT gated on g_threaded, because a pend recorded before the guest's first
+       clone() is patched after it -- the slot's shape must be right at emission, when the future is
+       not yet known.  Cost: one extra retired instruction on an edge that is about to pay a whole
+       dispatcher round trip, and exactly zero once the edge is patched, because the branch IS the
+       chain.  This is the same shaping the x86 backend's emit_chain_exit does under HL_X86_MT_CHAIN;
+       it is unconditional here because here threaded chaining is already on and shipped. */
+    emit32(0x14000001u); // b .+4 -- the patch slot, rewritten to `b body(+8)` by patch_links_to
     add_pend3(slot, target, 0, fwd);
-    // slot (= first insn) is patched to `b body(+8)` later
     if (g_steal1617 && g_chain_exit_dedup_n < CHAIN_EXIT_DEDUP_MAX) {
         e_movconst(16, target);
         g_chain_exit_dedup_patch[g_chain_exit_dedup_n++] = (uint32_t *)g_cp;

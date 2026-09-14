@@ -145,6 +145,12 @@ struct LaunchArguments {
     /// Route the x86 guest BUS memory-guard slow path through one shared per-arena thunk (off by default).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
     x86_bus_thunk: Option<TranslitFeatureControl>,
+    /// Chain direct x86 block edges while a peer guest thread is live (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_mt_chain: Option<TranslitFeatureControl>,
+    /// Fill the x86 indirect-branch target cache while a peer guest thread is live (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_mt_ibtc: Option<TranslitFeatureControl>,
     /// Control the strict FS-load bridge (enabled by default for x86-64 transliteration).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, requires = "translit")]
     translit_fs_load_bridge: Option<TranslitFeatureControl>,
@@ -232,10 +238,15 @@ fn parse_native_test_option(value: &str) -> Result<NativeTestOption, String> {
             name: "HL_TRANSLIT_DIRECT_CALL_PRE_SPILL_TEST",
             value: "1",
         }),
+        "HL_HOST_ASSUME_NO_LSE2=1" => Ok(NativeTestOption {
+            name: "HL_HOST_ASSUME_NO_LSE2",
+            value: "1",
+        }),
         _ if !value.contains('=') => Err("native test options use KEY=VALUE syntax".to_owned()),
         _ => Err(
             "unsupported native test option; expected one of HL_TRANSLIT_FS_AUTHORITY_TEST=1, \
-             HL_TRANSLIT_SYMBOL_RECEIPT=1, or HL_TRANSLIT_DIRECT_CALL_PRE_SPILL_TEST=1"
+             HL_TRANSLIT_SYMBOL_RECEIPT=1, HL_TRANSLIT_DIRECT_CALL_PRE_SPILL_TEST=1, or \
+             HL_HOST_ASSUME_NO_LSE2=1"
                 .to_owned(),
         ),
     }
@@ -488,6 +499,16 @@ fn execute(guest: Guest, launch: &LaunchArguments) -> Result<hl_engine::engine::
             "--x86-bus-thunk is available only in the x86-64 worker".to_owned(),
         ));
     }
+    if launch.x86_mt_chain.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-mt-chain is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.x86_mt_ibtc.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-mt-ibtc is available only in the x86-64 worker".to_owned(),
+        ));
+    }
     if launch.x86_ea_record_elide.is_some() && guest != Guest::X86_64 {
         return Err(Failure::Request(
             "--x86-ea-record-elide is available only in the x86-64 worker".to_owned(),
@@ -644,6 +665,8 @@ fn rootfs_plan(
         (launch.x86_exit_thunk, "HL_X86_EXIT_THUNK"),
         (launch.x86_prologue_thunk, "HL_X86_PROLOGUE_THUNK"),
         (launch.x86_bus_thunk, "HL_X86_BUS_THUNK"),
+        (launch.x86_mt_chain, "HL_X86_MT_CHAIN"),
+        (launch.x86_mt_ibtc, "HL_X86_MT_IBTC"),
         (launch.exec_ibtc_lazy, "HL_EXEC_IBTC_LAZY"),
         (launch.pcache_libs, "HL_PCACHE_LIBS"),
         (launch.pcache_link_image, "HL_PCACHE_LINK_IMAGE"),
@@ -1000,6 +1023,8 @@ mod tests {
         assert_eq!(defaults.x86_exit_thunk, None);
         assert_eq!(defaults.x86_prologue_thunk, None);
         assert_eq!(defaults.x86_bus_thunk, None);
+        assert_eq!(defaults.x86_mt_chain, None);
+        assert_eq!(defaults.x86_mt_ibtc, None);
         assert_eq!(defaults.x86_ea_record_elide, None);
         assert_eq!(defaults.x86_rmload_fold, None);
         assert_eq!(defaults.x86_owner_index, None);
@@ -1018,6 +1043,8 @@ mod tests {
             "--x86-exit-thunk=on",
             "--x86-prologue-thunk=on",
             "--x86-bus-thunk=on",
+            "--x86-mt-chain=on",
+            "--x86-mt-ibtc=on",
             "--x86-ea-record-elide=on",
             "--x86-rmload-fold=off",
             "--x86-owner-index=on",
@@ -1050,6 +1077,8 @@ mod tests {
         assert_eq!(selected.x86_exit_thunk, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.x86_prologue_thunk, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.x86_bus_thunk, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_mt_chain, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_mt_ibtc, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.x86_ea_record_elide, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.x86_rmload_fold, Some(super::TranslitFeatureControl::Off));
         assert_eq!(selected.x86_owner_index, Some(super::TranslitFeatureControl::On));
@@ -1561,6 +1590,8 @@ mod tests {
         assert_eq!(defaults.options.get("HL_X86_EXIT_THUNK"), None);
         assert_eq!(defaults.options.get("HL_X86_PROLOGUE_THUNK"), None);
         assert_eq!(defaults.options.get("HL_X86_BUS_THUNK"), None);
+        assert_eq!(defaults.options.get("HL_X86_MT_CHAIN"), None);
+        assert_eq!(defaults.options.get("HL_X86_MT_IBTC"), None);
         assert_eq!(defaults.options.get("HL_X86_EA_RECORD_ELIDE"), None);
         assert_eq!(defaults.options.get("HL_X86_RMLOAD_FOLD"), None);
         assert_eq!(defaults.options.get("HL_X86_OWNER_INDEX"), None);

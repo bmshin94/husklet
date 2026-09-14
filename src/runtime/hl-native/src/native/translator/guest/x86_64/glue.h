@@ -13,10 +13,39 @@
 
 enum { PRELOC_BLOCKRET = 1, PRELOC_IBTC = 2, PRELOC_HOSTGLOBAL = 3 };
 
-typedef struct hl_x86_ibtc_entry {
+// 16-byte aligned so that BOTH ways of a set are naturally aligned 16-byte pairs: HL_X86_MT_IBTC
+// publishes an entry with one `stp` and the emitted probe consumes it with one `ldp`, and the
+// single-copy atomicity that makes that race-free (FEAT_LSE2) requires natural alignment.
+typedef struct __attribute__((aligned(16))) hl_x86_ibtc_entry {
     uint64_t target;
     void *body;
 } hl_x86_ibtc_entry;
+
+// Atomic 128-bit RELEASE publish of a {target, body} pair into a 16-byte-aligned IBTC slot.
+// Single writer (the dispatcher holds g_jit_lock across every fill); many lock-free readers in
+// emitted code.  `dmb ish` orders everything that made `body` executable -- the translation stores
+// and jit_publish_code()'s dc/dsb/ic/dsb -- before the pair becomes observable.  The `stp` of two X
+// registers to a 16-byte-aligned address is single-copy atomic under FEAT_LSE2, so it is mutually
+// atomic with the probe's plain `ldp`: a reader sees the pair whole or not at all, never torn.
+// This is a verbatim sibling of translator/cache.c's ibtc_publish(), which the aarch64-guest
+// backend already relies on; it is repeated here only because the x86 backend's 2-way table has its
+// own entry type.  Explicit asm rather than a 16-byte __atomic, which may lower to a lock-taking
+// libatomic call that would not be atomic against the lock-free reader.
+static inline void hl_x86_xibtc_publish(hl_x86_ibtc_entry *e, uint64_t target, void *body) {
+#if defined(HL_HOST_CPU_AARCH64)
+    __asm__ volatile("dmb ish\n\t"
+                     "stp %1, %2, [%0]\n\t"
+                     :
+                     : "r"(e), "r"(target), "r"(body)
+                     : "memory");
+#else
+    // x86-TSO gives the ordering for free; the 16-byte access still has to be indivisible on BOTH
+    // sides, and `lock` cannot make the reader's plain load indivisible -- hence movdqa.
+    typedef unsigned long long hl_x86_ibtc_pair __attribute__((vector_size(16)));
+    hl_x86_ibtc_pair pair = {target, (unsigned long long)(uintptr_t)body};
+    __asm__ volatile("movdqa %1, %0" : "=m"(*e) : "x"(pair) : "memory");
+#endif
+}
 
 extern uint64_t g_emit_gpc;
 extern uint64_t g_disp_n;

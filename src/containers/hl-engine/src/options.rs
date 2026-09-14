@@ -208,6 +208,16 @@ const DEFINITIONS: &[Definition] = &[
         Flag
     ),
     launch!(
+        "HL_X86_MT_CHAIN",
+        "chain direct x86 block edges while a peer guest thread is live",
+        Flag
+    ),
+    launch!(
+        "HL_X86_MT_IBTC",
+        "fill the x86 indirect-branch target cache while a peer guest thread is live",
+        Flag
+    ),
+    launch!(
         "HL_TRANSLIT_JCC_SELF_LINK",
         "link a same-ISA descriptor's own backward JCC edge straight to its entry",
         Flag
@@ -461,6 +471,11 @@ const DEFINITIONS: &[Definition] = &[
     launch!(
         "HL_TRANSLIT_RIPREL_LOAD_BRIDGE",
         "control default-off natural RIP-relative register-load lowering",
+        Flag
+    ),
+    internal!(
+        "HL_HOST_ASSUME_NO_LSE2",
+        "test-only host reported as lacking single-copy-atomic 16-byte pair access",
         Flag
     ),
     debug!("HL_LOG", "debug-build logging tag selector", Text),

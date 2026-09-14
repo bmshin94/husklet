@@ -43,6 +43,16 @@ void hl_x86_emit_set_exit_thunk(int enabled);
 void hl_x86_emit_set_prologue_thunk(int enabled);
 void hl_x86_emit_set_bus_thunk(int enabled);
 
+/* HL_X86_MT_CHAIN / HL_X86_MT_IBTC: re-enable direct block chaining, and 2-way IBTC filling, while a
+   peer guest thread is live. Both default off, in which case `g_threaded` keeps disabling them and
+   every emission path stays byte-identical. Same host-arch seam as the two thunks above: the flags
+   live in the AArch64 emitter and other hosts link the no-op stubs in engine/target/x86_64.c. */
+void hl_x86_emit_set_mt_chain(int enabled);
+void hl_x86_emit_set_mt_ibtc(int enabled);
+/* HL_X86_MT_CHAIN, as seen by the SMC commit path: on, and not yet latched off by an SMC event. */
+int hl_x86_emit_mt_chain_enabled(void);
+void hl_x86_emit_mt_chain_smc_disable(void);
+
 uint64_t hl_x86_signal_nzcv_to_eflags(uint64_t nzcv);
 uint64_t hl_x86_signal_eflags_to_nzcv(uint64_t eflags);
 void hl_x86_signal_build(struct cpu *cpu, int signal_number, const hl_x86_signal_state *state);

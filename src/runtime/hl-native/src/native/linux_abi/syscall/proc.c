@@ -343,7 +343,12 @@ static void fork_child_hooks(struct cpu *c) {
     // parent RX alias -> SIGSEGV (the same class the execve path documents below). On the preserved-arena
     // path (single-threaded parent, or the MAP_JIT fallback) the cache VA and content are unchanged,
     // so the inherited g_xibtc stays valid and is kept warm.
-    if (g_dualmap && !g_fork_preserved) G_SHADOW_CLEAR(c);
+    // The g_dualmap half of this condition predates HL_X86_MT_IBTC: on Linux jit_after_fork() sets
+    // preserve = 0 for a threaded parent regardless of g_dualmap, so the arena is rebuilt and the
+    // inherited entries are stale in BOTH cases. It was unobservable only because a threaded parent
+    // could never have filled the table. !g_fork_preserved is the condition that actually matches
+    // "the arena moved"; clearing an already-empty table is a no-op, so this is safe with the option off.
+    if (!g_fork_preserved) G_SHADOW_CLEAR(c);
     // S2: invalidate inherited path/metadata caches so the child cannot serve an
     // entry populated before the filesystem diverged.
     hl_fdcache_reset();
