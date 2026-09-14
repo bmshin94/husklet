@@ -1764,12 +1764,27 @@ tab_title = "Sample"
         ));
         let host = Host::open(Attendance(Arc::clone(&bench)), gallery.audience());
         assert!(until(|| gallery.frames() == vec![1]), "the first extension speaks");
+        assert_eq!(
+            bench.halts(),
+            0,
+            "a healthy conversation has not been stopped"
+        );
 
         host.accept(Order::Retry);
 
         assert!(until(|| gallery.frames() == vec![1, 2]), "the second one speaks too");
         assert_eq!(bench.ensures(), 2, "the sequence was run again");
+        assert_eq!(
+            bench.halts(),
+            0,
+            "renewal deliberately keeps the owned generation live"
+        );
         host.close().expect("closed");
+        assert_eq!(
+            bench.halts(),
+            1,
+            "owned shutdown stops the renewed generation once"
+        );
     }
 
     #[test]
