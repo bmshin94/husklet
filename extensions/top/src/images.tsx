@@ -13,7 +13,6 @@ import {
   FormHelperText,
   FormLabel,
   Heading,
-  IconButton,
   InlineButton,
   Meter,
   ResourceState,
@@ -259,11 +258,11 @@ export function Images({
               }
               onInvoke={startPull}
             />
-            <IconButton
+            <Button
               label="Refresh"
               tooltip="Refresh images"
               icon="view-refresh-symbolic"
-              size="medium"
+              size="small"
               height="content"
               justify="start"
               variant="ghost"

@@ -10,7 +10,6 @@ import {
   Expander,
   Heading,
   InlineButton,
-  IconButton,
   InlineMessage,
   KeyValueTable,
   LogView,
@@ -568,7 +567,7 @@ function Toolbar({
   return (
     <Row gap={1} align="center">
       {loading ? <Spinner /> : null}
-      <IconButton
+      <Button
         label="Refresh"
         tooltip="Refresh executions"
         icon="view-refresh-symbolic"

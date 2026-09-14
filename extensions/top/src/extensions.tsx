@@ -14,7 +14,6 @@ import {
   FormControl,
   FormControlLabel,
   Heading,
-  IconButton,
   InlineButton,
   InlineMessage,
   Progress,
@@ -2436,8 +2435,9 @@ export function Extensions({
                   ) : null}
                 </Row>
                 <Spacer />
-                <IconButton
-                  label="Refresh installed extensions"
+                <Button
+                  label="Refresh"
+                  tooltip="Refresh installed extensions"
                   icon="view-refresh-symbolic"
                   size="small"
                   variant="ghost"

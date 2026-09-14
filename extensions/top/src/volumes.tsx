@@ -11,7 +11,6 @@ import {
   FormControl,
   FormLabel,
   Heading,
-  IconButton,
   InlineButton,
   ResourceState,
   RecoveryState,
@@ -170,11 +169,11 @@ export function Volumes({
             enabled={creation.state !== 'loading' && name.trim().length > 0}
             onInvoke={() => void create()}
           />
-          <IconButton
+          <Button
             label="Refresh"
             tooltip="Refresh volumes"
             icon="view-refresh-symbolic"
-            size="medium"
+            size="small"
             variant="ghost"
             enabled={creation.state !== 'loading'}
             onInvoke={resource.reload}

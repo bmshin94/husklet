@@ -1013,7 +1013,7 @@ test('Top owns workspace settings and extension management in the same tab', asy
     'Row',
     'Column',
   ]);
-  assert.deepEqual(property(stage, 'Refresh installed extensions', 'Size'), {
+  assert.deepEqual(property(stage, 'Refresh', 'Size'), {
     ControlSize: 'Small',
   });
   assert.deepEqual(
@@ -1055,10 +1055,13 @@ test('Top owns workspace settings and extension management in the same tab', asy
     Bounds: { minimum: { Chars: 38 }, maximum: 'Fill' },
   });
   assert.deepEqual(
-    taggedProperty(stage, 'Refresh installed extensions', 'IconButton', 'Icon'),
+    taggedProperty(stage, 'Refresh', 'Button', 'Icon'),
     { Text: 'view-refresh-symbolic' },
-    'inventory refresh is a compact icon action instead of a competing text button',
+    'persistent inventory refresh keeps a visible compact verb',
   );
+  assert.deepEqual(taggedProperty(stage, 'Refresh', 'Button', 'Tooltip'), {
+    Text: 'Refresh installed extensions',
+  });
   assert.equal(
     taggedProperty(stage, 'Install from an OCI image', 'Expander', 'Expanded')?.Flag,
     false,
@@ -4572,17 +4575,22 @@ test('every empty operational page explains what is absent and how to proceed', 
         Text: 'Refresh processes',
       });
     }
-    if (['Executions', 'Terminals'].includes(section)) {
-      assert.deepEqual(taggedProperty(stage, 'Refresh', 'IconButton', 'Icon'), {
+    if (['Executions', 'Images', 'Volumes', 'Networks', 'Terminals'].includes(section)) {
+      assert.deepEqual(taggedProperty(stage, 'Refresh', 'Button', 'Icon'), {
         Text: 'view-refresh-symbolic',
       });
-      assert.deepEqual(taggedProperty(stage, 'Refresh', 'IconButton', 'Size'), {
+      assert.deepEqual(taggedProperty(stage, 'Refresh', 'Button', 'Size'), {
         ControlSize: 'Small',
       });
       assert.deepEqual(
-        taggedProperty(stage, 'Refresh', 'IconButton', 'Tooltip'),
+        taggedProperty(stage, 'Refresh', 'Button', 'Tooltip'),
         { Text: `Refresh ${section.toLowerCase()}` },
-        `${section} refresh is a compact, contextual toolbar action`,
+        `${section} refresh keeps a visible compact verb`,
+      );
+      assert.equal(
+        taggedProperty(stage, 'Refresh', 'IconButton', 'Icon'),
+        undefined,
+        `${section} persistent refresh is not collapsed to a glyph-only action`,
       );
     }
     if (section === 'Images') {
@@ -6303,6 +6311,11 @@ test('network inspection exposes loading, retry, empty and domain-specific detai
   assert.ok(labelled(stage, 'Connected containers · 1'));
   assert.ok(labelled(stage, '1 connected'));
   assert.ok(labelled(stage, 'Refresh connections'));
+  assert.deepEqual(
+    taggedProperty(stage, 'Refresh connections', 'IconButton', 'Icon'),
+    { Text: 'view-refresh-symbolic' },
+    'the row-local detail refresh remains a constrained icon action',
+  );
   assert.ok(labelled(stage, 'Immutable network ID'));
   assert.ok(
     stage.frames

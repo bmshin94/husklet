@@ -365,6 +365,38 @@ mod unix {
                 );
                 assert!(chooser.grab_focus(), "compact section chooser is keyboard reachable");
             }
+            if fixture == "populated" {
+                let refresh_context = match name {
+                    "extensions" => Some(("Refresh installed extensions", "extension inventory")),
+                    "executions" => Some(("Refresh executions", "execution inventory")),
+                    "images" => Some(("Refresh images", "image inventory")),
+                    "volumes" => Some(("Refresh volumes", "volume inventory")),
+                    "networks" => Some(("Refresh networks", "network inventory")),
+                    _ => None,
+                };
+                if let Some((tooltip, purpose)) = refresh_context {
+                    let refresh = find_tooltip_button(&root, tooltip);
+                    assert_standard_action(&refresh, width_name, purpose, 28);
+                    assert!(
+                        !refresh.has_css_class("hl-iconbutton"),
+                        "{width_name} {purpose} refresh collapsed back to a glyph-only action"
+                    );
+                    assert!(
+                        refresh.width() >= 72,
+                        "{width_name} {purpose} refresh did not allocate its visible verb: {}px",
+                        refresh.width()
+                    );
+                    assert!(
+                        has_label(refresh.upcast_ref(), "Refresh"),
+                        "{width_name} {purpose} refresh omitted its visible verb"
+                    );
+                    assert_eq!(
+                        find_image(refresh.upcast_ref()).icon_name().as_deref(),
+                        Some("view-refresh-symbolic"),
+                        "{width_name} {purpose} refresh lost its scanning cue"
+                    );
+                }
+            }
             if fixture == "populated" && name == "processes" && width == 1_200 {
                 let refresh = find_tooltip_button(&root, "Refresh processes");
                 assert_eq!(refresh.height(), 44, "process refresh loses its standard hit target");
@@ -376,8 +408,15 @@ mod unix {
             }
             if fixture == "populated" && name == "containers" {
                 let refresh = find_tooltip_button(&root, "Refresh containers");
-                assert_eq!(refresh.height(), 44, "{width_name} refresh loses its standard hit target");
-                assert!(refresh.width() >= 72, "{width_name} refresh verb is not visibly allocated");
+                assert_eq!(
+                    refresh.height(),
+                    44,
+                    "{width_name} refresh loses its standard hit target"
+                );
+                assert!(
+                    refresh.width() >= 72,
+                    "{width_name} refresh verb is not visibly allocated"
+                );
                 assert!(refresh.has_css_class("hl-button"));
                 assert!(!refresh.has_css_class("hl-iconbutton"));
                 assert!(refresh.has_css_class("size-small"));
@@ -668,11 +707,6 @@ mod unix {
                     );
                 }
                 assert!(
-                    refresh.height() <= 38,
-                    "{width_name} image refresh exceeded the compact medium tier: {}px",
-                    refresh.height()
-                );
-                assert!(
                     has_label(&root, "Use a registry reference such as alpine:3.20."),
                     "{width_name} image field keeps concise format guidance"
                 );
@@ -723,9 +757,7 @@ mod unix {
                     );
                 }
                 let refresh = find_tooltip_button(&root, "Refresh installed extensions");
-                assert_eq!(refresh.icon_name().as_deref(), Some("view-refresh-symbolic"));
                 assert!(refresh.has_css_class("size-small"));
-                assert_eq!(refresh.height(), 28, "{width_name} refresh uses the compact tier");
                 let pagination = find_button(&root, "Show 12 more · 38 remaining");
                 assert_eq!(pagination.accessible_role(), gtk::AccessibleRole::Button);
                 assert!(
@@ -847,7 +879,6 @@ mod unix {
                 assert_standard_action(&create, width_name, "network create", 36);
                 let refresh = find_tooltip_button(&root, "Refresh networks");
                 let manage = find_button(&root, "Manage connections");
-                assert_eq!(refresh.icon_name().as_deref(), Some("view-refresh-symbolic"));
                 assert_eq!(refresh.accessible_role(), gtk::AccessibleRole::Button);
                 assert_inline_action(&manage, width_name, "network management");
                 assert_secondary_resource_toggle(&window, &root, &manage, &format!("{width_name} network inspection"));
@@ -3045,6 +3076,12 @@ mod unix {
                 );
                 assert!(create.has_css_class("size-small"));
                 assert_standard_action(&create, width_name, "volume create", 28);
+                assert_standard_action(&refresh, width_name, "volume inventory", 28);
+                assert!(
+                    refresh.width() >= 72,
+                    "{width_name} volume refresh lost its visible verb"
+                );
+                assert!(has_label(refresh.upcast_ref(), "Refresh"));
                 let entry_bounds = entry
                     .compute_bounds(&recovery_root)
                     .expect("volume name entry belongs to the Top root");

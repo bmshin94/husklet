@@ -6,7 +6,6 @@ import {
   Entry,
   Expander,
   Heading,
-  IconButton,
   ListItemAction,
   ListItemButton,
   ListItemSecondaryAction,
@@ -985,7 +984,7 @@ function Toolbar({
   return (
     <Row gap={1} align="center">
       {loading ? <Spinner /> : null}
-      <IconButton
+      <Button
         label="Refresh"
         tooltip="Refresh terminals"
         icon="view-refresh-symbolic"

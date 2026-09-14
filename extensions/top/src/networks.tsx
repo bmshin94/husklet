@@ -312,11 +312,11 @@ export function Networks({
             enabled={creation.state !== 'loading' && name.trim().length > 0}
             onInvoke={() => void create()}
           />
-          <IconButton
+          <Button
             label="Refresh"
             tooltip="Refresh networks"
             icon="view-refresh-symbolic"
-            size="large"
+            size="small"
             variant="ghost"
             enabled={creation.state !== 'loading'}
             onInvoke={resource.reload}
