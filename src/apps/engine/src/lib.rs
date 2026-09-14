@@ -1095,6 +1095,7 @@ mod tests {
         assert_eq!(defaults.exec_census_lazy, None);
         assert_eq!(defaults.call_sim_diag_only, None);
         assert_eq!(defaults.native_supervised, None);
+        assert_eq!(defaults.native_supervised_pane, None);
 
         let selected = launch(&[
             "--diagnostics",
@@ -1119,6 +1120,7 @@ mod tests {
             "--exec-census-lazy=on",
             "--call-sim-diag-only=off",
             "--native-supervised",
+            "--native-supervised-pane=on",
             "--rootfs",
             "/image",
             "bin/program",
@@ -1160,6 +1162,7 @@ mod tests {
             Some(super::TranslitFeatureControl::Off)
         );
         assert_eq!(selected.native_supervised, Some(super::NativeSupervisedControl::On));
+        assert_eq!(selected.native_supervised_pane, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.rootfs.as_deref(), Some(std::path::Path::new("/image")));
 
         for option in [
@@ -1393,6 +1396,71 @@ mod tests {
     /// Every backend flag this effort added is x86-64-only, hidden, and spelled `=on|off` with a
     /// required `=`.  The guard matters because an accepted-but-inert flag on the aarch64 worker is
     /// how a measurement lane attributes a number to a mechanism that never ran.
+    #[test]
+    /// `--native-supervised-pane` is NOT in the x86-only enumeration above, because
+    /// native supervision is host-ISA-generic: it supervises a same-ISA guest, so an
+    /// AArch64 worker supervising an AArch64 guest reads this flag for real. A worker
+    /// guard would be wrong. It still needs the rest of the contract pinned, and
+    /// nothing pinned it -- it shipped with no test at all.
+    ///
+    /// The `=off` case is the one that matters. The reader is C
+    /// (`hl_native_supervised_flag`), and the failure mode this asserts against is a
+    /// reader spelled `hl_options_get(...) != NULL`, which inverts a default-off flag
+    /// the moment someone writes `=off`: the plan below stores the string "0", which
+    /// such a reader reports as ON. Deleting the `!(value[0] == '0' && ...)` clause
+    /// from the C reader cannot be caught here, but storing anything other than "0"
+    /// on the Rust side can, and that is the half this layer owns.
+    fn the_supervised_pane_flag_requires_equals_and_stores_off_as_zero() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let root = tempfile::tempdir().unwrap();
+        let program = root.path().join("bin/program");
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        std::fs::write(&program, b"\x7fELF").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = root.path().to_str().unwrap();
+
+        for invalid in ["yes", "1", "0", "enabled", ""] {
+            let option = format!("--native-supervised-pane={invalid}");
+            assert!(
+                LaunchArguments::try_parse_from(["hl-x86_64", option.as_str(), "bin/program"]).is_err(),
+                "--native-supervised-pane accepted {invalid:?}"
+            );
+        }
+
+        let absent = rootfs_plan(root.path(), &launch(&["--rootfs", path, "bin/program"])).unwrap();
+        assert_eq!(
+            absent.options.get("HL_NATIVE_SUPERVISED_PANE"),
+            None,
+            "the pane surface must be absent by default, not merely off"
+        );
+
+        let on = rootfs_plan(
+            root.path(),
+            &launch(&["--native-supervised-pane=on", "--rootfs", path, "bin/program"]),
+        )
+        .unwrap();
+        assert_eq!(on.options.get("HL_NATIVE_SUPERVISED_PANE"), Some("1"));
+
+        let off = rootfs_plan(
+            root.path(),
+            &launch(&["--native-supervised-pane=off", "--rootfs", path, "bin/program"]),
+        )
+        .unwrap();
+        assert_eq!(
+            off.options.get("HL_NATIVE_SUPERVISED_PANE"),
+            Some("0"),
+            "=off must store \"0\"; a registered-but-non-zero value reads ON in the worker"
+        );
+
+        assert!(
+            on.environment
+                .iter()
+                .all(|entry| !entry.starts_with(b"HL_NATIVE_SUPERVISED_PANE=")),
+            "launch options must not enter the guest environment"
+        );
+    }
+
     #[test]
     fn integrated_backend_flags_are_x86_only_and_require_equals() {
         for flag in [
@@ -1733,6 +1801,7 @@ mod tests {
         assert_eq!(defaults.options.get("HL_CALL_SIM_DIAG_ONLY"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_FS_LOAD_BRIDGE"), None);
         assert_eq!(defaults.options.get("HL_NATIVE_SUPERVISED"), None);
+        assert_eq!(defaults.options.get("HL_NATIVE_SUPERVISED_PANE"), None);
 
         let selected = rootfs_plan(
             root.path(),
