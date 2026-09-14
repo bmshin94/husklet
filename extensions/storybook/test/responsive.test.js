@@ -40,16 +40,14 @@ test('Responsive documents explicit compact and wide alternate subtrees', () => 
     .map((patch) => patch.SetProp.value?.Text);
   assert(labels.includes('Section'));
   assert(labels.some((label) => label?.includes('keep an 8px gap')));
-  const rows = new Set(
-    frame.patches.filter((patch) => patch.Create?.tag === 'Row').map((patch) => patch.Create.id),
-  );
-  assert(
-    frame.patches.some(
-      (patch) =>
-        rows.has(patch.SetProp?.id) &&
-        patch.SetProp.prop === 'Gap' &&
-        patch.SetProp.value?.Length?.Step === 2,
-    ),
+  const section = frame.patches.find(
+    (patch) => patch.SetProp?.prop === 'Label' && patch.SetProp.value?.Text === 'Section',
+  )?.SetProp.id;
+  const toolbar = frame.patches.find((patch) => patch.Insert?.child === section)?.Insert.parent;
+  assert.deepEqual(
+    frame.patches.find((patch) => patch.SetProp?.id === toolbar && patch.SetProp.prop === 'Gap')
+      ?.SetProp.value,
+    { Length: { Step: 2 } },
     'compact label/control toolbar uses the shared 8px gap token',
   );
 });
