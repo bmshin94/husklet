@@ -21,7 +21,7 @@ test('CardActions owns a focused single-component workbench', () => {
   const frame = host().render(h(CardActionsWorkbench));
   const headings = creations(frame, 'Heading').map((id) => props(frame, id).Label?.Text);
   assert.deepEqual(headings, [
-    'CardActions',
+    'Card Actions',
     'Overview',
     'Alignment',
     'Density',

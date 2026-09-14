@@ -17,7 +17,7 @@ import {
   searchResults,
 } from '../dist/app.js';
 import { grouped, nativeTags, tags } from '../dist/catalogue.js';
-import { defaults } from '../dist/defaults.js';
+import { defaults, spaced } from '../dist/defaults.js';
 import { ButtonWorkbench } from '../dist/button.js';
 import { components } from '@husklet/react';
 import { ACQUISITION_STORY, acquisitionStates } from '../dist/acquisition.js';
@@ -711,7 +711,7 @@ test('global component navigation reaches every catalogue component without simu
     assert.ok(
       components[tag.name]
         ? created(changes).some((entry) => entry.tag === tag.name)
-        : node(changes, 'Heading', tag.name),
+        : node(changes, 'Heading', spaced(tag.name)),
       `navigation did not render ${tag.name}`,
     );
     seen.add(tag.name);

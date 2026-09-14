@@ -57,6 +57,6 @@ test('InlineButton teaches compact chrome and full target semantics before its A
   assert.ok(labels.some((label) => label?.includes('visible chrome is 28px')));
   assert.ok(labels.some((label) => label?.includes('hit target remains at least 44px')));
   assert.ok(labels.some((label) => label?.includes('one accent ring around the compact chrome')));
-  assert.deepEqual(headings.slice(0, 3), ['InlineButton', 'Overview', 'Variants']);
+  assert.deepEqual(headings.slice(0, 3), ['Inline Button', 'Overview', 'Variants']);
   assert.ok(headings.indexOf('Accessibility') < headings.indexOf('API'));
 });

@@ -10,6 +10,7 @@ import { components } from '@husklet/react';
 import { PACKAGE } from './host.js';
 import { FLOW_STORIES } from '../dist/app.js';
 import { grouped, tags } from '../dist/catalogue.js';
+import { spaced } from '../dist/defaults.js';
 
 const { KIND, Reader, encode } = await import(new URL('dist/wire.js', `file://${PACKAGE}`));
 
@@ -258,7 +259,7 @@ test('the shipped entrypoint connects and renders the complete playground over a
     assert.ok(
       components[tag.name]
         ? componentFrame.with.frame.patches.some((patch) => patch.Create?.tag === tag.name)
-        : liveNode(live, 'Heading', tag.name),
+        : liveNode(live, 'Heading', spaced(tag.name)),
       `selecting <${tag.name}> did not render its isolated component page`,
     );
     selected.add(tag.name);

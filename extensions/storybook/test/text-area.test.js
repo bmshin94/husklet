@@ -23,7 +23,7 @@ test('TextArea owns a focused multi-line component reference', () => {
   const frame = host().render(h(TextAreaWorkbench));
   const headings = creations(frame, 'Heading').map((id) => properties(frame, id).Label?.Text);
   assert.deepEqual(headings.slice(0, 7), [
-    'TextArea',
+    'Text Area',
     'Overview',
     'Presentation',
     'States',

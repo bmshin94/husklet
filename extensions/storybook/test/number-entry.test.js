@@ -19,7 +19,7 @@ test('NumberEntry documents bounds, steps, and availability as live controls', (
   const frame = host().render(h(NumberEntryWorkbench));
   const headings = creations(frame, 'Heading').map((id) => properties(frame, id).Label?.Text);
   assert.deepEqual(headings.slice(0, 8), [
-    'NumberEntry',
+    'Number Entry',
     'Overview',
     'Bounds',
     'Steps',

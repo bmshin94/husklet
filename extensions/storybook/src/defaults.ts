@@ -146,9 +146,9 @@ const LABEL_DRIVEN = new Set(['Button', 'IconButton', 'ToggleButton', 'Fab', 'Sp
 /** Families whose containers read better without a caption of their own. */
 const LABELLESS = new Set(['layout']);
 
-/** `CardHeader` reads as `Card header` in a preview. */
+/** `NavigationMenuItem` reads as `Navigation Menu Item` in human-facing copy. */
 export function spaced(name: string): string {
-  return name.replace(/([a-z])([A-Z])/g, '$1 $2');
+  return name.replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').replace(/([a-z0-9])([A-Z])/g, '$1 $2');
 }
 
 /** Every component's default set, for tests and for a first selection. */

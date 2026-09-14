@@ -3121,7 +3121,7 @@ mod unix {
                 next_document.vadjustment().value()
             );
             assert!(
-                find::<gtk::Label>(&root, |label| label.text() == "IconButton").is_visible(),
+                find::<gtk::Label>(&root, |label| label.text() == "Icon Button").is_visible(),
                 "the newly selected page title is visible at the top"
             );
             capture_story(&realized_window, "IconButton after scrolled Button navigation");
@@ -3350,7 +3350,7 @@ mod unix {
             horizontal.value()
         );
         let title = find::<gtk::Label>(root, |label| {
-            label.has_css_class("hl-heading") && label.text() == "ConfirmAction"
+            label.has_css_class("hl-heading") && label.text() == "Confirm Action"
         });
         let bounds = title
             .compute_bounds(root)

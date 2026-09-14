@@ -6,6 +6,7 @@ import { compositeComponents } from '@husklet/react';
 import { FLOW_STORIES, Playground } from '../dist/app.js';
 import { componentPages } from '../dist/component-pages.js';
 import { grouped, tags } from '../dist/catalogue.js';
+import { spaced } from '../dist/defaults.js';
 import { host } from './host.js';
 
 const names = compositeComponents.map(({ name }) => name);
@@ -33,13 +34,13 @@ test('each composite route renders only its selected component document', () => 
       .filter((patch) => headingIds.has(patch.SetProp?.id) && patch.SetProp?.prop === 'Label')
       .map((patch) => patch.SetProp.value?.Text);
     assert.equal(
-      headings.filter((label) => label === selected).length,
+      headings.filter((label) => label === spaced(selected)).length,
       1,
       `${selected} is not one isolated document`,
     );
     for (const sibling of names.filter((name) => name !== selected)) {
       assert.equal(
-        headings.includes(sibling),
+        headings.includes(spaced(sibling)),
         false,
         `${selected} materialized sibling ${sibling}`,
       );

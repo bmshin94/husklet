@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { component, tags } from '../dist/catalogue.js';
-import { all, defaults } from '../dist/defaults.js';
+import { all, defaults, spaced } from '../dist/defaults.js';
+
+test('public component identifiers become readable display names without losing acronyms', () => {
+  assert.equal(spaced('NavigationMenuItem'), 'Navigation Menu Item');
+  assert.equal(spaced('TestReportView'), 'Test Report View');
+  assert.equal(spaced('JSONTree'), 'JSON Tree');
+});
 
 test('selecting a component produces a default set of the right shape', () => {
   for (const [name, opened] of all()) {

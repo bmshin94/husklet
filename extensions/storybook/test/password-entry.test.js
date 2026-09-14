@@ -19,7 +19,7 @@ test('PasswordEntry documents reveal policy and genuine states', () => {
   const frame = host().render(h(PasswordEntryWorkbench));
   const headings = creations(frame, 'Heading').map((id) => properties(frame, id).Label?.Text);
   assert.deepEqual(headings.slice(0, 7), [
-    'PasswordEntry',
+    'Password Entry',
     'Overview',
     'Reveal policy',
     'States',

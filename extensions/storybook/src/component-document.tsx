@@ -16,6 +16,7 @@ import {
   Text,
 } from '@husklet/react';
 import type { ControlRow } from './editors.js';
+import { spaced } from './defaults.js';
 
 const INHERITED_LAYOUT = new Set([
   'width',
@@ -45,7 +46,7 @@ export function ComponentDocument({
 }) {
   return (
     <Column width="fill" pad={4} gap={4}>
-      <Heading label={name} scale="display" />
+      <Heading label={spaced(name)} scale="display" wrap />
       <Text label={summary} color="text-dim" width={contentWidth ?? 'fill'} wrap />
       {contentWidth ? (
         <Column gap={4} width={contentWidth}>
