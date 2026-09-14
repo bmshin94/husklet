@@ -2517,6 +2517,41 @@ test('extension discovery can retry a failed catalogue without leaving the page'
   assert.ok(labelled(stage, 'Review access'));
 });
 
+test('catalogue installs pause when workspace compatibility cannot be checked and recover in place', async () => {
+  let attempts = 0;
+  const stage = host();
+  stage.render(
+    h(Extensions, {
+      api: {
+        info: async () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error('workspace identity socket closed');
+          return { architecture: 'amd64' };
+        },
+        extensions: {
+          list: async () => [],
+          catalogue: firstPartyCatalogue,
+        },
+        watchExtensions: async () => () => {},
+      },
+    }),
+  );
+  await settled();
+  selectExtensionMode(stage, 'Discover');
+  await settled();
+
+  assert.ok(
+    labelled(stage, 'Compatibility could not be checked, so catalogue installs are paused.'),
+  );
+  assert.ok(labelled(stage, 'workspace identity socket closed'));
+  assert.equal(enabledStates(stage, 'Review access').at(-1), false);
+
+  invoke(stage, 'Retry compatibility check');
+  await settled();
+  assert.equal(attempts, 2);
+  assert.equal(enabledStates(stage, 'Review access').at(-1), true);
+});
+
 test('failed catalogue refresh keeps stale rows browseable but strips install and trust authority', async () => {
   let fail = false;
   const extensions = {

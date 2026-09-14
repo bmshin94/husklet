@@ -535,6 +535,10 @@ export function Extensions({
   );
   const [catalogueError, setCatalogueError] = React.useState('');
   const [workspaceArchitecture, setWorkspaceArchitecture] = React.useState('');
+  const [workspaceIdentityState, setWorkspaceIdentityState] = React.useState<
+    'loading' | 'ready' | 'error'
+  >(typeof api.info === 'function' ? 'loading' : 'ready');
+  const [workspaceIdentityError, setWorkspaceIdentityError] = React.useState('');
   const [inventoryState, setInventoryState] = React.useState<
     'loading' | 'empty' | 'error' | 'ready'
   >('loading');
@@ -601,6 +605,7 @@ export function Extensions({
   const inventoryEpoch = React.useRef(0);
   const installedSnapshot = React.useRef<ExtensionSummary[]>([]);
   const catalogueEpoch = React.useRef(0);
+  const workspaceIdentityEpoch = React.useRef(0);
   const lifecycleInFlight = React.useRef(false);
   const acquisitionInFlight = React.useRef(false);
   const openingInFlight = React.useRef('');
@@ -671,13 +676,26 @@ export function Extensions({
   React.useEffect(() => {
     void loadCatalogue();
   }, [loadCatalogue]);
-  React.useEffect(() => {
+  const loadWorkspaceIdentity = React.useCallback(async () => {
     if (typeof api.info !== 'function') return;
-    void api
-      .info()
-      .then((workspace) => setWorkspaceArchitecture(workspace.architecture))
-      .catch(() => setWorkspaceArchitecture(''));
+    const epoch = ++workspaceIdentityEpoch.current;
+    setWorkspaceIdentityState('loading');
+    setWorkspaceIdentityError('');
+    try {
+      const workspace = await api.info();
+      if (workspaceIdentityEpoch.current !== epoch) return;
+      setWorkspaceArchitecture(workspace.architecture);
+      setWorkspaceIdentityState('ready');
+    } catch (cause) {
+      if (workspaceIdentityEpoch.current !== epoch) return;
+      setWorkspaceArchitecture('');
+      setWorkspaceIdentityError(message(cause));
+      setWorkspaceIdentityState('error');
+    }
   }, [api]);
+  React.useEffect(() => {
+    void loadWorkspaceIdentity();
+  }, [loadWorkspaceIdentity]);
   React.useEffect(() => {
     let dispose: (() => Promise<void>) | undefined;
     void watchExtensions((listing) => {
@@ -1420,6 +1438,15 @@ export function Extensions({
                       <Text label="Loading extension catalogue…" color="text-dim" />
                     </Row>
                   )}
+                  {workspaceIdentityState === 'error' && (
+                    <RecoveryState
+                      operation="Workspace compatibility check"
+                      summary="Compatibility could not be checked, so catalogue installs are paused."
+                      error={workspaceIdentityError}
+                      retryLabel="Retry compatibility check"
+                      onRetry={loadWorkspaceIdentity}
+                    />
+                  )}
                   {catalogueState === 'ready' && catalogueEntries.length === 0 && (
                     <InlineMessage
                       label="The built-in extension catalogue is currently empty."
@@ -1583,6 +1610,7 @@ export function Extensions({
                                     tone="accent"
                                     enabled={
                                       catalogueAuthoritative &&
+                                      workspaceIdentityState === 'ready' &&
                                       !busy &&
                                       compatibility.compatible !== false
                                     }
@@ -1597,6 +1625,7 @@ export function Extensions({
                                     tone="neutral"
                                     enabled={
                                       catalogueAuthoritative &&
+                                      workspaceIdentityState === 'ready' &&
                                       !busy &&
                                       compatibility.compatible !== false
                                     }
@@ -1612,6 +1641,7 @@ export function Extensions({
                                       variant="outline"
                                       enabled={
                                         catalogueAuthoritative &&
+                                        workspaceIdentityState === 'ready' &&
                                         !busy &&
                                         compatibility.compatible !== false
                                       }
@@ -2576,7 +2606,9 @@ export function Extensions({
                                             variant="filled"
                                             tone="accent"
                                             enabled={
-                                              !busy && updateCompatibility?.compatible !== false
+                                              workspaceIdentityState === 'ready' &&
+                                              !busy &&
+                                              updateCompatibility?.compatible !== false
                                             }
                                             onInvoke={() => inspect(update.reference, update)}
                                           />
@@ -2602,7 +2634,9 @@ export function Extensions({
                                             size="small"
                                             variant="ghost"
                                             enabled={
-                                              !busy && currentCompatibility?.compatible !== false
+                                              workspaceIdentityState === 'ready' &&
+                                              !busy &&
+                                              currentCompatibility?.compatible !== false
                                             }
                                             onInvoke={() =>
                                               inspect(catalogueEntry.reference, catalogueEntry)
