@@ -132,7 +132,7 @@ impl Roster<Directory> {
             Err(Refusal::Record(Fault::Format { key, .. })) if key == "state/extensions/top" => {
                 let root = workspace.storage_dir(&crate::paths::hl_root());
                 let storage = Directory::open(root).map_err(|error| Fault::Storage(Box::new(error)))?;
-                Records::open(storage)?.forget(&ExtensionName::new("top").expect("fixed Top identity"))?;
+                Records::open(storage)?.discard_unreadable(&ExtensionName::new("top").expect("fixed Top identity"))?;
                 Self::workspace(workspace)
             }
             Err(error) => Err(error),

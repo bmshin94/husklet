@@ -335,6 +335,9 @@ mod tests {
         storage
             .put(&Key::parse("state/extensions/top").unwrap(), b"{corrupt")
             .unwrap();
+        storage
+            .put(&Key::parse("state/extension-faults/top").unwrap(), b"{stale")
+            .unwrap();
 
         install_defaults_with(&workspace, |_, reference| {
             Ok(Candidate {
@@ -348,6 +351,13 @@ mod tests {
         let entry = &Roster::workspace(&workspace).unwrap().entries()[0];
         assert_eq!(entry.image_digest, "sha256:current-top");
         assert_eq!(entry.stage, Stage::Duty);
+        assert!(
+            storage
+                .list(Some(&Key::parse("state/extension-faults").unwrap()))
+                .unwrap()
+                .is_empty(),
+            "an incompatible crash marker cannot poison the replacement"
+        );
     }
 
     #[test]

@@ -130,6 +130,25 @@ impl<S: Storage> Records<S> {
         Ok(())
     }
 
+    /// Discards an unreadable record and any crash marker without decoding
+    /// either one.
+    ///
+    /// This is deliberately separate from [`Self::forget`]: ordinary removal
+    /// preserves a valid marker when deleting the consent record fails, while
+    /// recovery from an incompatible required record cannot assume its marker
+    /// still uses the current encoding. Clearing the marker first leaves the
+    /// unreadable record in place if that step fails, so a later retry remains
+    /// on this explicit recovery path rather than installing beside stale
+    /// lifecycle state.
+    ///
+    /// # Errors
+    /// Returns `Fault::Storage` when either removal fails.
+    pub fn discard_unreadable(&self, name: &ExtensionName) -> Result<(), Fault> {
+        let key = self.key(name)?;
+        self.clear_fault(name)?;
+        self.storage.remove(&key).map_err(fault)
+    }
+
     /// The restart count of a fault the live host reported, if one was saved.
     pub fn fault(&self, name: &ExtensionName) -> Result<Option<u32>, Fault> {
         let key = self.fault_key(name)?;
