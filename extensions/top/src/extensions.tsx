@@ -918,15 +918,21 @@ export function Extensions({
         } else if (status.state === 'ready' && status.candidate) {
           if (extensionCommitConflict(cause)) {
             try {
+              const reconciliationEpoch = ++inventoryEpoch.current;
               const listing = await api.extensions.list();
-              ++inventoryEpoch.current;
-              installedSnapshot.current = listing;
-              setInstalled(listing);
-              setInventoryState(listing.length === 0 ? 'empty' : 'ready');
-              setInventoryError('');
+              const authoritative =
+                inventoryEpoch.current === reconciliationEpoch
+                  ? listing
+                  : installedSnapshot.current;
+              if (inventoryEpoch.current === reconciliationEpoch) {
+                installedSnapshot.current = listing;
+                setInstalled(listing);
+                setInventoryState(listing.length === 0 ? 'empty' : 'ready');
+                setInventoryError('');
+              }
               setAcquisition(null);
               candidateKey.current = '';
-              const current = listing.find((extension) => extension.name === reviewed.name);
+              const current = authoritative.find((extension) => extension.name === reviewed.name);
               if (current) revealInstalled(current.name);
               setNotice({
                 label: `${reviewed.name} changed while this review was open. Current installed state was refreshed. Inspect the image again before changing access.`,

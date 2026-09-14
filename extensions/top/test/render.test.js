@@ -3716,14 +3716,18 @@ test('extension image entry submits from the keyboard and consent explains reque
 test('a concurrent extension change refreshes inventory instead of offering a stale consent retry', async () => {
   let installed = false;
   let inspections = 0;
+  let publish;
+  let releaseRefresh;
   const stage = host();
   stage.render(
     h(Extensions, {
       api: {
         extensions: {
-          list: async () =>
-            installed
-              ? [
+          list: async () => {
+            if (!installed) return [];
+            return new Promise((resolve) => {
+              releaseRefresh = () =>
+                resolve([
                   {
                     name: 'assistant',
                     version: '1.1.0',
@@ -3731,8 +3735,9 @@ test('a concurrent extension change refreshes inventory instead of offering a st
                     enabled: true,
                     status: 'duty',
                   },
-                ]
-              : [],
+                ]);
+            });
+          },
           startAcquisition: async () => {
             inspections += 1;
             return { job: 'candidate' };
@@ -3760,7 +3765,10 @@ test('a concurrent extension change refreshes inventory instead of offering a st
             throw new Error('extension install may have committed', { cause: conflict });
           },
         },
-        watchExtensions: async () => () => {},
+        watchExtensions: async (notify) => {
+          publish = notify;
+          return () => {};
+        },
       },
     }),
   );
@@ -3772,6 +3780,17 @@ test('a concurrent extension change refreshes inventory instead of offering a st
   await settled();
   invoke(stage, 'Install with selected access');
   await settled();
+  publish([
+    {
+      name: 'assistant',
+      version: '1.2.0',
+      image_digest: `sha256:${'c'.repeat(64)}`,
+      enabled: true,
+      status: 'duty',
+    },
+  ]);
+  await settled();
+  releaseRefresh();
   await settled();
   await settled();
 
@@ -3784,6 +3803,10 @@ test('a concurrent extension change refreshes inventory instead of offering a st
   assert.ok(labelled(stage, 'assistant'));
   assert.equal(fieldValue(stage, 'Search installed'), 'assistant');
   assert.equal(inspections, 1, 'the stale candidate is not silently reacquired or replayed');
+  assert.ok(
+    labelled(stage, 'Version 1.2.0'),
+    'a newer watched inventory must win over the stale conflict refresh',
+  );
 });
 
 test('a ready extension review can be abandoned without granting authority', async () => {
