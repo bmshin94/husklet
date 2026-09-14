@@ -4488,6 +4488,7 @@ mod unix {
             docker_socket: false,
             scrollback: Some(10_000),
             vpn: None,
+            postgres: None,
             execution_lifetime: "persisted".into(),
             terminal: WorkspaceTerminal::default(),
         }
