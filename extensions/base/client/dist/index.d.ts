@@ -256,7 +256,12 @@ export declare class FileChunkOperationError extends Error {
     readonly identity: any;
     readonly offset: any;
     readonly total: any;
-    constructor(path: any, identity: any, offset: any, total: any, cause: any);
+    readonly deliveredBytes: any;
+    readonly deliveredChunks: any;
+    readonly maxBytes: any;
+    readonly maxChunks: any;
+    readonly resume: any;
+    constructor(path: any, identity: any, offset: any, total: any, deliveredBytes: any, deliveredChunks: any, maxBytes: any, maxChunks: any, cause: any);
 }
 /** A bounded text read lost transport after an exact prefix had been acknowledged. */
 export declare class FileTextOperationError extends Error {

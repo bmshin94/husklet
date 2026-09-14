@@ -20,9 +20,9 @@ try {
       // Persist these values and resume only this immutable file identity.
       console.log({ identity: cause.identity, offset: cause.offset, total: cause.total });
     } else if (cause instanceof FileChunkOperationError) {
-      // Reconnect first, then pass the typed failure to `resumeChunks`; it pins the
-      // continuation to this identity and rejects a replacement file.
-      console.log({ reconnect: true, identity: cause.identity, offset: cause.offset });
+      // Persist `cause.resume` as JSON. After reconnect (or a process restart), pass
+      // that token to `resumeChunks`; it pins identity and retains the original bounds.
+      console.log(JSON.stringify(cause.resume));
     } else {
       throw cause;
     }

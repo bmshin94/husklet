@@ -846,8 +846,23 @@ export class FileChunkOperationError extends Error {
   readonly identity;
   readonly offset;
   readonly total;
+  readonly deliveredBytes;
+  readonly deliveredChunks;
+  readonly maxBytes;
+  readonly maxChunks;
+  readonly resume;
 
-  constructor(path, identity, offset, total, cause) {
+  constructor(
+    path,
+    identity,
+    offset,
+    total,
+    deliveredBytes,
+    deliveredChunks,
+    maxBytes,
+    maxChunks,
+    cause,
+  ) {
     super(
       `filesystem chunks for ${path} at identity ${identity} failed at resumable offset ${offset}`,
       { cause },
@@ -857,6 +872,21 @@ export class FileChunkOperationError extends Error {
     this.identity = identity;
     this.offset = offset;
     this.total = total;
+    this.deliveredBytes = deliveredBytes;
+    this.deliveredChunks = deliveredChunks;
+    this.maxBytes = maxBytes;
+    this.maxChunks = maxChunks;
+    this.resume = Object.freeze({
+      version: 1,
+      path,
+      identity,
+      offset,
+      total,
+      deliveredBytes,
+      deliveredChunks,
+      maxBytes,
+      maxChunks,
+    });
   }
 }
 
@@ -4703,7 +4733,17 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
               !(cause instanceof FileChunkLimitError) &&
               !(cause instanceof FileChunkOperationError)
             ) {
-              throw new FileChunkOperationError(path, identity, cursor, total ?? null, cause);
+              throw new FileChunkOperationError(
+                path,
+                identity,
+                cursor,
+                total ?? null,
+                delivered,
+                chunks,
+                maxBytes,
+                maxChunks,
+                cause,
+              );
             }
             throw cause;
           }
@@ -4728,8 +4768,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         failure,
         {
           chunkBytes = 65_536,
-          maxBytes = 64 * 1024 * 1024,
-          maxChunks = 4_096,
+          maxBytes,
+          maxChunks,
           signal,
         }: {
           chunkBytes?: number;
@@ -4738,26 +4778,96 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           signal?: AbortSignal;
         } = {},
       ) {
-        if (!(failure instanceof FileChunkOperationError))
-          throw new TypeError('filesystem chunk recovery requires a FileChunkOperationError');
-        for await (const range of api.files.readChunks(failure.path, {
-          offset: failure.offset,
-          chunkBytes,
-          maxBytes,
-          maxChunks,
-          observed: failure.identity,
-          signal,
-        })) {
-          if (failure.total !== null && range.total !== failure.total) {
-            throw new FileExtentChangedError(
-              failure.path,
-              failure.identity,
-              failure.total,
-              range.total,
-              failure.offset,
+        const resume = failure instanceof FileChunkOperationError ? failure.resume : failure;
+        if (
+          !resume ||
+          resume.version !== 1 ||
+          typeof resume.path !== 'string' ||
+          !resume.path ||
+          typeof resume.identity !== 'string' ||
+          !resume.identity ||
+          new TextEncoder().encode(resume.identity).byteLength > 256 ||
+          !Number.isSafeInteger(resume.offset) ||
+          resume.offset < 0 ||
+          (resume.total !== null &&
+            (!Number.isSafeInteger(resume.total) ||
+              resume.total < resume.offset ||
+              resume.total > Number.MAX_SAFE_INTEGER)) ||
+          !Number.isSafeInteger(resume.deliveredBytes) ||
+          resume.deliveredBytes < 0 ||
+          !Number.isSafeInteger(resume.deliveredChunks) ||
+          resume.deliveredChunks < 0 ||
+          !Number.isSafeInteger(resume.maxBytes) ||
+          resume.maxBytes < 1 ||
+          resume.maxBytes > 1024 * 1024 * 1024 ||
+          !Number.isSafeInteger(resume.maxChunks) ||
+          resume.maxChunks < 1 ||
+          resume.maxChunks > 65_536 ||
+          resume.deliveredBytes > resume.maxBytes ||
+          resume.deliveredChunks > resume.maxChunks
+        )
+          throw new TypeError('filesystem chunk resume token is invalid or exceeds its bound');
+        const remainingBytes = resume.maxBytes - resume.deliveredBytes;
+        const remainingChunks = resume.maxChunks - resume.deliveredChunks;
+        if (remainingBytes === 0 || remainingChunks === 0) {
+          throw new FileChunkLimitError(
+            resume.path,
+            resume.identity,
+            resume.offset,
+            resume.total,
+            resume.maxBytes,
+            resume.maxChunks,
+          );
+        }
+        const nextMaxBytes = maxBytes ?? remainingBytes;
+        const nextMaxChunks = maxChunks ?? remainingChunks;
+        if (nextMaxBytes > remainingBytes || nextMaxChunks > remainingChunks)
+          throw new RangeError('filesystem chunk recovery cannot widen its remaining work bound');
+        try {
+          for await (const range of api.files.readChunks(resume.path, {
+            offset: resume.offset,
+            chunkBytes,
+            maxBytes: nextMaxBytes,
+            maxChunks: nextMaxChunks,
+            observed: resume.identity,
+            signal,
+          })) {
+            if (resume.total !== null && range.total !== resume.total) {
+              throw new FileExtentChangedError(
+                resume.path,
+                resume.identity,
+                resume.total,
+                range.total,
+                resume.offset,
+              );
+            }
+            yield range;
+          }
+        } catch (cause) {
+          if (cause instanceof FileChunkOperationError) {
+            throw new FileChunkOperationError(
+              resume.path,
+              resume.identity,
+              cause.offset,
+              resume.total,
+              resume.deliveredBytes + cause.deliveredBytes,
+              resume.deliveredChunks + cause.deliveredChunks,
+              resume.maxBytes,
+              resume.maxChunks,
+              cause.cause,
             );
           }
-          yield range;
+          if (cause instanceof FileChunkLimitError) {
+            throw new FileChunkLimitError(
+              resume.path,
+              resume.identity,
+              cause.offset,
+              resume.total,
+              resume.maxBytes,
+              resume.maxChunks,
+            );
+          }
+          throw cause;
         }
       },
       readText: async (

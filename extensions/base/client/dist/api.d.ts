@@ -1046,7 +1046,23 @@ export declare class FileChunkOperationError extends Error {
     readonly identity: string;
     readonly offset: number;
     readonly total: number | null;
+    readonly deliveredBytes: number;
+    readonly deliveredChunks: number;
+    readonly maxBytes: number;
+    readonly maxChunks: number;
+    readonly resume: Readonly<FileChunkResume>;
     readonly cause: unknown;
+}
+export interface FileChunkResume {
+    version: 1;
+    path: string;
+    identity: string;
+    offset: number;
+    total: number | null;
+    deliveredBytes: number;
+    deliveredChunks: number;
+    maxBytes: number;
+    maxChunks: number;
 }
 /** A bounded text read lost transport after an exact prefix had been acknowledged. */
 export declare class FileTextOperationError extends Error {
@@ -2400,7 +2416,7 @@ export interface WorkspaceApi {
             signal?: AbortSignal;
         }): AsyncGenerator<FileRange, void, void>;
         /** Resume an interrupted chunk stream from its exact file identity and acknowledged offset. */
-        resumeChunks(failure: FileChunkOperationError, options?: {
+        resumeChunks(failure: FileChunkOperationError | FileChunkResume, options?: {
             chunkBytes?: number;
             maxBytes?: number;
             maxChunks?: number;
