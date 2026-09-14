@@ -14,6 +14,7 @@ function terminalInputOperation(operation) {
     }
     return value;
 }
+const terminalCommandInputRecoveries = new WeakMap();
 /** A supervised input reply was lost; retry this exact operation and offset safely. */
 export class TerminalCommandInputOperationError extends Error {
     command;
@@ -25,13 +26,32 @@ export class TerminalCommandInputOperationError extends Error {
     constructor(command, operation, offset, input, close, cause) {
         super(`terminal command ${close ? 'input close' : 'input write'} at offset ${offset} may have committed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
         this.name = 'TerminalCommandInputOperationError';
-        this.command = immutableCopy(command);
-        this.operation = operation;
-        this.offset = offset;
-        this.input = input === undefined ? undefined : Object.freeze([...input]);
-        this.close = close;
+        const recovery = Object.freeze({
+            command: immutableCopy(command),
+            operation,
+            offset,
+            input: input === undefined ? undefined : Object.freeze([...input]),
+            close,
+        });
+        this.command = recovery.command;
+        this.operation = recovery.operation;
+        this.offset = recovery.offset;
+        this.input = recovery.input;
+        this.close = recovery.close;
         this.cause = cause;
+        Object.freeze(this);
     }
+}
+function terminalCommandInputFailure(command, operation, offset, input, close, cause) {
+    const error = new TerminalCommandInputOperationError(command, operation, offset, input, close, cause);
+    terminalCommandInputRecoveries.set(error, Object.freeze({
+        command: error.command,
+        operation: error.operation,
+        offset: error.offset,
+        input: error.input,
+        close: error.close,
+    }));
+    return error;
 }
 /** A supervised command creation reply was lost; retry the exact token safely. */
 export class TerminalCommandStartOperationError extends Error {
@@ -3115,7 +3135,7 @@ export function workspace(session, { signal } = {}) {
                     });
                 }
                 catch (cause) {
-                    throw new TerminalCommandInputOperationError(command, operation, offset, contents, false, cause);
+                    throw terminalCommandInputFailure(command, operation, offset, contents, false, cause);
                 }
                 const receipt = expect(response, 'terminal_command_input');
                 if (receipt.id !== command.id ||
@@ -3146,7 +3166,7 @@ export function workspace(session, { signal } = {}) {
                     });
                 }
                 catch (cause) {
-                    throw new TerminalCommandInputOperationError(command, operation, offset, undefined, true, cause);
+                    throw terminalCommandInputFailure(command, operation, offset, undefined, true, cause);
                 }
                 const receipt = expect(response, 'terminal_command_input');
                 if (receipt.id !== command.id ||
@@ -3159,21 +3179,22 @@ export function workspace(session, { signal } = {}) {
                 return receipt;
             },
             recoverCommandInput: (failure) => {
-                if (!(failure instanceof TerminalCommandInputOperationError)) {
+                const recovery = terminalCommandInputRecoveries.get(failure);
+                if (!(failure instanceof TerminalCommandInputOperationError) || !recovery) {
                     throw new TypeError('terminal command input recovery requires its exact input operation error');
                 }
-                if (failure.close) {
-                    return api.terminal.commandCloseInput(failure.command, {
-                        operation: failure.operation,
-                        offset: failure.offset,
+                if (recovery.close) {
+                    return api.terminal.commandCloseInput(recovery.command, {
+                        operation: recovery.operation,
+                        offset: recovery.offset,
                     });
                 }
-                if (failure.input === undefined) {
+                if (recovery.input === undefined) {
                     throw new TypeError('terminal command input recovery is missing the exact input bytes');
                 }
-                return api.terminal.commandWrite(failure.command, failure.input, {
-                    operation: failure.operation,
-                    offset: failure.offset,
+                return api.terminal.commandWrite(recovery.command, recovery.input, {
+                    operation: recovery.operation,
+                    offset: recovery.offset,
                 });
             },
             commandText: async (pane, { command: argv, operation, workingDirectory, input, maxBytes, pageLimit = 16, pollIntervalMs = 25, signal: abortSignal, cancelSignal = 'SIGTERM', cancelTimeoutMs = 5_000, }) => {

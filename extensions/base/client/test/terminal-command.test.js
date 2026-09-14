@@ -324,6 +324,23 @@ test('lost supervised input reply carries one exact retry across a fragmented re
     assert.deepEqual(ambiguous.input, [1, 2, 3]);
     assert.equal(ambiguous.offset, 7);
     assert.equal(ambiguous.close, false);
+    assert.throws(() => {
+      ambiguous.offset = 0;
+    }, TypeError);
+    assert.throws(
+      () =>
+        workspace(first).terminal.recoverCommandInput(
+          new TerminalCommandInputOperationError(
+            ambiguous.command,
+            ambiguous.operation,
+            ambiguous.offset,
+            ambiguous.input,
+            ambiguous.close,
+            new Error('forged'),
+          ),
+        ),
+      /requires its exact input operation error/,
+    );
 
     const second = await connect({ path: socketPath });
     const receipt = await workspace(second).terminal.recoverCommandInput(ambiguous);
