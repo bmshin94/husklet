@@ -48,10 +48,21 @@ impl<'a> Slots<'a> {
         slot: String,
         lifecycle: Rc<Cell<hl_extension::port::TerminalLifecycle>>,
     ) {
+        let generation = self.0.pane_generation.get().wrapping_add(1).max(1);
+        self.0.pane_generation.set(generation);
         self.0
             .panes
             .borrow_mut()
-            .push(PaneRegistration::new(terminal, slot, lifecycle));
+            .push(PaneRegistration::new(terminal, slot, generation, lifecycle));
+    }
+
+    pub(crate) fn generation(&self, terminal: &vte4::Terminal) -> Option<u64> {
+        self.0
+            .panes
+            .borrow()
+            .iter()
+            .find(|pane| pane.terminal.upgrade().as_ref() == Some(terminal))
+            .map(|pane| pane.generation)
     }
 
     pub(crate) fn lifecycle(&self, terminal: &vte4::Terminal) -> hl_extension::port::TerminalLifecycle {

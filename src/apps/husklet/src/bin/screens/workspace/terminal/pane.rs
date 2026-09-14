@@ -1740,6 +1740,62 @@ mod focus_ownership_tests {
     }
 
     #[test]
+    fn replacement_terminal_reusing_a_layout_slot_rejects_stale_llm_input() {
+        let ran = crate::test_support::on_the_toolkit_thread(|| {
+            let workspace = WorkspaceConfig::new("terminal-generation", "alpine:3.20", hl_ws::Arch::Amd64);
+            let tw = Window::bench(&workspace);
+            let (old_terminal, _old_slave) = terminal_with_pty();
+            let slot = "saved-slot".to_owned();
+            Slots::new(&tw).hold(&old_terminal, slot.clone());
+            let old_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            old_page.append(&PaneChrome::wrap(&tw, &old_terminal));
+            Tabs::new(&tw).add("old", None, &old_page, true);
+            let observed = screens::workspace::extensions::Console::pane_inventory(&tw)
+                .unwrap()
+                .panes
+                .into_iter()
+                .find(|pane| pane.slot == slot)
+                .unwrap();
+            assert_ne!(observed.generation, 0);
+
+            let (current_terminal, _current_slave) = terminal_with_pty();
+            let current_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            current_page.append(&PaneChrome::wrap(&tw, &current_terminal));
+            Tabs::new(&tw).add("current", None, &current_page, true);
+            Slots::new(&tw).discard(&old_terminal);
+            Slots::new(&tw).hold(&current_terminal, slot.clone());
+            let current = screens::workspace::extensions::Console::pane_inventory(&tw)
+                .unwrap()
+                .panes
+                .into_iter()
+                .find(|pane| pane.slot == slot)
+                .unwrap();
+            assert_ne!(current.generation, observed.generation);
+
+            let stale = screens::workspace::extensions::Console::write(
+                &tw,
+                &slot,
+                observed.generation,
+                observed.revision,
+                b"rm -rf important\n",
+            );
+            assert!(matches!(stale, Err(hl_extension::HostError::Conflict(_))));
+            assert!(screens::workspace::extensions::Console::write(
+                &tw,
+                &slot,
+                current.generation,
+                current.revision,
+                b"printf safe\n",
+            )
+            .is_ok());
+            tw.closing.set(true);
+        });
+        if !ran {
+            println!("skipped: no display connection");
+        }
+    }
+
+    #[test]
     fn removed_page_clears_only_focus_owned_by_that_page() {
         assert!(page_owns_focus(Some(&2), &[1, 2, 3]));
         assert!(!page_owns_focus(Some(&4), &[1, 2, 3]));

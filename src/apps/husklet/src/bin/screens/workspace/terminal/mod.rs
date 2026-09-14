@@ -12,6 +12,10 @@ pub(crate) struct TermWin {
     shell_no: Cell<u32>,
     /// Monotonic stable identity allocator for persisted pane layouts.
     pub(crate) slot_ctr: Cell<u32>,
+    /// Monotonic authority for terminal occupants. A restored slot may reuse
+    /// its stable layout name, but it must never reuse write authority held by
+    /// the terminal that previously occupied it.
+    pub(crate) pane_generation: Cell<u64>,
     /// Registry of every live pane: its terminal (weak), layout slot, and worker pid.
     pub(crate) panes: RefCell<Vec<PaneRegistration>>,
     /// Registry of every live pane holding an extension's interface instead of
@@ -56,6 +60,7 @@ fn bounded_pointer_number(value: f64) -> f64 {
 pub(crate) struct PaneRegistration {
     terminal: glib::WeakRef<vte4::Terminal>,
     slot: String,
+    generation: u64,
     lifecycle: Rc<Cell<hl_extension::port::TerminalLifecycle>>,
 }
 
@@ -63,11 +68,13 @@ impl PaneRegistration {
     pub(crate) fn new(
         terminal: &vte4::Terminal,
         slot: String,
+        generation: u64,
         lifecycle: Rc<Cell<hl_extension::port::TerminalLifecycle>>,
     ) -> Self {
         Self {
             terminal: terminal.downgrade(),
             slot,
+            generation,
             lifecycle,
         }
     }
@@ -493,6 +500,7 @@ impl Window {
             counter: Cell::new(0),
             shell_no: Cell::new(0),
             slot_ctr: Cell::new(0),
+            pane_generation: Cell::new(0),
             panes: RefCell::new(Vec::new()),
             surfaces: RefCell::new(Vec::new()),
             displaced: RefCell::new(HashMap::new()),
@@ -574,6 +582,7 @@ impl Window {
             counter: Cell::new(0),
             shell_no: Cell::new(0),
             slot_ctr: Cell::new(0),
+            pane_generation: Cell::new(0),
             panes: RefCell::new(Vec::new()),
             surfaces: RefCell::new(Vec::new()),
             displaced: RefCell::new(HashMap::new()),

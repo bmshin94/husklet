@@ -164,7 +164,7 @@ impl Console {
         Ok(TerminalTopology { active_tab, tabs })
     }
 
-    pub(super) fn pane_inventory(window: &Rc<TermWin>) -> Result<PaneInventory, HostError> {
+    pub(crate) fn pane_inventory(window: &Rc<TermWin>) -> Result<PaneInventory, HostError> {
         let topology = Self::topology(window)?;
         let mut panes = Vec::new();
         for tab in topology.tabs {
@@ -204,7 +204,11 @@ impl Console {
                         .and_then(|provider| Window::gallery(window)?.generation(&provider.extension))
                         .unwrap_or(0)
                 } else {
-                    0
+                    Panes::at(window, &pane.slot)
+                        .and_then(|occupancy| occupancy.content.downcast::<vte4::Terminal>().ok())
+                        .as_ref()
+                        .and_then(|terminal| Slots::new(window).generation(terminal))
+                        .unwrap_or(0)
                 },
                 revision: 0,
                 kind: if pane.occupant == Occupant::Surface {
@@ -348,7 +352,7 @@ impl Console {
             .native_requirement(node)
     }
 
-    pub(super) fn write(
+    pub(crate) fn write(
         window: &Rc<TermWin>,
         slot: &str,
         generation: u64,

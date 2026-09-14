@@ -78,7 +78,7 @@ impl Panes {
         let (cursor_column, cursor_row) = terminal.cursor_position();
         Reading::Text(PaneText {
             slot: slot.to_owned(),
-            generation: 0,
+            generation: Slots::new(window).generation(&terminal).unwrap_or(0),
             revision: 0,
             lifecycle: Slots::new(window).lifecycle(&terminal),
             columns: u16::try_from(terminal.column_count()).unwrap_or_default(),
@@ -105,7 +105,7 @@ impl Panes {
         let (lines, next) = Terminal::new(&terminal).history_page(cursor, lines)?;
         Ok(hl_extension::port::TerminalHistoryPage {
             slot: slot.to_owned(),
-            generation: 0,
+            generation: Slots::new(window).generation(&terminal).unwrap_or(0),
             revision: 0,
             lines,
             next,
