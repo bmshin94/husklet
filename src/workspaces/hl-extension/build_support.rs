@@ -96,6 +96,8 @@ pub fn watched(manifest: &Path) -> impl Iterator<Item = PathBuf> + '_ {
         manifest.join("protocol/v1.fnv1a64"),
         manifest.join("../../../extensions/base/client/src/generated-protocol.js"),
         manifest.join("../../../extensions/base/client/src/generated-protocol.d.ts"),
+        manifest.join("../../../extensions/base/client/dist/generated-protocol.js"),
+        manifest.join("../../../extensions/base/client/dist/generated-protocol.d.ts"),
     ])
 }
 
