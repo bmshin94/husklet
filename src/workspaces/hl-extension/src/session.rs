@@ -65,7 +65,19 @@ pub struct Session {
 #[derive(Default)]
 pub struct OwnedOperations {
     executions: std::collections::BTreeSet<String>,
+    command_starts: std::collections::BTreeMap<String, CommandStartOperation>,
     command_inputs: std::collections::BTreeMap<String, CommandInputState>,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct CommandStartOperation {
+    slot: String,
+    generation: u64,
+    revision: u64,
+    command: Vec<String>,
+    working_directory: Option<String>,
+    stdin: bool,
+    id: String,
 }
 
 #[derive(Default)]
@@ -82,6 +94,7 @@ enum CommandInputOperation {
 }
 
 const COMMAND_INPUT_OPERATIONS: usize = 4096;
+const COMMAND_START_OPERATIONS: usize = 4096;
 
 fn command_input_operation(operation: &str) -> Result<(), Failure> {
     if (16..=128).contains(&operation.len())
@@ -93,6 +106,19 @@ fn command_input_operation(operation: &str) -> Result<(), Failure> {
     }
     Err(Failure::Conflict {
         detail: "terminal input operation must be 16 through 128 lowercase hexadecimal characters".into(),
+    })
+}
+
+fn command_start_operation(operation: &str) -> Result<(), Failure> {
+    if (16..=128).contains(&operation.len())
+        && operation
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Ok(());
+    }
+    Err(Failure::Conflict {
+        detail: "terminal command start operation must be 16 through 128 lowercase hexadecimal characters".into(),
     })
 }
 
@@ -1872,6 +1898,7 @@ impl Session {
 
     fn terminal_command(&mut self, request: &Request, services: &Services<'_>) -> Result<Reply, Failure> {
         if let Request::TerminalCommandStart {
+            operation,
             slot,
             generation,
             revision,
@@ -1880,6 +1907,7 @@ impl Session {
             stdin,
         } = request
         {
+            command_start_operation(operation)?;
             validate_terminal_command(command)?;
             if working_directory.as_ref().is_some_and(|directory| {
                 directory.is_empty()
@@ -1895,6 +1923,44 @@ impl Session {
             }
             if *stdin {
                 self.peer.authority().permit(Capability::TerminalInput)?;
+            }
+            let asked = CommandStartOperation {
+                slot: slot.clone(),
+                generation: *generation,
+                revision: *revision,
+                command: command.clone(),
+                working_directory: working_directory.clone(),
+                stdin: *stdin,
+                id: String::new(),
+            };
+            let mut owned = self
+                .owned_executions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(previous) = owned.command_starts.get(operation) {
+                let mut expected = asked.clone();
+                expected.id.clone_from(&previous.id);
+                if previous != &expected {
+                    return Err(Failure::Conflict {
+                        detail: "terminal command start operation was already used for a different request".into(),
+                    });
+                }
+                let execution = services.containers.execution(&previous.id)?;
+                return Ok(Reply::TerminalCommandStart(crate::port::TerminalCommandStart {
+                    operation: operation.clone(),
+                    command: terminal_command_summary(
+                        execution,
+                        &self.extension_identity,
+                        slot,
+                        *generation,
+                        *revision,
+                    ),
+                }));
+            }
+            if owned.command_starts.len() >= COMMAND_START_OPERATIONS {
+                return Err(Failure::Conflict {
+                    detail: "terminal command creation is limited to 4096 idempotent operations".into(),
+                });
             }
             let terminal = self
                 .peer
@@ -1927,18 +1993,20 @@ impl Session {
                     detail: "host returned a terminal command owned by another container".into(),
                 });
             }
-            self.owned_executions
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .executions
-                .insert(id.clone());
-            return Ok(Reply::TerminalCommand(terminal_command_summary(
-                execution,
-                &self.extension_identity,
-                slot,
-                *generation,
-                *revision,
-            )));
+            owned.executions.insert(id.clone());
+            let mut committed = asked;
+            committed.id = id;
+            owned.command_starts.insert(operation.clone(), committed);
+            return Ok(Reply::TerminalCommandStart(crate::port::TerminalCommandStart {
+                operation: operation.clone(),
+                command: terminal_command_summary(
+                    execution,
+                    &self.extension_identity,
+                    slot,
+                    *generation,
+                    *revision,
+                ),
+            }));
         }
 
         let (id, owner, slot, generation, revision) = match request {

@@ -7513,6 +7513,27 @@
       "kind": "struct",
       "serde": {}
     },
+    "TerminalCommandStart": {
+      "fields": [
+        {
+          "name": "operation",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "command",
+          "optional": false,
+          "schema": {
+            "kind": "ref",
+            "name": "TerminalCommand"
+          }
+        }
+      ],
+      "kind": "struct",
+      "serde": {}
+    },
     "TerminalHistoryCursor": {
       "kind": "newtype",
       "of": {
@@ -10026,7 +10047,7 @@
       "request": "terminal_spawn_observed"
     },
     {
-      "reply": "terminal_command",
+      "reply": "terminal_command_start",
       "request": "terminal_command_start"
     },
     {
@@ -10581,6 +10602,16 @@
             "of": {
               "kind": "ref",
               "name": "TerminalCommand"
+            }
+          }
+        },
+        {
+          "name": "terminal_command_start",
+          "payload": {
+            "kind": "newtype",
+            "of": {
+              "kind": "ref",
+              "name": "TerminalCommandStart"
             }
           }
         },
@@ -12854,6 +12885,13 @@
           "name": "terminal_command_start",
           "payload": {
             "fields": [
+              {
+                "name": "operation",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              },
               {
                 "name": "slot",
                 "optional": false,
@@ -15919,7 +15957,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:42ae1bef18eda572",
+  "source_fingerprint": "fnv1a64:24b527ddf282d17a",
   "specification_version": 1,
   "topics": [
     {

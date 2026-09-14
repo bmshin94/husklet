@@ -9,6 +9,7 @@ import {
   ExtensionError,
   TerminalCommandInputOperationError,
   TerminalCommandOperationError,
+  TerminalCommandStartOperationError,
   workspace,
 } from '../dist/index.js';
 import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
@@ -47,12 +48,17 @@ test('supervised terminal command is authoritative over fragmented real Unix fra
         const call = frame.payload.call;
         let payload;
         if (call === 'terminal_command_start') {
+          assert.match(frame.payload.with.operation, /^[0-9a-f]{32}$/);
           assert.deepEqual(frame.payload.with, {
+            operation: frame.payload.with.operation,
             ...pane,
             command: running.command,
             stdin: true,
           });
-          payload = { reply: 'terminal_command', with: running };
+          payload = {
+            reply: 'terminal_command_start',
+            with: { operation: frame.payload.with.operation, command: running },
+          };
         } else if (call === 'terminal_command_write') {
           assert.deepEqual(frame.payload.with, {
             id,
@@ -164,6 +170,81 @@ test('supervised terminal command is authoritative over fragmented real Unix fra
   }
 });
 
+test('lost command-start reply recovers one process and rejects a hostile operation receipt', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-terminal-start-retry-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const received = [];
+  let connection = 0;
+  const server = net.createServer((socket) => {
+    const current = ++connection;
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.kind !== KIND.request) continue;
+        assert.equal(frame.payload.call, 'terminal_command_start');
+        received.push(frame.payload.with);
+        if (current === 1) {
+          socket.destroy();
+          continue;
+        }
+        fragmented(socket, {
+          channel: frame.channel,
+          kind: KIND.response,
+          payload: {
+            reply: 'terminal_command_start',
+            with: {
+              operation: current === 2 ? frame.payload.with.operation : 'f'.repeat(32),
+              command: running,
+            },
+          },
+        });
+      }
+    });
+    fragmented(socket, {
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: {
+        protocol: 1,
+        peer: 'terminal-command-start-retry',
+        granted: ['terminals:process-control'],
+      },
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const first = await connect({ path: socketPath });
+    let ambiguous;
+    try {
+      await workspace(first).terminal.commandStart(pane, running.command);
+      assert.fail('reply loss must retain exact start recovery authority');
+    } catch (error) {
+      assert(error instanceof TerminalCommandStartOperationError);
+      ambiguous = error;
+    }
+
+    const second = await connect({ path: socketPath });
+    assert.deepEqual(await workspace(second).terminal.recoverCommandStart(ambiguous), running);
+    assert.deepEqual(
+      received[1],
+      received[0],
+      'recovery must reuse the exact creation token and request',
+    );
+    await second.close();
+
+    const third = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(third).terminal.commandStart(pane, running.command, {
+        operation: 'e'.repeat(32),
+      }),
+      /different start operation/,
+    );
+    await third.close();
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('lost supervised input reply carries one exact retry across a fragmented reconnect', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-terminal-input-retry-'));
   const socketPath = path.join(directory, 'host.sock');
@@ -256,7 +337,10 @@ test('aborting idle command polling immediately cancels the exact supervised com
         const call = frame.payload.call;
         const payload =
           call === 'terminal_command_start'
-            ? { reply: 'terminal_command', with: running }
+            ? {
+                reply: 'terminal_command_start',
+                with: { operation: frame.payload.with.operation, command: running },
+              }
             : call === 'terminal_command_output'
               ? {
                   reply: 'terminal_command_output',
@@ -400,7 +484,10 @@ test('supervised command output survives reconnect and originating pane replacem
         requests.push(frame.payload);
         const payload =
           frame.payload.call === 'terminal_command_start'
-            ? { reply: 'terminal_command', with: running }
+            ? {
+                reply: 'terminal_command_start',
+                with: { operation: frame.payload.with.operation, command: running },
+              }
             : {
                 reply: 'terminal_command_output',
                 with: {
@@ -545,7 +632,13 @@ test('large Git review output exposes an exact reconnect cursor after fragmented
           fragmented(socket, {
             channel: frame.channel,
             kind: KIND.response,
-            payload: { reply: 'terminal_command', with: { ...running, command: gitCommand } },
+            payload: {
+              reply: 'terminal_command_start',
+              with: {
+                operation: frame.payload.with.operation,
+                command: { ...running, command: gitCommand },
+              },
+            },
           });
         } else if (frame.payload.call === 'terminal_command_output' && connection === 1) {
           if (firstOutput) {
@@ -705,7 +798,10 @@ test('repeated Unix disconnects cannot widen a supervised command output budget'
           fragmented(socket, {
             channel: frame.channel,
             kind: KIND.response,
-            payload: { reply: 'terminal_command', with: running },
+            payload: {
+              reply: 'terminal_command_start',
+              with: { operation: frame.payload.with.operation, command: running },
+            },
           });
         } else if (frame.payload.call === 'terminal_command_output') {
           if (reads++ > 0) {

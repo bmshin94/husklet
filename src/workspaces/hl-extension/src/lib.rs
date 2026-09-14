@@ -55,7 +55,7 @@ pub use port::{
     ExtensionSummary,
 };
 pub use port::{ExtensionPreferences, PreferenceValue};
-pub use port::{FileChange, FileChangeKind, FileChangePage, FileInventory};
+pub use port::{FileChange, FileChangeKind, FileChangePage, FileInventory, TerminalCommandStart};
 pub use port::{
     HostError, InspectablePane, PaneInventory, PaneKind, PaneSemanticAction, PaneSemanticTree, SemanticActionKind,
     SemanticNode,

@@ -1,6 +1,7 @@
 import {
   SemanticActionOperationError,
   TerminalCommandOperationError,
+  TerminalCommandStartOperationError,
   TerminalOperationError,
   connect,
   workspace,
@@ -123,7 +124,6 @@ try {
             cancelTimeoutMs: 1_000,
           });
         } catch (cause) {
-          if (!(cause instanceof TerminalCommandOperationError)) throw cause;
           const resumedSession = await connect({
             path: configuration.path,
             pendingLimit: 8,
@@ -131,7 +131,21 @@ try {
           });
           try {
             const resumedTerminal = workspace(resumedSession).terminal;
-            result = await resumedTerminal.resumeCommandText(cause.resume);
+            if (cause instanceof TerminalCommandStartOperationError) {
+              const command = await resumedTerminal.recoverCommandStart(cause);
+              result = await resumedTerminal.resumeCommandText({
+                version: 1,
+                command,
+                after: 0,
+                stdout: [],
+                stderr: [],
+                maxBytes: 1024 * 1024,
+              });
+            } else if (cause instanceof TerminalCommandOperationError) {
+              result = await resumedTerminal.resumeCommandText(cause.resume);
+            } else {
+              throw cause;
+            }
           } finally {
             await resumedSession.close();
           }

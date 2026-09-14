@@ -13,6 +13,16 @@ export declare class TerminalCommandInputOperationError extends Error {
     readonly cause: any;
     constructor(command: any, operation: any, offset: any, input: any, close: any, cause: any);
 }
+/** A supervised command creation reply was lost; retry the exact token safely. */
+export declare class TerminalCommandStartOperationError extends Error {
+    readonly pane: any;
+    readonly command: any;
+    readonly operation: any;
+    readonly workingDirectory: any;
+    readonly stdin: any;
+    readonly cause: any;
+    constructor(pane: any, command: any, operation: any, workingDirectory: any, stdin: any, cause: any);
+}
 /** The host returned a PostgreSQL page for a different query or cursor. */
 export declare class PostgresPageProtocolError extends Error {
     readonly query: any;

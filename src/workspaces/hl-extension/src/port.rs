@@ -155,6 +155,14 @@ pub struct TerminalCommand {
     pub command: Vec<String>,
 }
 
+/// Idempotent creation receipt for one supervised terminal command.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct TerminalCommandStart {
+    /// Caller-selected identity that makes creation safe to retry after disconnect.
+    pub operation: String,
+    pub command: TerminalCommand,
+}
+
 /// Bounded, cursor-addressed output belonging to one terminal command.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct TerminalCommandOutput {

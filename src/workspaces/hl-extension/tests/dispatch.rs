@@ -723,6 +723,7 @@ fn supervised_terminal_command_has_owned_identity_output_input_and_completion_wi
     let started = active
         .dispatch(
             &Request::TerminalCommandStart {
+                operation: "1".repeat(32),
                 slot: "s1".into(),
                 generation: 0,
                 revision: 0,
@@ -733,9 +734,11 @@ fn supervised_terminal_command_has_owned_identity_output_input_and_completion_wi
             &services(&host),
         )
         .expect("an exact pane snapshot may own a supervised command");
-    let Reply::TerminalCommand(started) = started else {
+    let Reply::TerminalCommandStart(started) = started else {
         panic!("wrong start reply")
     };
+    assert_eq!(started.operation, "1".repeat(32));
+    let started = started.command;
     assert_eq!(started.id, "e".repeat(32));
     assert_eq!(started.owner, COMMAND_OWNER);
     assert_eq!(
@@ -746,6 +749,52 @@ fn supervised_terminal_command_has_owned_identity_output_input_and_completion_wi
         host.ledger.reached(),
         vec!["containers.inspect", "containers.exec", "executions.inspect"]
     );
+
+    host.ledger.clear();
+    let mut recovered_start = session(
+        &[Capability::TerminalProcessControl, Capability::TerminalInput],
+        &[],
+    )
+    .with_execution_ownership(ownership.clone());
+    let replayed = recovered_start
+        .dispatch(
+            &Request::TerminalCommandStart {
+                operation: "1".repeat(32),
+                slot: "s1".into(),
+                generation: 0,
+                revision: 0,
+                command: vec!["sh".into(), "-lc".into(), "printf ready; exit 17".into()],
+                working_directory: Some("/work".into()),
+                stdin: true,
+            },
+            &services(&host),
+        )
+        .expect("the exact creation token recovers its existing command");
+    let Reply::TerminalCommandStart(replayed) = replayed else {
+        panic!("wrong replay reply")
+    };
+    assert_eq!(replayed.command.id, started.id);
+    assert_eq!(host.ledger.reached(), vec!["executions.inspect"]);
+
+    host.ledger.clear();
+    assert!(
+        recovered_start
+            .dispatch(
+                &Request::TerminalCommandStart {
+                    operation: "1".repeat(32),
+                    slot: "s1".into(),
+                    generation: 0,
+                    revision: 0,
+                    command: vec!["sh".into(), "-lc".into(), "different".into()],
+                    working_directory: Some("/work".into()),
+                    stdin: true,
+                },
+                &services(&host),
+            )
+            .is_err(),
+        "a token cannot be rebound to another command"
+    );
+    assert!(host.ledger.reached().is_empty());
 
     host.ledger.clear();
     let written = active
@@ -1058,6 +1107,7 @@ fn pane_snapshot_fences_command_creation_but_not_its_durable_identity() {
     let host = Host::new();
     let result = session(&[Capability::TerminalProcessControl], &[]).dispatch(
         &Request::TerminalCommandStart {
+            operation: "2".repeat(32),
             slot: "s1".into(),
             generation: 0,
             revision: 1,
@@ -2173,6 +2223,7 @@ fn calls() -> Vec<(Request, Capability)> {
         ),
         (
             Request::TerminalCommandStart {
+                operation: "3".repeat(32),
                 slot: "s1".into(),
                 generation: 0,
                 revision: 0,

@@ -380,6 +380,7 @@ pub enum Request {
     /// Starts a supervised workspace command only if this exact terminal
     /// occupant snapshot still exists. Completion never depends on a prompt.
     TerminalCommandStart {
+        operation: String,
         slot: String,
         generation: u64,
         revision: u64,
@@ -949,6 +950,7 @@ pub enum Reply {
     Execution(ExecutionSummary),
     Executions(ExecutionList),
     TerminalCommand(crate::port::TerminalCommand),
+    TerminalCommandStart(crate::port::TerminalCommandStart),
     TerminalCommandOutput(crate::port::TerminalCommandOutput),
     TerminalCommandInput(crate::port::TerminalCommandInput),
     Images(crate::port::ImageInventory),

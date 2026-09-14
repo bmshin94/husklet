@@ -124,7 +124,7 @@ const REQUEST_TO_REPLY: &[(&str, &str)] = &[
     ("terminal_split_observed", "identity"),
     ("terminal_spawn", "done"),
     ("terminal_spawn_observed", "done"),
-    ("terminal_command_start", "terminal_command"),
+    ("terminal_command_start", "terminal_command_start"),
     ("terminal_command_inspect", "terminal_command"),
     ("terminal_command_output", "terminal_command_output"),
     ("terminal_command_wait", "terminal_command"),

@@ -236,6 +236,7 @@ test('LLM terminal agent runs a supervised command without parsing a prompt', as
         });
       } else if (call === 'terminal_command_start') {
         assert.deepEqual(frame.payload.with, {
+          operation: frame.payload.with.operation,
           slot: 'term',
           generation: 4,
           revision: 8,
@@ -243,8 +244,11 @@ test('LLM terminal agent runs a supervised command without parsing a prompt', as
           stdin: false,
         });
         respond(socket, frame, {
-          reply: 'terminal_command',
-          with: { id: 'e'.repeat(32), owner: commandOwner, slot: 'term', generation: 4, revision: 8, running: true, exit_code: 0, pid: 19, command: ['sh', '-lc', 'explain status'] },
+          reply: 'terminal_command_start',
+          with: {
+            operation: frame.payload.with.operation,
+            command: { id: 'e'.repeat(32), owner: commandOwner, slot: 'term', generation: 4, revision: 8, running: true, exit_code: 0, pid: 19, command: ['sh', '-lc', 'explain status'] },
+          },
         });
       } else if (call === 'terminal_command_output') {
         respond(socket, frame, {

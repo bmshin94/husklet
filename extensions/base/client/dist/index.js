@@ -33,6 +33,29 @@ export class TerminalCommandInputOperationError extends Error {
         this.cause = cause;
     }
 }
+/** A supervised command creation reply was lost; retry the exact token safely. */
+export class TerminalCommandStartOperationError extends Error {
+    pane;
+    command;
+    operation;
+    workingDirectory;
+    stdin;
+    cause;
+    constructor(pane, command, operation, workingDirectory, stdin, cause) {
+        super(`terminal command start ${operation} may have committed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+        this.name = 'TerminalCommandStartOperationError';
+        this.pane = Object.freeze({
+            slot: pane.slot,
+            generation: pane.generation,
+            revision: pane.revision,
+        });
+        this.command = Object.freeze([...command]);
+        this.operation = operation;
+        this.workingDirectory = workingDirectory;
+        this.stdin = stdin;
+        this.cause = cause;
+    }
+}
 /** The host returned a PostgreSQL page for a different query or cursor. */
 export class PostgresPageProtocolError extends Error {
     query;
@@ -2742,7 +2765,7 @@ export function workspace(session, { signal } = {}) {
                     command: [...command],
                 });
             },
-            commandStart: async (pane, command, { workingDirectory, stdin = false } = {}) => {
+            commandStart: async (pane, command, { operation: askedOperation, workingDirectory, stdin = false, } = {}) => {
                 if (typeof pane?.slot !== 'string' ||
                     pane.slot.length === 0 ||
                     !Number.isSafeInteger(pane.generation) ||
@@ -2758,20 +2781,44 @@ export function workspace(session, { signal } = {}) {
                         new TextEncoder().encode(workingDirectory).byteLength > 4096)) {
                     throw new TypeError('terminal command workingDirectory must be an absolute, NUL-free path of at most 4096 bytes');
                 }
-                const started = exactTerminalCommand(expect(await session.call('terminal_command_start', {
-                    slot: pane.slot,
-                    generation: pane.generation,
-                    revision: pane.revision,
-                    command: [...exactCommand(command)],
-                    working_directory: workingDirectory,
-                    stdin,
-                }), 'terminal_command'));
+                const operation = terminalInputOperation(askedOperation);
+                const argv = [...exactCommand(command)];
+                let response;
+                try {
+                    response = await session.call('terminal_command_start', {
+                        operation,
+                        slot: pane.slot,
+                        generation: pane.generation,
+                        revision: pane.revision,
+                        command: argv,
+                        working_directory: workingDirectory,
+                        stdin,
+                    });
+                }
+                catch (cause) {
+                    throw new TerminalCommandStartOperationError(pane, argv, operation, workingDirectory, stdin, cause);
+                }
+                const receipt = expect(response, 'terminal_command_start');
+                if (receipt.operation !== operation) {
+                    throw new TypeError('host returned a terminal command for a different start operation');
+                }
+                const started = exactTerminalCommand(receipt.command);
                 if (started.slot !== pane.slot ||
                     started.generation !== pane.generation ||
                     started.revision !== pane.revision) {
                     throw new TypeError('host started a terminal command against a different pane snapshot');
                 }
                 return started;
+            },
+            recoverCommandStart: (failure) => {
+                if (!(failure instanceof TerminalCommandStartOperationError)) {
+                    throw new TypeError('terminal command recovery requires its exact start operation error');
+                }
+                return api.terminal.commandStart(failure.pane, [...failure.command], {
+                    operation: failure.operation,
+                    workingDirectory: failure.workingDirectory,
+                    stdin: failure.stdin,
+                });
             },
             commandInspect: async (command) => sameTerminalCommand(exactTerminalCommand(command), expect(await session.call('terminal_command_inspect', {
                 id: immutableIdentity(command.id, [32], 'terminal command'),
@@ -2905,7 +2952,7 @@ export function workspace(session, { signal } = {}) {
                 }
                 return receipt;
             },
-            commandText: async (pane, { command: argv, workingDirectory, input, maxBytes, pageLimit = 16, pollIntervalMs = 25, signal: abortSignal, cancelSignal = 'SIGTERM', cancelTimeoutMs = 5_000, }) => {
+            commandText: async (pane, { command: argv, operation, workingDirectory, input, maxBytes, pageLimit = 16, pollIntervalMs = 25, signal: abortSignal, cancelSignal = 'SIGTERM', cancelTimeoutMs = 5_000, }) => {
                 if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 16 * 1024 * 1024) {
                     throw new RangeError('terminal command maxBytes must be between 1 and 16777216');
                 }
@@ -2933,6 +2980,7 @@ export function workspace(session, { signal } = {}) {
                     if (abortSignal?.aborted)
                         throw abortSignal.reason ?? new DOMException('Aborted', 'AbortError');
                     owned = await api.terminal.commandStart(pane, argv, {
+                        operation,
                         workingDirectory,
                         stdin: input !== undefined,
                     });
@@ -6761,6 +6809,7 @@ export const protocolCoverage = Object.freeze({
             'spawn',
             'spawnObserved',
             'commandStart',
+            'recoverCommandStart',
             'commandInspect',
             'commandOutput',
             'commandWait',

@@ -1003,6 +1003,16 @@ export declare class TerminalCommandInputOperationError extends Error {
   readonly cause: unknown;
 }
 
+/** A supervised command may have started before its creation reply was lost. */
+export declare class TerminalCommandStartOperationError extends Error {
+  readonly pane: Readonly<Pick<PaneText, 'slot' | 'generation' | 'revision'>>;
+  readonly command: readonly string[];
+  readonly operation: string;
+  readonly workingDirectory?: string;
+  readonly stdin: boolean;
+  readonly cause: unknown;
+}
+
 /** The host returned a PostgreSQL page for a different query or cursor. */
 export declare class PostgresPageProtocolError extends Error {
   readonly query: PostgresQueryId;
@@ -1980,8 +1990,10 @@ export interface WorkspaceApi {
     commandStart(
       pane: Pick<PaneText, 'slot' | 'generation' | 'revision'>,
       command: string[],
-      options?: { workingDirectory?: string; stdin?: boolean },
+      options?: { operation?: string; workingDirectory?: string; stdin?: boolean },
     ): Promise<TerminalCommand>;
+    /** Retry only the exact token and request retained after an ambiguous start reply. */
+    recoverCommandStart(failure: TerminalCommandStartOperationError): Promise<TerminalCommand>;
     /** Resume by immutable command identity; originating-pane replacement does not revoke it. */
     commandInspect(command: TerminalCommand): Promise<TerminalCommand>;
     commandOutput(
@@ -2016,6 +2028,8 @@ export interface WorkspaceApi {
       pane: Pick<PaneText, 'slot' | 'generation' | 'revision'>,
       options: {
         command: string[];
+        /** Durable creation token; reuse it to recover a reply-lost start without duplication. */
+        operation?: string;
         workingDirectory?: string;
         input?: string | Iterable<number>;
         maxBytes: number;

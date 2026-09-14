@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:0f97def63df67db7
+// Protocol artifact fnv1a64:2b6b5afa73cf8096
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -420,7 +420,7 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "terminal_split_observed": "identity",
   "terminal_spawn": "done",
   "terminal_spawn_observed": "done",
-  "terminal_command_start": "terminal_command",
+  "terminal_command_start": "terminal_command_start",
   "terminal_command_inspect": "terminal_command",
   "terminal_command_output": "terminal_command_output",
   "terminal_command_wait": "terminal_command",
@@ -7882,6 +7882,27 @@ const definitions = {
     "kind": "struct",
     "serde": {}
   },
+  "TerminalCommandStart": {
+    "fields": [
+      {
+        "name": "operation",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "command",
+        "optional": false,
+        "schema": {
+          "kind": "ref",
+          "name": "TerminalCommand"
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {}
+  },
   "TerminalHistoryCursor": {
     "kind": "newtype",
     "of": {
@@ -9726,6 +9747,16 @@ const roots = {
           "of": {
             "kind": "ref",
             "name": "TerminalCommand"
+          }
+        }
+      },
+      {
+        "name": "terminal_command_start",
+        "payload": {
+          "kind": "newtype",
+          "of": {
+            "kind": "ref",
+            "name": "TerminalCommandStart"
           }
         }
       },
@@ -11999,6 +12030,13 @@ const roots = {
         "name": "terminal_command_start",
         "payload": {
           "fields": [
+            {
+              "name": "operation",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            },
             {
               "name": "slot",
               "optional": false,

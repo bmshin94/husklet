@@ -109,6 +109,34 @@ export class TerminalCommandInputOperationError extends Error {
   }
 }
 
+/** A supervised command creation reply was lost; retry the exact token safely. */
+export class TerminalCommandStartOperationError extends Error {
+  readonly pane;
+  readonly command;
+  readonly operation;
+  readonly workingDirectory;
+  readonly stdin;
+  readonly cause;
+
+  constructor(pane, command, operation, workingDirectory, stdin, cause) {
+    super(
+      `terminal command start ${operation} may have committed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
+    this.name = 'TerminalCommandStartOperationError';
+    this.pane = Object.freeze({
+      slot: pane.slot,
+      generation: pane.generation,
+      revision: pane.revision,
+    });
+    this.command = Object.freeze([...command]);
+    this.operation = operation;
+    this.workingDirectory = workingDirectory;
+    this.stdin = stdin;
+    this.cause = cause;
+  }
+}
+
 /** The host returned a PostgreSQL page for a different query or cursor. */
 export class PostgresPageProtocolError extends Error {
   readonly query;
@@ -3531,7 +3559,11 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       commandStart: async (
         pane,
         command,
-        { workingDirectory, stdin = false }: { workingDirectory?: string; stdin?: boolean } = {},
+        {
+          operation: askedOperation,
+          workingDirectory,
+          stdin = false,
+        }: { operation?: string; workingDirectory?: string; stdin?: boolean } = {},
       ) => {
         if (
           typeof pane?.slot !== 'string' ||
@@ -3554,19 +3586,34 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
             'terminal command workingDirectory must be an absolute, NUL-free path of at most 4096 bytes',
           );
         }
-        const started = exactTerminalCommand(
-          expect(
-            await session.call('terminal_command_start', {
-              slot: pane.slot,
-              generation: pane.generation,
-              revision: pane.revision,
-              command: [...exactCommand(command)],
-              working_directory: workingDirectory,
-              stdin,
-            }),
-            'terminal_command',
-          ),
-        );
+        const operation = terminalInputOperation(askedOperation);
+        const argv = [...exactCommand(command)];
+        let response;
+        try {
+          response = await session.call('terminal_command_start', {
+            operation,
+            slot: pane.slot,
+            generation: pane.generation,
+            revision: pane.revision,
+            command: argv,
+            working_directory: workingDirectory,
+            stdin,
+          });
+        } catch (cause) {
+          throw new TerminalCommandStartOperationError(
+            pane,
+            argv,
+            operation,
+            workingDirectory,
+            stdin,
+            cause,
+          );
+        }
+        const receipt = expect(response, 'terminal_command_start');
+        if (receipt.operation !== operation) {
+          throw new TypeError('host returned a terminal command for a different start operation');
+        }
+        const started = exactTerminalCommand(receipt.command);
         if (
           started.slot !== pane.slot ||
           started.generation !== pane.generation ||
@@ -3575,6 +3622,16 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           throw new TypeError('host started a terminal command against a different pane snapshot');
         }
         return started;
+      },
+      recoverCommandStart: (failure) => {
+        if (!(failure instanceof TerminalCommandStartOperationError)) {
+          throw new TypeError('terminal command recovery requires its exact start operation error');
+        }
+        return api.terminal.commandStart(failure.pane, [...failure.command], {
+          operation: failure.operation,
+          workingDirectory: failure.workingDirectory,
+          stdin: failure.stdin,
+        });
       },
       commandInspect: async (command) =>
         sameTerminalCommand(
@@ -3764,6 +3821,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         pane,
         {
           command: argv,
+          operation,
           workingDirectory,
           input,
           maxBytes,
@@ -3801,6 +3859,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           if (abortSignal?.aborted)
             throw abortSignal.reason ?? new DOMException('Aborted', 'AbortError');
           owned = await api.terminal.commandStart(pane, argv, {
+            operation,
             workingDirectory,
             stdin: input !== undefined,
           });
@@ -8242,6 +8301,7 @@ export const protocolCoverage = Object.freeze({
       'spawn',
       'spawnObserved',
       'commandStart',
+      'recoverCommandStart',
       'commandInspect',
       'commandOutput',
       'commandWait',
