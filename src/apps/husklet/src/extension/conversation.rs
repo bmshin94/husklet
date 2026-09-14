@@ -1862,6 +1862,7 @@ mod tests {
         fn inspect(&self, name: &str) -> Result<hl_extension::WorkspaceConfiguration, HostError> {
             self.ledger.note("workspace.inspect");
             Ok(hl_extension::WorkspaceConfiguration {
+                postgres: None,
                 generation: "0123456789abcdef0123456789abcdef".into(),
                 configuration_revision: "abcdef0123456789abcdef0123456789".into(),
                 name: name.into(),
@@ -3615,6 +3616,7 @@ mod tests {
             &mut wire,
             &Request::WorkspaceCreate {
                 configuration: hl_extension::WorkspaceConfiguration {
+                    postgres: None,
                     generation: "0123456789abcdef0123456789abcdef".into(),
                     configuration_revision: "abcdef0123456789abcdef0123456789".into(),
                     name: "agent-created".into(),

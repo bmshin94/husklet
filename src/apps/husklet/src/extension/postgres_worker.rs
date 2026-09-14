@@ -68,7 +68,7 @@ struct Lease {
 enum Cancellation {
     #[cfg(test)]
     Plain(tokio_postgres::CancelToken),
-    Tls(tokio_postgres::CancelToken),
+    Tls(tokio_postgres::CancelToken, tokio_postgres_rustls::MakeRustlsConnect),
 }
 
 /// One connection-owning worker. Production construction will require the TLS
@@ -272,13 +272,18 @@ impl Peer for QueryWorker {
                 _ => None,
             })
             .ok_or_else(|| HostError::Conflict("postgres password authentication is required".into()))?;
-        if material.credentials().len() != 1 {
+        if material.credentials().iter().any(|credential| {
+            matches!(
+                credential,
+                DatabaseCredential::ClientCertificate(_) | DatabaseCredential::ClientPrivateKey(_)
+            )
+        }) {
             return Err(HostError::Conflict(
-                "postgres production transport currently accepts exactly one password credential".into(),
+                "postgres client certificate authentication is not yet supported".into(),
             ));
         }
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-        let tls = native_tls()?;
+        let tls = self.tls(material)?;
         let (connect_timeout_ms, io_timeout_ms) = endpoint.timeouts_ms();
         let mut config = tokio_postgres::Config::new();
         config
@@ -295,13 +300,13 @@ impl Peer for QueryWorker {
             .wait(async {
                 tokio::time::timeout(
                     Duration::from_millis(u64::from(connect_timeout_ms)),
-                    config.connect(tls),
+                    config.connect(tls.clone()),
                 )
                 .await
             })
             .map_err(|_| unavailable("postgres TLS connection timed out"))?
             .map_err(unavailable_error)?;
-        let cancellation = Cancellation::Tls(client.cancel_token());
+        let cancellation = Cancellation::Tls(client.cancel_token(), tls.clone());
         self.executor.spawn(async move {
             if let Err(error) = driver.await {
                 hl_log::hl_error!(hl_log::tag::RUNTIME, "postgres connection ended: {error}");
@@ -369,10 +374,9 @@ impl Peer for QueryWorker {
                 .wait(async { tokio::time::timeout(lease.timeout, token.cancel_query(tokio_postgres::NoTls)).await })
                 .map_err(|_| unavailable("postgres cancellation timed out"))?
                 .map_err(unavailable_error)?,
-            Cancellation::Tls(token) => {
-                let tls = native_tls()?;
+            Cancellation::Tls(token, tls) => {
                 self.executor
-                    .wait(async { tokio::time::timeout(lease.timeout, token.cancel_query(tls)).await })
+                    .wait(async { tokio::time::timeout(lease.timeout, token.cancel_query(tls.clone())).await })
                     .map_err(|_| unavailable("postgres cancellation timed out"))?
                     .map_err(unavailable_error)?;
             }
@@ -400,6 +404,34 @@ impl Peer for QueryWorker {
             .remove(lease.as_str())
             .map(|_| ())
             .ok_or_else(|| HostError::Absent("postgres lease is not live".into()))
+    }
+}
+
+impl QueryWorker {
+    fn tls(&self, material: &DatabaseAuthentication) -> Result<tokio_postgres_rustls::MakeRustlsConnect, HostError> {
+        let certificates: Vec<_> = material
+            .credentials()
+            .iter()
+            .filter_map(|credential| match credential {
+                DatabaseCredential::RootCertificate(secret) => Some(secret.as_bytes()),
+                _ => None,
+            })
+            .collect();
+        if certificates.is_empty() {
+            native_tls()
+        } else {
+            let mut roots = rustls::RootCertStore::empty();
+            for certificate in certificates {
+                roots
+                    .add(rustls::pki_types::CertificateDer::from(certificate.to_vec()))
+                    .map_err(|_| HostError::Unavailable("postgres trust root is invalid".into()))?;
+            }
+            Ok(tokio_postgres_rustls::MakeRustlsConnect::new(
+                rustls::ClientConfig::builder()
+                    .with_root_certificates(roots)
+                    .with_no_client_auth(),
+            ))
+        }
     }
 }
 
@@ -433,6 +465,7 @@ mod tests {
     use hl_extension::QueryOperationToken;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::sync::Arc;
 
     fn frame(kind: u8, body: &[u8]) -> Vec<u8> {
         let mut value = vec![kind];
@@ -494,6 +527,93 @@ mod tests {
                 .unwrap();
         });
         (address, received)
+    }
+
+    fn tls_fixture() -> (std::net::SocketAddr, Vec<u8>, std::thread::JoinHandle<()>) {
+        let certified = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let certificate = rustls::pki_types::CertificateDer::from(certified.cert);
+        let private_key = rustls::pki_types::PrivatePkcs8KeyDer::from(certified.signing_key.serialize_der());
+        let server = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![certificate.clone()], private_key.into())
+            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let joined = std::thread::spawn(move || {
+            let (mut tcp, _) = listener.accept().unwrap();
+            let mut ssl_request = [0; 8];
+            tcp.read_exact(&mut ssl_request).unwrap();
+            assert_eq!(u32::from_be_bytes(ssl_request[4..].try_into().unwrap()), 80_877_103);
+            tcp.write_all(b"S").unwrap();
+            let connection = rustls::ServerConnection::new(Arc::new(server)).unwrap();
+            let mut stream = rustls::StreamOwned::new(connection, tcp);
+            let mut length = [0; 4];
+            if stream.read_exact(&mut length).is_err() {
+                return;
+            }
+            let mut startup = vec![0; u32::from_be_bytes(length) as usize - 4];
+            stream.read_exact(&mut startup).unwrap();
+            for message in [frame(b'R', &0u32.to_be_bytes()), frame(b'Z', b"I")] {
+                for byte in message {
+                    stream.write_all(&[byte]).unwrap();
+                    stream.flush().unwrap();
+                }
+            }
+            let mut header = [0; 5];
+            stream.read_exact(&mut header).unwrap();
+            let length = u32::from_be_bytes(header[1..].try_into().unwrap()) as usize;
+            let mut query = vec![0; length - 4];
+            stream.read_exact(&mut query).unwrap();
+            let mut description = Vec::new();
+            description.extend_from_slice(&1u16.to_be_bytes());
+            description.extend_from_slice(b"value\0");
+            description.extend_from_slice(&0u32.to_be_bytes());
+            description.extend_from_slice(&0i16.to_be_bytes());
+            description.extend_from_slice(&25u32.to_be_bytes());
+            description.extend_from_slice(&(-1i16).to_be_bytes());
+            description.extend_from_slice(&(-1i32).to_be_bytes());
+            description.extend_from_slice(&0i16.to_be_bytes());
+            let mut row = Vec::new();
+            row.extend_from_slice(&1u16.to_be_bytes());
+            row.extend_from_slice(&2u32.to_be_bytes());
+            row.extend_from_slice(b"ok");
+            for message in [
+                frame(b'T', &description),
+                frame(b'D', &row),
+                frame(b'C', b"SELECT 1\0"),
+                frame(b'Z', b"I"),
+            ] {
+                for byte in message {
+                    stream.write_all(&[byte]).unwrap();
+                    stream.flush().unwrap();
+                }
+            }
+        });
+        (address, certificate.as_ref().to_vec(), joined)
+    }
+
+    fn connection(port: u16) -> PostgresConnection {
+        PostgresConnection {
+            container_id: "a".repeat(64),
+            container_generation: 1,
+            network: "database".into(),
+            port,
+            database: "fixture".into(),
+            user: "fixture".into(),
+            credential_keys: vec!["db.password".into()],
+        }
+    }
+
+    fn password(root: Option<Vec<u8>>) -> DatabaseAuthentication {
+        let mut credentials = vec![DatabaseCredential::Password(super::super::postgres::Secret::new(
+            b"not-logged".to_vec(),
+        ))];
+        if let Some(root) = root {
+            credentials.push(DatabaseCredential::RootCertificate(
+                super::super::postgres::Secret::new(root),
+            ));
+        }
+        DatabaseAuthentication::new(credentials).unwrap()
     }
 
     #[test]
@@ -579,10 +699,55 @@ mod tests {
             super::super::postgres::Secret::new(b"not-logged".to_vec()),
         )])
         .unwrap();
-        assert!(matches!(
-            worker.open(&connection, &endpoint, &material),
-            Err(HostError::Unavailable(_))
-        ));
+        let error = worker.open(&connection, &endpoint, &material).unwrap_err();
+        assert!(matches!(error, HostError::Unavailable(_)));
+        let visible = error.to_string();
+        assert!(!visible.contains("not-logged"));
+        assert!(!format!("{error:?}").contains("not-logged"));
         observed.join().unwrap();
+    }
+
+    #[test]
+    fn injected_root_accepts_fragmented_tls_postgres_and_runs_a_query() {
+        let (address, root, server) = tls_fixture();
+        let worker = QueryWorker::owned();
+        let endpoint = DatabaseEndpoint::new(
+            address,
+            super::super::postgres::DatabaseTls::verify_full("localhost").unwrap(),
+            2_000,
+            2_000,
+        )
+        .unwrap();
+        let lease = worker
+            .open(&connection(address.port()), &endpoint, &password(Some(root)))
+            .unwrap();
+        let query = PostgresQuery::new(QueryOperationToken::new("tls-query").unwrap(), "select 1", 8, 64).unwrap();
+        let id = worker.start(&lease, &query).unwrap();
+        let page = worker.page(&lease, &id, None).unwrap();
+        assert_eq!(page.columns, vec!["value"]);
+        assert_eq!(page.rows, vec![vec![Some("ok".into())]]);
+        assert!(page.next_cursor.is_none());
+        worker.close_lease(&lease).unwrap();
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn injected_root_rejects_the_wrong_tls_server_name_without_disclosing_secret() {
+        let (address, root, server) = tls_fixture();
+        let worker = QueryWorker::owned();
+        let endpoint = DatabaseEndpoint::new(
+            address,
+            super::super::postgres::DatabaseTls::verify_full("database.invalid").unwrap(),
+            2_000,
+            2_000,
+        )
+        .unwrap();
+        let error = worker
+            .open(&connection(address.port()), &endpoint, &password(Some(root)))
+            .unwrap_err();
+        assert!(matches!(error, HostError::Unavailable(_)));
+        assert!(!error.to_string().contains("not-logged"));
+        assert!(!format!("{error:?}").contains("not-logged"));
+        server.join().unwrap();
     }
 }
