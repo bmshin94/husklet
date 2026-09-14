@@ -49,7 +49,9 @@ test('digest-pinned same-version review rejects a substituted image over real Un
                     version: '2.0.0',
                     enabled: true,
                     status: 'duty',
-                    pane_providers: [],
+                    pane_providers: [
+                      { id: 'playground', title: 'Component playground', icon: null },
+                    ],
                   },
                 ],
               }
@@ -108,6 +110,7 @@ test('digest-pinned same-version review rejects a substituted image over real Un
     stage = host();
     stage.render(h(Extensions, { api: workspace(session) }));
     await until(() => labelled(stage, 'Review update'));
+    assert.ok(labelled(stage, 'Open'));
     assert.ok(labelled(stage, 'Update to Version 2.0.0 · Compatibility not declared'));
     invokeByLabel(stage, 'Review update');
     await until(() => labelled(stage, 'Catalogue verification could not be completed.'));

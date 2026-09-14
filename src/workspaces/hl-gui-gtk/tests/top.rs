@@ -4564,6 +4564,12 @@ mod unix {
                         title: "Component playground".into(),
                         icon: Some("applications-graphics-symbolic".into()),
                     }]
+                } else if name == "developer-tool-01" {
+                    vec![PaneProvider {
+                        id: ExtensionName::new("dashboard").expect("valid provider id"),
+                        title: "Developer dashboard".into(),
+                        icon: None,
+                    }]
                 } else if name == "installed-07" {
                     vec![PaneProvider {
                         id: ExtensionName::new("observability").expect("valid provider id"),
@@ -5330,11 +5336,11 @@ mod unix {
             .expect("healthy installed extension belongs to a card");
         let mut attention_cards = vec![("fault", first.clone())];
         if let Some(action) = find_button_optional(root, "Review update") {
-            attention_cards.push((
-                "update",
-                ancestor_with_class(action.upcast_ref(), "hl-card")
-                    .expect("update-required extension action belongs to a card"),
-            ));
+            let card = ancestor_with_class(action.upcast_ref(), "hl-card")
+                .expect("update-required extension action belongs to a card");
+            let open = find_tooltip_button(&card, "Open Developer dashboard");
+            assert_standard_action(&open, case, "updated extension provider", 28);
+            attention_cards.push(("update", card));
         }
         for (label, card) in &attention_cards {
             let section_width = card.parent().expect("attention card belongs to its section").width();

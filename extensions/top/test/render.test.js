@@ -1872,6 +1872,7 @@ test('an installed catalogue extension exposes its update review without retypin
               version: '1.0.0',
               enabled: true,
               status: 'duty',
+              pane_providers: [{ id: 'playground', title: 'Component playground', icon: null }],
             },
           ],
           catalogue: firstPartyCatalogue,
@@ -1906,12 +1907,21 @@ test('an installed catalogue extension exposes its update review without retypin
     { ControlSize: 'Small' },
     'installed update review keeps its management card compact',
   );
+  assert.ok(
+    labelledInCard(stage, 'storybook', 'Open').length,
+    'an advertised update does not prevent opening the installed extension',
+  );
   selectExtensionMode(stage, 'Discover');
   await settled();
   assert.equal(
     labelledInCard(stage, 'Component playground', 'Review update').length,
     1,
     'the Discover update card owns an immediate review action',
+  );
+  assert.equal(
+    labelledInCard(stage, 'Component playground', 'Open').length,
+    1,
+    'the Discover update card retains its existing provider action',
   );
   assert.deepEqual(
     taggedProperty(stage, 'Review update', 'Button', 'Size'),

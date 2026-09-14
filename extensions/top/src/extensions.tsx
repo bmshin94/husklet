@@ -1618,20 +1618,25 @@ export function Extensions({
                                     providerAction(installedExtension, provider)
                                   ) : null
                                 ) : updateAvailable ? (
-                                  <Button
-                                    label="Review update"
-                                    tooltip={`Review the ${entry.version} update for ${entry.title}`}
-                                    size="small"
-                                    variant="filled"
-                                    tone="accent"
-                                    enabled={
-                                      catalogueAuthoritative &&
-                                      workspaceIdentityState === 'ready' &&
-                                      !busy &&
-                                      compatibility.compatible !== false
-                                    }
-                                    onInvoke={() => inspect(entry.reference, entry)}
-                                  />
+                                  <>
+                                    <Button
+                                      label="Review update"
+                                      tooltip={`Review the ${entry.version} update for ${entry.title}`}
+                                      size="small"
+                                      variant="filled"
+                                      tone="accent"
+                                      enabled={
+                                        catalogueAuthoritative &&
+                                        workspaceIdentityState === 'ready' &&
+                                        !busy &&
+                                        compatibility.compatible !== false
+                                      }
+                                      onInvoke={() => inspect(entry.reference, entry)}
+                                    />
+                                    {installedExtension && installedExtension.enabled && provider
+                                      ? providerAction(installedExtension, provider)
+                                      : null}
+                                  </>
                                 ) : !installedExtension ? (
                                   <Button
                                     label="Review install"
@@ -2640,7 +2645,7 @@ export function Extensions({
                                             enabled={!busy}
                                             onInvoke={() => lifecycle(extension, 'enable')}
                                           />
-                                        ) : !update && provider ? (
+                                        ) : extension.enabled && provider ? (
                                           providerAction(extension, provider)
                                         ) : null}
                                         {!builtIn && !update && catalogueEntry ? (
