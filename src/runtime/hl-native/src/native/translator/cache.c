@@ -2465,6 +2465,93 @@ static void jit_body_owner_highwater_publish(unsigned exclusive) {
            !atomic_compare_exchange_weak_explicit(&g_body_owner_highwater, &current, exclusive,
                                                   memory_order_release, memory_order_relaxed)) {}
 }
+
+#define JIT_BODY_OWNER_SLOTS (sizeof(g_body_owners) / sizeof(g_body_owners[0]))
+
+/* Occupancy index over g_body_owners (HL_X86_OWNER_INDEX, off by default).
+
+   jit_body_owner_set_for() answers "which slot owns this generation?" by
+   walking all JIT_BODY_OWNER_SLOTS entries, and a MISS costs the whole walk.
+   The shared dispatcher asks exactly that question once per translation, from
+   jit_cache_needs_rotation() -> jit_body_owner_needs_rotation(), before it
+   ever emits a byte -- so the per-translation cost of the walk is paid by
+   every guest block on every thread, under the dispatch mutex, and does not
+   depend on what is being translated.
+
+   The set of OCCUPIED slots, by contrast, is tiny: one per simultaneously
+   retained cache generation, which is one in the steady state and bounded by
+   the number of retired caches a flush may leave pinned.  Recording those slot
+   indices as they are published turns the query into a walk of the live
+   population instead of a walk of the capacity.
+
+   This is an occupancy index, not a cache: a slot is in g_body_owner_live if
+   and only if its `entry` has been published and not yet detached, so a lookup
+   that consults it sees exactly the slots the full walk would have accepted.
+   Every candidate is still re-validated against the slot's own released
+   `entry` and its `generation`, with the same acquire load the full walk uses,
+   so the index narrows WHICH slots are examined and never decides membership.
+   Maintenance happens at the three points that already mutate `entry`, under
+   the same lock/quiescence those mutations require, so the index is updated
+   in lockstep with the occupancy it describes.  It is maintained
+   unconditionally -- the launch option selects only whether lookups consult
+   it -- so arming the option cannot expose a half-built index. */
+static unsigned g_body_owner_live[STW_RETIRED_MAX + 1];
+static _Atomic unsigned g_body_owner_live_n;
+
+static int g_body_owner_index_state = -1;
+static int jit_body_owner_index_selected(void) {
+    if (g_body_owner_index_state < 0) g_body_owner_index_state = hl_option_flag_value("HL_X86_OWNER_INDEX", 0);
+    return g_body_owner_index_state;
+}
+
+/* Append a freshly published slot.  The index write precedes the release store
+   of the bound, mirroring jit_body_owner_set_for's publication of `entry`: a
+   reader that observes the new bound observes the index word behind it. */
+static void jit_body_owner_index_insert(unsigned slot) {
+    unsigned n = atomic_load_explicit(&g_body_owner_live_n, memory_order_relaxed);
+    if (n >= JIT_BODY_OWNER_SLOTS) return; /* cannot happen: one live slot per slot */
+    for (unsigned i = 0; i < n; i++)
+        if (g_body_owner_live[i] == slot) return;
+    g_body_owner_live[n] = slot;
+    atomic_store_explicit(&g_body_owner_live_n, n + 1u, memory_order_release);
+}
+
+/* Drop a detached slot.  Reached only from the quiescent writers that detach
+   `entry` itself (generation reclamation and the fork/teardown clear), so the
+   swap-with-last compaction cannot race a concurrent lookup. */
+static void jit_body_owner_index_remove(unsigned slot) {
+    unsigned n = atomic_load_explicit(&g_body_owner_live_n, memory_order_relaxed);
+    for (unsigned i = 0; i < n; i++) {
+        if (g_body_owner_live[i] != slot) continue;
+        g_body_owner_live[i] = g_body_owner_live[n - 1u];
+        atomic_store_explicit(&g_body_owner_live_n, n - 1u, memory_order_release);
+        return;
+    }
+}
+
+/* The index-narrowed form of the full walk's acceptance test. */
+static jit_body_owner_set *jit_body_owner_set_indexed(uint64_t generation) {
+    unsigned n = atomic_load_explicit(&g_body_owner_live_n, memory_order_acquire);
+    if (n > JIT_BODY_OWNER_SLOTS) n = JIT_BODY_OWNER_SLOTS;
+    for (unsigned i = 0; i < n; i++) {
+        unsigned slot = g_body_owner_live[i];
+        if (slot >= JIT_BODY_OWNER_SLOTS) continue;
+        jit_body_owner_entry *entries = atomic_load_explicit(&g_body_owners[slot].entry, memory_order_acquire);
+        if (entries != NULL && g_body_owners[slot].generation == generation) return &g_body_owners[slot];
+    }
+    return NULL;
+}
+
+/* First unpublished slot, in the same order the full walk would have chosen.
+   Allocation happens once per cache generation, never per translation, so this
+   walk is off the measured path and the index deliberately does not shortcut
+   it: keeping the identical choice keeps published slot identities stable. */
+static jit_body_owner_set *jit_body_owner_first_empty(void) {
+    for (size_t i = 0; i < JIT_BODY_OWNER_SLOTS; i++)
+        if (atomic_load_explicit(&g_body_owners[i].entry, memory_order_acquire) == NULL)
+            return &g_body_owners[i];
+    return NULL;
+}
 #if defined(HL_NATIVE_TEST_HOOKS)
 static _Atomic int g_body_owner_publish_pause;
 static _Atomic int g_body_owner_publish_slot;
@@ -2481,10 +2568,17 @@ static int g_perf_map_fresh_rollover_test_armed;
 
 static jit_body_owner_set *jit_body_owner_set_for(uint64_t generation, int create) {
     jit_body_owner_set *empty = NULL;
-    for (size_t i = 0; i < sizeof(g_body_owners) / sizeof(g_body_owners[0]); i++) {
-        jit_body_owner_entry *entries = atomic_load_explicit(&g_body_owners[i].entry, memory_order_acquire);
-        if (entries != NULL && g_body_owners[i].generation == generation) return &g_body_owners[i];
-        if (empty == NULL && entries == NULL) empty = &g_body_owners[i];
+    if (jit_body_owner_index_selected()) {
+        jit_body_owner_set *live = jit_body_owner_set_indexed(generation);
+        if (live != NULL) return live;
+        if (!create) return NULL;
+        empty = jit_body_owner_first_empty();
+    } else {
+        for (size_t i = 0; i < sizeof(g_body_owners) / sizeof(g_body_owners[0]); i++) {
+            jit_body_owner_entry *entries = atomic_load_explicit(&g_body_owners[i].entry, memory_order_acquire);
+            if (entries != NULL && g_body_owners[i].generation == generation) return &g_body_owners[i];
+            if (empty == NULL && entries == NULL) empty = &g_body_owners[i];
+        }
     }
     if (!create || empty == NULL) return NULL;
     // Keep the 16-byte search entry compact: one parallel 16-bit mask per range carries the complete
@@ -2515,6 +2609,7 @@ static jit_body_owner_set *jit_body_owner_set_for(uint64_t generation, int creat
 #endif
     jit_body_owner_highwater_publish((unsigned)(empty - g_body_owners) + 1u);
     atomic_store_explicit(&empty->entry, entries, memory_order_release);
+    jit_body_owner_index_insert((unsigned)(empty - g_body_owners));
     return empty;
 }
 
@@ -2725,6 +2820,7 @@ static void jit_body_owner_drop_generation(uint64_t generation) {
         g_body_owners[i].rw = NULL;
         g_body_owners[i].rw2rx = 0;
         atomic_store_explicit(&g_body_owners[i].count, 0, memory_order_relaxed);
+        jit_body_owner_index_remove((unsigned)i);
         return;
     }
 }
@@ -2755,6 +2851,7 @@ static void jit_body_owner_clear(void) {
         atomic_store_explicit(&g_body_owners[i].count, 0, memory_order_relaxed);
     }
     atomic_store_explicit(&g_body_owner_highwater, 0, memory_order_release);
+    atomic_store_explicit(&g_body_owner_live_n, 0, memory_order_release);
 }
 
 static void jit_body_owner_after_fork(int preserve) {

@@ -151,6 +151,9 @@ struct LaunchArguments {
     /// Fold [base+displacement] x86 r/m memory loads into one addressing-mode load (off by default).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
     x86_rmload_fold: Option<TranslitFeatureControl>,
+    /// Resolve the x86 body-owner generation slot through an occupancy index instead of a full table walk (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_owner_index: Option<TranslitFeatureControl>,
     /// Control automatic same-ISA native syscall supervision.
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true)]
     native_supervised: Option<NativeSupervisedControl>,
@@ -475,6 +478,11 @@ fn execute(guest: Guest, launch: &LaunchArguments) -> Result<hl_engine::engine::
             "--x86-rmload-fold is available only in the x86-64 worker".to_owned(),
         ));
     }
+    if launch.x86_owner_index.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-owner-index is available only in the x86-64 worker".to_owned(),
+        ));
+    }
     if launch.translit_fs_load_bridge.is_some() && guest != Guest::X86_64 {
         return Err(Failure::Request(
             "--translit-fs-load-bridge is available only in the x86-64 worker".to_owned(),
@@ -609,6 +617,7 @@ fn rootfs_plan(
     for (control, name) in [
         (launch.x86_ea_record_elide, "HL_X86_EA_RECORD_ELIDE"),
         (launch.x86_rmload_fold, "HL_X86_RMLOAD_FOLD"),
+        (launch.x86_owner_index, "HL_X86_OWNER_INDEX"),
         (launch.translit_riprel_readonly, "HL_TRANSLIT_RIPREL_READONLY"),
         (launch.translit_riprel_load_bridge, "HL_TRANSLIT_RIPREL_LOAD_BRIDGE"),
         (launch.translit_fs_load_bridge, "HL_TRANSLIT_FS_LOAD_BRIDGE"),
@@ -963,6 +972,7 @@ mod tests {
         assert_eq!(defaults.x86_prologue_thunk, None);
         assert_eq!(defaults.x86_ea_record_elide, None);
         assert_eq!(defaults.x86_rmload_fold, None);
+        assert_eq!(defaults.x86_owner_index, None);
         assert_eq!(defaults.exec_ibtc_lazy, None);
         assert_eq!(defaults.native_supervised, None);
 
@@ -979,6 +989,7 @@ mod tests {
             "--x86-prologue-thunk=on",
             "--x86-ea-record-elide=on",
             "--x86-rmload-fold=off",
+            "--x86-owner-index=on",
             "--exec-ibtc-lazy=on",
             "--native-supervised",
             "--rootfs",
@@ -1009,6 +1020,7 @@ mod tests {
         assert_eq!(selected.x86_prologue_thunk, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.x86_ea_record_elide, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.x86_rmload_fold, Some(super::TranslitFeatureControl::Off));
+        assert_eq!(selected.x86_owner_index, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.exec_ibtc_lazy, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.native_supervised, Some(super::NativeSupervisedControl::On));
         assert_eq!(selected.rootfs.as_deref(), Some(std::path::Path::new("/image")));
@@ -1518,6 +1530,7 @@ mod tests {
         assert_eq!(defaults.options.get("HL_X86_PROLOGUE_THUNK"), None);
         assert_eq!(defaults.options.get("HL_X86_EA_RECORD_ELIDE"), None);
         assert_eq!(defaults.options.get("HL_X86_RMLOAD_FOLD"), None);
+        assert_eq!(defaults.options.get("HL_X86_OWNER_INDEX"), None);
         assert_eq!(defaults.options.get("HL_EXEC_IBTC_LAZY"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_FS_LOAD_BRIDGE"), None);
         assert_eq!(defaults.options.get("HL_NATIVE_SUPERVISED"), None);

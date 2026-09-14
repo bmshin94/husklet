@@ -228,6 +228,11 @@ const DEFINITIONS: &[Definition] = &[
         Flag
     ),
     launch!(
+        "HL_X86_OWNER_INDEX",
+        "resolve the x86 body-owner generation slot through an occupancy index instead of a full table walk",
+        Flag
+    ),
+    launch!(
         "HL_TRANSLIT_DIRECT_JMP_IBTC_DISABLE",
         "disable direct-JMP late linking through the same-ISA IBTC",
         Flag
