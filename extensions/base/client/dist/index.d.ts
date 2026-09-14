@@ -71,6 +71,12 @@ export declare class ImagePullStartProtocolError extends Error {
     readonly receivedReference: any;
     constructor(expectedReference: any, receivedReference: any);
 }
+/** The host returned image-pull status for another job or reference. */
+export declare class ImagePullStatusProtocolError extends Error {
+    readonly expected: any;
+    readonly received: any;
+    constructor(expected: any, received: any);
+}
 /** A credential removal may have committed before its reply was lost. */
 export declare class CredentialRemoveOperationError extends Error {
     readonly key: any;

@@ -146,6 +146,17 @@ export class ImagePullStartProtocolError extends Error {
         this.receivedReference = receivedReference;
     }
 }
+/** The host returned image-pull status for another job or reference. */
+export class ImagePullStatusProtocolError extends Error {
+    expected;
+    received;
+    constructor(expected, received) {
+        super('host returned image-pull status for another job or reference');
+        this.name = 'ImagePullStatusProtocolError';
+        this.expected = Object.freeze({ ...expected });
+        this.received = Object.freeze({ job: received.job, reference: received.reference });
+    }
+}
 /** A credential removal may have committed before its reply was lost. */
 export class CredentialRemoveOperationError extends Error {
     key;
@@ -2703,6 +2714,8 @@ export function workspace(session, { signal } = {}) {
                         if (Date.now() >= deadline)
                             throw new Error(`image pull timed out after ${timeoutMs}ms`);
                         const status = expect(await session.call('image_pull_status', { job }), 'image_pull');
+                        if (status.job !== job)
+                            throw new ImagePullStatusProtocolError({ job }, status);
                         if (status.state === 'complete' && status.image)
                             return status.image;
                         if (status.state === 'failed')
@@ -2728,7 +2741,12 @@ export function workspace(session, { signal } = {}) {
                     throw new ImagePullStartProtocolError(reference, job.reference);
                 return job;
             },
-            pullStatus: async (job) => expect(await session.call('image_pull_status', { job }), 'image_pull'),
+            pullStatus: async (job) => {
+                const status = expect(await session.call('image_pull_status', { job }), 'image_pull');
+                if (status.job !== job)
+                    throw new ImagePullStatusProtocolError({ job }, status);
+                return status;
+            },
             cancelPull: (job) => done('image_pull_cancel', { job }),
             remove: (reference) => done('image_remove', { reference: immutableDigest(reference, 'image') }),
             prune: async () => expect(await session.call('image_prune'), 'image_prune'),

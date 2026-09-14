@@ -18,6 +18,7 @@ import {
   FileWriteOperationError,
   FilesystemJournalGapError,
   ImagePullStartProtocolError,
+  ImagePullStatusProtocolError,
   JsonLineDecodeError,
   JsonLineParseError,
   PaneInventoryChangedError,
@@ -38,13 +39,38 @@ test('fragmented Unix image pull refuses a job for another reference', async () 
     const reader = new Reader();
     socket.on('data', (chunk) => {
       for (const frame of reader.take(chunk)) {
+        if (frame.payload.call === 'image_pull_status') {
+          const reply = encode({
+            channel: 2,
+            kind: KIND.response,
+            payload: {
+              reply: 'image_pull',
+              with: {
+                job: 'another-job',
+                reference: 'registry.example/private:latest',
+                revision: 1,
+                state: 'pulling',
+              },
+            },
+          });
+          for (const byte of reply) socket.write(Uint8Array.of(byte));
+          continue;
+        }
+        if (frame.payload.call === 'image_pull_cancel') {
+          socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
+          continue;
+        }
         if (frame.payload.call !== 'image_pull_start') continue;
+        const requested = frame.payload.with.reference;
         const reply = encode({
           channel: 2,
           kind: KIND.response,
           payload: {
             reply: 'image_pull_job',
-            with: { job: 'hostile-job', reference: 'registry.example/private:latest' },
+            with:
+              requested === 'alpine:3.20'
+                ? { job: 'hostile-job', reference: 'registry.example/private:latest' }
+                : { job: 'safe-job', reference: requested },
           },
         });
         for (const byte of reply) socket.write(Uint8Array.of(byte));
@@ -65,6 +91,10 @@ test('fragmented Unix image pull refuses a job for another reference', async () 
     await assert.rejects(
       workspace(session).images.startPull('alpine:3.20'),
       (error) => error instanceof ImagePullStartProtocolError,
+    );
+    await assert.rejects(
+      workspace(session).images.pull('busybox:1.36', { timeoutMs: 20 }),
+      (error) => error instanceof ImagePullStatusProtocolError,
     );
   } finally {
     await session?.close();

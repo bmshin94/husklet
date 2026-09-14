@@ -478,6 +478,11 @@ export declare class ImagePullStartProtocolError extends Error {
   readonly expectedReference: string;
   readonly receivedReference: string;
 }
+/** The host returned image-pull status for another job or reference. */
+export declare class ImagePullStatusProtocolError extends Error {
+  readonly expected: Readonly<{ job: string; reference?: string }>;
+  readonly received: Readonly<{ job: string; reference: string }>;
+}
 export interface ImagePullStatus {
   job: string;
   reference: string;
