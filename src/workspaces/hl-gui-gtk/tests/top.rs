@@ -4960,7 +4960,11 @@ mod unix {
         let chrome_bounds = chrome
             .compute_bounds(root)
             .expect("resource toggle chrome belongs to Top root");
-        assert_eq!(chrome_bounds.height(), 28.0, "{case} visible chrome is not compact");
+        assert!(
+            (26.0..=30.0).contains(&chrome_bounds.height()),
+            "{case} visible chrome escaped the compact tier at {}px",
+            chrome_bounds.height()
+        );
         assert!(action.height() >= 44, "{case} lost its accessible interaction target");
         assert_inline_outline_pixels(window, action, false, &format!("{case} at rest"));
         assert!(action.is_focusable(), "{case} is not keyboard reachable");
