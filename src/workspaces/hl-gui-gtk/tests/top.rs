@@ -1727,6 +1727,13 @@ mod unix {
                     8.0,
                     "Top responsive divider must expose an exact 8px interaction target"
                 );
+                assert_responsive_divider_pixels(
+                    &window,
+                    &root,
+                    &paned,
+                    [0x43, 0x38, 0x32],
+                    "focused navigation leaves the divider at rest",
+                );
                 let body_before = body.width();
                 paned.set_position(200);
                 root.measure(gtk::Orientation::Horizontal, -1);
@@ -1743,6 +1750,13 @@ mod unix {
                 assert!(
                     paned.has_focus(),
                     "resized Top divider exposes its focused handle state"
+                );
+                assert_responsive_divider_pixels(
+                    &window,
+                    &root,
+                    &paned,
+                    [0xf7, 0x9d, 0x55],
+                    "focused divider exposes the accent handle",
                 );
                 assert_overview_grid(&root, 1_200, 224, "resized-wide");
                 capture(&window, "populated-workspace-resized-wide", 1_200, 800);
@@ -6865,6 +6879,33 @@ mod unix {
                 "{case} retained accent chrome while insensitive"
             );
         }
+    }
+
+    fn assert_responsive_divider_pixels(
+        window: &gtk::Window,
+        root: &gtk::Widget,
+        paned: &gtk::Paned,
+        expected: [u8; 3],
+        case: &str,
+    ) {
+        settle_toolkit();
+        let texture = stable_texture(window, root.width(), 800);
+        let stride = texture.width() as usize * 4;
+        let mut pixels = vec![0_u8; stride * texture.height() as usize];
+        texture.download(&mut pixels, stride);
+        let navigation = paned.start_child().expect("responsive divider has navigation");
+        let bounds = navigation
+            .compute_bounds(root)
+            .expect("responsive navigation belongs to Top root");
+        let x = (bounds.x() + bounds.width()).round() as usize + 4;
+        let height = texture.height() as usize;
+        let matching = (4..height.saturating_sub(4))
+            .filter(|y| pixels[*y * stride + x * 4..*y * stride + x * 4 + 3] == expected)
+            .count();
+        assert!(
+            matching >= height.saturating_sub(16),
+            "{case}: only {matching}/{height} sampled handle pixels were {expected:?}"
+        );
     }
 
     fn assert_outline_button_pixels(

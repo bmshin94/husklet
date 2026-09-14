@@ -4477,7 +4477,7 @@ mod unix {
         let expected = if focused {
             [0xf7, 0x9d, 0x55]
         } else {
-            [0xcf, 0xc5, 0xbe]
+            [0x43, 0x38, 0x32]
         };
         let count = (y0..y1)
             .flat_map(|y| (gutter_start..gutter_end).map(move |x| (x, y)))

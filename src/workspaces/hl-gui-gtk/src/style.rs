@@ -64,19 +64,19 @@ fn controls(css: &mut String, theme: &Theme) {
          scrolledwindow, viewport, listview, columnview, notebook, frame, paned, expander {{ \
            background: transparent; color: {text}; }}\n\
          paned.hl-responsive-divider.horizontal > separator, paned.hl-splitter.horizontal > separator {{ min-width: 2px; min-height: 28px; \
-           background: {dim}; border-left: 3px solid transparent; border-right: 3px solid transparent; background-clip: padding-box; }}\n\
+           background: {line}; border-left: 3px solid transparent; border-right: 3px solid transparent; background-clip: padding-box; }}\n\
          paned.hl-responsive-divider.vertical > separator, paned.hl-splitter.vertical > separator {{ min-height: 2px; min-width: 28px; \
-           background: {dim}; border-top: 3px solid transparent; border-bottom: 3px solid transparent; background-clip: padding-box; }}\n\
-         paned.hl-responsive-divider.horizontal > separator:hover, paned.hl-responsive-divider.horizontal > separator:focus, paned.hl-responsive-divider.horizontal:focus-within > separator, paned.hl-splitter.horizontal > separator:hover, .keyboard-focus.horizontal > separator {{ \
+           background: {line}; border-top: 3px solid transparent; border-bottom: 3px solid transparent; background-clip: padding-box; }}\n\
+         paned.hl-responsive-divider.horizontal > separator:hover, paned.hl-responsive-divider.horizontal > separator:focus, paned.hl-responsive-divider.horizontal:focus > separator, paned.hl-splitter.horizontal > separator:hover, .keyboard-focus.horizontal > separator {{ \
            background-color: {accent}; border-left-color: transparent; border-right-color: transparent; }}\n\
-         paned.hl-responsive-divider.vertical > separator:hover, paned.hl-responsive-divider.vertical > separator:focus, paned.hl-responsive-divider.vertical:focus-within > separator, paned.hl-splitter.vertical > separator:hover, .keyboard-focus.vertical > separator {{ \
+         paned.hl-responsive-divider.vertical > separator:hover, paned.hl-responsive-divider.vertical > separator:focus, paned.hl-responsive-divider.vertical:focus > separator, paned.hl-splitter.vertical > separator:hover, .keyboard-focus.vertical > separator {{ \
            background-color: {accent}; border-top-color: transparent; border-bottom-color: transparent; }}\n\
          paned.hl-splitter-native.horizontal > separator {{ min-width: 8px; background: transparent; }}\n\
          paned.hl-splitter-native.vertical > separator {{ min-height: 8px; background: transparent; }}\n\
-         .hl-splitter-handle {{ background: {dim}; }}\n\
+         .hl-splitter-handle {{ background: {line}; }}\n\
          .hl-splitter-handle.keyboard-highlight, .hl-splitter-handle.pointer-highlight {{ background-color: {accent}; }}\n\
-         .hl-splitter.splitter-horizontal > separator {{ min-width: 2px; min-height: 28px; background: {dim}; border-left: 3px solid transparent; border-right: 3px solid transparent; background-clip: padding-box; }}\n\
-         .hl-splitter.splitter-vertical > separator {{ min-height: 2px; min-width: 28px; background: {dim}; border-top: 3px solid transparent; border-bottom: 3px solid transparent; background-clip: padding-box; }}\n\
+         .hl-splitter.splitter-horizontal > separator {{ min-width: 2px; min-height: 28px; background: {line}; border-left: 3px solid transparent; border-right: 3px solid transparent; background-clip: padding-box; }}\n\
+         .hl-splitter.splitter-vertical > separator {{ min-height: 2px; min-width: 28px; background: {line}; border-top: 3px solid transparent; border-bottom: 3px solid transparent; background-clip: padding-box; }}\n\
          .hl-splitter.splitter-horizontal > separator:hover, .hl-splitter.splitter-horizontal.keyboard-focus > separator {{ background-color: {accent}; border-left-color: transparent; border-right-color: transparent; }}\n\
          .hl-splitter.splitter-vertical > separator:hover, .hl-splitter.splitter-vertical.keyboard-focus > separator {{ background-color: {accent}; border-top-color: transparent; border-bottom-color: transparent; }}\n\
          notebook header, notebook tab {{ background: {surface}; color: {dim}; }}\n\
@@ -763,11 +763,19 @@ mod tests {
         assert!(css.contains(
             "paned.hl-responsive-divider.horizontal > separator, paned.hl-splitter.horizontal > separator { min-width: 2px; min-height: 28px;"
         ));
+        assert!(css.contains(
+            "background: #323843; border-left: 3px solid transparent; border-right: 3px solid transparent; background-clip: padding-box;"
+        ));
         assert!(css.contains("border-left: 3px solid transparent; border-right: 3px solid transparent;"));
         assert!(
             css.contains("paned.hl-splitter-native.horizontal > separator { min-width: 8px; background: transparent;")
         );
-        assert!(css.contains(".hl-splitter-handle { background: #bec5cf;"));
+        assert!(css.contains(".hl-splitter-handle { background: #323843;"));
+        assert!(css.contains("paned.hl-responsive-divider.horizontal:focus > separator"));
+        assert!(
+            !css.contains("paned.hl-responsive-divider.horizontal:focus-within > separator"),
+            "focus inside navigation must not make its adjacent resize handle look active"
+        );
         assert!(css.contains(
             ".hl-splitter-handle.keyboard-highlight, .hl-splitter-handle.pointer-highlight { background-color: #559df7;"
         ));
