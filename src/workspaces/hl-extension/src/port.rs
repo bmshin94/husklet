@@ -735,6 +735,7 @@ pub struct WorkspaceState {
 pub struct WorkspacePostgresProfile {
     pub tls_server_name: String,
     pub password_key: String,
+    pub root_certificate_key: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]

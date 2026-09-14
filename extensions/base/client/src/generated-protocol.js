@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:0e051aa0c3a31458
+// Protocol artifact fnv1a64:7f91a7de8cfa6d48
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -9252,6 +9252,16 @@ const definitions = {
         "optional": false,
         "schema": {
           "kind": "string"
+        }
+      },
+      {
+        "name": "root_certificate_key",
+        "optional": true,
+        "schema": {
+          "kind": "optional",
+          "of": {
+            "kind": "string"
+          }
         }
       }
     ],

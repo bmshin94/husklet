@@ -96,6 +96,7 @@ struct WsBuilder {
     execution_lifetime: ExecutionLifetime,
     postgres_tls_server_name: Option<String>,
     postgres_password_key: Option<String>,
+    postgres_root_certificate_key: Option<String>,
 }
 
 #[derive(Default)]
@@ -147,6 +148,7 @@ impl WsBuilder {
             }
             "postgres_tls_server_name" if !v.is_empty() => self.postgres_tls_server_name = Some(v.to_owned()),
             "postgres_password_key" if !v.is_empty() => self.postgres_password_key = Some(v.to_owned()),
+            "postgres_root_certificate_key" if !v.is_empty() => self.postgres_root_certificate_key = Some(v.to_owned()),
             "terminal_font" if !v.is_empty() => self.terminal.font_family = Some(v.to_owned()),
             "terminal_size" => self.terminal.font_size = Some(Value::new("terminal_size", v).number()?),
             "terminal_foreground" if !v.is_empty() => self.terminal.foreground = Some(v.to_owned()),
@@ -243,6 +245,7 @@ impl WsBuilder {
             (Some(tls_server_name), Some(password_key)) => Some(PostgresProfile {
                 tls_server_name,
                 password_key,
+                root_certificate_key: self.postgres_root_certificate_key,
             }),
             _ => return Err(Value::new("postgres profile", "incomplete").invalid()),
         };

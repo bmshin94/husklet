@@ -952,7 +952,10 @@ mod tests {
     }
 
     impl DatabaseResolver for Resolver {
-        fn endpoint(&self, _: &PostgresConnection) -> Result<DatabaseEndpoint, HostError> {
+        fn endpoint(&self, connection: &PostgresConnection) -> Result<DatabaseEndpoint, HostError> {
+            if connection.credential_keys != ["db.password"] {
+                return Err(HostError::Conflict("postgres credential set is not configured".into()));
+            }
             self.resolutions.fetch_add(1, Ordering::SeqCst);
             DatabaseEndpoint::new(
                 SocketAddr::from(([127, 0, 0, 1], self.port.load(Ordering::SeqCst) as u16)),
@@ -1072,6 +1075,44 @@ mod tests {
         ));
         assert_eq!(credentials.reads.load(Ordering::SeqCst), 0);
         assert_eq!(resolver.resolutions.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn production_authority_denies_unconfigured_credentials_before_reading_any_secret() {
+        let owner = installation('a');
+        let installations = CurrentInstallation {
+            owner: owner.clone(),
+            live: AtomicBool::new(true),
+        };
+        let containers = ContainerService {
+            generation: AtomicUsize::new(9),
+        };
+        let networks = NetworkService {
+            member: AtomicBool::new(true),
+        };
+        let credentials = CredentialService {
+            revision: AtomicUsize::new(7),
+            reads: AtomicUsize::new(0),
+        };
+        let resolver = Resolver {
+            resolutions: AtomicUsize::new(0),
+            port: AtomicUsize::new(5432),
+        };
+        let authority = ServiceAuthority::new(
+            owner.clone(),
+            &installations,
+            &containers,
+            &networks,
+            &credentials,
+            &resolver,
+        );
+        let mut request = connection();
+        request.credential_keys.push("unconfigured.secret".into());
+        assert!(matches!(
+            authority.authenticate(owner.as_str(), &request),
+            Err(HostError::Conflict(_))
+        ));
+        assert_eq!(credentials.reads.load(Ordering::SeqCst), 0);
     }
 
     #[test]

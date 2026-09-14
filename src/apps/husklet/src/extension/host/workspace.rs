@@ -844,10 +844,14 @@ impl Store {
                 cursor_shape: workspace.terminal.cursor_shape.clone(),
                 cursor_blink: workspace.terminal.cursor_blink,
             },
-            postgres: workspace.postgres.as_ref().map(|profile| hl_extension::WorkspacePostgresProfile {
-                tls_server_name: profile.tls_server_name.clone(),
-                password_key: profile.password_key.clone(),
-            }),
+            postgres: workspace
+                .postgres
+                .as_ref()
+                .map(|profile| hl_extension::WorkspacePostgresProfile {
+                    tls_server_name: profile.tls_server_name.clone(),
+                    password_key: profile.password_key.clone(),
+                    root_certificate_key: profile.root_certificate_key.clone(),
+                }),
         }
     }
 
@@ -895,11 +899,22 @@ impl Store {
         workspace.postgres = value.postgres.as_ref().map(|profile| crate::config::PostgresProfile {
             tls_server_name: profile.tls_server_name.clone(),
             password_key: profile.password_key.clone(),
+            root_certificate_key: profile.root_certificate_key.clone(),
         });
         if let Some(profile) = &workspace.postgres {
             super::super::postgres::DatabaseTls::verify_full(profile.tls_server_name.clone())?;
-            if profile.password_key.is_empty() || profile.password_key.len() > 128 || profile.password_key.contains('\0') {
+            if profile.password_key.is_empty()
+                || profile.password_key.len() > 128
+                || profile.password_key.contains('\0')
+            {
                 return Err(HostError::Conflict("postgres password key profile is invalid".into()));
+            }
+            if profile.root_certificate_key.as_ref().is_some_and(|key| {
+                key.is_empty() || key.len() > 128 || key.contains('\0') || key == &profile.password_key
+            }) {
+                return Err(HostError::Conflict(
+                    "postgres root certificate key profile is invalid".into(),
+                ));
             }
         }
         Ok(workspace)

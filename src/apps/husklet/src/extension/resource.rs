@@ -23,6 +23,7 @@ pub(crate) struct PostgresResolver<'a> {
     resources: &'a Resources,
     server_name: String,
     password_key: String,
+    root_certificate_key: Option<String>,
 }
 
 impl<'a> PostgresResolver<'a> {
@@ -35,16 +36,43 @@ impl<'a> PostgresResolver<'a> {
         if profile.password_key.is_empty() || profile.password_key.len() > 128 || profile.password_key.contains('\0') {
             return Err(HostError::Conflict("postgres password key profile is invalid".into()));
         }
+        if profile
+            .root_certificate_key
+            .as_ref()
+            .is_some_and(|key| key.is_empty() || key.len() > 128 || key.contains('\0') || key == &profile.password_key)
+        {
+            return Err(HostError::Conflict(
+                "postgres root certificate key profile is invalid".into(),
+            ));
+        }
         Ok(Some(Self {
             resources,
             server_name: profile.tls_server_name.clone(),
             password_key: profile.password_key.clone(),
+            root_certificate_key: profile.root_certificate_key.clone(),
         }))
     }
 }
 
 impl DatabaseResolver for PostgresResolver<'_> {
     fn endpoint(&self, connection: &PostgresConnection) -> Result<DatabaseEndpoint, HostError> {
+        let expected = self.root_certificate_key.as_ref().map_or(1, |_| 2);
+        if connection.credential_keys.len() != expected
+            || connection
+                .credential_keys
+                .iter()
+                .filter(|key| *key == &self.password_key)
+                .count()
+                != 1
+            || self
+                .root_certificate_key
+                .as_ref()
+                .is_some_and(|root| connection.credential_keys.iter().filter(|key| *key == root).count() != 1)
+        {
+            return Err(HostError::Conflict(
+                "postgres connection must name exactly the configured credential keys".into(),
+            ));
+        }
         let target = self.resources.database_dial_target(connection)?;
         DatabaseEndpoint::new(
             target.address(),
@@ -55,9 +83,14 @@ impl DatabaseResolver for PostgresResolver<'_> {
     }
 
     fn role(&self, key: &str) -> Result<CredentialRole, HostError> {
-        (key == self.password_key)
-            .then_some(CredentialRole::Password)
-            .ok_or_else(|| HostError::Conflict("postgres credential key has no configured authentication role".into()))
+        if key == self.password_key {
+            Some(CredentialRole::Password)
+        } else if self.root_certificate_key.as_deref() == Some(key) {
+            Some(CredentialRole::RootCertificate)
+        } else {
+            None
+        }
+        .ok_or_else(|| HostError::Conflict("postgres credential key has no configured authentication role".into()))
     }
 }
 

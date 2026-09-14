@@ -70,17 +70,20 @@ fn postgres_profile_is_typed_durable_and_contains_no_secret_value() {
     workspace.postgres = Some(PostgresProfile {
         tls_server_name: "database.internal".into(),
         password_key: "database.password".into(),
+        root_certificate_key: Some("database.ca".into()),
     });
     WorkspaceStore::load(&path).unwrap().upsert(workspace).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.contains("postgres_tls_server_name = database.internal"));
     assert!(text.contains("postgres_password_key = database.password"));
+    assert!(text.contains("postgres_root_certificate_key = database.ca"));
     assert!(!text.to_ascii_lowercase().contains("secret"));
     assert_eq!(
         WorkspaceStore::load(&path).unwrap().get("database").unwrap().postgres,
         Some(PostgresProfile {
             tls_server_name: "database.internal".into(),
             password_key: "database.password".into(),
+            root_certificate_key: Some("database.ca".into()),
         })
     );
     let _ = std::fs::remove_file(path);

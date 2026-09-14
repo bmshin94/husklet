@@ -324,6 +324,7 @@ export interface WorkspaceConfiguration extends WorkspaceInfo {
 export interface WorkspacePostgresProfile {
   tls_server_name: string;
   password_key: string;
+  root_certificate_key?: string | null;
 }
 export interface ContainerSummary {
   id: string;

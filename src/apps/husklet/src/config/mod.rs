@@ -214,6 +214,7 @@ pub struct WorkspaceConfig {
 pub struct PostgresProfile {
     pub tls_server_name: String,
     pub password_key: String,
+    pub root_certificate_key: Option<String>,
 }
 
 pub(super) const DEFAULT_SCROLLBACK_LINES: u64 = 100_000;
@@ -579,6 +580,9 @@ impl WorkspaceStore {
             if let Some(postgres) = &w.postgres {
                 out.field("postgres_tls_server_name", &postgres.tls_server_name);
                 out.field("postgres_password_key", &postgres.password_key);
+                if let Some(key) = &postgres.root_certificate_key {
+                    out.field("postgres_root_certificate_key", key);
+                }
             }
             if let Some(value) = &w.terminal.font_family {
                 out.field("terminal_font", value);

@@ -372,6 +372,7 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
                       change('postgres', {
                         tls_server_name: String(event.value ?? '').trim(),
                         password_key: configuration.postgres?.password_key ?? '',
+                        root_certificate_key: configuration.postgres?.root_certificate_key ?? null,
                       }),
                   )}
                   {field(
@@ -382,7 +383,21 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
                       change('postgres', {
                         tls_server_name: configuration.postgres?.tls_server_name ?? '',
                         password_key: String(event.value ?? '').trim(),
+                        root_certificate_key: configuration.postgres?.root_certificate_key ?? null,
                       }),
+                  )}
+                  {field(
+                    'Root certificate credential key',
+                    configuration.postgres?.root_certificate_key ?? '',
+                    'database.ca (optional)',
+                    (event) => {
+                      const key = String(event.value ?? '').trim();
+                      change('postgres', {
+                        tls_server_name: configuration.postgres?.tls_server_name ?? '',
+                        password_key: configuration.postgres?.password_key ?? '',
+                        root_certificate_key: key || null,
+                      });
+                    },
                   )}
                   {configuration.postgres && (
                     <Button
@@ -776,8 +791,23 @@ function validate(value: WorkspaceConfiguration) {
   if (value.postgres) {
     if (!/^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/.test(value.postgres.tls_server_name))
       throw new Error('PostgreSQL TLS server name must be a valid DNS name.');
-    if (!value.postgres.password_key || value.postgres.password_key.length > 128 || value.postgres.password_key.includes('\0'))
-      throw new Error('PostgreSQL password credential key must contain 1 to 128 NUL-free characters.');
+    if (
+      !value.postgres.password_key ||
+      value.postgres.password_key.length > 128 ||
+      value.postgres.password_key.includes('\0')
+    )
+      throw new Error(
+        'PostgreSQL password credential key must contain 1 to 128 NUL-free characters.',
+      );
+    if (
+      value.postgres.root_certificate_key &&
+      (value.postgres.root_certificate_key.length > 128 ||
+        value.postgres.root_certificate_key.includes('\0') ||
+        value.postgres.root_certificate_key === value.postgres.password_key)
+    )
+      throw new Error(
+        'PostgreSQL root certificate key must be distinct and contain at most 128 NUL-free characters.',
+      );
   }
   for (const [label, color] of [
     ['Foreground', value.terminal.foreground],

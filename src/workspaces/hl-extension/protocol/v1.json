@@ -8884,6 +8884,16 @@
           "schema": {
             "kind": "string"
           }
+        },
+        {
+          "name": "root_certificate_key",
+          "optional": true,
+          "schema": {
+            "kind": "optional",
+            "of": {
+              "kind": "string"
+            }
+          }
         }
       ],
       "kind": "struct",
@@ -15818,7 +15828,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:f118664a6ae12bde",
+  "source_fingerprint": "fnv1a64:9171ab7c88a73774",
   "specification_version": 1,
   "topics": [
     {
