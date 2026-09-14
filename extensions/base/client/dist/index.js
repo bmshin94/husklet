@@ -1828,6 +1828,7 @@ export function workspace(session, { signal } = {}) {
                 return container;
             },
             processes: async (id, { snapshot, after = 0, limit = 128, } = {}) => {
+                const containerId = immutableIdentity(id, [32, 64], 'container');
                 if (!Number.isSafeInteger(after) || after < 0)
                     throw new RangeError('container process cursor must be a nonnegative safe integer');
                 if (!Number.isSafeInteger(limit) || limit < 1 || limit > 128)
@@ -1836,9 +1837,13 @@ export function workspace(session, { signal } = {}) {
                     throw new TypeError('container process snapshot must be 64 hexadecimal characters');
                 if (after > 0 && snapshot === undefined)
                     throw new TypeError('container process continuation requires its snapshot identity');
-                const page = expect(await session.call('container_processes', { id, snapshot, after, limit }), 'processes');
-                if (/^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{64})$/.test(id) && page.container_id !== id) {
-                    throw new TypeError(`host returned processes for container ${page.container_id}, expected ${id}; no process snapshot was assumed`);
+                const page = expect(await session.call('container_processes', { id: containerId, snapshot, after, limit }), 'processes');
+                const matches = page.container_id === containerId ||
+                    (containerId.length === 32 &&
+                        page.container_id.length === 64 &&
+                        page.container_id.startsWith(containerId));
+                if (!matches) {
+                    throw new TypeError(`host returned processes for container ${page.container_id}, expected ${containerId}; no process snapshot was assumed`);
                 }
                 return page;
             },

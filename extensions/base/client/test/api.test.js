@@ -3408,7 +3408,7 @@ test('deep container methods and subscriptions use exact protocol request shapes
     /container name must/,
   );
   const operations = [
-    api.containers.processes('c1'),
+    api.containers.processes(containerId),
     api.containers.logs('c1', { stdout: true, stderr: false }),
     api.containers.execution(executionId),
     api.containers.executions(),
@@ -3438,7 +3438,7 @@ test('deep container methods and subscriptions use exact protocol request shapes
   assert.deepEqual(calls, [
     {
       call: 'container_processes',
-      with: { id: 'c1', after: 0, limit: 128 },
+      with: { id: containerId, after: 0, limit: 128 },
     },
     { call: 'container_logs', with: { id: 'c1', stdout: true, stderr: false } },
     { call: 'execution_inspect', with: { id: executionId } },

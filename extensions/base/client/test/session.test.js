@@ -918,8 +918,7 @@ test('real Unix process inspection rejects another container and preserves sessi
         if (frame.kind !== KIND.request || frame.channel !== 2) continue;
         calls.push(frame.payload);
         const owner = calls.length === 1 ? 'b'.repeat(64) : containerId;
-        socket.write(
-          encode({
+        const reply = encode({
             channel: 2,
             kind: KIND.response,
             payload: {
@@ -937,8 +936,8 @@ test('real Unix process inspection rejects another container and preserves sessi
                 truncated: false,
               },
             },
-          }),
-        );
+          });
+        for (const byte of reply) socket.write(Uint8Array.of(byte));
       }
     });
     socket.write(
@@ -953,6 +952,8 @@ test('real Unix process inspection rejects another container and preserves sessi
   try {
     const session = await connect({ path: socketPath });
     const containers = workspace(session).containers;
+    await assert.rejects(containers.processes('database'), /complete immutable ID/);
+    assert.equal(calls.length, 0, 'a mutable name never crossed the Unix socket');
     await assert.rejects(
       containers.processes(containerId),
       new RegExp(`processes for container ${'b'.repeat(64)}, expected ${containerId}`),
@@ -961,11 +962,12 @@ test('real Unix process inspection rejects another container and preserves sessi
       calls.map(({ call }) => call),
       ['container_processes'],
     );
-    assert.equal((await containers.processes(containerId)).container_id, containerId);
+    assert.equal((await containers.processes(containerId.slice(0, 32))).container_id, containerId);
     assert.deepEqual(
       calls.map(({ call }) => call),
       ['container_processes', 'container_processes'],
     );
+    assert.equal(calls[1].with.id, containerId.slice(0, 32));
     await session.close();
   } finally {
     for (const connection of connections) connection.destroy();
