@@ -16,11 +16,11 @@ mod unix {
         NetworkEndpointInventory, NetworkInventory, NetworkKind, NetworkSummary, PaneText, TerminalLifecycle,
     };
     use hl_extension::{
-        Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
-        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, InspectablePane, PROTOCOL, PaneInventory,
-        PaneKind, PaneProvider, PreferenceValue, RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire,
+        codec, Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
+        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, InspectablePane, PaneInventory, PaneKind,
+        PaneProvider, PreferenceValue, RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire,
         WorkspaceConfiguration, WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo,
-        WorkspaceTerminal, codec,
+        WorkspaceTerminal, PROTOCOL,
     };
     use hl_gui::{Renderer as _, SourceMutation, Theme, Tree};
     use hl_gui_gtk::Surface;
@@ -2096,6 +2096,7 @@ mod unix {
                     other => panic!("unexpected removal menu-close request: {other:?}"),
                 }
             }
+            exercise_first_party_acquisition_failure(&mut wire, &mut tree, &mut surface, &window);
         }
         if fixture == "populated" && name == "extensions" && !catalogue_empty {
             let installed_intro = find_label(
@@ -3261,17 +3262,15 @@ mod unix {
         std::fs::remove_file(socket).expect("Top test socket is removed");
     }
 
-    fn exercise_extension_update(
+    fn exercise_first_party_acquisition_failure(
         wire: &mut Wire<UnixStream>,
         tree: &mut Tree,
         surface: &mut Surface,
         window: &gtk::Window,
     ) {
-        let reference = "ghcr.io/example/developer-tool-01:1.0.0@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-        let old_digest = format!("sha256:{}", "4".repeat(64));
-        let next_digest = format!("sha256:{}", "c".repeat(64));
+        let first_party_reference = format!("ghcr.io/husklet/storybook:0.4.0@sha256:{}", "a".repeat(64));
         let root = surface.widget().clone().upcast::<gtk::Widget>();
-        find_tooltip_button(&root, "Review the 1.0.0 update for Developer Tool 01").emit_clicked();
+        find_button(&root, "Check for changes").emit_clicked();
         settle_toolkit();
         send_report(surface, wire, 101, |event| {
             matches!(event, hl_gui::Event::Invoke { .. })
@@ -3287,16 +3286,16 @@ mod unix {
                     reference: actual,
                     refresh,
                 } => {
-                    assert_eq!(actual, reference);
-                    assert!(refresh, "catalogue updates must resolve a mutable tag again");
+                    assert_eq!(actual, first_party_reference);
+                    assert!(refresh, "checking a catalogue image must resolve its tag again");
                     Reply::ExtensionAcquisitionJob(ExtensionAcquisitionJob {
-                        job: "gtk-update".into(),
+                        job: "gtk-first-party-check".into(),
                     })
                 }
                 Request::ExtensionAcquisitionStatus { job } => {
                     Reply::ExtensionAcquisition(ExtensionAcquisitionStatus {
                         job,
-                        reference: reference.into(),
+                        reference: first_party_reference.clone(),
                         revision: 1,
                         state: "failed".into(),
                         progress: None,
@@ -3312,34 +3311,37 @@ mod unix {
         assert!(
             has_label(
                 &failure_root,
-                "Source ghcr.io/example/developer-tool-01:1.0.0 · sha256:cccccccccccc…cccccccc"
+                "Source ghcr.io/husklet/storybook:0.4.0 · sha256:aaaaaaaaaaaa…aaaaaaaa"
             ),
             "failure retains a compact image reference"
         );
         assert_eq!(
             find_label(
                 &failure_root,
-                "Source ghcr.io/example/developer-tool-01:1.0.0 · sha256:cccccccccccc…cccccccc"
+                "Source ghcr.io/husklet/storybook:0.4.0 · sha256:aaaaaaaaaaaa…aaaaaaaa"
             )
             .tooltip_text()
             .as_deref(),
-            Some(reference),
+            Some(first_party_reference.as_str()),
             "the full immutable reference remains available on demand"
         );
         assert!(
-            !has_label(&failure_root, &format!("Image · {reference}")),
+            !has_label(&failure_root, &format!("Image · {first_party_reference}")),
             "failure body does not repeat the header identity"
         );
         let retry = find_button(&failure_root, "Retry inspection");
-        let settings = find_button(&failure_root, "Open workspace settings");
         let back = find_button(&failure_root, "Back to catalogue");
         let technical = find_expander(&failure_root, "Technical details");
         assert!(
             has_label(
                 &failure_root,
-                "Registry access denied. Sign in with credentials that can read this image, or verify that the image is public."
+                "This verified Husklet release image is unavailable from its public registry. Check your connection and retry. If it remains unavailable, update Husklet to a release with a matching published extension image."
             ),
-            "failure leads with bounded recovery language"
+            "first-party failure leads with release-specific recovery language"
+        );
+        assert!(
+            !has_label(&failure_root, "Open workspace settings"),
+            "a public first-party release does not send developers to private registry credentials"
         );
         assert!(!technical.is_expanded(), "raw inspection diagnostics start collapsed");
         let ready_deadline = Instant::now() + DEADLINE;
@@ -3382,7 +3384,7 @@ mod unix {
             assert_contained(&failure_root, &format!("extension-acquisition-failure/{width_name}"));
             let failure_message = find_inline_message(
                 &failure_root,
-                "Registry access denied. Sign in with credentials that can read this image, or verify that the image is public.",
+                "This verified Husklet release image is unavailable from its public registry. Check your connection and retry. If it remains unavailable, update Husklet to a release with a matching published extension image.",
             )
             .expect("failure recovery has its InlineMessage");
             let cue = failure_message
@@ -3391,7 +3393,7 @@ mod unix {
                 .expect("failure message has its status cue");
             let copy = find_label(
                 failure_message.upcast_ref(),
-                "Registry access denied. Sign in with credentials that can read this image, or verify that the image is public.",
+                "This verified Husklet release image is unavailable from its public registry. Check your connection and retry. If it remains unavailable, update Husklet to a release with a matching published extension image.",
             );
             let cue_bounds = cue
                 .compute_bounds(&failure_message)
@@ -3417,14 +3419,14 @@ mod unix {
                 retry_bounds.y() < detail_bounds.y(),
                 "{width_name} Retry must precede secondary details"
             );
-            for (label, action) in [("retry", &retry), ("settings", &settings), ("back", &back)] {
+            for (label, action) in [("retry", &retry), ("back", &back)] {
                 assert!(
                     action.has_css_class("size-small"),
                     "{width_name} {label} action is compact"
                 );
                 assert_standard_action(action, width_name, label, 28);
             }
-            let action_bounds = [&retry, &settings, &back].map(|action| {
+            let action_bounds = [&retry, &back].map(|action| {
                 widgets_with_class(action.upcast_ref(), "hl-button-chrome")[0]
                     .compute_bounds(&failure_root)
                     .expect("recovery chrome belongs to failure card")
@@ -3437,59 +3439,40 @@ mod unix {
             );
             capture(
                 window,
-                &format!("extension-acquisition-failure-{width_name}"),
+                &format!("first-party-acquisition-failure-{width_name}"),
                 width,
                 800,
             );
         }
-        assert!(settings.is_mapped() && settings.is_sensitive());
         let _ = surface.reports().drain();
-        settings.grab_focus();
-        settings.emit_clicked();
+        assert!(back.is_mapped() && back.is_sensitive());
+        back.grab_focus();
+        back.emit_clicked();
         settle_toolkit();
         send_report(surface, wire, 101, |event| {
             matches!(event, hl_gui::Event::Invoke { .. })
         });
+        apply_extension_update_until(
+            wire,
+            tree,
+            surface,
+            "Check for changes",
+            |request| panic!("unexpected first-party recovery return call: {request:?}"),
+            || None,
+        );
+    }
 
-        apply_extension_update_until(
-            wire,
-            tree,
-            surface,
-            "Workspace settings",
-            |request| match request {
-                Request::WorkspaceInfo => Reply::Workspace(workspace_info()),
-                Request::WorkspaceInspect { .. } => Reply::WorkspaceConfiguration(workspace_configuration()),
-                other => panic!("unexpected workspace-settings recovery call: {other:?}"),
-            },
-            || None,
-        );
-        let settings_root = surface.widget().clone().upcast::<gtk::Widget>();
-        let _ = surface.reports().drain();
-        find_button(&settings_root, "Return to extension retry").emit_clicked();
-        settle_toolkit();
-        send_report(surface, wire, 101, |event| {
-            matches!(event, hl_gui::Event::Invoke { .. })
-        });
-        apply_extension_update_until(
-            wire,
-            tree,
-            surface,
-            "Developer Tool 01",
-            |request| match request {
-                Request::ExtensionList => Reply::Extensions(extensions()),
-                Request::ExtensionCatalogue => Reply::ExtensionCatalogue(catalogue()),
-                Request::WorkspaceInfo => Reply::Workspace(workspace_info()),
-                Request::WorkspaceInspect { .. } => Reply::WorkspaceConfiguration(workspace_configuration()),
-                Request::EventSubscribe { .. } => Reply::Done,
-                Request::EventUnsubscribe { .. } => Reply::Done,
-                other => panic!("unexpected extension recovery return call: {other:?}"),
-            },
-            || None,
-        );
-        let returned_root = surface.widget().clone().upcast::<gtk::Widget>();
-        let reference_entry = find_entry_placeholder(&returned_root, "registry.example/extension:version");
-        assert_eq!(reference_entry.text(), reference);
-        find_tooltip_button(&returned_root, "Review the 1.0.0 update for Developer Tool 01").emit_clicked();
+    fn exercise_extension_update(
+        wire: &mut Wire<UnixStream>,
+        tree: &mut Tree,
+        surface: &mut Surface,
+        window: &gtk::Window,
+    ) {
+        let reference = "ghcr.io/example/developer-tool-01:1.0.0@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+        let old_digest = format!("sha256:{}", "4".repeat(64));
+        let next_digest = format!("sha256:{}", "c".repeat(64));
+        let root = surface.widget().clone().upcast::<gtk::Widget>();
+        find_tooltip_button(&root, "Review the 1.0.0 update for Developer Tool 01").emit_clicked();
         settle_toolkit();
         send_report(surface, wire, 101, |event| {
             matches!(event, hl_gui::Event::Invoke { .. })

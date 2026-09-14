@@ -87,10 +87,15 @@ test('catalogue display strings cannot forge verified publisher status', () => {
 
 test('a new catalogue generation revokes verification from an open review snapshot', async () => {
   const verified = (await firstPartyCatalogue()).entries[0];
+  assert.match(
+    acquisitionFailure('unauthorized', verified),
+    /^This verified Husklet release image/,
+  );
   const stale = staleCatalogueExpectation(verified);
   assert.equal(stale.publisher_verified, false);
   assert.equal(stale.reference, verified.reference);
   assert.equal(stale.source, verified.source);
+  assert.match(acquisitionFailure('unauthorized', stale), /^Registry access denied\./);
   assert.equal(staleCatalogueExpectation(null), null);
 });
 
@@ -2853,6 +2858,56 @@ test('extension inspection keeps invalid and failed references recoverable with 
     Text: 'containers:read',
   });
   assert.deepEqual(latestSwitchValues(stage), [false]);
+});
+
+test('a verified first-party release failure does not send developers to private registry credentials', async () => {
+  const stage = host();
+  stage.render(
+    h(Extensions, {
+      onOpenWorkspaceSettings: () =>
+        assert.fail('public first-party images do not need credentials'),
+      api: {
+        extensions: {
+          list: async () => [],
+          catalogue: firstPartyCatalogue,
+          startAcquisition: async () => ({ job: 'first-party-review' }),
+          acquisition: async () => ({
+            job: 'first-party-review',
+            reference: FIRST_PARTY_REFERENCE,
+            revision: 1,
+            state: 'failed',
+            progress: null,
+            candidate: null,
+            error: 'registry request failed: unauthorized: authentication required',
+          }),
+        },
+        watchExtensions: async () => () => {},
+      },
+    }),
+  );
+  await settled();
+  selectExtensionMode(stage, 'Discover');
+  await settled();
+  invoke(stage, 'Review install');
+  await settled();
+  await settled();
+
+  assert.ok(
+    labelled(
+      stage,
+      'This verified Husklet release image is unavailable from its public registry. Check your connection and retry. If it remains unavailable, update Husklet to a release with a matching published extension image.',
+    ),
+  );
+  assert.ok(labelled(stage, 'Retry inspection'));
+  assert.ok(labelled(stage, 'Back to catalogue'));
+  assert.equal(labelled(stage, 'Open workspace settings'), undefined);
+  assert.equal(
+    labelled(
+      stage,
+      'Registry access denied. Sign in with credentials that can read this image, or verify that the image is public.',
+    ),
+    undefined,
+  );
 });
 
 test('extension acquisition phases and failures remain actionable without raw engine cascades', () => {

@@ -170,6 +170,10 @@ export function staleCatalogueExpectation(entry: ExtensionCatalogueEntry | null)
   return entry ? { ...entry, publisher_verified: false } : entry;
 }
 
+function isVerifiedFirstPartyCatalogueEntry(entry: ExtensionCatalogueEntry | null): boolean {
+  return Boolean(entry?.publisher_verified === true && entry.publisher === 'Husklet');
+}
+
 export function catalogueCandidateMismatch(
   entry: Pick<ExtensionCatalogueEntry, 'id' | 'version' | 'reference'> | null,
   candidate: { name: string; version: string } | null | undefined,
@@ -2342,6 +2346,7 @@ export function Extensions({
                           <InlineMessage
                             label={acquisitionFailure(
                               acquisition.error ?? 'The image could not be inspected.',
+                              catalogueExpectation,
                             )}
                             tone="danger"
                             width={COPY_WIDTH}
@@ -2356,6 +2361,7 @@ export function Extensions({
                               onInvoke={() => inspect(reference, catalogueExpectation)}
                             />
                             {isAcquisitionAuthenticationFailure(acquisition.error) &&
+                            !isVerifiedFirstPartyCatalogueEntry(catalogueExpectation) &&
                             onOpenWorkspaceSettings ? (
                               <Button
                                 label="Open workspace settings"
@@ -3055,13 +3061,19 @@ export function acquisitionProgressFraction(
   return Math.min(1, Math.max(0, current / total));
 }
 
-export function acquisitionFailure(detail: string): string {
+export function acquisitionFailure(
+  detail: string,
+  catalogueEntry: ExtensionCatalogueEntry | null = null,
+): string {
   const normalized = detail.replaceAll('\\n', ' ').replaceAll(/\s+/g, ' ').trim();
   const registryMessage = /"message"\s*:\s*"([^"]+)"/.exec(normalized)?.[1];
   const architecture = /linux\/([A-Za-z0-9_-]+).*requires linux\/([A-Za-z0-9_-]+)/i.exec(
     normalized,
   );
   if (/unauthorized|denied|authentication required|insufficient_scope/i.test(normalized)) {
+    if (isVerifiedFirstPartyCatalogueEntry(catalogueEntry)) {
+      return 'This verified Husklet release image is unavailable from its public registry. Check your connection and retry. If it remains unavailable, update Husklet to a release with a matching published extension image.';
+    }
     return 'Registry access denied. Sign in with credentials that can read this image, or verify that the image is public.';
   }
   if (registryMessage) {
