@@ -2016,14 +2016,16 @@ mod unix {
             .expect("community publisher signal is a semantic badge");
             assert!(community.has_css_class("tone-warning"));
             let review = find_tooltip_button(&discover_root, "Review the 1.0.0 update for Developer Tool 01");
-            let review_access = find_tooltip_button(&discover_root, "Review access requested by Developer Tool 02");
-            let third_review = find_tooltip_button(&discover_root, "Review access requested by Developer Tool 03");
+            let review_access = find_tooltip_button(&discover_root, "Review installation access for Developer Tool 02");
+            let third_review = find_tooltip_button(&discover_root, "Review installation access for Developer Tool 03");
             let review_card = ancestor_with_class(review.upcast_ref(), "hl-card")
                 .expect("Discover update action belongs to its card");
             let access_card = ancestor_with_class(review_access.upcast_ref(), "hl-card")
                 .expect("Discover access action belongs to its card");
             let third_card = ancestor_with_class(third_review.upcast_ref(), "hl-card")
                 .expect("third Discover action belongs to its card");
+            assert!(has_label(&access_card, "Review install"));
+            assert!(has_label(&third_card, "Review install"));
             assert!(review.is_sensitive(), "compatible Discover update is actionable");
             assert!(
                 review.has_css_class("variant-filled"),

@@ -1618,8 +1618,8 @@ export function Extensions({
                                   />
                                 ) : !installedExtension ? (
                                   <Button
-                                    label="Review access"
-                                    tooltip={`Review access requested by ${entry.title}`}
+                                    label="Review install"
+                                    tooltip={`Review installation access for ${entry.title}`}
                                     size="small"
                                     variant="outline"
                                     tone="neutral"

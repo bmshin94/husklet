@@ -1003,7 +1003,7 @@ test('Top owns workspace settings and extension management in the same tab', asy
   assert.ok(labelled(stage, 'Compatibility undeclared'));
   assert.equal(labelled(stage, 'Review requested access before anything is installed.'), undefined);
   assert.deepEqual(
-    ancestorTags(stage, 'Review access').slice(0, 4),
+    ancestorTags(stage, 'Review install').slice(0, 4),
     ['Row', 'CardContent', 'Card', 'Row'],
     'catalogue lifecycle action owns a dedicated compact row',
   );
@@ -1423,17 +1423,17 @@ test('extension discovery reviews the first-party Storybook without requiring a 
   selectExtensionMode(stage, 'Discover');
   await settled();
   assert.deepEqual(
-    taggedProperty(stage, 'Review access', 'Button', 'Size'),
+    taggedProperty(stage, 'Review install', 'Button', 'Size'),
     { ControlSize: 'Small' },
     'new-extension review keeps its catalogue card compact',
   );
   assert.deepEqual(
-    taggedProperty(stage, 'Review access', 'Button', 'Variant'),
+    taggedProperty(stage, 'Review install', 'Button', 'Variant'),
     { Variant: 'Outline' },
     'available extensions use a quiet review action until access is explicitly approved',
   );
   assert.deepEqual(
-    taggedProperty(stage, 'Review access', 'Button', 'Tone'),
+    taggedProperty(stage, 'Review install', 'Button', 'Tone'),
     { Tone: 'Neutral' },
     'repeated catalogue actions stay neutral until selected or focused',
   );
@@ -1442,7 +1442,8 @@ test('extension discovery reviews the first-party Storybook without requiring a 
     { Tone: 'Neutral' },
     'availability does not compete with updates or consent for accent emphasis',
   );
-  invoke(stage, 'Review access');
+  assert.equal(labelled(stage, 'Review access'), undefined);
+  invoke(stage, 'Review install');
   await settled();
   await settled();
   assert.deepEqual(acquisitions, [
@@ -1810,7 +1811,7 @@ test('extension discovery keeps unknown compatibility reviewable and blocks know
   await settled();
   assert.ok(labelled(stage, 'Compatibility not declared'));
   assert.deepEqual(
-    enabledStates(stage, 'Review access'),
+    enabledStates(stage, 'Review install'),
     [false, false, true],
     'deterministic title ordering preserves compatibility authority per card',
   );
@@ -1885,7 +1886,7 @@ test('an installed catalogue extension exposes its update review without retypin
   );
   assert.ok(labelled(stage, 'Update to Version 2.0.0 · Compatibility not declared'));
   assert.equal(
-    labelled(stage, 'Review access'),
+    labelled(stage, 'Review install'),
     undefined,
     'installed catalogue entries do not also appear as new installations',
   );
@@ -2007,7 +2008,7 @@ test('an up-to-date built-in is hidden by default and available through the inst
     'installed provenance shares the trust disclosure instead of adding a second card row',
   );
   assert.equal(labelled(stage, 'View installed details'), undefined);
-  assert.equal(labelled(stage, 'Review access'), undefined);
+  assert.equal(labelled(stage, 'Review install'), undefined);
   assert.equal(labelled(stage, 'Review update'), undefined);
   assert.ok(labelled(stage, 'Open'));
   assert.ok(labelled(stage, 'Check current image'));
@@ -2514,7 +2515,7 @@ test('extension discovery can retry a failed catalogue without leaving the page'
   invoke(stage, 'Retry catalogue');
   await settled();
   assert.equal(attempts, 2);
-  assert.ok(labelled(stage, 'Review access'));
+  assert.ok(labelled(stage, 'Review install'));
 });
 
 test('catalogue installs pause when workspace compatibility cannot be checked and recover in place', async () => {
@@ -2544,12 +2545,12 @@ test('catalogue installs pause when workspace compatibility cannot be checked an
     labelled(stage, 'Compatibility could not be checked, so catalogue installs are paused.'),
   );
   assert.ok(labelled(stage, 'workspace identity socket closed'));
-  assert.equal(enabledStates(stage, 'Review access').at(-1), false);
+  assert.equal(enabledStates(stage, 'Review install').at(-1), false);
 
   invoke(stage, 'Retry compatibility check');
   await settled();
   assert.equal(attempts, 2);
-  assert.equal(enabledStates(stage, 'Review access').at(-1), true);
+  assert.equal(enabledStates(stage, 'Review install').at(-1), true);
 });
 
 test('failed catalogue refresh keeps stale rows browseable but strips install and trust authority', async () => {
@@ -2572,7 +2573,7 @@ test('failed catalogue refresh keeps stale rows browseable but strips install an
   await settled();
   selectExtensionMode(stage, 'Discover');
   await settled();
-  assert.equal(enabledStates(stage, 'Review access').at(-1), true);
+  assert.equal(enabledStates(stage, 'Review install').at(-1), true);
 
   fail = true;
   stage.render(h(Extensions, { ...props, api: { ...props.api, extensions: { ...extensions } } }));
@@ -2584,7 +2585,7 @@ test('failed catalogue refresh keeps stale rows browseable but strips install an
     Tone: 'Warning',
   });
   assert.ok(labelled(stage, 'catalogue refresh is offline'));
-  assert.equal(enabledStates(stage, 'Review access').at(-1), false);
+  assert.equal(enabledStates(stage, 'Review install').at(-1), false);
   assert.ok(labelled(stage, 'Publisher · Husklet'));
 });
 
@@ -2623,12 +2624,12 @@ test('extension discovery keeps the newest result when catalogue retries finish 
   invoke(stage, 'Retry catalogue');
   await settled();
   assert.equal(attempts, 3);
-  assert.ok(labelled(stage, 'Review access'));
+  assert.ok(labelled(stage, 'Review install'));
 
   rejectSlowRetry(new Error('stale retry failed after the current catalogue loaded'));
   await settled();
   const visible = orderedLabels(stage);
-  assert.ok(visible.includes('Review access'));
+  assert.ok(visible.includes('Review install'));
   assert.equal(visible.includes('Extension catalogue could not be completed.'), false);
   assert.equal(visible.includes('stale retry failed after the current catalogue loaded'), false);
 });
