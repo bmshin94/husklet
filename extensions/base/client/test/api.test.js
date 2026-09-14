@@ -4370,7 +4370,14 @@ test('observed filesystem ranges and creation preserve exact identities on the w
     encode({
       channel: 2,
       kind: KIND.response,
-      payload: { reply: 'identity', with: 'v1:1:8:3:4:5:6:9' },
+      payload: {
+        reply: 'file_write',
+        with: {
+          path: 'logs/new.log',
+          observed: 'v1:1:8:3:4:5:6:7',
+          identity: 'v1:1:8:3:4:5:6:9',
+        },
+      },
     }),
   );
   assert.equal(await replace, 'v1:1:8:3:4:5:6:9');

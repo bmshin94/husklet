@@ -2908,6 +2908,34 @@
       "kind": "struct",
       "serde": {}
     },
+    "FileWriteReceipt": {
+      "fields": [
+        {
+          "name": "path",
+          "optional": false,
+          "schema": {
+            "kind": "ref",
+            "name": "RelativePath"
+          }
+        },
+        {
+          "name": "observed",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "identity",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        }
+      ],
+      "kind": "struct",
+      "serde": {}
+    },
     "FilesystemGrant": {
       "fields": [
         {
@@ -10231,7 +10259,7 @@
       "request": "filesystem_write"
     },
     {
-      "reply": "identity",
+      "reply": "file_write",
       "request": "filesystem_write_observed"
     },
     {
@@ -10935,6 +10963,16 @@
                 "kind": "ref",
                 "name": "FileRange"
               }
+            }
+          }
+        },
+        {
+          "name": "file_write",
+          "payload": {
+            "kind": "newtype",
+            "of": {
+              "kind": "ref",
+              "name": "FileWriteReceipt"
             }
           }
         },
@@ -16005,7 +16043,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:127aa8c1f18c7cbb",
+  "source_fingerprint": "fnv1a64:456d14bf8817f33e",
   "specification_version": 1,
   "topics": [
     {

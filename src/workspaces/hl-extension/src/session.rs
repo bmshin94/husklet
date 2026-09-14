@@ -2523,7 +2523,11 @@ impl Session {
                     .peer
                     .authority()
                     .port(Capability::FilesystemWrite, services.files)?;
-                Ok(Reply::Identity(port.write_observed(path, observed, contents)?))
+                Ok(Reply::FileWrite(crate::port::FileWriteReceipt {
+                    path: path.clone(),
+                    observed: observed.clone(),
+                    identity: port.write_observed(path, observed, contents)?,
+                }))
             }
             Request::FilesystemCreateObserved { path, contents } => {
                 if contents.len() > 64 * 1024 {

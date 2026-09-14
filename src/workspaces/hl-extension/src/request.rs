@@ -977,6 +977,7 @@ pub enum Reply {
     Contents(Vec<u8>),
     FileRange(crate::port::FileRange),
     FileRanges(Vec<crate::port::FileRange>),
+    FileWrite(crate::port::FileWriteReceipt),
     State(crate::port::ExtensionState),
     Preferences(crate::port::ExtensionPreferences),
     Credential(crate::port::ExtensionCredential),

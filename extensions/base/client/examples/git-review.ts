@@ -1,6 +1,7 @@
 import {
   ExecutionOperationError,
   FileWriteOperationError,
+  FileWriteProtocolError,
   type WorkspaceApi,
 } from '@husklet/client';
 
@@ -43,6 +44,8 @@ export async function resumeGitText(
 
 /** Reconcile a reviewed file whose atomic write committed before its reply was lost. */
 export async function resumeReviewedFileWrite(host: WorkspaceApi, failure: unknown) {
+  // A mismatched receipt is a protocol violation, never an ambiguous write to reconcile.
+  if (failure instanceof FileWriteProtocolError) throw failure;
   if (!(failure instanceof FileWriteOperationError)) throw failure;
   return host.files.recoverObservedWrite(failure);
 }

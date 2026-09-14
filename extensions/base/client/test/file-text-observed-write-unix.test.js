@@ -5,7 +5,7 @@ import path from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import test from 'node:test';
 
-import { connect, workspace } from '../dist/index.js';
+import { FileWriteProtocolError, connect, workspace } from '../dist/index.js';
 import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
 
 test('path-bearing text observation cannot be redirected before its fragmented CAS write', async () => {
@@ -39,7 +39,21 @@ test('path-bearing text observation cannot be redirected before its fragmented C
                   truncated: false,
                 },
               }
-            : { reply: 'identity', with: `sha256:${'b'.repeat(64)}` };
+            : {
+                reply: 'file_write',
+                with:
+                  calls.filter((call) => call.call === 'filesystem_write_observed').length === 1
+                    ? {
+                        path: 'src/approved.ts',
+                        observed: identity,
+                        identity: `sha256:${'b'.repeat(64)}`,
+                      }
+                    : {
+                        path: 'src/other.ts',
+                        observed: `sha256:${'c'.repeat(64)}`,
+                        identity: `sha256:${'d'.repeat(64)}`,
+                      },
+              };
         sendFragmented(socket, { channel: frame.channel, kind: KIND.response, payload });
       }
     });
@@ -80,6 +94,16 @@ test('path-bearing text observation cannot be redirected before its fragmented C
         contents: [110, 101, 119],
       },
     });
+    await assert.rejects(
+      host.files.writeObserved('src/approved.ts', identity, [110, 101, 119]),
+      (error) => {
+        assert(error instanceof FileWriteProtocolError);
+        assert.deepEqual(error.expected, { path: 'src/approved.ts', observed: identity });
+        assert.equal(error.received.path, 'src/other.ts');
+        assert.equal(error.received.observed, `sha256:${'c'.repeat(64)}`);
+        return true;
+      },
+    );
     await session.close();
   } finally {
     for (const connection of connections) connection.destroy();

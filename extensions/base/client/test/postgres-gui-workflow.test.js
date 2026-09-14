@@ -144,7 +144,10 @@ test('Postgres GUI uses bounded observation, opaque credentials, pane text, and 
           };
         } else if (call === 'filesystem_write_observed') {
           payload = allowedWrites.has(value.path)
-            ? { reply: 'identity', with: 'v1:2:3:4:5:6:7:9' }
+            ? {
+                reply: 'file_write',
+                with: { path: value.path, observed: value.observed, identity: 'v1:2:3:4:5:6:7:9' },
+              }
             : {
                 error: 'denied',
                 capability: 'filesystem:write',

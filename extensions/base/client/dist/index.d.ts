@@ -159,6 +159,12 @@ export declare class FileWriteOperationError extends Error {
     readonly contents: any;
     constructor(path: any, observed: any, contents: any, cause: any);
 }
+/** The host returned a file-write identity for another path or prior generation. */
+export declare class FileWriteProtocolError extends Error {
+    readonly expected: any;
+    readonly received: any;
+    constructor(expected: any, received: any);
+}
 /** Catalogue discovery was bounded before it became a complete searchable set. */
 export declare class IncompleteCatalogueError extends Error {
     readonly received: any;

@@ -62,7 +62,10 @@ test('fragmented Unix file write recovery accepts only the exact committed revie
           const reply = encode({
             channel: frame.channel,
             kind: KIND.response,
-            payload: { reply: 'identity', with: identity },
+            payload: {
+              reply: 'file_write',
+              with: { path: input.path, observed: input.observed, identity },
+            },
           });
           if (thisConnection === 1) socket.write(reply.subarray(0, 1), () => socket.destroy());
           else fragmented(socket, reply);

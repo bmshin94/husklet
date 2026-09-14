@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:87333b987e5e8114
+// Protocol artifact fnv1a64:dfdc53e01be4c59a
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -454,7 +454,7 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "filesystem_read_ranges": "file_ranges",
   "filesystem_stat": "entry",
   "filesystem_write": "done",
-  "filesystem_write_observed": "identity",
+  "filesystem_write_observed": "file_write",
   "filesystem_create_observed": "identity",
   "filesystem_mkdir": "done",
   "filesystem_rename": "done",
@@ -3271,6 +3271,34 @@ const definitions = {
           "of": {
             "kind": "string"
           }
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {}
+  },
+  "FileWriteReceipt": {
+    "fields": [
+      {
+        "name": "path",
+        "optional": false,
+        "schema": {
+          "kind": "ref",
+          "name": "RelativePath"
+        }
+      },
+      {
+        "name": "observed",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "identity",
+        "optional": false,
+        "schema": {
+          "kind": "string"
         }
       }
     ],
@@ -10080,6 +10108,16 @@ const roots = {
               "kind": "ref",
               "name": "FileRange"
             }
+          }
+        }
+      },
+      {
+        "name": "file_write",
+        "payload": {
+          "kind": "newtype",
+          "of": {
+            "kind": "ref",
+            "name": "FileWriteReceipt"
           }
         }
       },

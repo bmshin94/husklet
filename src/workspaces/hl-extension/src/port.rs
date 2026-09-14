@@ -856,6 +856,14 @@ pub struct FileRangeRequest {
     pub observed: Option<String>,
 }
 
+/// Receipt binding an observed file replacement to its exact path and prior identity.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct FileWriteReceipt {
+    pub path: RelativePath,
+    pub observed: String,
+    pub identity: String,
+}
+
 /// A bounded, complete-or-explicitly-truncated view of every declared filesystem root.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct FileInventory {

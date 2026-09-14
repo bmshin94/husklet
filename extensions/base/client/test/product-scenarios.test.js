@@ -799,7 +799,10 @@ test('Git review resumes bounded inspection and applies one identity-observed fi
           },
         });
       else if (call === 'filesystem_write_observed')
-        respond(socket, frame, { reply: 'identity', with: 'file-v2' });
+        respond(socket, frame, {
+          reply: 'file_write',
+          with: { path: value.path, observed: value.observed, identity: 'file-v2' },
+        });
       else if (call === 'state_write')
         respond(socket, frame, { reply: 'identity', with: `sha256:${'2'.repeat(64)}` });
       else if (call === 'interface_open_tab')

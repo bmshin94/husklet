@@ -328,6 +328,17 @@ export class FileWriteOperationError extends Error {
         this.contents = Object.freeze([...contents]);
     }
 }
+/** The host returned a file-write identity for another path or prior generation. */
+export class FileWriteProtocolError extends Error {
+    expected;
+    received;
+    constructor(expected, received) {
+        super('host returned a filesystem write receipt for another path or generation');
+        this.name = 'FileWriteProtocolError';
+        this.expected = Object.freeze({ ...expected });
+        this.received = Object.freeze({ ...received });
+    }
+}
 /** Catalogue discovery was bounded before it became a complete searchable set. */
 export class IncompleteCatalogueError extends Error {
     received;
@@ -4031,14 +4042,17 @@ export function workspace(session, { signal } = {}) {
             writeObserved: async (path, observed, contents) => {
                 const exact = exactFileContents(contents);
                 try {
-                    return expect(await session.call('filesystem_write_observed', {
+                    const receipt = expect(await session.call('filesystem_write_observed', {
                         path,
                         observed,
                         contents: exact,
-                    }), 'identity');
+                    }), 'file_write');
+                    if (receipt.path !== path || receipt.observed !== observed)
+                        throw new FileWriteProtocolError({ path, observed }, receipt);
+                    return receipt.identity;
                 }
                 catch (cause) {
-                    if (cause instanceof ExtensionError)
+                    if (cause instanceof ExtensionError || cause instanceof FileWriteProtocolError)
                         throw cause;
                     throw new FileWriteOperationError(path, observed, exact, cause);
                 }
@@ -4062,14 +4076,17 @@ export function workspace(session, { signal } = {}) {
                 requireFilesystemActive(signal);
                 if (current.identity === failure.observed) {
                     try {
-                        return expect(await session.call('filesystem_write_observed', {
+                        const receipt = expect(await session.call('filesystem_write_observed', {
                             path: failure.path,
                             observed: failure.observed,
                             contents: failure.contents,
-                        }, { signal }), 'identity');
+                        }, { signal }), 'file_write');
+                        if (receipt.path !== failure.path || receipt.observed !== failure.observed)
+                            throw new FileWriteProtocolError({ path: failure.path, observed: failure.observed }, receipt);
+                        return receipt.identity;
                     }
                     catch (cause) {
-                        if (cause instanceof ExtensionError)
+                        if (cause instanceof ExtensionError || cause instanceof FileWriteProtocolError)
                             throw cause;
                         throw new FileWriteOperationError(failure.path, failure.observed, failure.contents, cause);
                     }

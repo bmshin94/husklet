@@ -158,7 +158,7 @@ const REQUEST_TO_REPLY: &[(&str, &str)] = &[
     ("filesystem_read_ranges", "file_ranges"),
     ("filesystem_stat", "entry"),
     ("filesystem_write", "done"),
-    ("filesystem_write_observed", "identity"),
+    ("filesystem_write_observed", "file_write"),
     ("filesystem_create_observed", "identity"),
     ("filesystem_mkdir", "done"),
     ("filesystem_rename", "done"),

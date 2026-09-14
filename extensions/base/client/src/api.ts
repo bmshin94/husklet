@@ -1153,6 +1153,12 @@ export declare class FileWriteOperationError extends Error {
   readonly cause: unknown;
 }
 
+/** The host returned a file-write identity for another path or prior generation. */
+export declare class FileWriteProtocolError extends Error {
+  readonly expected: Readonly<{ path: string; observed: string }>;
+  readonly received: Readonly<{ path: string; observed: string; identity: string }>;
+}
+
 export interface ConnectOptions {
   path?: string;
   /** Bounds pending calls, heartbeats, and queued event callback deliveries. */

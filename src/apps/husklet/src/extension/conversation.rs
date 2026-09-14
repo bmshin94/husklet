@@ -3574,9 +3574,12 @@ mod tests {
                 contents: b"new".to_vec(),
             },
         );
-        let Reply::Identity(published) = codec::read_reply(&answer).expect("identity reply") else {
+        let Reply::FileWrite(receipt) = codec::read_reply(&answer).expect("file write reply") else {
             panic!("unexpected reply")
         };
+        assert_eq!(receipt.path, exact);
+        assert_eq!(receipt.observed, observed);
+        let published = receipt.identity;
         assert_ne!(published, observed);
         assert_eq!(
             std::fs::read(root.join("settings.json")).expect("published file"),

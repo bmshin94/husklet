@@ -538,7 +538,14 @@ fn observed_file_mutations_reject_a_stale_agent_and_keep_the_real_socket_usable(
         &mut server,
     )
     .expect("replaced");
-    assert_eq!(replaced, Reply::Identity("file-v2".into()));
+    assert_eq!(
+        replaced,
+        Reply::FileWrite(hl_extension::port::FileWriteReceipt {
+            path: path.clone(),
+            observed: "file-v1".into(),
+            identity: "file-v2".into(),
+        })
+    );
 
     assert!(matches!(
         exchange(
