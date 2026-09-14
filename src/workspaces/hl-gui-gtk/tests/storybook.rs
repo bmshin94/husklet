@@ -28,6 +28,7 @@ mod unix {
         "PasswordEntry",
         "TextArea",
         "Select",
+        "NavigationMenuItem",
         "Switch",
         "ToggleButton",
         "Checkbox",
@@ -280,6 +281,7 @@ mod unix {
             "Button"
                 | "InlineButton"
                 | "IconButton"
+                | "NavigationMenuItem"
                 | "Entry"
                 | "Select"
                 | "Checkbox"
@@ -1393,6 +1395,73 @@ mod unix {
             realized_window.set_size_request(1_200, 800);
             realized_window.set_default_size(1_200, 800);
             settle_window_width(&realized_window, 1_200);
+        }
+        if story == "NavigationMenuItem" {
+            realized_window.set_size_request(600, 800);
+            realized_window.set_default_size(600, 800);
+            settle_window_width(&realized_window, 600);
+            let items = descendants::<gtk::ToggleButton>(&root)
+                .into_iter()
+                .filter(|item| item.has_css_class("hl-navigationmenuitem"))
+                .collect::<Vec<_>>();
+            assert_eq!(items.len(), 4, "NavigationMenuItem page documents four row states");
+            assert_eq!(
+                items.iter().filter(|item| item.is_active()).count(),
+                1,
+                "exactly one destination owns selected state"
+            );
+            assert_eq!(
+                items.iter().filter(|item| !item.is_sensitive()).count(),
+                1,
+                "the unavailable destination has a genuine disabled state"
+            );
+            for item in &items {
+                if item.is_sensitive() {
+                    assert!(item.is_focusable(), "every available destination exposes keyboard focus");
+                }
+                assert!(
+                    descendants::<gtk::Label>(&item.clone().upcast())
+                        .iter()
+                        .any(|label| !label.text().is_empty()),
+                    "every destination exposes a visible semantic name"
+                );
+                assert!(!item.has_frame(), "navigation rows must not gain button frames");
+                assert!(
+                    (28..=34).contains(&item.height()),
+                    "navigation rows exceeded compact chrome: {}px",
+                    item.height()
+                );
+                let bounds = item
+                    .compute_bounds(&root)
+                    .expect("navigation row belongs to its component document");
+                assert!(
+                    bounds.x() >= 16.0 && bounds.x() + bounds.width() <= 584.0,
+                    "narrow navigation row escaped the document lane: {bounds:?}"
+                );
+            }
+            assert!(items[1].grab_focus(), "an available destination accepts keyboard focus");
+            items[1].set_state_flags(gtk::StateFlags::PRELIGHT, false);
+            settle_toolkit();
+            assert!(items[1].has_focus());
+            assert!(!items[1].is_active(), "focus must remain distinct from selection");
+            capture_story(&realized_window, "NavigationMenuItem focused narrow");
+            realized_window.set_size_request(1_200, 800);
+            realized_window.set_default_size(1_200, 800);
+            settle_window_width(&realized_window, 1_200);
+            let wide_bounds = items
+                .iter()
+                .map(|item| item.compute_bounds(&root).expect("wide navigation row remains rooted"))
+                .collect::<Vec<_>>();
+            assert!(
+                wide_bounds.iter().all(|bounds| {
+                    bounds.width() >= 190.0
+                        && bounds.width() <= 220.0
+                        && bounds.x() >= 264.0
+                        && bounds.x() + bounds.width() <= 1_184.0
+                }),
+                "wide navigation specimens lost their compact bounded lane: {wide_bounds:?}"
+            );
+            capture_story(&realized_window, "NavigationMenuItem wide");
         }
         capture_story(&realized_window, story);
         if story == "Validated settings form" {
@@ -3556,6 +3625,15 @@ mod unix {
             }
             "Navigation and transient UI" => {
                 find::<gtk::Expander>(root, |_| true).set_expanded(false);
+            }
+            "NavigationMenuItem" => {
+                let destination = find::<gtk::ToggleButton>(root, |item| {
+                    item.has_css_class("hl-navigationmenuitem")
+                        && descendants::<gtk::Label>(&item.clone().upcast())
+                            .iter()
+                            .any(|label| label.text() == "Extensions")
+                });
+                destination.emit_clicked();
             }
             "Bounded streaming log" => {
                 find::<gtk::Button>(root, |button| button_caption(button).as_deref() == Some("Append batch"))

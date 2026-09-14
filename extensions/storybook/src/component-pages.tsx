@@ -24,6 +24,7 @@ import { RadioWorkbench } from './radio.js';
 import { RadioGroupWorkbench } from './radio-group.js';
 import { ResponsiveWorkbench } from './responsive.js';
 import { NumberEntryWorkbench } from './number-entry.js';
+import { NavigationMenuItemWorkbench } from './navigation-menu-item.js';
 import { PasswordEntryWorkbench } from './password-entry.js';
 import { SearchWorkbench } from './search.js';
 import { RecoveryStateStory } from './recovery-state.js';
@@ -54,6 +55,7 @@ type NativeWorkbenchName =
   | 'InlineMessage'
   | 'InlineButton'
   | 'NumberEntry'
+  | 'NavigationMenuItem'
   | 'PasswordEntry'
   | 'Radio'
   | 'RadioGroup'
@@ -117,6 +119,7 @@ const nativeWorkbenchPages = {
   InlineMessage: InlineMessageWorkbench,
   InlineButton: InlineButtonWorkbench,
   NumberEntry: NumberEntryWorkbench,
+  NavigationMenuItem: NavigationMenuItemWorkbench,
   PasswordEntry: PasswordEntryWorkbench,
   Radio: RadioWorkbench,
   RadioGroup: RadioGroupWorkbench,
