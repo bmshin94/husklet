@@ -11,7 +11,6 @@ import type {
   TerminalCommand,
   TerminalCommandInput,
   TerminalPaneInput,
-  TerminalInputWriter,
   TerminalCommandOutput,
   PostgresConnection,
   PostgresCursor,
