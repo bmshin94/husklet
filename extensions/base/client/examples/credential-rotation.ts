@@ -1,8 +1,26 @@
 import {
+  CredentialRemoveOperationError,
   CredentialWriteProtocolError,
   ExecutionStartOperationError,
   type WorkspaceApi,
 } from '@husklet/client';
+
+/** Remove one secret without replaying the destructive call after a lost reply. */
+export async function removeDatabaseCredential(
+  host: WorkspaceApi,
+  reconnect: () => Promise<WorkspaceApi>,
+  key: string,
+) {
+  const before = await host.credentials.read(key);
+  try {
+    return await host.credentials.removeObserved(before.revision, key);
+  } catch (cause) {
+    if (!(cause instanceof CredentialRemoveOperationError)) throw cause;
+    return (await reconnect()).credentials.recoverRemove(cause);
+  } finally {
+    before.value?.fill(0);
+  }
+}
 
 /**
  * Start a process with host-injected credentials. On reply loss, reconnect only to identify

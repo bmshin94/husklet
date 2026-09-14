@@ -745,6 +745,13 @@ export declare class CredentialWriteProtocolError extends Error {
   readonly expected: Readonly<{ key: string; observed: number }>;
   readonly received: Readonly<{ key: string; observed: number; revision: number }>;
 }
+
+/** A credential removal may have committed before its reply was lost. */
+export declare class CredentialRemoveOperationError extends Error {
+  readonly key: string;
+  readonly observed: number;
+  readonly cause: unknown;
+}
 export interface StateCodec<T> {
   decode(value: unknown): T;
   encode(value: T): unknown;
@@ -2586,6 +2593,8 @@ export interface WorkspaceApi {
     /** Reconcile by exact revision and bytes without replaying the secret mutation. */
     recoverSet(failure: CredentialSetOperationError, options?: CallOptions): Promise<number>;
     remove(observed: number, key: string): Promise<number>;
+    removeObserved(observed: number, key: string): Promise<number>;
+    recoverRemove(failure: CredentialRemoveOperationError, options?: CallOptions): Promise<number>;
   };
   /** Host-owned PostgreSQL leases. Start calls reconcile by the same operation token and are never auto-replayed. */
   postgres: {

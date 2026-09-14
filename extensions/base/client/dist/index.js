@@ -124,6 +124,17 @@ export class CredentialWriteProtocolError extends Error {
         this.received = Object.freeze({ ...received });
     }
 }
+/** A credential removal may have committed before its reply was lost. */
+export class CredentialRemoveOperationError extends Error {
+    key;
+    observed;
+    constructor(key, observed, cause) {
+        super(`credential ${key} removal after revision ${observed} has an unknown outcome`, { cause });
+        this.name = 'CredentialRemoveOperationError';
+        this.key = key;
+        this.observed = observed;
+    }
+}
 function immutableCopy(value) {
     if (Array.isArray(value))
         return Object.freeze(value.map(immutableCopy));
@@ -4351,7 +4362,33 @@ export function workspace(session, { signal } = {}) {
                     source?.fill(0);
                 }
             },
-            remove: async (observed, key) => expect(await session.call('credential_remove', { observed, key: exactCredentialKey(key) }), 'revision'),
+            remove: async (observed, key) => {
+                const exactKey = exactCredentialKey(key);
+                const receipt = expect(await session.call('credential_remove', { observed, key: exactKey }), 'credential_write');
+                if (receipt.key !== exactKey || receipt.observed !== observed)
+                    throw new CredentialWriteProtocolError({ key: exactKey, observed }, receipt);
+                return receipt.revision;
+            },
+            removeObserved: async (observed, key) => {
+                const exactKey = exactCredentialKey(key);
+                try {
+                    return await api.credentials.remove(observed, exactKey);
+                }
+                catch (cause) {
+                    if (cause instanceof ExtensionError || cause instanceof CredentialWriteProtocolError)
+                        throw cause;
+                    throw new CredentialRemoveOperationError(exactKey, observed, cause);
+                }
+            },
+            recoverRemove: async (failure, options = {}) => {
+                if (!(failure instanceof CredentialRemoveOperationError))
+                    throw new TypeError('credential removal recovery requires CredentialRemoveOperationError');
+                const current = await api.credentials.read(failure.key, options);
+                if (current.revision === failure.observed + 1 && current.value === null)
+                    return current.revision;
+                current.value?.fill(0);
+                throw new Error(`credential ${failure.key} no longer proves the ambiguous removal; no mutation was replayed`);
+            },
         },
         postgres: {
             openOnce: async (operation, connection) => {

@@ -59,6 +59,12 @@ export declare class CredentialWriteProtocolError extends Error {
     readonly received: any;
     constructor(expected: any, received: any);
 }
+/** A credential removal may have committed before its reply was lost. */
+export declare class CredentialRemoveOperationError extends Error {
+    readonly key: any;
+    readonly observed: any;
+    constructor(key: any, observed: any, cause: any);
+}
 /** An extension install/update may have committed before its reply was lost. */
 export declare class ExtensionCommitOperationError extends Error {
     readonly operation: any;

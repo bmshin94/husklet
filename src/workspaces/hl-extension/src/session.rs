@@ -2745,9 +2745,11 @@ impl Session {
                         detail: format!("credential {key} is outside the consented write scope"),
                     });
                 }
-                port.credential_remove(*observed, key)
-                    .map(Reply::Revision)
-                    .map_err(Failure::from)
+                Ok(Reply::CredentialWrite(crate::port::CredentialWriteReceipt {
+                    key: key.clone(),
+                    observed: *observed,
+                    revision: port.credential_remove(*observed, key)?,
+                }))
             }
             _ => Err(Failure::Unsupported {
                 call: "extension state".into(),

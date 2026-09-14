@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:ef50c9f4ba805913
+// Protocol artifact fnv1a64:83117eab79c5d339
 export const PROTOCOL_SPECIFICATION_VERSION: 1;
 export const PROTOCOL_VERSION: 1;
 export const PROTOCOL_BOUNDS: Readonly<{ "extension_job_bytes": number; "extension_reference_bytes": number; "pane_input_bytes": number; "pane_inventory_items": number; "pane_text_bytes": number; "resource_inventory_items": number; "semantic_action_value_bytes": number; "semantic_depth": number; "semantic_nodes": number; "semantic_text_bytes": number; "terminal_command_argument_bytes": number; "terminal_command_bytes": number }>;
@@ -304,7 +304,7 @@ export interface WireReplyByCall {
   "preference_remove": Extract<WireReply, { reply: "revision" }>;
   "credential_read": Extract<WireReply, { reply: "credential" }>;
   "credential_set": Extract<WireReply, { reply: "credential_write" }>;
-  "credential_remove": Extract<WireReply, { reply: "revision" }>;
+  "credential_remove": Extract<WireReply, { reply: "credential_write" }>;
   "postgres_open_once": Extract<WireReply, { reply: "postgres_open" }>;
   "postgres_query_start_once": Extract<WireReply, { reply: "postgres_start" }>;
   "postgres_query_status": Extract<WireReply, { reply: "postgres_state" }>;

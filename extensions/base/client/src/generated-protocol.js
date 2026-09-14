@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:ef50c9f4ba805913
+// Protocol artifact fnv1a64:83117eab79c5d339
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -469,7 +469,7 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "preference_remove": "revision",
   "credential_read": "credential",
   "credential_set": "credential_write",
-  "credential_remove": "revision",
+  "credential_remove": "credential_write",
   "postgres_open_once": "postgres_open",
   "postgres_query_start_once": "postgres_start",
   "postgres_query_status": "postgres_state",

@@ -173,7 +173,7 @@ const REQUEST_TO_REPLY: &[(&str, &str)] = &[
     ("preference_remove", "revision"),
     ("credential_read", "credential"),
     ("credential_set", "credential_write"),
-    ("credential_remove", "revision"),
+    ("credential_remove", "credential_write"),
     ("postgres_open_once", "postgres_open"),
     ("postgres_query_start_once", "postgres_start"),
     ("postgres_query_status", "postgres_state"),

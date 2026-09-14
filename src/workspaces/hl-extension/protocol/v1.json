@@ -10400,7 +10400,7 @@
       "request": "credential_set"
     },
     {
-      "reply": "revision",
+      "reply": "credential_write",
       "request": "credential_remove"
     },
     {
@@ -16144,7 +16144,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:91a1bc19c3bb0853",
+  "source_fingerprint": "fnv1a64:6404669535e5719f",
   "specification_version": 1,
   "topics": [
     {

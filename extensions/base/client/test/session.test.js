@@ -1694,7 +1694,14 @@ test('real Unix credential calls reveal only the named value and preserve CAS fr
                     revision: 8,
                   },
                 }
-              : { reply: 'revision', with: 9 };
+              : {
+                  reply: 'credential_write',
+                  with: {
+                    key: frame.payload.with.key,
+                    observed: frame.payload.with.observed,
+                    revision: 9,
+                  },
+                };
         socket.write(encode({ channel: frame.channel, kind: KIND.response, payload: reply }));
       }
     });
