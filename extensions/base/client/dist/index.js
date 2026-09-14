@@ -6375,7 +6375,28 @@ export function workspace(session, { signal } = {}) {
         if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000)
             throw new RangeError('extension commit recovery timeout must be between 1 and 30000ms');
         const scoped = signal ? api.withSignal(signal) : api;
-        let status = await scoped.extensions.acquisition(failure.job);
+        const committedExtension = async () => {
+            const extension = (await scoped.extensions.list()).find(({ name }) => name === failure.candidate.name);
+            return extension &&
+                extension.image_digest === failure.candidate.image_digest &&
+                extension.version === failure.candidate.version &&
+                extensionReviewedAuthority(extension) === reviewedAuthority(failure.review)
+                ? extension
+                : undefined;
+        };
+        // Acquisition jobs are process-local, but the extension roster is durable.
+        // Prove the desired state before consulting job history so an application
+        // restart can recover an exact commit without ever replaying it.
+        const durable = await committedExtension();
+        if (durable)
+            return durable;
+        let status;
+        try {
+            status = await scoped.extensions.acquisition(failure.job);
+        }
+        catch (cause) {
+            throw new Error(`extension ${failure.candidate.name} commit cannot be recovered because its acquisition history is unavailable and durable extension state does not match the reviewed candidate`, { cause });
+        }
         const deadline = Date.now() + timeoutMs;
         while (status.state === 'committing' || status.state === 'ready') {
             const remaining = deadline - Date.now();
@@ -6392,11 +6413,8 @@ export function workspace(session, { signal } = {}) {
         const expectedState = failure.operation === 'install' ? 'installed' : 'updated';
         if (status.state !== expectedState)
             throw new Error(`extension ${failure.operation} finished as ${status.state}`);
-        const extension = (await scoped.extensions.list()).find(({ name }) => name === failure.candidate.name);
-        if (!extension ||
-            extension.image_digest !== failure.candidate.image_digest ||
-            extension.version !== failure.candidate.version ||
-            extensionReviewedAuthority(extension) !== reviewedAuthority(failure.review))
+        const extension = await committedExtension();
+        if (!extension)
             throw new Error(`extension ${failure.candidate.name} no longer matches the committed candidate and reviewed authority`);
         return extension;
     };

@@ -57,6 +57,18 @@ test('lost install reply recovers exact reviewed authority without replay over f
         if (frame.kind !== KIND.request) continue;
         calls.push({ connection: current, call: frame.payload.call });
         if (frame.payload.call === 'extension_acquisition_status') {
+          if (current > 1) {
+            fragmented(socket, {
+              channel: frame.channel,
+              kind: KIND.response,
+              flags: 2,
+              payload: {
+                error: 'absent',
+                detail: 'acquisition job disappeared after host restart',
+              },
+            });
+            continue;
+          }
           fragmented(socket, {
             channel: frame.channel,
             kind: KIND.response,
@@ -139,7 +151,7 @@ test('lost install reply recovers exact reviewed authority without replay over f
     const third = await connect({ path: socketPath });
     await assert.rejects(
       workspace(third).extensions.recoverCommit(failure),
-      /no longer matches the committed candidate and reviewed authority/,
+      /acquisition history is unavailable and durable extension state does not match the reviewed candidate/,
     );
     assert.equal(calls.filter(({ call }) => call === 'extension_install').length, 1);
     await third.close();

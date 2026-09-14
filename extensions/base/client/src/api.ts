@@ -1368,7 +1368,7 @@ export interface WorkspaceApi {
       | { changed: true; extension: ExtensionSummary }
       | { changed: false; name: string; image_digest: string; revision: number }
     >;
-    /** Reconcile a lost install/update reply from terminal acquisition and exact persisted authority. */
+    /** Reconcile a lost install/update reply from exact persisted authority, including after host restart. */
     recoverCommit(
       failure: ExtensionCommitOperationError,
       options?: { timeoutMs?: number; signal?: AbortSignal },
