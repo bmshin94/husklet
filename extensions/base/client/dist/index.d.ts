@@ -13,6 +13,14 @@ export declare class TerminalCommandInputOperationError extends Error {
     readonly cause: any;
     constructor(command: any, operation: any, offset: any, input: any, close: any, cause: any);
 }
+/** The host returned a PostgreSQL page for a different query or cursor. */
+export declare class PostgresPageProtocolError extends Error {
+    readonly query: any;
+    readonly cursor: any;
+    readonly receivedQuery: any;
+    readonly receivedCursor: any;
+    constructor(query: any, cursor: any, receivedQuery: any, receivedCursor: any);
+}
 /** A credential CAS write may have committed before its revision reply was lost. */
 export declare class CredentialSetOperationError extends Error {
     readonly key: any;

@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:5e7318303c024fbd
+// Protocol artifact fnv1a64:ddbda7537419c95b
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -5307,6 +5307,25 @@ const definitions = {
   },
   "PostgresPage": {
     "fields": [
+      {
+        "name": "query",
+        "optional": false,
+        "schema": {
+          "kind": "ref",
+          "name": "PostgresQueryId"
+        }
+      },
+      {
+        "name": "cursor",
+        "optional": true,
+        "schema": {
+          "kind": "optional",
+          "of": {
+            "kind": "ref",
+            "name": "PostgresCursor"
+          }
+        }
+      },
       {
         "name": "columns",
         "optional": false,

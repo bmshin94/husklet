@@ -4939,6 +4939,25 @@
     "PostgresPage": {
       "fields": [
         {
+          "name": "query",
+          "optional": false,
+          "schema": {
+            "kind": "ref",
+            "name": "PostgresQueryId"
+          }
+        },
+        {
+          "name": "cursor",
+          "optional": true,
+          "schema": {
+            "kind": "optional",
+            "of": {
+              "kind": "ref",
+              "name": "PostgresCursor"
+            }
+          }
+        },
+        {
           "name": "columns",
           "optional": false,
           "schema": {
@@ -15889,7 +15908,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:7610505c22d2967d",
+  "source_fingerprint": "fnv1a64:868d1ff4099aa2ea",
   "specification_version": 1,
   "topics": [
     {

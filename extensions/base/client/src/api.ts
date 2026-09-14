@@ -1001,6 +1001,14 @@ export declare class TerminalCommandInputOperationError extends Error {
   readonly cause: unknown;
 }
 
+/** The host returned a PostgreSQL page for a different query or cursor. */
+export declare class PostgresPageProtocolError extends Error {
+  readonly query: PostgresQueryId;
+  readonly cursor: PostgresCursor | null;
+  readonly receivedQuery: PostgresQueryId;
+  readonly receivedCursor: PostgresCursor | null;
+}
+
 export type TerminalCommandResumeToken = {
   version: 1;
   command: Readonly<TerminalCommand>;
@@ -2536,6 +2544,10 @@ export interface WorkspaceApi {
     ): Promise<PostgresOpenOutcome>;
     startOnce(lease: PostgresLeaseId, query: PostgresQuery): Promise<PostgresStartOutcome>;
     status(lease: PostgresLeaseId, query: PostgresQueryId): Promise<PostgresQueryState>;
+    /**
+     * Read the next bounded page. The reply echoes the exact query and input cursor; retrying the
+     * same cursor after a lost reply returns the same page without advancing the database stream.
+     */
     page(
       lease: PostgresLeaseId,
       query: PostgresQueryId,

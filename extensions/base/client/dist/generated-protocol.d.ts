@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:5e7318303c024fbd
+// Protocol artifact fnv1a64:ddbda7537419c95b
 export const PROTOCOL_SPECIFICATION_VERSION: 1;
 export const PROTOCOL_VERSION: 1;
 export const PROTOCOL_BOUNDS: Readonly<{ "extension_job_bytes": number; "extension_reference_bytes": number; "pane_input_bytes": number; "pane_inventory_items": number; "pane_text_bytes": number; "resource_inventory_items": number; "semantic_action_value_bytes": number; "semantic_depth": number; "semantic_nodes": number; "semantic_text_bytes": number; "terminal_command_argument_bytes": number; "terminal_command_bytes": number }>;
@@ -105,7 +105,7 @@ export type PostgresConnection = { "container_id": string; "container_generation
 export type PostgresCursor = string;
 export type PostgresLeaseId = string;
 export type PostgresOpenOutcome = { disposition: "opened" } & { "lease": PostgresLeaseId } | { disposition: "reconciled" } & { "lease": PostgresLeaseId };
-export type PostgresPage = { "columns": Array<string>; "rows": Array<Array<string | null>>; "next_cursor"?: PostgresCursor | null; "bytes": number };
+export type PostgresPage = { "query": PostgresQueryId; "cursor"?: PostgresCursor | null; "columns": Array<string>; "rows": Array<Array<string | null>>; "next_cursor"?: PostgresCursor | null; "bytes": number };
 export type PostgresQuery = { "operation": QueryOperationToken; "statement": string; "page_rows": number; "page_bytes": number };
 export type PostgresQueryId = string;
 export type PostgresQueryState = "running" | "completed" | "cancelled" | "failed";

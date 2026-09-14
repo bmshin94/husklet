@@ -460,6 +460,9 @@ struct QueryRecord {
     id: PostgresQueryId,
     state: PostgresQueryState,
     cursor: Option<PostgresCursor>,
+    /// Last committed page, retained so a lost socket reply can be replayed by
+    /// its exact input cursor without advancing the database stream twice.
+    replay: Option<PostgresPage>,
 }
 
 struct LeaseRecord {
@@ -631,6 +634,7 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
                 id: id.clone(),
                 state: PostgresQueryState::Running,
                 cursor: None,
+                replay: None,
             },
         );
         Ok(PostgresStartOutcome::Started { query: id })
@@ -672,17 +676,23 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
         let Some(query_record) = record.queries.values_mut().find(|item| &item.id == query) else {
             return Err(HostError::Absent("postgres query is not owned by this lease".into()));
         };
+        if let Some(page) = &query_record.replay {
+            if page.cursor.as_ref() == cursor {
+                return Ok(page.clone());
+            }
+        }
         if cursor != query_record.cursor.as_ref() {
             return Err(HostError::Conflict(
                 "postgres cursor is stale or belongs to another page".into(),
             ));
         }
         let page = self.peer.page(lease, query, cursor)?;
-        page.validate(&query_record.request)?;
+        page.validate(&query_record.request, query, cursor)?;
         query_record.cursor.clone_from(&page.next_cursor);
         if page.next_cursor.is_none() {
             query_record.state = PostgresQueryState::Completed;
         }
+        query_record.replay = Some(page.clone());
         Ok(page)
     }
 
@@ -804,6 +814,7 @@ mod tests {
         opened: Arc<AtomicUsize>,
         closed: Arc<AtomicUsize>,
         fail_close: Arc<AtomicBool>,
+        pages: Arc<AtomicUsize>,
     }
 
     impl Peer for FakePeer {
@@ -835,7 +846,10 @@ mod tests {
             _: &PostgresQueryId,
             cursor: Option<&PostgresCursor>,
         ) -> Result<PostgresPage, HostError> {
+            self.pages.fetch_add(1, Ordering::SeqCst);
             Ok(PostgresPage {
+                query: PostgresQueryId::new("query-1").unwrap(),
+                cursor: cursor.cloned(),
                 columns: vec!["answer".into()],
                 rows: vec![vec![Some("42".into())]],
                 next_cursor: cursor.is_none().then(|| PostgresCursor::new("page-2").unwrap()),
@@ -1341,7 +1355,7 @@ mod tests {
     }
 
     #[test]
-    fn cursor_is_single_use_bounded_and_rotation_revokes_before_peer_use() {
+    fn cursor_replays_the_last_receipt_once_and_rotation_revokes_before_peer_use() {
         let authority = FakeAuthority {
             live: Arc::new(AtomicBool::new(true)),
             revision: Arc::new(AtomicUsize::new(7)),
@@ -1362,12 +1376,17 @@ mod tests {
         };
         let first = broker.page(&owner, &lease, &query, None).unwrap();
         assert_eq!(first.rows, vec![vec![Some("42".into())]]);
-        assert!(matches!(
-            broker.page(&owner, &lease, &query, None),
-            Err(HostError::Conflict(_))
-        ));
+        assert_eq!(first.query, query);
+        assert_eq!(first.cursor, None);
+        assert_eq!(broker.page(&owner, &lease, &query, None).unwrap(), first);
+        assert_eq!(
+            peer.pages.load(Ordering::SeqCst),
+            1,
+            "replay must not consume the database stream"
+        );
         let cursor = PostgresCursor::new("page-2").unwrap();
         broker.page(&owner, &lease, &query, Some(&cursor)).unwrap();
+        assert_eq!(peer.pages.load(Ordering::SeqCst), 2);
         authority.revision.store(8, Ordering::SeqCst);
         assert!(matches!(
             broker.cancel(&owner, &lease, &query),

@@ -262,6 +262,10 @@ pub enum PostgresOpenOutcome {
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostgresPage {
+    /// Exact query this receipt belongs to.
+    pub query: PostgresQueryId,
+    /// Cursor presented to produce this page. `None` identifies the first page.
+    pub cursor: Option<PostgresCursor>,
     pub columns: Vec<String>,
     /// Text-format PostgreSQL cells; `None` is SQL NULL.
     pub rows: Vec<Vec<Option<String>>>,
@@ -270,8 +274,16 @@ pub struct PostgresPage {
 }
 
 impl PostgresPage {
-    pub fn validate(&self, requested: &PostgresQuery) -> Result<(), HostError> {
-        if self.rows.len() > requested.page_rows as usize
+    pub fn validate(
+        &self,
+        requested: &PostgresQuery,
+        query: &PostgresQueryId,
+        cursor: Option<&PostgresCursor>,
+    ) -> Result<(), HostError> {
+        if &self.query != query
+            || self.cursor.as_ref() != cursor
+            || self.next_cursor.as_ref().is_some_and(|next| Some(next) == cursor)
+            || self.rows.len() > requested.page_rows as usize
             || self.bytes > requested.page_bytes
             || self.columns.len() > 256
             || self.rows.iter().any(|row| row.len() != self.columns.len())
@@ -375,12 +387,16 @@ mod tests {
             create: false,
         };
         assert!(request.authorize(&names_only, &networks, &credentials).is_err());
-        assert!(request
-            .authorize(&containers, &NetworkGrant::default(), &credentials)
-            .is_err());
-        assert!(request
-            .authorize(&containers, &networks, &CredentialGrant::default())
-            .is_err());
+        assert!(
+            request
+                .authorize(&containers, &NetworkGrant::default(), &credentials)
+                .is_err()
+        );
+        assert!(
+            request
+                .authorize(&containers, &networks, &CredentialGrant::default())
+                .is_err()
+        );
         let exposure_only = CredentialGrant {
             read: vec!["postgres.password".into()],
             expose_to_execution: vec!["postgres.password".into()],
@@ -429,17 +445,50 @@ mod tests {
         assert!(PostgresQuery::new(QueryOperationToken::new("op-2").unwrap(), "", 2, 128).is_err());
         assert!(PostgresQuery::new(QueryOperationToken::new("op-3").unwrap(), "select 1", 1_001, 128).is_err());
         let page = PostgresPage {
+            query: PostgresQueryId::new("query-1").unwrap(),
+            cursor: None,
             columns: vec!["n".into()],
             rows: vec![vec![Some("1".into())], vec![Some("2".into())]],
             next_cursor: Some(PostgresCursor::new("next").unwrap()),
             bytes: 64,
         };
-        page.validate(&query).unwrap();
+        page.validate(&query, &PostgresQueryId::new("query-1").unwrap(), None)
+            .unwrap();
+        assert!(
+            page.validate(&query, &PostgresQueryId::new("another-query").unwrap(), None)
+                .is_err()
+        );
+        assert!(
+            page.validate(
+                &query,
+                &PostgresQueryId::new("query-1").unwrap(),
+                Some(&PostgresCursor::new("wrong-page").unwrap()),
+            )
+            .is_err()
+        );
+        let stalled = PostgresPage {
+            cursor: Some(PostgresCursor::new("page-2").unwrap()),
+            next_cursor: Some(PostgresCursor::new("page-2").unwrap()),
+            ..page.clone()
+        };
+        assert!(
+            stalled
+                .validate(
+                    &query,
+                    &PostgresQueryId::new("query-1").unwrap(),
+                    Some(&PostgresCursor::new("page-2").unwrap()),
+                )
+                .is_err()
+        );
         let too_many = PostgresPage {
             rows: vec![vec![Some("1".into())], vec![Some("2".into())], vec![Some("3".into())]],
             ..page
         };
-        assert!(too_many.validate(&query).is_err());
+        assert!(
+            too_many
+                .validate(&query, &PostgresQueryId::new("query-1").unwrap(), None)
+                .is_err()
+        );
         let outcome = PostgresStartOutcome::Reconciled {
             query: PostgresQueryId::new("query-1").unwrap(),
             state: PostgresQueryState::Completed,

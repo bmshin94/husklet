@@ -1478,6 +1478,8 @@ mod tests {
                 return Err(HostError::Conflict("postgres page cursor is stale".into()));
             }
             Ok(PostgresPage {
+                query: query.clone(),
+                cursor: cursor.cloned(),
                 columns: vec!["answer".into()],
                 rows: vec![vec![Some("42".into())]],
                 next_cursor: None,
@@ -2280,14 +2282,18 @@ mod tests {
             )),
             Ok(Reply::PostgresState(PostgresQueryState::Running))
         ));
-        assert!(matches!(
-            codec::read_reply(&fragmented_ask(
-                &mut writer,
-                &mut wire,
-                &Request::PostgresQueryPage { lease: lease.clone(), query: query_id.clone(), cursor: None },
-            )),
-            Ok(Reply::PostgresPage(PostgresPage { ref rows, .. })) if rows.len() == 1
-        ));
+        let page_request = Request::PostgresQueryPage {
+            lease: lease.clone(),
+            query: query_id.clone(),
+            cursor: None,
+        };
+        let Ok(Reply::PostgresPage(page)) = codec::read_reply(&fragmented_ask(&mut writer, &mut wire, &page_request))
+        else {
+            panic!("fragmented postgres page reply was not decoded")
+        };
+        assert_eq!(page.query, query_id);
+        assert_eq!(page.cursor, None);
+        assert_eq!(page.rows.len(), 1);
         assert!(matches!(
             codec::read_reply(&fragmented_ask(
                 &mut writer,

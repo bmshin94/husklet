@@ -144,6 +144,11 @@ groups
     '- `host.credentials.setObserved(...)` / `recoverSet(error)` — preserve exact key, CAS revision, and replacement bytes across a lost reply; recovery reads and scrubs the current value, accepts only an advanced exact match, and never replays rotation.',
   );
 groups
+  .get('PostgreSQL broker')
+  .push(
+    '- Every `host.postgres.page(...)` reply carries its exact query and input cursor. The host retains the immediately preceding bounded page, so retrying that cursor after a lost reply returns identical rows without advancing the database stream; the client rejects a mismatched receipt before exposing rows.',
+  );
+groups
   .get('Terminal and panes')
   .push(
     '- A supervised terminal command remains inspectable, readable, writable, waitable, and cancellable by its immutable returned identity after its originating pane is replaced or the extension reconnects. The pane snapshot fences creation only.',

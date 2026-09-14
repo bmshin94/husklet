@@ -109,6 +109,23 @@ export class TerminalCommandInputOperationError extends Error {
   }
 }
 
+/** The host returned a PostgreSQL page for a different query or cursor. */
+export class PostgresPageProtocolError extends Error {
+  readonly query;
+  readonly cursor;
+  readonly receivedQuery;
+  readonly receivedCursor;
+
+  constructor(query, cursor, receivedQuery, receivedCursor) {
+    super(`postgres page receipt does not match query ${query} and its requested cursor`);
+    this.name = 'PostgresPageProtocolError';
+    this.query = query;
+    this.cursor = cursor;
+    this.receivedQuery = receivedQuery;
+    this.receivedCursor = receivedCursor;
+  }
+}
+
 /** A credential CAS write may have committed before its revision reply was lost. */
 export class CredentialSetOperationError extends Error {
   readonly key;
@@ -5474,11 +5491,18 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         expect(await session.call('postgres_query_start_once', { lease, query }), 'postgres_start'),
       status: async (lease, query) =>
         expect(await session.call('postgres_query_status', { lease, query }), 'postgres_state'),
-      page: async (lease, query, cursor) =>
-        expect(
+      page: async (lease, query, cursor) => {
+        const page = expect(
           await session.call('postgres_query_page', { lease, query, cursor: cursor ?? null }),
           'postgres_page',
-        ),
+        );
+        const requestedCursor = cursor ?? null;
+        const receivedCursor = page.cursor ?? null;
+        if (page.query !== query || receivedCursor !== requestedCursor) {
+          throw new PostgresPageProtocolError(query, requestedCursor, page.query, receivedCursor);
+        }
+        return page;
+      },
       cancel: async (lease, query) =>
         expect(await session.call('postgres_query_cancel', { lease, query }), 'postgres_state'),
       closeQuery: async (lease, query) => {
