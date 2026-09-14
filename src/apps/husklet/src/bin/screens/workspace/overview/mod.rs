@@ -200,10 +200,10 @@ impl<'a> Overview<'a> {
         gallery: &Gallery,
         window: Option<&Rc<screens::workspace::terminal::TermWin>>,
     ) -> Option<Rc<Shelf>> {
-        let roster = match hl::extension::Roster::workspace(workspace) {
+        let roster = match open_roster(workspace, AppConfig::get().local_extension.as_deref()) {
             Ok(roster) => Rc::new(RefCell::new(roster)),
-            Err(refusal) => {
-                hl_log::hl_error!(hl_log::tag::RUNTIME, "workspace extensions: {refusal}");
+            Err(reason) => {
+                hl_log::hl_error!(hl_log::tag::RUNTIME, "workspace extensions: {reason}");
                 return None;
             }
         };
@@ -366,6 +366,19 @@ impl<'a> Overview<'a> {
     }
 }
 
+fn open_roster(
+    workspace: &WorkspaceConfig,
+    local_extension: Option<&str>,
+) -> Result<hl::extension::Roster<hl_ws::storage::Directory>, String> {
+    #[cfg(debug_assertions)]
+    if let Some(entrypoint) = local_extension {
+        components::workspace::install_local_top(workspace, entrypoint)?;
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = local_extension;
+    hl::extension::Roster::workspace(workspace).map_err(|error| error.to_string())
+}
+
 fn top_section(name: &str) -> Option<&str> {
     matches!(
         name,
@@ -393,7 +406,8 @@ fn notification_id(extension: &str, id: &str) -> String {
 
 #[cfg(test)]
 mod notification_tests {
-    use super::{notification_id, notification_title, top_section};
+    use super::{notification_id, notification_title, open_roster, top_section};
+    use hl::config::WorkspaceConfig;
 
     #[test]
     fn host_owns_visible_attribution_and_stable_replacement_identity() {
@@ -420,5 +434,40 @@ mod notification_tests {
         }
         assert_eq!(top_section("storybook"), None);
         assert_eq!(top_section("extension"), None);
+    }
+
+    #[test]
+    fn reopening_with_a_rebuilt_local_top_replaces_its_same_version_registration() {
+        let package = tempfile::tempdir().unwrap();
+        let dist = package.path().join("dist");
+        std::fs::create_dir_all(&dist).unwrap();
+        let entrypoint = dist.join("main.js");
+        std::fs::write(&entrypoint, "export const build = 1;").unwrap();
+        std::fs::write(
+            package.path().join("extension.toml"),
+            include_str!("../../../../../../../../extensions/top/extension.toml"),
+        )
+        .unwrap();
+        let mut workspace = WorkspaceConfig::new("demo", "image:latest", hl_ws::Arch::Arm64);
+        workspace.storage = Some(package.path().join("workspace"));
+
+        let first = open_roster(&workspace, entrypoint.to_str())
+            .unwrap()
+            .entries()
+            .into_iter()
+            .find(|entry| entry.name.as_str() == "top")
+            .unwrap()
+            .image_digest;
+
+        std::fs::write(&entrypoint, "export const build = 2;").unwrap();
+        let reopened = open_roster(&workspace, entrypoint.to_str())
+            .unwrap()
+            .entries()
+            .into_iter()
+            .find(|entry| entry.name.as_str() == "top")
+            .unwrap();
+
+        assert_ne!(reopened.image_digest, first, "the rebuilt bundle replaces stale authority");
+        assert_eq!(reopened.stage, hl_extension::Stage::Duty);
     }
 }

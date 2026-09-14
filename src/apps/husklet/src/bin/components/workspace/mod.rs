@@ -219,7 +219,10 @@ fn provision_workspace(workspace: WorkspaceConfig) -> std::io::Result<()> {
 /// The extension still speaks the production socket protocol; this replaces
 /// only registry acquisition, which is unavailable on headless test hosts.
 #[cfg(debug_assertions)]
-fn install_local_top(workspace: &WorkspaceConfig, entrypoint: &str) -> Result<(), String> {
+pub(crate) fn install_local_top(
+    workspace: &WorkspaceConfig,
+    entrypoint: &str,
+) -> Result<(), String> {
     let manifest_path = std::path::Path::new(entrypoint)
         .parent()
         .and_then(std::path::Path::parent)
