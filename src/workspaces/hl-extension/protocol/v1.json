@@ -6148,6 +6148,13 @@
           }
         },
         {
+          "name": "redacted",
+          "optional": false,
+          "schema": {
+            "kind": "boolean"
+          }
+        },
+        {
           "name": "disabled",
           "optional": false,
           "schema": {
@@ -16092,7 +16099,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:4c1b8e56239b2eab",
+  "source_fingerprint": "fnv1a64:f915377bd65d9d41",
   "specification_version": 1,
   "topics": [
     {

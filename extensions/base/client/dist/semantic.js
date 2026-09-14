@@ -2,7 +2,6 @@ const XML_LIMIT = 64 * 1024;
 const NODE_LIMIT = 256;
 const DEPTH_LIMIT = 32;
 const TEXT_LIMIT = 256;
-const SECRET = /(password|secret|token|credential|private.?key)/i;
 const bytes = (text) => new TextEncoder().encode(text).byteLength;
 const boundedText = (value, limit = TEXT_LIMIT) => {
     const characters = Array.from(String(value));
@@ -66,11 +65,9 @@ export function semanticText(tree) {
             append(`<label${label.truncated ? ' truncated="true"' : ''}>${escapeXml(label.value)}</label>`, reserve + bytes(close) + 14);
         }
         if (entry.value != null) {
-            const value = SECRET.test(`${entry.role ?? ''} ${entry.label ?? ''}`)
-                ? '[redacted]'
-                : entry.value;
+            const value = entry.redacted === true ? '[redacted]' : entry.value;
             const field = boundedText(value);
-            append(`<value${field.truncated ? ' truncated="true"' : ''}>${escapeXml(field.value)}</value>`, reserve + bytes(close) + 14);
+            append(`<value${entry.redacted === true ? ' redacted="true"' : ''}${field.truncated ? ' truncated="true"' : ''}>${escapeXml(field.value)}</value>`, reserve + bytes(close) + 14);
         }
         for (const child of Array.isArray(entry.children) ? entry.children : []) {
             if (cut)

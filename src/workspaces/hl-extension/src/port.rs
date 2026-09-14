@@ -562,6 +562,9 @@ pub struct SemanticNode {
     pub role: String,
     pub label: Option<String>,
     pub value: Option<String>,
+    /// Whether the value was withheld by the pane owner rather than literally
+    /// containing the displayed redaction marker.
+    pub redacted: bool,
     pub disabled: bool,
     /// Whether invoking this node performs an irreversible operation.
     pub destructive: bool,

@@ -28,7 +28,7 @@ use hl_gui_gtk::Surface;
 const FAULT_NODE: u64 = u64::MAX;
 
 pub use banner::Banner;
-pub use queue::{channel, Deliveries, Delivery, Post, CAPACITY, DRAIN};
+pub use queue::{CAPACITY, DRAIN, Deliveries, Delivery, Post, channel};
 pub use sink::{Signal, Sink};
 
 /// How often the page looks at its queue. Matches the other live workspace
@@ -197,6 +197,7 @@ impl Interface {
                             .take(hl_extension::port::SEMANTIC_TEXT_LIMIT)
                             .collect(),
                     ),
+                    redacted: false,
                     disabled: self.recovery_pending.get(),
                     destructive: false,
                     actions: vec![SemanticActionKind::Invoke],
@@ -272,6 +273,7 @@ impl Interface {
                 .text(hl_gui::Prop::Value)
                 .or_else(|| node.text(hl_gui::Prop::Detail))
                 .map(|value| if secret { "[redacted]".to_owned() } else { clip(value) }),
+            redacted: secret,
             disabled: !node.is_enabled(),
             destructive: node.flag(hl_gui::Prop::Destructive, false),
             actions,

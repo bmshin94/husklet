@@ -571,6 +571,7 @@ impl TerminalSurface for Host {
                 role: "column".into(),
                 label: None,
                 value: None,
+                redacted: false,
                 disabled: false,
                 destructive: false,
                 actions: vec![],
@@ -751,11 +752,8 @@ fn supervised_terminal_command_has_owned_identity_output_input_and_completion_wi
     );
 
     host.ledger.clear();
-    let mut recovered_start = session(
-        &[Capability::TerminalProcessControl, Capability::TerminalInput],
-        &[],
-    )
-    .with_execution_ownership(ownership.clone());
+    let mut recovered_start = session(&[Capability::TerminalProcessControl, Capability::TerminalInput], &[])
+        .with_execution_ownership(ownership.clone());
     let replayed = recovered_start
         .dispatch(
             &Request::TerminalCommandStart {
@@ -824,8 +822,7 @@ fn supervised_terminal_command_has_owned_identity_output_input_and_completion_wi
     );
 
     host.ledger.clear();
-    let mut reconnected = session(&[Capability::TerminalInput], &[])
-        .with_execution_ownership(ownership.clone());
+    let mut reconnected = session(&[Capability::TerminalInput], &[]).with_execution_ownership(ownership.clone());
     let retry = reconnected
         .dispatch(
             &Request::TerminalCommandWrite {

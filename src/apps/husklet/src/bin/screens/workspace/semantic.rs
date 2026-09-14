@@ -34,6 +34,7 @@ pub struct Node {
     pub role: String,
     pub label: Option<String>,
     pub value: Option<String>,
+    pub redacted: bool,
     pub disabled: bool,
     pub destructive: bool,
     pub actions: Vec<ActionKind>,
@@ -100,6 +101,7 @@ impl Registry {
         act: Rc<dyn Fn(ActionKind, Option<&str>)>,
     ) -> u64 {
         let id = stable_id(path);
+        let redacted = matches!(value, Some(Value::Secret));
         let node = Node {
             id,
             role: bounded(role),
@@ -108,6 +110,7 @@ impl Registry {
                 Value::Public(value) => bounded(value),
                 Value::Secret => "[redacted]".to_owned(),
             }),
+            redacted,
             disabled: false,
             destructive: false,
             actions: actions.to_vec(),
@@ -146,12 +149,17 @@ impl Registry {
         let Some(entry) = entries.get_mut(&stable_id(path)) else {
             return;
         };
+        let redacted = matches!(value, Value::Secret);
         let value = match value {
             Value::Public(value) => bounded(value),
             Value::Secret => "[redacted]".to_owned(),
         };
-        if entry.node.value.as_deref() != Some(&value) || entry.node.disabled != disabled {
+        if entry.node.value.as_deref() != Some(&value)
+            || entry.node.redacted != redacted
+            || entry.node.disabled != disabled
+        {
             entry.node.value = Some(value);
+            entry.node.redacted = redacted;
             entry.node.disabled = disabled;
             self.bump();
         }
@@ -248,6 +256,7 @@ impl Registry {
                 role: "navigation".to_owned(),
                 label: Some("Workspace".to_owned()),
                 value: None,
+                redacted: false,
                 disabled: false,
                 destructive: false,
                 actions: Vec::new(),
@@ -332,6 +341,7 @@ mod tests {
             TEXT_LIMIT
         );
         assert_eq!(first.root.children[0].value.as_deref(), Some("[redacted]"));
+        assert!(first.root.children[0].redacted);
         registry.register(
             "workspace/extensions",
             "tab",
@@ -340,6 +350,8 @@ mod tests {
             &[],
             Rc::new(|_, _| {}),
         );
+        let second = registry.snapshot();
+        assert!(!second.root.children[1].redacted);
         assert_eq!(
             registry.act(&Action {
                 revision: first.revision,

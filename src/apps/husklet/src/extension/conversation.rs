@@ -1838,6 +1838,7 @@ mod tests {
                         "Lifecycle notice".into()
                     }),
                     value: Some(format!("revision {revision}")),
+                    redacted: false,
                     disabled: false,
                     destructive: false,
                     actions: Vec::new(),
@@ -1847,6 +1848,7 @@ mod tests {
                             role: "button".into(),
                             label: Some("Ambiguous action".into()),
                             value: None,
+                            redacted: false,
                             disabled: false,
                             destructive: false,
                             actions: vec![hl_extension::SemanticActionKind::Invoke],
@@ -2240,7 +2242,8 @@ mod tests {
         let Ok(Reply::PostgresOpen(PostgresOpenOutcome::Reconciled {
             operation: open_receipt,
             lease,
-        })) = codec::read_reply(&answer) else {
+        })) = codec::read_reply(&answer)
+        else {
             panic!("lost open reply was not reconciled")
         };
         assert_eq!(open_receipt, QueryOperationToken::new("open-once").unwrap());

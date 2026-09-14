@@ -120,6 +120,7 @@ test('stable layout retries a tab-only change over fragmented Unix frames', asyn
                 role: 'document',
                 label: 'Review',
                 value: null,
+                redacted: false,
                 disabled: false,
                 destructive: false,
                 actions: [],

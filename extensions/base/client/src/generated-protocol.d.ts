@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:589fe0957c8da16c
+// Protocol artifact fnv1a64:ca60f85d0545b007
 export const PROTOCOL_SPECIFICATION_VERSION: 1;
 export const PROTOCOL_VERSION: 1;
 export const PROTOCOL_BOUNDS: Readonly<{ "extension_job_bytes": number; "extension_reference_bytes": number; "pane_input_bytes": number; "pane_inventory_items": number; "pane_text_bytes": number; "resource_inventory_items": number; "semantic_action_value_bytes": number; "semantic_depth": number; "semantic_nodes": number; "semantic_text_bytes": number; "terminal_command_argument_bytes": number; "terminal_command_bytes": number }>;
@@ -125,7 +125,7 @@ export type RowRange = { "start": number; "count": number };
 export type RowWindow = { "source": SourceId; "version": Version; "request": RequestId; "range": RowRange; "rows": Array<Row> };
 export type Scale = "Caption" | "Body" | "Title" | "Display";
 export type SemanticActionKind = "invoke" | "change" | "submit" | "toggle" | "expand" | "focus";
-export type SemanticNode = { "id": number; "role": string; "label"?: string | null; "value"?: string | null; "disabled": boolean; "destructive": boolean; "actions": Array<SemanticActionKind>; "children": Array<SemanticNode> };
+export type SemanticNode = { "id": number; "role": string; "label"?: string | null; "value"?: string | null; "redacted": boolean; "disabled": boolean; "destructive": boolean; "actions": Array<SemanticActionKind>; "children": Array<SemanticNode> };
 export type SourceId = number;
 export type SourceMutation = { "Open": { "source": SourceId; "columns": Array<Column> } } | { "Length": { "source": SourceId; "version": Version; "rows": number } } | { "Window": RowWindow } | { "Invalidate": { "source": SourceId; "version": Version; "range"?: RowRange | null } } | { "Close": { "source": SourceId } };
 export type StateWriteReceipt = { "observed": string; "identity": string };
