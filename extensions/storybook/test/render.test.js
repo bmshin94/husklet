@@ -228,41 +228,19 @@ test('the sidebar uses one native scroller without nesting a List scroller', () 
   );
 });
 
-test('the adjustable navigation cannot collapse below its usable width', async () => {
+test('the adjustable navigation declares its usable width to the native divider', () => {
   const stage = host();
   const first = stage.render(h(Playground));
   const responsive = created(first.patches).find((entry) => entry.tag === 'Responsive')?.id;
   assert.notEqual(responsive, undefined, 'the wide layout owns an adjustable responsive split');
-
   assert.ok(
-    stage.surface.dispatch({
-      trigger: 'Change',
-      node: responsive,
-      id: `${responsive}:Change`,
-      value: 320,
-    }),
-  );
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const before = stage.frames.length;
-  assert.ok(
-    stage.surface.dispatch({
-      trigger: 'Change',
-      node: responsive,
-      id: `${responsive}:Change`,
-      value: 40,
-    }),
-  );
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.ok(
-    stage
-      .since(before)
-      .some(
-        (patch) =>
-          patch.SetProp?.id === responsive &&
-          patch.SetProp.prop === 'Position' &&
-          patch.SetProp.value?.Number === SIDEBAR_MINIMUM,
-      ),
-    'a drag toward zero restores the compact usable sidebar minimum',
+    first.patches.some(
+      (patch) =>
+        patch.SetProp?.id === responsive &&
+        patch.SetProp.prop === 'Minimum' &&
+        patch.SetProp.value?.Number === SIDEBAR_MINIMUM,
+    ),
+    'the divider did not receive the native sidebar minimum',
   );
 });
 

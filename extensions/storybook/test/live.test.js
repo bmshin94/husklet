@@ -8,7 +8,7 @@ import test from 'node:test';
 import { components } from '@husklet/react';
 
 import { PACKAGE } from './host.js';
-import { FLOW_STORIES } from '../dist/app.js';
+import { FLOW_STORIES, SIDEBAR_MINIMUM } from '../dist/app.js';
 import { grouped, tags } from '../dist/catalogue.js';
 import { spaced } from '../dist/defaults.js';
 
@@ -200,9 +200,11 @@ test('the shipped entrypoint connects and renders the complete playground over a
   assert.ok(
     rendered.with.frame.patches.some(
       (patch) =>
-        patch.SetHandler?.id === responsive && patch.SetHandler.handler.trigger === 'Change',
+        patch.SetProp?.id === responsive &&
+        patch.SetProp.prop === 'Minimum' &&
+        patch.SetProp.value?.Number === SIDEBAR_MINIMUM,
     ),
-    'the live adjustable navigation has no controlled minimum-width handler',
+    'the live adjustable navigation has no native minimum width',
   );
   const live = new Map();
   apply(live, rendered.with.frame.patches);

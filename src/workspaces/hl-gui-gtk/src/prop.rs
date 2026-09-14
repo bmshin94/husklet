@@ -65,6 +65,7 @@ pub(crate) fn apply(widget: &gtk::Widget, node: &Node, prop: Prop, value: &PropV
         Prop::Position => position(widget, value),
         Prop::Breakpoint => build::responsive::set(widget, value),
         Prop::Alternate => build::responsive::set_alternate(widget, value),
+        Prop::Minimum if build::responsive::set_minimum(widget, value.as_number().unwrap_or_default() as i32) => {}
         Prop::Minimum | Prop::Maximum | Prop::Step => range(widget, prop, value),
         Prop::Fraction => fraction(widget, value),
         Prop::Choices => choices(widget, node, value, reports),

@@ -1016,8 +1016,8 @@ mod unix {
                 if width == 1_200 {
                     document.vadjustment().set_value(0.0);
                     settle_toolkit();
-                    let state_bounds = ["Empty", "Focused", "Selected", "Disabled", "Invalid", "Long label"]
-                        .map(|label| {
+                    let state_bounds =
+                        ["Empty", "Focused", "Selected", "Disabled", "Invalid", "Long label"].map(|label| {
                             let widget = find::<gtk::Label>(&root, |candidate| candidate.text() == label);
                             widget
                                 .compute_bounds(&root)
@@ -1080,17 +1080,17 @@ mod unix {
                             .all(|bounds| bounds.x() >= 16.0 && bounds.x() + bounds.width() <= 584.0),
                         "a Select specimen escaped the 16px narrow content lane at {label}: {specimen_bounds:?}"
                     );
-                    let state_bounds = ["Empty", "Focused", "Selected", "Disabled", "Invalid", "Long label"]
-                        .map(|state| {
+                    let state_bounds =
+                        ["Empty", "Focused", "Selected", "Disabled", "Invalid", "Long label"].map(|state| {
                             let widget = find::<gtk::Label>(&root, |candidate| candidate.text() == state);
                             widget
                                 .compute_bounds(&root)
                                 .unwrap_or_else(|| panic!("{state} state label belongs to the narrow Select document"))
                         });
                     assert!(
-                        state_bounds.windows(2).all(|pair| {
-                            (pair[1].x() - pair[0].x()).abs() <= 1.0 && pair[1].y() > pair[0].y()
-                        }),
+                        state_bounds
+                            .windows(2)
+                            .all(|pair| { (pair[1].x() - pair[0].x()).abs() <= 1.0 && pair[1].y() > pair[0].y() }),
                         "narrow Select states must remain one ordered column: {state_bounds:?}"
                     );
                 }
@@ -1478,7 +1478,10 @@ mod unix {
             );
             for item in &items {
                 if item.is_sensitive() {
-                    assert!(item.is_focusable(), "every available destination exposes keyboard focus");
+                    assert!(
+                        item.is_focusable(),
+                        "every available destination exposes keyboard focus"
+                    );
                 }
                 assert!(
                     descendants::<gtk::Label>(&item.clone().upcast())
@@ -1942,27 +1945,35 @@ mod unix {
                         hl_gui::Event::Change {
                             value: hl_gui::PropValue::Number(value),
                             ..
-                        } if *value == 40.0
+                        } if *value == 240.0
                     )
                 }),
-                "native divider did not report its requested collapsed position: {reports:?}"
+                "native divider did not report its clamped position: {reports:?}"
             );
             capture_story(&realized_window, "Storybook navigation requested collapsed");
-
-            paned.set_position(240);
-            root.allocate(1_200, 1_600, -1, None);
-            settle_toolkit();
-            assert_eq!(navigation.width(), 240, "controlled minimum was not host-renderable");
+            assert!(
+                navigation.width() >= 240,
+                "navigation collapsed below its usable width: {}",
+                navigation.width()
+            );
+            let library = find::<gtk::Label>(&navigation, |label| label.text() == "Library");
+            assert!(
+                library.width() >= 40,
+                "minimum-width navigation collapsed its Library heading to {} pixels",
+                library.width()
+            );
             capture_story(&realized_window, "Storybook navigation clamped minimum");
 
-            paned.set_position(240);
-            root.allocate(1_200, 1_600, -1, None);
-            settle_toolkit();
+            let minimum = navigation.width();
             let body_before = body.width();
-            paned.set_position(280);
+            paned.set_position(minimum + 40);
             root.allocate(1_200, 1_600, -1, None);
             settle_toolkit();
-            assert_eq!(navigation.width(), 280, "native divider resizes the Storybook rail");
+            assert_eq!(
+                navigation.width(),
+                minimum + 40,
+                "native divider resizes the Storybook rail"
+            );
             assert_eq!(
                 body.width(),
                 body_before - 40,
@@ -1971,7 +1982,7 @@ mod unix {
             assert!(paned.grab_focus(), "resized divider accepts keyboard focus");
             assert!(paned.has_focus(), "resized divider exposes its focused handle state");
             capture_story(&realized_window, "Button resized navigation");
-            paned.set_position(240);
+            paned.set_position(minimum);
             root.allocate(1_200, 1_600, -1, None);
             selected.grab_focus();
             settle_toolkit();
@@ -2346,7 +2357,9 @@ mod unix {
             assert!(long.wraps(), "long Card copy does not wrap");
             let inline_label = find::<gtk::Label>(&root, |label| label.text() == "Outline · inline work");
             let selected_label = find::<gtk::Label>(&root, |label| label.text() == "Filled · selected focus");
-            let inline_bounds = inline_label.compute_bounds(&root).expect("outline guidance belongs to Card page");
+            let inline_bounds = inline_label
+                .compute_bounds(&root)
+                .expect("outline guidance belongs to Card page");
             let selected_bounds = selected_label
                 .compute_bounds(&root)
                 .expect("filled guidance belongs to Card page");

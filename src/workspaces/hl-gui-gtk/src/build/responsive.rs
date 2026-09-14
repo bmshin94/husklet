@@ -11,6 +11,7 @@ use hl_gui::PropValue;
 pub(super) struct Pane {
     breakpoint: Cell<i32>,
     wide_position: Cell<i32>,
+    minimum_position: Cell<i32>,
     allocating: Cell<bool>,
     setting_position: Cell<bool>,
     has_body: Cell<bool>,
@@ -28,6 +29,7 @@ impl Default for Pane {
         Self {
             breakpoint: Cell::new(640),
             wide_position: Cell::new(160),
+            minimum_position: Cell::new(0),
             allocating: Cell::new(false),
             setting_position: Cell::new(false),
             has_body: Cell::new(false),
@@ -91,7 +93,12 @@ impl ObjectImpl for Pane {
         ]);
         let responsive = self.obj().downgrade();
         paned.connect_position_notify(move |paned| {
-            let value = paned.position();
+            let minimum = responsive.upgrade().map_or(0, |pane| pane.imp().minimum_position.get());
+            let value = paned.position().max(minimum);
+            if value != paned.position() {
+                paned.set_position(value);
+                return;
+            }
             let text = format!("{value} pixels");
             paned.update_property(&[
                 gtk::accessible::Property::ValueNow(f64::from(value)),
@@ -173,7 +180,7 @@ impl WidgetImpl for Pane {
         let paned = self.paned();
         let expanded = width >= self.breakpoint.get();
         let branch_changed = self.expanded.replace(Some(expanded)) != Some(expanded);
-        let wide_position = self.wide_position.get();
+        let wide_position = self.wide_position.get().max(self.minimum_position.get());
         // Two children are explicit compact and wide alternatives. GtkStack
         // supplies page visibility without divider semantics; its inactive
         // page is also absent from focus and accessibility traversal.
@@ -341,10 +348,24 @@ pub(crate) fn set_position(widget: &gtk::Widget, position: i32) -> bool {
         return false;
     };
     let imp = pane.imp();
+    let position = position.max(imp.minimum_position.get());
     imp.wide_position.set(position);
     imp.setting_position.set(true);
     imp.paned().set_position(position);
     imp.setting_position.set(false);
+    true
+}
+
+pub(crate) fn set_minimum(widget: &gtk::Widget, minimum: i32) -> bool {
+    let Some(pane) = widget.downcast_ref::<ResponsivePane>() else {
+        return false;
+    };
+    let imp = pane.imp();
+    let minimum = minimum.max(0);
+    imp.minimum_position.set(minimum);
+    if imp.wide_position.get() < minimum {
+        set_position(widget, minimum);
+    }
     true
 }
 
