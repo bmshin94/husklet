@@ -188,6 +188,20 @@ pub struct TerminalCommandInput {
     pub closed: bool,
 }
 
+/// Receipt for one idempotent write into an interactive terminal pane.
+///
+/// The cursor identifies the pane incarnation that accepted the bytes. The
+/// caller-selected operation makes a lost reply safe to retry without typing
+/// the same command twice.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct TerminalPaneInput {
+    pub slot: String,
+    pub generation: u64,
+    pub revision: u64,
+    pub operation: String,
+    pub committed: u32,
+}
+
 /// Bounded container creation authority with no host bind-mount path.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ContainerCreateSpec {

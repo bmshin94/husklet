@@ -2306,6 +2306,7 @@ fn calls() -> Vec<(Request, Capability)> {
                 slot: "s1".into(),
                 generation: 1,
                 revision: 2,
+                operation: "3333333333333333".into(),
                 contents: b"pwd\n".to_vec(),
             },
             Capability::TerminalInput,
@@ -3176,6 +3177,7 @@ fn terminal_input_and_grid_are_bounded_before_the_window_is_reached() {
         slot: "s1".into(),
         generation: 1,
         revision: 2,
+        operation: "3333333333333333".into(),
         contents: vec![0; hl_extension::port::PANE_INPUT_BYTES + 1],
     };
     assert!(matches!(
@@ -3194,6 +3196,46 @@ fn terminal_input_and_grid_are_bounded_before_the_window_is_reached() {
         Err(Failure::Conflict { .. })
     ));
     assert!(host.ledger.reached().is_empty());
+}
+
+#[test]
+fn terminal_pane_input_is_exactly_once_across_authenticated_reconnects() {
+    let host = Host::new();
+    let ownership = hl_extension::ExecutionOwnership::default();
+    let operation = "0123456789abcdef";
+    let request = Request::TerminalWritePane {
+        slot: "agent".into(),
+        generation: 7,
+        revision: 11,
+        operation: operation.into(),
+        contents: b"deploy\n".to_vec(),
+    };
+
+    let first = session(&[Capability::TerminalInput], &[])
+        .with_execution_ownership(ownership.clone())
+        .dispatch(&request, &services(&host))
+        .expect("first write");
+    let replay = session(&[Capability::TerminalInput], &[])
+        .with_execution_ownership(ownership.clone())
+        .dispatch(&request, &services(&host))
+        .expect("lost reply recovery");
+    assert_eq!(first, replay);
+    assert_eq!(host.ledger.reached(), vec!["terminal.write"]);
+
+    let conflicting = Request::TerminalWritePane {
+        slot: "agent".into(),
+        generation: 7,
+        revision: 11,
+        operation: operation.into(),
+        contents: b"deploy --force\n".to_vec(),
+    };
+    assert!(matches!(
+        session(&[Capability::TerminalInput], &[])
+            .with_execution_ownership(ownership)
+            .dispatch(&conflicting, &services(&host)),
+        Err(Failure::Conflict { detail }) if detail.contains("already used")
+    ));
+    assert_eq!(host.ledger.reached(), vec!["terminal.write"]);
 }
 
 #[test]

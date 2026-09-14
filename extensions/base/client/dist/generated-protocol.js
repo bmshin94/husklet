@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:2a2a71f60053add9
+// Protocol artifact fnv1a64:135ccf91a3d28143
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -431,7 +431,7 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "terminal_read_history": "terminal_history",
   "pane_semantic_read": "semantics",
   "pane_semantic_action": "done",
-  "terminal_write_pane": "done",
+  "terminal_write_pane": "terminal_pane_input",
   "terminal_resize_grid": "done",
   "terminal_resize_grid_observed": "done",
   "terminal_close_pane": "done",
@@ -8204,6 +8204,59 @@ const definitions = {
     "kind": "struct",
     "serde": {}
   },
+  "TerminalPaneInput": {
+    "fields": [
+      {
+        "name": "slot",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "generation",
+        "optional": false,
+        "schema": {
+          "bits": 64,
+          "kind": "integer",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "signed": false
+        }
+      },
+      {
+        "name": "revision",
+        "optional": false,
+        "schema": {
+          "bits": 64,
+          "kind": "integer",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "signed": false
+        }
+      },
+      {
+        "name": "operation",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "committed",
+        "optional": false,
+        "schema": {
+          "bits": 32,
+          "kind": "integer",
+          "maximum": 4294967295,
+          "minimum": 0,
+          "signed": false
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {}
+  },
   "TerminalTabState": {
     "kind": "enum",
     "serde": {},
@@ -9968,6 +10021,16 @@ const roots = {
           "of": {
             "kind": "ref",
             "name": "TerminalCommandInput"
+          }
+        }
+      },
+      {
+        "name": "terminal_pane_input",
+        "payload": {
+          "kind": "newtype",
+          "of": {
+            "kind": "ref",
+            "name": "TerminalPaneInput"
           }
         }
       },
@@ -12895,6 +12958,13 @@ const roots = {
                 "maximum": 9007199254740991,
                 "minimum": 0,
                 "signed": false
+              }
+            },
+            {
+              "name": "operation",
+              "optional": false,
+              "schema": {
+                "kind": "string"
               }
             },
             {

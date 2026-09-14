@@ -76,7 +76,16 @@ test('quiet terminal input rejects replacement without settling unrelated output
               of: { slot: 'agent', kind: 'terminal', generation: 5, revision: 1, coalesced: 0 },
             },
           });
-          reply({ reply: 'done' });
+          reply({
+            reply: 'terminal_pane_input',
+            with: {
+              slot: frame.payload.with.slot,
+              generation: frame.payload.with.generation,
+              revision: frame.payload.with.revision,
+              operation: frame.payload.with.operation,
+              committed: frame.payload.with.contents.length,
+            },
+          });
         }
       }
     });

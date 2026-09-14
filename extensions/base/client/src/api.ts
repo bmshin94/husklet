@@ -10,6 +10,7 @@ import type {
   WireUiEvent,
   TerminalCommand,
   TerminalCommandInput,
+  TerminalPaneInput,
   TerminalCommandOutput,
   PostgresConnection,
   PostgresCursor,
@@ -30,6 +31,7 @@ export type {
   PreferenceValue,
   TerminalCommand,
   TerminalCommandInput,
+  TerminalPaneInput,
   TerminalCommandOutput,
   PostgresConnection,
   PostgresCursor,
@@ -996,8 +998,9 @@ export declare class TerminalOperationError extends Error {
         generation: number;
         revision: number;
         written: true | 'unknown';
-        /** Present only when the write reply was lost; never replay these bytes blindly. */
+        /** Present only when the write reply was lost; retry only with this operation. */
         input?: readonly number[];
+        operation?: string;
         after?: Readonly<{ kind: 'terminal' | 'ui'; generation: number; revision: number }>;
       }>;
   readonly cause: unknown;
@@ -2218,20 +2221,24 @@ export interface WorkspaceApi {
       generation: number,
       revision: number,
       input: string | Iterable<number>,
-    ): Promise<void>;
+      options?: { operation?: string },
+    ): Promise<TerminalPaneInput>;
     /** Write exact bytes using one terminal snapshot as indivisible stale-pane authority. */
-    writeObserved(before: PaneText, input: string | Iterable<number>): Promise<void>;
+    writeObserved(
+      before: PaneText,
+      input: string | Iterable<number>,
+      options?: { operation?: string },
+    ): Promise<TerminalPaneInput>;
     /**
-     * Re-observe a write whose acknowledgement was lost. This never declares replay safe:
-     * unchanged text can mean accepted input that has not produced output, while an advanced
-     * revision can contain unrelated output. Replacement identifies the new occupant only.
+     * Retry the exact idempotent operation after its acknowledgement was lost. The host either
+     * returns the original receipt without writing again or commits the bytes once.
      */
     reconcileWriteFailure(
       failure: TerminalOperationError,
       options?: { lines?: number },
     ): Promise<{
       outcome: 'unchanged' | 'advanced' | 'replaced';
-      replaySafe: false;
+      receipt: TerminalPaneInput;
       before: Readonly<{ slot: string; generation: number; revision: number }>;
       current: ReadablePane;
     }>;

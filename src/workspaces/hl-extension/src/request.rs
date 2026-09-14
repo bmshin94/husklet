@@ -463,6 +463,7 @@ pub enum Request {
         slot: String,
         generation: u64,
         revision: u64,
+        operation: String,
         contents: Vec<u8>,
     },
     TerminalResizeGrid {
@@ -953,6 +954,7 @@ pub enum Reply {
     TerminalCommandStart(crate::port::TerminalCommandStart),
     TerminalCommandOutput(crate::port::TerminalCommandOutput),
     TerminalCommandInput(crate::port::TerminalCommandInput),
+    TerminalPaneInput(crate::port::TerminalPaneInput),
     Images(crate::port::ImageInventory),
     Image(ImageSummary),
     ImagePullJob(ImagePullJob),

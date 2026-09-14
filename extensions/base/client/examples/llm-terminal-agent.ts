@@ -98,7 +98,7 @@ try {
         const resumedSession = await connect({ path: configuration.path, timeout: 5_000 });
         try {
           inputResult = await workspace(resumedSession).terminal.reconcileWriteFailure(cause);
-          // `replaySafe` is always false: neither output nor silence proves whether raw bytes arrived.
+          // The host reuses the frozen operation token and returns its original receipt without typing twice.
         } finally {
           await resumedSession.close();
         }

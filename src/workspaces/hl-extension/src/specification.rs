@@ -135,7 +135,7 @@ const REQUEST_TO_REPLY: &[(&str, &str)] = &[
     ("terminal_read_history", "terminal_history"),
     ("pane_semantic_read", "semantics"),
     ("pane_semantic_action", "done"),
-    ("terminal_write_pane", "done"),
+    ("terminal_write_pane", "terminal_pane_input"),
     ("terminal_resize_grid", "done"),
     ("terminal_resize_grid_observed", "done"),
     ("terminal_close_pane", "done"),

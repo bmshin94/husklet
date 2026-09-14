@@ -8,12 +8,13 @@ import test from 'node:test';
 import { TerminalOperationError, connect, workspace } from '../dist/index.js';
 import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
 
-test('lost raw-input reply reconciles without treating unrelated output as replay authority', async () => {
+test('lost raw-input reply retries one idempotent operation without typing twice', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-terminal-recovery-'));
   const socketPath = path.join(directory, 'host.sock');
   const connections = new Set();
   let accepted = 0;
   let connectionNumber = 0;
+  let committedOperation;
   const screen = (revision, line) => ({
     slot: 'agent',
     generation: 9,
@@ -70,9 +71,25 @@ test('lost raw-input reply reconciles without treating unrelated output as repla
             },
           });
         } else if (frame.payload.call === 'terminal_write_pane') {
-          accepted += 1;
           assert.deepEqual(frame.payload.with.contents, [0x03]);
-          socket.destroy(); // The PTY accepted the byte; every reply byte is lost.
+          assert.match(frame.payload.with.operation, /^[0-9a-f]{32}$/);
+          if (committedOperation === undefined) {
+            committedOperation = frame.payload.with.operation;
+            accepted += 1;
+            socket.destroy(); // The PTY accepted the byte; every reply byte is lost.
+          } else {
+            assert.equal(frame.payload.with.operation, committedOperation);
+            reply({
+              reply: 'terminal_pane_input',
+              with: {
+                slot: 'agent',
+                generation: 9,
+                revision: 4,
+                operation: committedOperation,
+                committed: 1,
+              },
+            });
+          }
         }
       }
     });
@@ -105,8 +122,14 @@ test('lost raw-input reply reconciles without treating unrelated output as repla
     const recovery = await workspace(resumed).terminal.reconcileWriteFailure(failure);
     assert.equal(recovery.outcome, 'advanced');
     assert.equal(recovery.current.text, 'timer tick');
-    assert.equal(recovery.replaySafe, false, 'an unrelated revision must never authorize replay');
-    assert.equal(accepted, 1, 'reconciliation never resends the raw byte');
+    assert.deepEqual(recovery.receipt, {
+      slot: 'agent',
+      generation: 9,
+      revision: 4,
+      operation: committedOperation,
+      committed: 1,
+    });
+    assert.equal(accepted, 1, 'the host receipt prevents a second PTY write');
     await resumed.close();
   } finally {
     for (const connection of connections) connection.destroy();

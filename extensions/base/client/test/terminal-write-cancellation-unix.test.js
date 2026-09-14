@@ -41,7 +41,10 @@ test('fragmented Unix session discloses completed input authority when observati
       for (const frame of reader.take(chunk)) {
         if (frame.kind !== KIND.request) continue;
         const reply = (payload) => send({ channel: frame.channel, kind: KIND.response, payload });
-        if (frame.payload.call === 'event_subscribe' || frame.payload.call === 'event_unsubscribe') {
+        if (
+          frame.payload.call === 'event_subscribe' ||
+          frame.payload.call === 'event_unsubscribe'
+        ) {
           reply({ reply: 'done' });
         } else if (frame.payload.call === 'terminal_read_pane') {
           reads += 1;
@@ -76,7 +79,16 @@ test('fragmented Unix session discloses completed input authority when observati
               of: { slot: 'agent', kind: 'terminal', generation: 4, revision, coalesced: 0 },
             },
           });
-          reply({ reply: 'done' });
+          reply({
+            reply: 'terminal_pane_input',
+            with: {
+              slot: frame.payload.with.slot,
+              generation: frame.payload.with.generation,
+              revision: frame.payload.with.revision,
+              operation: frame.payload.with.operation,
+              committed: written.length,
+            },
+          });
         }
       }
     });

@@ -3363,7 +3363,7 @@ export function workspace(session, { signal } = {}) {
             act: (slot, action) => {
                 return done('pane_semantic_action', { slot, action: exactSemanticAction(action) });
             },
-            writeInput: (slot, generation, revision, input) => {
+            writeInput: (slot, generation, revision, input, { operation: askedOperation } = {}) => {
                 if (!Number.isSafeInteger(generation) ||
                     generation < 0 ||
                     !Number.isSafeInteger(revision) ||
@@ -3371,9 +3371,28 @@ export function workspace(session, { signal } = {}) {
                     throw new TypeError('terminal input requires nonnegative safe integer generation and revision');
                 }
                 const contents = exactPaneInput(input);
-                return done('terminal_write_pane', { slot, generation, revision, contents: [...contents] });
+                const operation = terminalInputOperation(askedOperation);
+                return session
+                    .call('terminal_write_pane', {
+                    slot,
+                    generation,
+                    revision,
+                    operation,
+                    contents: [...contents],
+                })
+                    .then((reply) => {
+                    const receipt = expect(reply, 'terminal_pane_input');
+                    if (receipt.slot !== slot ||
+                        receipt.generation !== generation ||
+                        receipt.revision !== revision ||
+                        receipt.operation !== operation ||
+                        receipt.committed !== contents.length) {
+                        throw new TypeError('host returned a terminal pane input receipt for a different operation');
+                    }
+                    return receipt;
+                });
             },
-            writeObserved: (before, input) => {
+            writeObserved: (before, input, options) => {
                 if (!before ||
                     typeof before.slot !== 'string' ||
                     before.slot.length === 0 ||
@@ -3384,12 +3403,7 @@ export function workspace(session, { signal } = {}) {
                     throw new TypeError('observed terminal input requires a snapshot with an exact cursor');
                 }
                 const contents = exactPaneInput(input);
-                return done('terminal_write_pane', {
-                    slot: before.slot,
-                    generation: before.generation,
-                    revision: before.revision,
-                    contents: [...contents],
-                });
+                return api.terminal.writeInput(before.slot, before.generation, before.revision, contents, options);
             },
             resizeGrid: (slot, columns, rows) => {
                 if (!Number.isInteger(columns) ||
@@ -5157,6 +5171,7 @@ export function workspace(session, { signal } = {}) {
             throw new TypeError('terminal input wait requires nonnegative safe integer generation and revision');
         }
         const contents = exactPaneInput(input);
+        const operation = terminalInputOperation();
         if (lines !== undefined && (!Number.isSafeInteger(lines) || lines < 0)) {
             throw new TypeError('terminal input wait lines must be a nonnegative safe integer');
         }
@@ -5190,7 +5205,7 @@ export function workspace(session, { signal } = {}) {
                 throw new Error('terminal screen cursor changed before input authority');
             }
             inputAttempted = true;
-            await scoped.terminal.writeInput(slot, generation, revision, contents);
+            await scoped.terminal.writeInput(slot, generation, revision, contents, { operation });
             inputWritten = true;
             const deadline = Date.now() + timeoutMs;
             for (;;) {
@@ -5242,6 +5257,7 @@ export function workspace(session, { signal } = {}) {
                         slot,
                         generation,
                         revision,
+                        operation,
                         written: 'unknown',
                         input: Object.freeze([...contents]),
                     }, cause);
@@ -5269,7 +5285,9 @@ export function workspace(session, { signal } = {}) {
         if (!(failure instanceof TerminalOperationError) ||
             failure.operation !== 'write-input' ||
             !('written' in failure.result) ||
-            failure.result.written !== 'unknown') {
+            failure.result.written !== 'unknown' ||
+            typeof failure.result.operation !== 'string' ||
+            !failure.result.input) {
             throw new TypeError('terminal input reconciliation requires an ambiguous write-input TerminalOperationError');
         }
         const before = Object.freeze({
@@ -5277,6 +5295,7 @@ export function workspace(session, { signal } = {}) {
             generation: failure.result.generation,
             revision: failure.result.revision,
         });
+        const receipt = await api.terminal.writeInput(before.slot, before.generation, before.revision, failure.result.input, { operation: failure.result.operation });
         const current = await api.terminal.toText(before.slot, { lines });
         const cursor = current.snapshot;
         const outcome = cursor.generation !== before.generation
@@ -5284,7 +5303,7 @@ export function workspace(session, { signal } = {}) {
             : cursor.revision !== before.revision
                 ? 'advanced'
                 : 'unchanged';
-        return { outcome, replaySafe: false, before, current };
+        return { outcome, receipt, before, current };
     };
     api.terminal.writeObservedAndWaitForText = (before, input, options) => {
         if (!before ||

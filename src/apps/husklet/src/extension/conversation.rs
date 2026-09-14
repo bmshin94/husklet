@@ -5171,6 +5171,7 @@ mod tests {
                 slot: "s1".into(),
                 generation: 1,
                 revision: 2,
+                operation: "0123456789abcdef".into(),
                 contents: secret.to_vec(),
             },
         );

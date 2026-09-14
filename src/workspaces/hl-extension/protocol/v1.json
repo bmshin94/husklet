@@ -7835,6 +7835,59 @@
       "kind": "struct",
       "serde": {}
     },
+    "TerminalPaneInput": {
+      "fields": [
+        {
+          "name": "slot",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "generation",
+          "optional": false,
+          "schema": {
+            "bits": 64,
+            "kind": "integer",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "signed": false
+          }
+        },
+        {
+          "name": "revision",
+          "optional": false,
+          "schema": {
+            "bits": 64,
+            "kind": "integer",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "signed": false
+          }
+        },
+        {
+          "name": "operation",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "committed",
+          "optional": false,
+          "schema": {
+            "bits": 32,
+            "kind": "integer",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "signed": false
+          }
+        }
+      ],
+      "kind": "struct",
+      "serde": {}
+    },
     "TerminalTabState": {
       "kind": "enum",
       "serde": {},
@@ -10282,7 +10335,7 @@
       "request": "pane_semantic_action"
     },
     {
-      "reply": "done",
+      "reply": "terminal_pane_input",
       "request": "terminal_write_pane"
     },
     {
@@ -10823,6 +10876,16 @@
             "of": {
               "kind": "ref",
               "name": "TerminalCommandInput"
+            }
+          }
+        },
+        {
+          "name": "terminal_pane_input",
+          "payload": {
+            "kind": "newtype",
+            "of": {
+              "kind": "ref",
+              "name": "TerminalPaneInput"
             }
           }
         },
@@ -13753,6 +13816,13 @@
                 }
               },
               {
+                "name": "operation",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              },
+              {
                 "name": "contents",
                 "optional": false,
                 "schema": {
@@ -16188,7 +16258,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:8cf886c5e31e3106",
+  "source_fingerprint": "fnv1a64:c8971419c7f9a04e",
   "specification_version": 1,
   "topics": [
     {

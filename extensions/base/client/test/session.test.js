@@ -926,24 +926,24 @@ test('real Unix process inspection rejects another container and preserves sessi
         calls.push(frame.payload);
         const owner = calls.length === 1 ? 'b'.repeat(64) : containerId;
         const reply = encode({
-            channel: 2,
-            kind: KIND.response,
-            payload: {
-              reply: 'processes',
-              with: {
-                container_id: owner,
-                titles: ['PID', 'CMD'],
-                processes: [['7', 'postgres']],
-                snapshot: 'c'.repeat(64),
-                next: null,
-                more: false,
-                observed_at_ms: 1,
-                scope: 'namespace',
-                pid_identity: 'snapshot',
-                truncated: false,
-              },
+          channel: 2,
+          kind: KIND.response,
+          payload: {
+            reply: 'processes',
+            with: {
+              container_id: owner,
+              titles: ['PID', 'CMD'],
+              processes: [['7', 'postgres']],
+              snapshot: 'c'.repeat(64),
+              next: null,
+              more: false,
+              observed_at_ms: 1,
+              scope: 'namespace',
+              pid_identity: 'snapshot',
+              truncated: false,
             },
-          });
+          },
+        });
         for (const byte of reply) socket.write(Uint8Array.of(byte));
       }
     });
@@ -9242,7 +9242,9 @@ test('real Unix writeAndWait subscribes and reads before bytes, then returns adv
           }
         } else if (frame.payload.call === 'terminal_write_pane') {
           writes += 1;
-          assert.deepEqual(frame.payload.with, {
+          const { operation, ...write } = frame.payload.with;
+          assert.match(operation, /^[0-9a-f]{32}$/);
+          assert.deepEqual(write, {
             slot,
             generation: 4,
             revision: 7,
@@ -9259,7 +9261,22 @@ test('real Unix writeAndWait subscribes and reads before bytes, then returns adv
                 },
               }),
             );
-          socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
+          socket.write(
+            encode({
+              channel: 2,
+              kind: KIND.response,
+              payload: {
+                reply: 'terminal_pane_input',
+                with: {
+                  slot,
+                  generation: 4,
+                  revision: 7,
+                  operation,
+                  committed: write.contents.length,
+                },
+              },
+            }),
+          );
         }
       }
     });
@@ -9371,7 +9388,16 @@ test('observed terminal input keeps snapshot authority intact over one-byte Unix
           flags: frame.payload.with.revision === 10 ? 1 : 3,
           payload:
             frame.payload.with.revision === 10
-              ? { reply: 'done' }
+              ? {
+                  reply: 'terminal_pane_input',
+                  with: {
+                    slot: frame.payload.with.slot,
+                    generation: frame.payload.with.generation,
+                    revision: frame.payload.with.revision,
+                    operation: frame.payload.with.operation,
+                    committed: frame.payload.with.contents.length,
+                  },
+                }
               : { error: 'conflict', detail: 'pane snapshot is stale' },
         });
         for (const byte of response) socket.write(Uint8Array.of(byte));
@@ -9398,10 +9424,15 @@ test('observed terminal input keeps snapshot authority intact over one-byte Unix
       { slot: 'pane-a', generation: 7, revision: 10, lines: ['$ '], truncated: false },
       Uint8Array.of(0, 3, 255),
     );
-    assert.deepEqual(received[0], {
-      call: 'terminal_write_pane',
-      with: { slot: 'pane-a', generation: 7, revision: 10, contents: [0, 3, 255] },
-    });
+    const { operation, ...firstWrite } = received[0].with;
+    assert.match(operation, /^[0-9a-f]{32}$/);
+    assert.deepEqual(
+      { call: received[0].call, with: firstWrite },
+      {
+        call: 'terminal_write_pane',
+        with: { slot: 'pane-a', generation: 7, revision: 10, contents: [0, 3, 255] },
+      },
+    );
     await assert.rejects(
       terminal.writeObserved(
         { slot: 'pane-a', generation: 7, revision: 9, lines: ['$ old'], truncated: false },
@@ -9417,13 +9448,14 @@ test('observed terminal input keeps snapshot authority intact over one-byte Unix
   }
 });
 
-test('fragmented Unix input reply loss preserves exact no-replay authority across reconnect', async () => {
+test('fragmented Unix input reply loss preserves its exact recovery operation across reconnect', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-input-reply-loss-'));
   const socketPath = path.join(directory, 'host.sock');
   const peers = new Set();
   const input = [0, 3, 255, 10];
   let connection = 0;
   let revision = 7;
+  let operation;
   const screen = () => ({
     slot: 'agent-pane',
     generation: 4,
@@ -9453,7 +9485,11 @@ test('fragmented Unix input reply loss preserves exact no-replay authority acros
           payload = { reply: 'text', with: screen() };
         } else if (frame.payload.call === 'terminal_write_pane') {
           assert.equal(currentConnection, 1, 'ambiguous input must never be replayed');
-          assert.deepEqual(frame.payload.with, {
+          ({ operation } = frame.payload.with);
+          assert.match(operation, /^[0-9a-f]{32}$/);
+          const write = { ...frame.payload.with };
+          delete write.operation;
+          assert.deepEqual(write, {
             slot: 'agent-pane',
             generation: 4,
             revision: 7,
@@ -9463,7 +9499,16 @@ test('fragmented Unix input reply loss preserves exact no-replay authority acros
           const response = encode({
             channel: 2,
             kind: KIND.response,
-            payload: { reply: 'done' },
+            payload: {
+              reply: 'terminal_pane_input',
+              with: {
+                slot: 'agent-pane',
+                generation: 4,
+                revision: 7,
+                operation,
+                committed: input.length,
+              },
+            },
           });
           socket.write(response.subarray(0, 1), () => socket.destroy());
           continue;
@@ -9506,6 +9551,7 @@ test('fragmented Unix input reply loss preserves exact no-replay authority acros
           revision: 7,
           written: 'unknown',
           input,
+          operation,
         });
         return true;
       },
@@ -9611,7 +9657,9 @@ test('real Unix quiet terminal wait does not mistake local echo for an agent res
           );
         } else if (frame.payload.call === 'terminal_write_pane') {
           writes += 1;
-          assert.deepEqual(frame.payload.with, {
+          const { operation, ...write } = frame.payload.with;
+          assert.match(operation, /^[0-9a-f]{32}$/);
+          assert.deepEqual(write, {
             slot,
             generation: 4,
             revision: writes === 1 ? 7 : 9,
@@ -9623,7 +9671,22 @@ test('real Unix quiet terminal wait does not mistake local echo for an agent res
             revision = 8;
             changed(socket);
           }
-          socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
+          socket.write(
+            encode({
+              channel: 2,
+              kind: KIND.response,
+              payload: {
+                reply: 'terminal_pane_input',
+                with: {
+                  slot,
+                  generation: 4,
+                  revision: write.revision,
+                  operation,
+                  committed: write.contents.length,
+                },
+              },
+            }),
+          );
         }
       }
     });
@@ -9733,16 +9796,18 @@ test('real Unix projected input refuses to attribute replacement pane text to se
             payload: {
               reply: 'panes',
               with: {
-                panes: [{
-                  slot: 'pane-input',
-                  generation: 5,
-                  revision: 1,
-                  kind: 'terminal',
-                  provider: null,
-                  tab: 'tab-1',
-                  title: 'Replacement',
-                  focused: true,
-                }],
+                panes: [
+                  {
+                    slot: 'pane-input',
+                    generation: 5,
+                    revision: 1,
+                    kind: 'terminal',
+                    provider: null,
+                    tab: 'tab-1',
+                    title: 'Replacement',
+                    focused: true,
+                  },
+                ],
                 truncated: false,
               },
             },
@@ -9761,7 +9826,9 @@ test('real Unix projected input refuses to attribute replacement pane text to se
             }),
           );
         } else if (frame.payload.call === 'terminal_write_pane') {
-          assert.deepEqual(frame.payload.with, {
+          const { operation, ...write } = frame.payload.with;
+          assert.match(operation, /^[0-9a-f]{32}$/);
+          assert.deepEqual(write, {
             slot: 'pane-input',
             generation: 4,
             revision: 7,
@@ -9783,7 +9850,22 @@ test('real Unix projected input refuses to attribute replacement pane text to se
               },
             }),
           );
-          socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
+          socket.write(
+            encode({
+              channel: 2,
+              kind: KIND.response,
+              payload: {
+                reply: 'terminal_pane_input',
+                with: {
+                  slot: 'pane-input',
+                  generation: 4,
+                  revision: 7,
+                  operation,
+                  committed: 1,
+                },
+              },
+            }),
+          );
         }
       }
     });
@@ -12248,10 +12330,7 @@ test('fragmented Unix create-once reconnects to one immutable identity and rejec
     );
     assert.equal(creates, 1);
     await assert.rejects(
-      workspace(second).containers.createOnce(
-        'fedcba9876543210fedcba9876543210',
-        spec,
-      ),
+      workspace(second).containers.createOnce('fedcba9876543210fedcba9876543210', spec),
       (error) => {
         assert(error instanceof ContainerCreateOnceProtocolError);
         assert.equal(error.expectedToken, 'fedcba9876543210fedcba9876543210');

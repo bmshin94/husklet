@@ -67,6 +67,7 @@ pub struct OwnedOperations {
     executions: std::collections::BTreeSet<String>,
     command_starts: std::collections::BTreeMap<String, CommandStartOperation>,
     command_inputs: std::collections::BTreeMap<String, CommandInputState>,
+    pane_inputs: std::collections::BTreeMap<String, PaneInputOperation>,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -93,8 +94,18 @@ enum CommandInputOperation {
     Close { offset: u64 },
 }
 
+#[derive(Clone, Eq, PartialEq)]
+struct PaneInputOperation {
+    slot: String,
+    generation: u64,
+    revision: u64,
+    digest: [u8; 32],
+    committed: u32,
+}
+
 const COMMAND_INPUT_OPERATIONS: usize = 4096;
 const COMMAND_START_OPERATIONS: usize = 4096;
+const PANE_INPUT_OPERATIONS: usize = 4096;
 
 fn command_input_operation(operation: &str) -> Result<(), Failure> {
     if (16..=128).contains(&operation.len())
@@ -1903,7 +1914,7 @@ impl Session {
             self.peer.authority().permit(Capability::TerminalProcessControl)?;
         }
         let port = self.peer.authority().port(request.capability(), services.terminal)?;
-        Self::command(request, port.port())
+        self.command(request, port.port())
     }
 
     fn terminal_command(&mut self, request: &Request, services: &Services<'_>) -> Result<Reply, Failure> {
@@ -2261,7 +2272,7 @@ impl Session {
         }
     }
 
-    fn command(request: &Request, port: &dyn TerminalSurface) -> Result<Reply, Failure> {
+    fn command(&mut self, request: &Request, port: &dyn TerminalSurface) -> Result<Reply, Failure> {
         match request {
             Request::TerminalOpenTab { title } => {
                 validate_pane_title(title)?;
@@ -2298,16 +2309,55 @@ impl Session {
                 slot,
                 generation,
                 revision,
+                operation,
                 contents,
             } => {
-                if contents.len() > PANE_INPUT_BYTES {
+                if contents.is_empty() || contents.len() > PANE_INPUT_BYTES {
                     return Err(Failure::Conflict {
-                        detail: format!("terminal input exceeds the {PANE_INPUT_BYTES} byte limit"),
+                        detail: format!("terminal input must contain between 1 and {PANE_INPUT_BYTES} bytes"),
                     });
                 }
-                port.write(slot, *generation, *revision, contents)
-                    .map(|()| Reply::Done)
-                    .map_err(Failure::from)
+                command_input_operation(operation)?;
+                let committed = u32::try_from(contents.len()).expect("pane input bound fits u32");
+                let asked = PaneInputOperation {
+                    slot: slot.clone(),
+                    generation: *generation,
+                    revision: *revision,
+                    digest: command_input_digest(contents),
+                    committed,
+                };
+                let mut owned = self
+                    .owned_executions
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(previous) = owned.pane_inputs.get(operation) {
+                    if previous != &asked {
+                        return Err(Failure::Conflict {
+                            detail: "terminal pane input operation was already used for a different pane, cursor, or bytes".into(),
+                        });
+                    }
+                    return Ok(Reply::TerminalPaneInput(crate::port::TerminalPaneInput {
+                        slot: slot.clone(),
+                        generation: *generation,
+                        revision: *revision,
+                        operation: operation.clone(),
+                        committed,
+                    }));
+                }
+                if owned.pane_inputs.len() >= PANE_INPUT_OPERATIONS {
+                    return Err(Failure::Conflict {
+                        detail: "terminal pane input is limited to 4096 idempotent operations".into(),
+                    });
+                }
+                port.write(slot, *generation, *revision, contents)?;
+                owned.pane_inputs.insert(operation.clone(), asked);
+                Ok(Reply::TerminalPaneInput(crate::port::TerminalPaneInput {
+                    slot: slot.clone(),
+                    generation: *generation,
+                    revision: *revision,
+                    operation: operation.clone(),
+                    committed,
+                }))
             }
             Request::TerminalResizeGrid { slot, columns, rows }
             | Request::TerminalResizeGridObserved {

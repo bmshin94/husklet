@@ -3995,7 +3995,10 @@ test('terminal topology, bounded input, grid resize and retitle use exact typed 
   const tabFocus = terminal.focusTab('t1');
   const splitting = terminal.splitObserved('s1', 4, 7, 'below');
   const spawning = terminal.spawnObserved('s1', 4, 7, ['printf', '%s\n', 'ready']);
-  const writing = terminal.writeInput('s1', 4, 7, 'echo hello\n');
+  const inputOperation = '0123456789abcdef';
+  const writing = terminal.writeInput('s1', 4, 7, 'echo hello\n', {
+    operation: inputOperation,
+  });
   const resizing = terminal.resizeGridObserved('s1', 4, 7, 120, 40);
   const ratio = terminal.ratioObserved('s1', 4, 7, 0.6);
   const focusing = terminal.focusObserved('s1', 4, 7);
@@ -4024,6 +4027,7 @@ test('terminal topology, bounded input, grid resize and retitle use exact typed 
       slot: 's1',
       generation: 4,
       revision: 7,
+      operation: inputOperation,
       contents: [...new TextEncoder().encode('echo hello\n')],
     },
   });
@@ -4057,6 +4061,22 @@ test('terminal topology, bounded input, grid resize and retitle use exact typed 
     encode({ channel: 2, kind: KIND.response, payload: { reply: 'identity', with: 's2' } }),
   );
   stage.host.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
+  stage.host.write(
+    encode({
+      channel: 2,
+      kind: KIND.response,
+      payload: {
+        reply: 'terminal_pane_input',
+        with: {
+          slot: 's1',
+          generation: 4,
+          revision: 7,
+          operation: inputOperation,
+          committed: 11,
+        },
+      },
+    }),
+  );
   stage.host.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
   stage.host.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
   stage.host.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
