@@ -258,6 +258,11 @@ const DEFINITIONS: &[Definition] = &[
         Flag
     ),
     launch!(
+        "HL_X86_GNA_PAGE_CACHE",
+        "answer the guest PROT_NONE prefix query from a per-thread clean-page cache instead of walking the whole ledger",
+        Flag
+    ),
+    launch!(
         "HL_X86_OWNER_INDEX",
         "resolve the x86 body-owner generation slot through an occupancy index instead of a full table walk",
         Flag

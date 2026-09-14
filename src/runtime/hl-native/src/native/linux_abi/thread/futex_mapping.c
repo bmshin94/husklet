@@ -504,3 +504,14 @@ static _Atomic uint64_t g_gna_generation = 2;
 static atomic_flag g_gna_writer = ATOMIC_FLAG_INIT;
 static _Thread_local uint64_t g_gna_negative_page[GNA_NEGATIVE_N];
 static _Thread_local uint64_t g_gna_negative_generation[GNA_NEGATIVE_N];
+/* Per-thread PAGE-CLEAN cache for gna_prefix (HL_X86_GNA_PAGE_CACHE, off by
+   default).  A slot records "guest page P had NO tracked PROT_NONE interval
+   overlapping ANY of its bytes, as of ledger generation G".  Distinct from
+   g_gna_negative_*, which records only that some sub-range of a page missed:
+   that weaker fact cannot answer a prefix query without assuming every ledger
+   interval is page aligned, and the ledger does not promise that.  Zeroed
+   slots are self-invalidating: g_gna_generation starts at 2 and every
+   even (settled) value is >= 2, so generation 0 never matches. */
+#define GNA_CLEAN_N 1024u
+static _Thread_local uint64_t g_gna_clean_page[GNA_CLEAN_N];
+static _Thread_local uint64_t g_gna_clean_generation[GNA_CLEAN_N];

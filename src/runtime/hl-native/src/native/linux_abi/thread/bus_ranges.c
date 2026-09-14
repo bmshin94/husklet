@@ -499,9 +499,68 @@ static int gna_all(uint64_t a, uint64_t len) {
 // copy_to_user is byte-granular: a read(2) whose destination straddles a PROT_NONE page copies the good
 // prefix and returns that SHORT count, reporting EFAULT only when the prefix is empty. gna_hit alone
 // cannot express that (it is all-or-nothing), so the read family clamps its count with this instead.
-static uint64_t gna_prefix(uint64_t a, uint64_t len) {
-    if (!len || __atomic_load_n(&g_ngna, __ATOMIC_ACQUIRE) == 0) return len;
-    a = nonpie_unfold(a); // guest-keyed registry; the return is a LENGTH, so the coordinate cancels
+/* HL_X86_GNA_PAGE_CACHE: consult the per-thread clean-page cache instead of
+   re-walking the whole PROT_NONE ledger.  Off by default; unset is
+   byte-identical to the full walk.
+
+   WHY THIS IS THE SAME ANSWER, NOT AN APPROXIMATION.  gna_prefix answers "how
+   many LEADING bytes of [a,a+len) lie outside every tracked interval".  A slot
+   is published only when the walk it replaces returned the FULL length -- i.e.
+   proved that no interval overlaps [a,a+len) at all -- and only for pages
+   ENTIRELY inside that proven-clean span.  A later query is answered from a
+   slot only when [a,a+len) lies entirely inside that one page and the ledger
+   generation is unchanged.  "No interval overlaps page P" implies "no interval
+   overlaps any sub-range of P", so the cached answer is exactly `len`, which
+   is exactly what the walk would return.  Nothing here assumes the ledger's
+   intervals are page aligned, and no query is answered from a page the walk
+   did not fully cover.
+
+   SEQLOCK DISCIPLINE is unchanged: the slot is read inside the same
+   even-generation window the walk uses and re-validated against the same
+   generation afterwards, so a concurrent mmap/mprotect/munmap forces a retry
+   exactly as it does for the walk.  The arrays are _Thread_local, so the only
+   interleaving possible is a signal handler between the two publishing
+   stores; page is stored before generation, so a handler either sees a slot
+   that does not name its page (miss, full walk) or one that does -- and that
+   page has already been proven clean at this generation. */
+static int g_gna_page_cache_state = -1;
+static int gna_page_cache_selected(void) {
+    if (g_gna_page_cache_state < 0) g_gna_page_cache_state = hl_option_flag_value("HL_X86_GNA_PAGE_CACHE", 0);
+    return g_gna_page_cache_state;
+}
+
+static unsigned gna_clean_slot(uint64_t page) {
+    return (unsigned)((page >> 12) * 2654435761u) & (GNA_CLEAN_N - 1u);
+}
+
+/* Record every page lying ENTIRELY inside the proven-clean span [a,a+len).
+   Bounded so a very wide grant cannot spend more publishing than the walk it
+   is replacing; the pages that matter are the accessed one and its immediate
+   neighbours, which come first. */
+#define GNA_CLEAN_PUBLISH_MAX 8u
+static void gna_clean_publish(uint64_t a, uint64_t len, uint64_t generation) {
+    uint64_t end = a + len;
+    if (end < a) return;
+    uint64_t page = (a + UINT64_C(4095)) & ~UINT64_C(4095);
+    if (page < a) return;
+    for (unsigned published = 0; published < GNA_CLEAN_PUBLISH_MAX; ++published) {
+        if (page > UINT64_MAX - UINT64_C(4096) || page + UINT64_C(4096) > end) return;
+        unsigned slot = gna_clean_slot(page);
+        g_gna_clean_page[slot] = page;
+        g_gna_clean_generation[slot] = generation;
+        page += UINT64_C(4096);
+    }
+}
+
+/* The shipped full walk.  This body is byte-for-byte what gna_prefix was
+   before HL_X86_GNA_PAGE_CACHE existed, and it is what runs when the option is
+   unset or off -- no extra test inside the scan loop, so the default path is
+   not merely equivalent but identical.  (An earlier revision folded the
+   cache's page bookkeeping into this loop behind a predicate; with the option
+   OFF that still cost one load-and-branch on each of ~130 M scanned entries
+   and measured +1.60% on a whole cc1 run.  A gate that is off must cost
+   nothing, so the two scans are now separate functions.) */
+static uint64_t gna_prefix_full(uint64_t a, uint64_t len) {
     for (int attempt = 0; attempt < 4096; ++attempt) {
         uint64_t generation = atomic_load_explicit(&g_gna_generation, memory_order_acquire);
         if (generation & 1) {
@@ -522,6 +581,177 @@ static uint64_t gna_prefix(uint64_t a, uint64_t len) {
     }
     return 0;
 }
+
+/* The same question, answered through the per-thread clean-page cache. */
+static uint64_t gna_prefix_cached(uint64_t a, uint64_t len) {
+    uint64_t page = a & ~UINT64_C(4095);
+    /* Answerable from one slot only when the WHOLE query lies inside one page. */
+    int single_page = a + len > a && page <= UINT64_MAX - UINT64_C(4096) &&
+                      ((a + len - 1) & ~UINT64_C(4095)) == page;
+    uint64_t page_end = page + UINT64_C(4096);
+    unsigned slot = single_page ? gna_clean_slot(page) : 0;
+    for (int attempt = 0; attempt < 4096; ++attempt) {
+        uint64_t generation = atomic_load_explicit(&g_gna_generation, memory_order_acquire);
+        if (generation & 1) {
+            sched_yield();
+            continue;
+        }
+        if (single_page && g_gna_clean_generation[slot] == generation && g_gna_clean_page[slot] == page &&
+            atomic_load_explicit(&g_gna_generation, memory_order_acquire) == generation)
+            return len;
+        uint64_t end = a + len;
+        int count = __atomic_load_n(&g_ngna, __ATOMIC_ACQUIRE);
+        /* Learn the containing page's verdict in the SAME pass.  The walk is
+           already touching every interval, so proving "nothing overlaps this
+           page" costs one extra compare per entry and makes even a narrow
+           query warm the slot -- without it only a query that happened to span
+           a whole page could ever publish one. */
+        int page_clean = single_page;
+        for (int i = 0; i < count; ++i) {
+            uint64_t lo = __atomic_load_n(&g_gna[i].lo, __ATOMIC_RELAXED);
+            uint64_t hi = __atomic_load_n(&g_gna[i].hi, __ATOMIC_RELAXED);
+            if (a < hi && end > lo) {
+                uint64_t first = lo > a ? lo : a;
+                if (first - a < end - a) end = first;
+            }
+            if (page_clean && page < hi && page_end > lo) page_clean = 0;
+        }
+        if (atomic_load_explicit(&g_gna_generation, memory_order_acquire) == generation) {
+            if (single_page) {
+                if (page_clean) {
+                    g_gna_clean_page[slot] = page;
+                    g_gna_clean_generation[slot] = generation;
+                }
+            } else if (end - a == len) {
+                gna_clean_publish(a, len, generation);
+            }
+            return end - a;
+        }
+    }
+    return 0;
+}
+
+static uint64_t gna_prefix(uint64_t a, uint64_t len) {
+    if (!len || __atomic_load_n(&g_ngna, __ATOMIC_ACQUIRE) == 0) return len;
+    a = nonpie_unfold(a); // guest-keyed registry; the return is a LENGTH, so the coordinate cancels
+    if (gna_page_cache_selected()) return gna_prefix_cached(a, len);
+    return gna_prefix_full(a, len);
+}
+
+
+#if HL_NATIVE_TEST_HOOKS
+/* ---------------------------------------------------------------------------
+   Differential boundary battery for the gna page-clean cache.
+
+   Every probe below is answered THREE times: once with the cache forced off
+   (the full ledger walk, i.e. the shipped default), then twice with it forced
+   on (so the second pass runs against warm slots).  Any disagreement between
+   the three answers is a failure.  The battery deliberately covers the cases
+   where an index most easily diverges from a walk: an address exactly at a
+   range start and at a range end, a query spanning two ADJACENT ranges, a
+   query spanning a GAP between ranges, a zero-length query, a range added and
+   removed mid-run, the prefix query's PARTIAL-coverage case, and sub-page
+   queries inside a page the cache has published as clean.
+   --------------------------------------------------------------------------- */
+#define GNA_DIFF_PROBES 18u
+
+static void gna_probe_battery(uint64_t base, uint64_t *out) {
+#define PG(n) (base + (uint64_t)(n)*UINT64_C(4096))
+    unsigned i = 0;
+    out[i++] = gna_prefix(PG(2), 1);                 /* exactly at a range start */
+    out[i++] = gna_prefix(PG(2) - 1, 1);             /* the byte before it */
+    out[i++] = gna_prefix(PG(4) - 1, 1);             /* last byte of the 2nd range */
+    out[i++] = gna_prefix(PG(4), 1);                 /* exactly at a range end */
+    out[i++] = gna_prefix(PG(2), UINT64_C(0x2000));  /* spans two ADJACENT ranges */
+    out[i++] = gna_prefix(PG(4), UINT64_C(0x3000));  /* spans a GAP, then a range */
+    out[i++] = gna_prefix(PG(1), 0);                 /* zero length */
+    out[i++] = gna_prefix(PG(2) - 16, 32);           /* PARTIAL coverage */
+    out[i++] = gna_prefix(PG(1), UINT64_C(0x1000));  /* a whole clean page */
+    out[i++] = gna_prefix(PG(1) + 8, 8);             /* sub-range of that page */
+    out[i++] = gna_prefix(PG(1) + UINT64_C(0xff0), UINT64_C(0x20)); /* straddles into a range */
+    out[i++] = gna_prefix(PG(4), UINT64_C(0x1000));  /* clean page just past a range end */
+    out[i++] = gna_prefix(PG(5), UINT64_C(0x2000));  /* clean page, then a range */
+    out[i++] = gna_prefix(PG(8), UINT64_C(0x4000));  /* multi-page clean span */
+    out[i++] = gna_prefix(PG(8) + UINT64_C(0x2000), 4); /* sub-range of a later page */
+    out[i++] = (uint64_t)gna_hit(PG(2), 1);
+    out[i++] = (uint64_t)gna_hit(PG(4), 1);
+    out[i++] = (uint64_t)gna_hit(PG(1), UINT64_C(0x1000));
+#undef PG
+}
+
+/* The battery, plus a mid-run add/remove of a range the cache has already
+   published a clean verdict for.  Returns the probe values so the caller can
+   compare cache-off against cache-on. */
+static void gna_probe_round(uint64_t guest, uint64_t base, uint64_t *out) {
+    gna_probe_battery(base, out);
+    /* Range ADDED mid-run over a page the cache just published as clean. */
+    gna_add(guest + UINT64_C(0x5000), guest + UINT64_C(0x6000));
+    out[GNA_DIFF_PROBES + 0] = gna_prefix(base + UINT64_C(0x5000), UINT64_C(0x1000));
+    out[GNA_DIFF_PROBES + 1] = gna_prefix(base + UINT64_C(0x5008), 8);
+    /* ...and REMOVED again. */
+    gna_clear(guest + UINT64_C(0x5000), guest + UINT64_C(0x6000));
+    out[GNA_DIFF_PROBES + 2] = gna_prefix(base + UINT64_C(0x5000), UINT64_C(0x1000));
+    out[GNA_DIFF_PROBES + 3] = gna_prefix(base + UINT64_C(0x5008), 8);
+}
+
+#define GNA_DIFF_TOTAL (GNA_DIFF_PROBES + 4u)
+
+static int gna_page_cache_differential_test(uint64_t *probes) {
+    uint64_t *saved = malloc(sizeof g_gna);
+    if (saved == NULL) return -ENOMEM;
+    gna_writer_lock();
+    int saved_count = __atomic_load_n(&g_ngna, __ATOMIC_RELAXED);
+    memcpy(saved, g_gna, sizeof g_gna);
+    gna_writer_unlock();
+    int saved_state = g_gna_page_cache_state;
+
+    uint64_t guest = UINT64_C(0x50000000);
+    guest -= nonpie_fold(guest) & UINT64_C(4095);
+    uint64_t base = nonpie_fold(guest);
+
+    /* Work on a window of the ledger rather than resetting it, so unrelated
+       live entries stay in place and the walk stays representative. */
+    gna_clear(guest - UINT64_C(0x10000), guest + UINT64_C(0x20000));
+    gna_add(guest + UINT64_C(0x2000), guest + UINT64_C(0x3000));
+    gna_add(guest + UINT64_C(0x3000), guest + UINT64_C(0x4000)); /* ADJACENT to the first */
+    gna_add(guest + UINT64_C(0x6000), guest + UINT64_C(0x7000)); /* after a GAP */
+
+    uint64_t off[GNA_DIFF_TOTAL], on1[GNA_DIFF_TOTAL], on2[GNA_DIFF_TOTAL];
+    int result = 0;
+    g_gna_page_cache_state = 0;
+    memset(g_gna_clean_page, 0, sizeof g_gna_clean_page);
+    memset(g_gna_clean_generation, 0, sizeof g_gna_clean_generation);
+    gna_probe_round(guest, base, off);
+    g_gna_page_cache_state = 1;
+    gna_probe_round(guest, base, on1);
+    gna_probe_round(guest, base, on2); /* warm */
+    for (unsigned i = 0; i < GNA_DIFF_TOTAL; ++i)
+        if (off[i] != on1[i] || off[i] != on2[i]) result = -(int)(100 + i);
+
+    /* The battery must be non-vacuous: it has to contain both refusals and
+       grants, or an always-"len" cache would pass it. */
+    if (result == 0) {
+        int refusals = 0, grants = 0;
+        for (unsigned i = 0; i < GNA_DIFF_PROBES; ++i) {
+            if (off[i] == 0) refusals++;
+            else grants++;
+        }
+        if (refusals < 4 || grants < 4) result = -99;
+    }
+    if (probes != NULL) *probes = GNA_DIFF_TOTAL;
+
+    gna_clear(guest - UINT64_C(0x10000), guest + UINT64_C(0x20000));
+    gna_writer_lock();
+    atomic_fetch_add_explicit(&g_gna_generation, 1, memory_order_acq_rel);
+    memcpy(g_gna, saved, sizeof g_gna);
+    __atomic_store_n(&g_ngna, saved_count, __ATOMIC_RELEASE);
+    atomic_fetch_add_explicit(&g_gna_generation, 1, memory_order_release);
+    gna_writer_unlock();
+    free(saved);
+    g_gna_page_cache_state = saved_state;
+    return result;
+}
+#endif
 
 static void gro_add(uint64_t lo, uint64_t hi) {
     if (hi <= lo) return;
@@ -900,6 +1130,7 @@ HL_API int HL_TARGET_LOCAL(exec_page_cache_test)(uint32_t scenario, uint64_t *sc
     case 50:
     case 51:
     case 52: result = map_source_index_test(scenario, scans); break;
+    case 67: result = gna_page_cache_differential_test(scans); break;
     case 18: result = HL_TARGET_LOCAL(jit_rollover_mapping_test)(scans); break;
     case 53: result = HL_TARGET_LOCAL(jit_preferred_mapping_test)(scans); break;
     case 54: result = HL_TARGET_LOCAL(jit_fork_mapping_ownership_test)(scans); break;

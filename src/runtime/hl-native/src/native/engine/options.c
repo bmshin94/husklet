@@ -140,6 +140,10 @@ static const hl_option_definition hl_option_definitions[] = {
     HL_LAUNCH_OPTION("HL_X86_RMLOAD_FOLD",
                      "fold [base+displacement] x86 r/m memory loads into one addressing-mode load",
                      HL_OPTION_FLAG),
+    HL_LAUNCH_OPTION("HL_X86_GNA_PAGE_CACHE",
+                     "answer the guest PROT_NONE prefix query from a per-thread clean-page cache instead of "
+                     "walking the whole ledger",
+                     HL_OPTION_FLAG),
     HL_LAUNCH_OPTION("HL_X86_OWNER_INDEX",
                      "resolve the x86 body-owner generation slot through an occupancy index instead of a "
                      "full table walk",
