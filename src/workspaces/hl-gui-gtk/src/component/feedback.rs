@@ -135,6 +135,8 @@ fn strip() -> gtk::Box {
     let emblem = slot::emblem_image();
     emblem.set_accessible_role(gtk::AccessibleRole::Presentation);
     emblem.set_can_focus(false);
+    emblem.set_valign(gtk::Align::Start);
+    emblem.set_margin_top(1);
     default_emblem(&emblem, Tone::Neutral);
     widget.append(&emblem);
     let caption = slot::caption_label();
@@ -142,6 +144,7 @@ fn strip() -> gtk::Box {
     caption.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     caption.set_max_width_chars(56);
     caption.set_xalign(0.0);
+    caption.set_valign(gtk::Align::Start);
     caption.set_hexpand(true);
     widget.append(&caption);
     widget

@@ -50,12 +50,12 @@ export function InlineMessageWorkbench() {
 
       <DocumentationSection title="Wrapping">
         <FieldSpecimen
-          label="Bounded diagnostic"
-          helper="Keep the cause concise and place recovery actions after the message."
-          width={{ chars: 44 }}
+          label="Product-length recovery"
+          helper="The status cue anchors the first line; keep the cause concise and put recovery actions after the message."
+          width={{ chars: 36 }}
         >
           <InlineMessage
-            label="Network inventory is unavailable. Check that the workspace is running, then retry."
+            label="Registry access denied. Sign in with credentials that can read this image, or verify that the image is public."
             tone="danger"
             width="fill"
           />

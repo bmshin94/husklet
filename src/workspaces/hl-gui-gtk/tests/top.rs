@@ -3240,6 +3240,29 @@ mod unix {
             window.queue_draw();
             settle_frame();
             assert_contained(&failure_root, &format!("extension-acquisition-failure/{width_name}"));
+            let failure_message = find_inline_message(
+                &failure_root,
+                "Registry access denied. Sign in with credentials that can read this image, or verify that the image is public.",
+            )
+            .expect("failure recovery has its InlineMessage");
+            let cue = failure_message
+                .first_child()
+                .and_then(|child| child.downcast::<gtk::Image>().ok())
+                .expect("failure message has its status cue");
+            let copy = find_label(
+                failure_message.upcast_ref(),
+                "Registry access denied. Sign in with credentials that can read this image, or verify that the image is public.",
+            );
+            let cue_bounds = cue
+                .compute_bounds(&failure_message)
+                .expect("failure cue belongs to its message");
+            let copy_bounds = copy
+                .compute_bounds(&failure_message)
+                .expect("failure copy belongs to its message");
+            assert!(
+                cue_bounds.y() <= copy_bounds.y() + 2.0,
+                "{width_name} multiline status cue floats below its first line: cue={cue_bounds:?} copy={copy_bounds:?}"
+            );
             let retry_chrome = widgets_with_class(retry.upcast_ref(), "hl-button-chrome")
                 .into_iter()
                 .next()

@@ -2419,10 +2419,21 @@ mod unix {
                 candidate.has_css_class("hl-inlinemessage")
                     && descendants::<gtk::Label>(candidate.upcast_ref()).iter().any(|caption| {
                         caption.text()
-                            == "Network inventory is unavailable. Check that the workspace is running, then retry."
+                            == "Registry access denied. Sign in with credentials that can read this image, or verify that the image is public."
                     })
             });
             assert!(long.width() <= root.width(), "long message overflowed its page");
+            let emblem = find::<gtk::Image>(long.upcast_ref(), |_| true);
+            let caption = find::<gtk::Label>(long.upcast_ref(), |caption| {
+                caption.text()
+                    == "Registry access denied. Sign in with credentials that can read this image, or verify that the image is public."
+            });
+            assert_eq!(emblem.valign(), gtk::Align::Start, "multiline cue is not top-aligned");
+            assert_eq!(
+                caption.valign(),
+                gtk::Align::Start,
+                "multiline caption is not top-aligned"
+            );
             assert!(
                 descendants::<gtk::Label>(long.upcast_ref())
                     .iter()

@@ -46,5 +46,13 @@ test('InlineMessage owns a one-component reference for every generated tone', ()
     ),
     'the reference omits the explicit icon override',
   );
+  assert(
+    messages.some(
+      (message) =>
+        message.Label?.Text ===
+        'Registry access denied. Sign in with credentials that can read this image, or verify that the image is public.',
+    ),
+    'the reference omits the product-length multiline alignment specimen',
+  );
   assert(created(frame.patches, 'TableRow').length > 0, 'the generated public API is missing');
 });
