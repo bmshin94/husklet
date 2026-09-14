@@ -986,8 +986,19 @@ export declare class TerminalCommandOperationError extends Error {
   readonly stdout?: readonly number[];
   /** Exact bounded stderr bytes acknowledged at `after`, safe to prepend after reconnect. */
   readonly stderr?: readonly number[];
+  /** Frozen, JSON-safe recovery state retaining the original aggregate output ceiling. */
+  readonly resume: Readonly<TerminalCommandResumeToken>;
   readonly cause: unknown;
 }
+
+export type TerminalCommandResumeToken = {
+  version: 1;
+  command: Readonly<TerminalCommand>;
+  after: number;
+  stdout: readonly number[];
+  stderr: readonly number[];
+  maxBytes: number;
+};
 /** A terminal text request cannot be represented by the host's bounded pane tail. */
 export declare class TerminalReadLimitError extends RangeError {
   readonly requested: number;
@@ -1360,7 +1371,7 @@ export interface WorkspaceApi {
     waitForProviderMount(
       extension: string,
       provider: string,
-      options: {
+      options?: {
         state?: 'mounted' | 'unmounted';
         after?: Pick<InspectablePane, 'slot' | 'generation' | 'revision'> | null;
         timeoutMs?: number;
@@ -1991,18 +2002,10 @@ export interface WorkspaceApi {
         cancelTimeoutMs?: number;
       },
     ): Promise<{ command: TerminalCommand; stdout: string; stderr: string }>;
-    /**
-     * Resume bounded UTF-8 collection for an immutable supervised command after reconnect.
-     * Initial bytes and `after` should come from `TerminalCommandOperationError`. This observer
-     * never signals the command; failures retain the latest completely consumed cursor and bytes.
-     */
+    /** Resume from the error's frozen token without widening its original aggregate byte ceiling. */
     resumeCommandText(
-      command: TerminalCommand,
-      options: {
-        after: number;
-        stdout?: readonly number[];
-        stderr?: readonly number[];
-        maxBytes: number;
+      resume: Readonly<TerminalCommandResumeToken>,
+      options?: {
         maxPages?: number;
         pageLimit?: number;
         pollIntervalMs?: number;

@@ -131,12 +131,7 @@ try {
           });
           try {
             const resumedTerminal = workspace(resumedSession).terminal;
-            result = await resumedTerminal.resumeCommandText(cause.command, {
-              after: cause.after,
-              stdout: cause.stdout,
-              stderr: cause.stderr,
-              maxBytes: 1024 * 1024,
-            });
+            result = await resumedTerminal.resumeCommandText(cause.resume);
           } finally {
             await resumedSession.close();
           }

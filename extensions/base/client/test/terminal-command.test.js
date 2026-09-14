@@ -553,11 +553,11 @@ test('large Git review output exposes an exact reconnect cursor after fragmented
     assert(Object.isFrozen(failure.command.command));
 
     const resumed = await connect({ path: socketPath });
-    const remainder = await workspace(resumed).terminal.resumeCommandText(failure.command, {
-      after: failure.after,
-      stdout: failure.stdout,
-      stderr: failure.stderr,
-      maxBytes: 1024 * 1024,
+    assert.equal(failure.resume.maxBytes, 1024 * 1024);
+    assert(Object.isFrozen(failure.resume));
+    const recovered = JSON.parse(JSON.stringify(failure.resume));
+    assert.deepEqual(recovered, failure.resume);
+    const remainder = await workspace(resumed).terminal.resumeCommandText(recovered, {
       pageLimit: 1,
     });
     assert.equal(remainder.stdout, 'diff --git a/a b/a\n');
@@ -568,6 +568,132 @@ test('large Git review output exposes an exact reconnect cursor after fragmented
       with: { id, owner, ...pane, timeout_ms: 30000 },
     });
     await resumed.close();
+  } finally {
+    for (const connection of connections) connection.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('repeated Unix disconnects cannot widen a supervised command output budget', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-command-budget-resume-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const connections = new Set();
+  let accepted = 0;
+  const pages = [
+    { sequence: 1, bytes: [1, 2, 3] },
+    { sequence: 2, bytes: [4, 5] },
+    { sequence: 3, bytes: [6, 7] },
+  ];
+  const server = net.createServer((socket) => {
+    const connection = ++accepted;
+    connections.add(socket);
+    socket.on('close', () => connections.delete(socket));
+    let reads = 0;
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.kind !== KIND.request) continue;
+        if (frame.payload.call === 'terminal_command_start') {
+          fragmented(socket, {
+            channel: frame.channel,
+            kind: KIND.response,
+            payload: { reply: 'terminal_command', with: running },
+          });
+        } else if (frame.payload.call === 'terminal_command_output') {
+          if (reads++ > 0) {
+            socket.destroy();
+            continue;
+          }
+          const entry = pages[connection - 1];
+          fragmented(socket, {
+            channel: frame.channel,
+            kind: KIND.response,
+            payload: {
+              reply: 'terminal_command_output',
+              with: {
+                id,
+                owner,
+                ...pane,
+                output: {
+                  entries: [
+                    {
+                      sequence: entry.sequence,
+                      timestamp_ms: entry.sequence,
+                      stream: 'stdout',
+                      bytes: entry.bytes,
+                    },
+                  ],
+                  next: entry.sequence,
+                  more: false,
+                  eof: false,
+                  gap: false,
+                },
+              },
+            },
+          });
+        }
+      }
+    });
+    fragmented(socket, {
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: {
+        protocol: 1,
+        peer: `bounded-agent-${connection}`,
+        granted: ['terminals:process-control', 'terminals:output'],
+      },
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const first = await connect({ path: socketPath });
+    let failure;
+    try {
+      await workspace(first).terminal.commandText(pane, {
+        command: running.command,
+        maxBytes: 6,
+        pageLimit: 1,
+        pollIntervalMs: 10,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    assert(
+      failure instanceof TerminalCommandOperationError,
+      `${failure?.constructor?.name}: ${failure}`,
+    );
+    assert.equal(failure.resume.maxBytes, 6);
+    await first.close();
+
+    const second = await connect({ path: socketPath });
+    try {
+      await workspace(second).terminal.resumeCommandText(failure.resume, {
+        pageLimit: 1,
+        pollIntervalMs: 10,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    assert(failure instanceof TerminalCommandOperationError);
+    assert.equal(failure.resume.maxBytes, 6);
+    assert.deepEqual(failure.resume.stdout, [1, 2, 3, 4, 5]);
+    await second.close();
+
+    const third = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(third).terminal.resumeCommandText(failure.resume, {
+        pageLimit: 1,
+        pollIntervalMs: 10,
+      }),
+      (error) =>
+        error instanceof TerminalCommandOperationError &&
+        error.resume.maxBytes === 6 &&
+        error.resume.after === 2 &&
+        error.resume.stdout.length === 5 &&
+        error.cause instanceof RangeError,
+    );
+    await third.close();
   } finally {
     for (const connection of connections) connection.destroy();
     await new Promise((resolve) => server.close(resolve));

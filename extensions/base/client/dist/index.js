@@ -452,7 +452,8 @@ export class TerminalCommandOperationError extends Error {
     after;
     stdout;
     stderr;
-    constructor(command, phase, after, cause, output = undefined) {
+    resume;
+    constructor(command, phase, after, cause, output = undefined, maxBytes = undefined) {
         super(`terminal command ${command.id} ${phase} failed after sequence ${after}: ${cause instanceof Error ? cause.message : String(cause)}`);
         this.name = 'TerminalCommandOperationError';
         this.command = Object.freeze({ ...command, command: Object.freeze([...command.command]) });
@@ -460,6 +461,17 @@ export class TerminalCommandOperationError extends Error {
         this.after = after;
         this.stdout = output?.stdout;
         this.stderr = output?.stderr;
+        this.resume =
+            maxBytes === undefined
+                ? undefined
+                : Object.freeze({
+                    version: 1,
+                    command: this.command,
+                    after,
+                    stdout: this.stdout ?? Object.freeze([]),
+                    stderr: this.stderr ?? Object.freeze([]),
+                    maxBytes,
+                });
         this.cause = cause;
     }
 }
@@ -2902,17 +2914,24 @@ export function workspace(session, { signal } = {}) {
                         throw new TerminalCommandOperationError(owned, phase, after, cause, {
                             stdout: flatten(chunks.stdout),
                             stderr: flatten(chunks.stderr),
-                        });
+                        }, maxBytes);
                     }
                     throw cause;
                 }
             },
-            resumeCommandText: async (command, { after, stdout = [], stderr = [], maxBytes, maxPages = 4_096, pageLimit = 16, pollIntervalMs = 25, signal, }) => {
-                command = exactTerminalCommand(command);
-                if (!Number.isSafeInteger(after) || after < 0)
-                    throw new TypeError('terminal command resume cursor must be a nonnegative safe integer');
-                if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 16 * 1024 * 1024)
-                    throw new RangeError('terminal command maxBytes must be between 1 and 16777216');
+            resumeCommandText: async (resume, { maxPages = 4_096, pageLimit = 16, pollIntervalMs = 25, signal, } = {}) => {
+                if (resume?.version !== 1 ||
+                    !Number.isSafeInteger(resume.after) ||
+                    resume.after < 0 ||
+                    !Number.isSafeInteger(resume.maxBytes) ||
+                    resume.maxBytes < 1 ||
+                    resume.maxBytes > 16 * 1024 * 1024) {
+                    throw new TypeError('terminal command recovery requires a valid version 1 resume token');
+                }
+                const command = exactTerminalCommand(resume.command);
+                const { after, maxBytes } = resume;
+                const stdout = resume.stdout;
+                const stderr = resume.stderr;
                 if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 4_096)
                     throw new RangeError('terminal command maxPages must be between 1 and 4096');
                 if (!Number.isInteger(pageLimit) || pageLimit < 1 || pageLimit > 16)
@@ -2975,7 +2994,7 @@ export function workspace(session, { signal } = {}) {
                     throw new TerminalCommandOperationError(command, phase, cursor, cause, {
                         stdout: Object.freeze(bytes.stdout),
                         stderr: Object.freeze(bytes.stderr),
-                    });
+                    }, maxBytes);
                 }
             },
             read: async (slot, lines) => exactPane(expect(await session.call('terminal_read_pane', {
