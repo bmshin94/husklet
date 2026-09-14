@@ -132,7 +132,8 @@ fn content() -> gtk::Box {
 
 fn actions() -> gtk::Box {
     let widget = axis::row(6);
-    widget.set_halign(gtk::Align::End);
+    widget.set_hexpand(true);
+    widget.set_halign(gtk::Align::Fill);
     widget
 }
 

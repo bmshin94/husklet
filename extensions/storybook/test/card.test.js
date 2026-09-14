@@ -69,6 +69,13 @@ test('Card owns a dedicated single-component document with canonical anatomy', (
   );
   assert.ok(inventory, 'Card documents an operational inventory record');
   assert.deepEqual(ancestorProps(frame, inventory, 'Card')?.Width, { Length: 'Fill' });
+  assert(
+    frame.patches.some(
+      (patch) =>
+        patch.SetProp?.prop === 'Label' &&
+        patch.SetProp.value.Text?.includes('Actions start at the content edge by default'),
+    ),
+  );
 });
 
 test('Card examples keep compact explicit actions and long copy inside the component', () => {

@@ -55,7 +55,7 @@ export function CardWorkbench() {
 
       <DocumentationSection title="Anatomy">
         <Text
-          label="Keep the order Header → Content → Actions. The header names one subject, content explains it, and actions affect only that subject."
+          label="Keep the order Header → Content → Actions. The header names one subject, content explains it, and actions affect only that subject. Actions start at the content edge by default; set justify only when a confirmation footer needs another alignment."
           color="text-dim"
           wrap
         />

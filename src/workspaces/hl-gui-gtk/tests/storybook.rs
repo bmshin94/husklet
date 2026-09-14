@@ -2185,8 +2185,16 @@ mod unix {
                 let body = card.child().expect("Card owns a body");
                 let actions = descendants::<gtk::Box>(&body)
                     .into_iter()
-                    .find(|candidate| candidate.halign() == gtk::Align::End)
+                    .find(|candidate| candidate.has_css_class("hl-cardactions"))
                     .expect("CardActions remains after content");
+                assert_eq!(actions.halign(), gtk::Align::Fill);
+                assert!(actions.hexpands(), "default CardActions does not fill the card body");
+                assert!(
+                    actions.width() >= body.width() - 2,
+                    "default CardActions occupied {}px of its {}px card body",
+                    actions.width(),
+                    body.width()
+                );
                 let content = body.first_child().expect("Card body starts with content");
                 assert!(
                     content.has_css_class("hl-cardcontent"),
