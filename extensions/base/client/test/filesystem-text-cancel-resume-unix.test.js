@@ -5,7 +5,12 @@ import path from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import test from 'node:test';
 
-import { FileTextOperationError, connect, workspace } from '../dist/index.js';
+import {
+  FileChunkOperationError,
+  FileTextOperationError,
+  connect,
+  workspace,
+} from '../dist/index.js';
 import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
 
 test('cancelled in-flight file range preserves an exact prefix for reconnect resume', async () => {
@@ -29,7 +34,7 @@ test('cancelled in-flight file range preserves an exact prefix for reconnect res
         if (frame.kind !== KIND.request || frame.payload.call !== 'filesystem_read_range') continue;
         const offset = frame.payload.with.offset;
         offsets.push(offset);
-        if (current === 1 && offset === 2) {
+        if (current <= 2 && offset === 2) {
           stalled?.();
           continue; // Prove AbortSignal interrupts an already-written ordered call.
         }
@@ -60,6 +65,30 @@ test('cancelled in-flight file range preserves an exact prefix for reconnect res
   });
   await new Promise((resolve) => server.listen(socketPath, resolve));
   try {
+    const chunksSession = await connect({ path: socketPath, timeout: 5_000 });
+    const chunksCancellation = new AbortController();
+    const chunksStalled = new Promise((resolve) => {
+      stalled = resolve;
+    });
+    const chunks = Array.fromAsync(
+      workspace(chunksSession).files.readChunks('docs/large.txt', {
+        chunkBytes: 2,
+        signal: chunksCancellation.signal,
+      }),
+    );
+    await chunksStalled;
+    chunksCancellation.abort('indexing checkpoint requested');
+    await assert.rejects(chunks, (error) => {
+      assert(error instanceof FileChunkOperationError);
+      assert.equal(error.cause?.name, 'AbortError');
+      assert.deepEqual(
+        [error.resume.identity, error.resume.offset, error.resume.deliveredBytes],
+        ['file-v1', 2, 2],
+      );
+      return true;
+    });
+    await chunksSession.close();
+
     const first = await connect({ path: socketPath, timeout: 5_000 });
     const cancellation = new AbortController();
     const secondRange = new Promise((resolve) => {
@@ -92,7 +121,7 @@ test('cancelled in-flight file range preserves an exact prefix for reconnect res
       identity: 'file-v1',
       bytes: 4,
     });
-    assert.deepEqual(offsets, [0, 2, 2], 'the acknowledged prefix is never fetched twice');
+    assert.deepEqual(offsets, [0, 2, 0, 2, 2], 'the acknowledged prefix is never fetched twice');
     await resumed.close();
   } finally {
     for (const socket of sockets) socket.destroy();

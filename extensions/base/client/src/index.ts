@@ -4916,12 +4916,13 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           }
           parts.push(decoder.decode());
         } catch (error) {
+          const operationCause = error instanceof FileChunkOperationError ? error.cause : error;
           if (
             identity &&
-            error instanceof TypeError &&
-            /encoded data was not valid/i.test(error.message)
+            operationCause instanceof TypeError &&
+            /encoded data was not valid/i.test(operationCause.message)
           ) {
-            throw new FileTextDecodeError(path, identity, bytes, error);
+            throw new FileTextDecodeError(path, identity, bytes, operationCause);
           }
           if (
             identity &&
@@ -4929,12 +4930,13 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
             !(error instanceof FileExtentChangedError) &&
             !(error instanceof FileTextLimitError) &&
             !(error instanceof FileTextOperationError) &&
-            (preservePartialOnAbort || !(error instanceof Error && error.name === 'AbortError'))
+            (preservePartialOnAbort ||
+              !(operationCause instanceof Error && operationCause.name === 'AbortError'))
           ) {
             const contents = chunks.flatMap((chunk) => Array.from(chunk));
-            throw new FileTextOperationError(path, identity, contents, maxBytes, error);
+            throw new FileTextOperationError(path, identity, contents, maxBytes, operationCause);
           }
-          throw error;
+          throw operationCause;
         }
         if (!identity) throw new TypeError('host returned a filesystem file without an identity');
         return Object.freeze({ path, text: parts.join(''), identity, bytes });
