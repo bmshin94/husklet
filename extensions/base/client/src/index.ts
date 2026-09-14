@@ -4035,6 +4035,26 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         }
         return receipt;
       },
+      recoverCommandInput: (failure) => {
+        if (!(failure instanceof TerminalCommandInputOperationError)) {
+          throw new TypeError(
+            'terminal command input recovery requires its exact input operation error',
+          );
+        }
+        if (failure.close) {
+          return api.terminal.commandCloseInput(failure.command, {
+            operation: failure.operation,
+            offset: failure.offset,
+          });
+        }
+        if (failure.input === undefined) {
+          throw new TypeError('terminal command input recovery is missing the exact input bytes');
+        }
+        return api.terminal.commandWrite(failure.command, failure.input, {
+          operation: failure.operation,
+          offset: failure.offset,
+        });
+      },
       commandText: async (
         pane,
         {
@@ -8682,6 +8702,7 @@ export const protocolCoverage = Object.freeze({
       'commandCancel',
       'commandWrite',
       'commandCloseInput',
+      'recoverCommandInput',
       'read',
       'semantics',
       'act',

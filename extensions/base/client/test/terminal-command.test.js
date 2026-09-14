@@ -275,9 +275,12 @@ test('lost supervised input reply carries one exact retry across a fragmented re
     socket.on('data', (chunk) => {
       for (const frame of reader.take(chunk)) {
         if (frame.channel !== 2) continue;
-        assert.equal(frame.payload.call, 'terminal_command_write');
+        assert(
+          frame.payload.call === 'terminal_command_write' ||
+            frame.payload.call === 'terminal_command_close_input',
+        );
         received.push(frame.payload.with);
-        if (current === 1) {
+        if (current === 1 || current === 3) {
           socket.destroy();
           continue;
         }
@@ -290,8 +293,8 @@ test('lost supervised input reply carries one exact retry across a fragmented re
               id,
               operation: frame.payload.with.operation,
               offset: frame.payload.with.offset,
-              committed: 3,
-              closed: false,
+              committed: frame.payload.call === 'terminal_command_write' ? 3 : 0,
+              closed: frame.payload.call === 'terminal_command_close_input',
             },
           },
         });
@@ -323,11 +326,7 @@ test('lost supervised input reply carries one exact retry across a fragmented re
     assert.equal(ambiguous.close, false);
 
     const second = await connect({ path: socketPath });
-    const receipt = await workspace(second).terminal.commandWrite(
-      ambiguous.command,
-      ambiguous.input,
-      { operation: ambiguous.operation, offset: ambiguous.offset },
-    );
+    const receipt = await workspace(second).terminal.recoverCommandInput(ambiguous);
     assert.deepEqual(receipt, {
       id,
       operation: ambiguous.operation,
@@ -337,6 +336,31 @@ test('lost supervised input reply carries one exact retry across a fragmented re
     });
     assert.deepEqual(received[1], received[0], 'reconnect must replay only the exact operation');
     second.close();
+
+    const third = await connect({ path: socketPath });
+    let ambiguousClose;
+    try {
+      await workspace(third).terminal.commandCloseInput(running, { offset: 10 });
+      assert.fail('EOF reply loss must remain explicit');
+    } catch (error) {
+      assert(error instanceof TerminalCommandInputOperationError);
+      ambiguousClose = error;
+    }
+    assert.equal(ambiguousClose.close, true);
+    assert.equal(ambiguousClose.input, undefined);
+    third.close();
+
+    const fourth = await connect({ path: socketPath });
+    const closed = await workspace(fourth).terminal.recoverCommandInput(ambiguousClose);
+    assert.deepEqual(closed, {
+      id,
+      operation: ambiguousClose.operation,
+      offset: 10,
+      committed: 0,
+      closed: true,
+    });
+    assert.deepEqual(received[3], received[2], 'reconnect must replay only the exact EOF operation');
+    fourth.close();
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(directory, { recursive: true, force: true });

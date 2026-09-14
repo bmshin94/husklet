@@ -2056,6 +2056,8 @@ export interface WorkspaceApi {
             operation?: string;
             offset?: number;
         }): Promise<TerminalCommandInput>;
+        /** Retry only the exact write or EOF operation retained after an ambiguous input reply. */
+        recoverCommandInput(failure: TerminalCommandInputOperationError): Promise<TerminalCommandInput>;
         /**
          * Run, collect bounded UTF-8 output, and return authoritative process completion.
          * Abort interrupts idle output polling immediately before cancelling the owned command.

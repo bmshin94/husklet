@@ -3158,6 +3158,24 @@ export function workspace(session, { signal } = {}) {
                 }
                 return receipt;
             },
+            recoverCommandInput: (failure) => {
+                if (!(failure instanceof TerminalCommandInputOperationError)) {
+                    throw new TypeError('terminal command input recovery requires its exact input operation error');
+                }
+                if (failure.close) {
+                    return api.terminal.commandCloseInput(failure.command, {
+                        operation: failure.operation,
+                        offset: failure.offset,
+                    });
+                }
+                if (failure.input === undefined) {
+                    throw new TypeError('terminal command input recovery is missing the exact input bytes');
+                }
+                return api.terminal.commandWrite(failure.command, failure.input, {
+                    operation: failure.operation,
+                    offset: failure.offset,
+                });
+            },
             commandText: async (pane, { command: argv, operation, workingDirectory, input, maxBytes, pageLimit = 16, pollIntervalMs = 25, signal: abortSignal, cancelSignal = 'SIGTERM', cancelTimeoutMs = 5_000, }) => {
                 if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 16 * 1024 * 1024) {
                     throw new RangeError('terminal command maxBytes must be between 1 and 16777216');
@@ -7131,6 +7149,7 @@ export const protocolCoverage = Object.freeze({
             'commandCancel',
             'commandWrite',
             'commandCloseInput',
+            'recoverCommandInput',
             'read',
             'semantics',
             'act',
