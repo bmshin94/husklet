@@ -61,6 +61,7 @@ export { Workspace } from './workspace.js';
 export {
   Extensions,
   acquisitionFailure,
+  acquisitionCancellationRecovery,
   acquisitionTechnicalDetail,
   acquisitionLabel,
   acquisitionProgressFraction,

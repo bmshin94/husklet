@@ -7,10 +7,18 @@ import test from 'node:test';
 import { createElement as h } from 'react';
 import { connect, workspace } from '../../../extensions/base/react/dist/index.js';
 import { KIND, Reader, encode } from '../../../extensions/base/react/dist/wire.js';
-import { Extensions, lifecycleStateObserved } from '../dist/app.js';
+import {
+  Extensions,
+  acquisitionCancellationRecovery,
+  lifecycleStateObserved,
+} from '../dist/app.js';
 import { host } from './host.js';
 
 test('digest-pinned same-version review rejects a substituted image over real Unix framing', async () => {
+  assert.equal(
+    acquisitionCancellationRecovery('ready'),
+    'Inspection completed before cancellation. Review this candidate or cancel the review; nothing has been installed.',
+  );
   const directory = await mkdtemp(join(tmpdir(), 'husklet-extension-update-'));
   const socketPath = join(directory, 'host.sock');
   const oldDigest = `sha256:${'a'.repeat(64)}`;

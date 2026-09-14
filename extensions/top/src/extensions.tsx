@@ -951,10 +951,9 @@ export function Extensions({
     } catch (cause) {
       cancelledJob.current = '';
       try {
-        setAcquisition(await api.extensions.acquisition(acquisition.job));
-        setError(
-          'Acquisition advanced before cancellation. Review its current phase and cancel again if needed.',
-        );
+        const current = await api.extensions.acquisition(acquisition.job);
+        setAcquisition(current);
+        setError(acquisitionCancellationRecovery(current.state));
       } catch {
         setError(
           `Cancellation failed: ${message(cause)} Retry inspection to reconcile its current state.`,
@@ -2959,6 +2958,16 @@ export function acquisitionLabel(acquisition: ExtensionAcquisitionStatus): strin
             Math.round((progress.current / Math.max(1, progress.total)) * 100),
           )}%)`;
   return `${progress.status}${progress.id ? ` · ${progress.id}` : ''}${amount}`.slice(0, 500);
+}
+
+export function acquisitionCancellationRecovery(state: string): string {
+  if (state === 'ready') {
+    return 'Inspection completed before cancellation. Review this candidate or cancel the review; nothing has been installed.';
+  }
+  if (state === 'committing') {
+    return 'The reviewed extension started saving before cancellation. Wait for its final state before acting again.';
+  }
+  return 'Acquisition advanced before cancellation. Review its current phase and cancel again if needed.';
 }
 
 export function acquisitionProgressFraction(

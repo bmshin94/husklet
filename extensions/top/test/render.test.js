@@ -2901,9 +2901,18 @@ test('a stale cancellation refreshes the authoritative phase and remains cancell
             job: 'moving-job',
             reference: 'registry.example/tool:1',
             revision: ++reads,
-            state: reads === 1 ? 'inspecting' : 'reading-manifest',
+            state: reads === 1 ? 'inspecting' : 'ready',
             progress: null,
-            candidate: null,
+            candidate:
+              reads === 1
+                ? null
+                : {
+                    name: 'tool',
+                    version: '1.0.0',
+                    image_digest: `sha256:${'a'.repeat(64)}`,
+                    installed_image_digest: null,
+                    requested: [],
+                  },
             error: null,
           }),
           waitForAcquisition: async () => new Promise(() => {}),
@@ -2928,17 +2937,14 @@ test('a stale cancellation refreshes the authoritative phase and remains cancell
   invoke(stage, 'Cancel inspection');
   await settled();
   assert.equal(cancellations, 1);
-  assert.ok(labelled(stage, 'Reading and validating the extension manifest…'));
   assert.ok(
     labelled(
       stage,
-      'Acquisition advanced before cancellation. Review its current phase and cancel again if needed.',
+      'Inspection completed before cancellation. Review this candidate or cancel the review; nothing has been installed.',
     ),
   );
-  assert.ok(labelled(stage, 'Cancel inspection'));
-  assert.deepEqual(property(stage, 'Cancel inspection', 'Size'), {
-    ControlSize: 'Medium',
-  });
+  assert.ok(labelled(stage, 'Review tool'));
+  assert.ok(labelled(stage, 'Cancel review'));
 });
 
 test('exact workspace environment consent carries its required verb and clears coherently', async () => {
