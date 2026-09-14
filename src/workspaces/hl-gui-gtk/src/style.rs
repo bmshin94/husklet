@@ -41,6 +41,7 @@ fn controls(css: &mut String, theme: &Theme) {
            background: {ground}; color: {text}; border: 1px solid {line}; border-radius: {radius}px; min-height: 30px; }}\n\
          entry text, spinbutton text {{ color: {text}; }}\n\
          entry, spinbutton, textview, dropdown > button {{ padding: 3px 9px; }}\n\
+         .hl-textarea textview text {{ background: transparent; border: none; border-radius: 0; min-height: 0; }}\n\
          .hl-select {{ background: {ground}; border: 1px solid {line}; border-radius: {radius}px; min-height: 30px; padding: 2px 9px; }}\n\
          .hl-select:hover {{ border-color: {dim}; }}\n\
          .hl-select:focus-within {{ border-color: {accent}; box-shadow: 0 0 0 1px {accent}; }}\n\
@@ -655,6 +656,9 @@ mod tests {
         assert!(css.contains(".hl-select:disabled, .hl-select button:disabled { border-color: #a9b0bc;"));
         assert!(css.contains(
             "entry:disabled, spinbutton:disabled, textview:disabled, dropdown:disabled, .hl-select:disabled { opacity: .62; background:"
+        ));
+        assert!(css.contains(
+            ".hl-textarea textview text { background: transparent; border: none; border-radius: 0; min-height: 0;"
         ));
         assert!(css.contains("switch:disabled { opacity: .55;"));
         assert!(css.contains(

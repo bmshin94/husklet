@@ -1178,6 +1178,7 @@ mod unix {
                 .child()
                 .and_then(|child| child.downcast::<gtk::TextView>().ok())
                 .expect("TextArea owns a native multi-line editor");
+            assert!(editor.has_css_class("hl-textarea"));
             assert_eq!(view.accessible_role(), gtk::AccessibleRole::TextBox);
             assert!(view.is_editable());
             assert!(view.is_monospace());
@@ -1188,6 +1189,12 @@ mod unix {
                 editor.height()
             );
             assert!(view.grab_focus(), "TextArea accepts keyboard focus");
+            assert!(
+                view.width() >= editor.width() - 24,
+                "TextArea editable canvas lost space to nested chrome: editor={} canvas={}",
+                editor.width(),
+                view.width()
+            );
             let invalid = descendants::<gtk::ScrolledWindow>(&root)
                 .into_iter()
                 .find(|window| window.has_css_class("tone-danger"))

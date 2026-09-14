@@ -36,6 +36,12 @@ test('TextArea owns a focused multi-line component reference', () => {
   assert(editors.some((props) => props.Monospace?.Flag === false));
   assert(editors.some((props) => props.Enabled?.Flag === false));
   assert(editors.some((props) => props.Tone?.Tone === 'Danger'));
+  assert(
+    frame.patches.some((patch) =>
+      patch.SetProp?.value?.Text?.includes('editable canvas never adds a second nested frame'),
+    ),
+    'the TextArea reference does not teach its single-boundary focus and validation contract',
+  );
 });
 
 test('TextArea retains its controlled multi-line Change value and visible count', () => {

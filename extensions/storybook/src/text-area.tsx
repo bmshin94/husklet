@@ -107,6 +107,11 @@ export function TextAreaWorkbench() {
           label="TextArea reports the complete controlled value after each edit. Bound retained text, preserve line breaks, and show validation without replacing the editor contents."
           wrap
         />
+        <Text
+          label="The editor has one visible boundary. Focus and validation change that outer boundary; the editable canvas never adds a second nested frame."
+          color="text-dim"
+          wrap
+        />
       </DocumentationSection>
 
       <DocumentationSection title="Accessibility">

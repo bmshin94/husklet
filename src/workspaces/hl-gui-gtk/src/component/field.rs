@@ -100,6 +100,7 @@ pub(crate) fn editor(editable: bool) -> gtk::ScrolledWindow {
     view.set_monospace(true);
     view.set_editable(editable);
     let window = gtk::ScrolledWindow::new();
+    window.add_css_class("hl-textarea");
     window.set_child(Some(&view));
     window.set_min_content_height(96);
     window.set_hexpand(true);
