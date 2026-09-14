@@ -4,7 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import test from 'node:test';
-import { StateWriteOperationError, connect, workspace } from '../dist/index.js';
+import {
+  StateWriteOperationError,
+  StateWriteProtocolError,
+  connect,
+  workspace,
+} from '../dist/index.js';
 import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
 
 test('embeddings checkpoint reconciles a committed write after fragmented Unix reply loss', async () => {
@@ -36,7 +41,10 @@ test('embeddings checkpoint reconciles a committed write after fragmented Unix r
         const payload =
           frame.payload.call === 'state_read'
             ? { reply: 'state', with: current }
-            : { reply: 'identity', with: after };
+            : {
+                reply: 'state_write',
+                with: { observed: `sha256:${'9'.repeat(64)}`, identity: after },
+              };
         const bytes = encode({ channel: frame.channel, kind: KIND.response, payload });
         socket.write(bytes.subarray(0, 5));
         socket.write(bytes.subarray(5));
@@ -82,6 +90,12 @@ test('embeddings checkpoint reconciles a committed write after fragmented Unix r
       (error) => error?.kind === 'conflict',
     );
     assert.equal(writes, 1, 'an intervening checkpoint is never overwritten');
+    await assert.rejects(workspace(resumed).state.write(current.identity, [1, 2, 3]), (error) => {
+      assert(error instanceof StateWriteProtocolError);
+      assert.equal(error.expectedObserved, `sha256:${'3'.repeat(64)}`);
+      assert.equal(error.received.observed, `sha256:${'9'.repeat(64)}`);
+      return true;
+    });
     await resumed.close();
   } finally {
     for (const connection of connections) connection.destroy();

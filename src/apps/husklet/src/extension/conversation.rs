@@ -2449,13 +2449,15 @@ mod tests {
         let written = ask(
             &mut wire,
             &Request::StateWrite {
-                observed: initial.identity,
+                observed: initial.identity.clone(),
                 contents: contents.clone(),
             },
         );
-        let Ok(Reply::Identity(identity)) = codec::read_reply(&written) else {
+        let Ok(Reply::StateWrite(receipt)) = codec::read_reply(&written) else {
             panic!("full state quota must be writable");
         };
+        assert_eq!(receipt.observed, initial.identity);
+        let identity = receipt.identity;
         let read = ask(&mut wire, &Request::StateRead);
         assert!(
             matches!(codec::read_reply(&read), Ok(Reply::State(state)) if state.identity == identity && state.contents == contents)

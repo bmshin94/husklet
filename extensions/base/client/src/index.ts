@@ -458,6 +458,19 @@ export class StateWriteOperationError extends Error {
   }
 }
 
+/** The host returned checkpoint authority for another prior state generation. */
+export class StateWriteProtocolError extends Error {
+  readonly expectedObserved;
+  readonly received;
+
+  constructor(expectedObserved, received) {
+    super('host returned an extension state write receipt for another generation');
+    this.name = 'StateWriteProtocolError';
+    this.expectedObserved = expectedObserved;
+    this.received = Object.freeze({ ...received });
+  }
+}
+
 /** A file CAS write lost its outcome; exact path, identity, and candidate bytes are recoverable. */
 export class FileWriteOperationError extends Error {
   readonly path;
@@ -5373,14 +5386,18 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     },
     state: {
       read: async () => expect(await session.call('state_read', undefined), 'state'),
-      write: async (observed, contents) =>
-        expect(
+      write: async (observed, contents) => {
+        observed = exactStateIdentity(observed);
+        const receipt = expect(
           await session.call('state_write', {
-            observed: exactStateIdentity(observed),
+            observed,
             contents: exactStateBytes(contents),
           }),
-          'identity',
-        ),
+          'state_write',
+        );
+        if (receipt.observed !== observed) throw new StateWriteProtocolError(observed, receipt);
+        return receipt.identity;
+      },
       clear: (observed) => done('state_clear', { observed: exactStateIdentity(observed) }),
       readJson: async (codec) => {
         const checked = exactStateCodec(codec);
@@ -5390,7 +5407,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         observed = exactStateIdentity(observed);
         const contents = encodeJsonState(value, codec);
         return api.state.write(observed, contents).catch((cause) => {
-          if (cause instanceof ExtensionError) throw cause;
+          if (cause instanceof ExtensionError || cause instanceof StateWriteProtocolError)
+            throw cause;
           throw new StateWriteOperationError(observed, contents, cause);
         });
       },

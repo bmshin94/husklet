@@ -2667,9 +2667,10 @@ impl Session {
                     });
                 }
                 exact_state_identity(observed)?;
-                port.write(observed, contents)
-                    .map(Reply::Identity)
-                    .map_err(Failure::from)
+                Ok(Reply::StateWrite(crate::port::StateWriteReceipt {
+                    observed: observed.clone(),
+                    identity: port.write(observed, contents)?,
+                }))
             }
             Request::StateClear { observed } => {
                 exact_state_identity(observed)?;

@@ -2891,7 +2891,10 @@ test('real Unix JSON state decode failure retains exact identity for CAS recover
                 },
               }
             : frame.payload.call === 'state_write'
-              ? { reply: 'identity', with: recoveredIdentity }
+              ? {
+                  reply: 'state_write',
+                  with: { observed: frame.payload.with.observed, identity: recoveredIdentity },
+                }
               : {
                   reply: 'workspace',
                   with: { name: 'index', image: 'toolbox', architecture: 'amd64' },
@@ -3470,7 +3473,10 @@ test('real Unix private state exposes a stale-writer conflict instead of losing 
         } else {
           contents = frame.payload.with.contents;
           identity = `sha256:${'a'.repeat(64)}`;
-          payload = { reply: 'identity', with: identity };
+          payload = {
+            reply: 'state_write',
+            with: { observed: frame.payload.with.observed, identity },
+          };
         }
         socket.write(
           encode({

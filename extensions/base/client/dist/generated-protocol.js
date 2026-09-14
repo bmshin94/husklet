@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:dfdc53e01be4c59a
+// Protocol artifact fnv1a64:cba3c8d9db0b1a38
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -462,7 +462,7 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "filesystem_remove": "done",
   "filesystem_remove_observed": "done",
   "state_read": "state",
-  "state_write": "identity",
+  "state_write": "state_write",
   "state_clear": "done",
   "preference_read": "preferences",
   "preference_set": "revision",
@@ -6677,6 +6677,26 @@ const definitions = {
       }
     ]
   },
+  "StateWriteReceipt": {
+    "fields": [
+      {
+        "name": "observed",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "identity",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {}
+  },
   "TabSummary": {
     "fields": [
       {
@@ -10128,6 +10148,16 @@ const roots = {
           "of": {
             "kind": "ref",
             "name": "ExtensionState"
+          }
+        }
+      },
+      {
+        "name": "state_write",
+        "payload": {
+          "kind": "newtype",
+          "of": {
+            "kind": "ref",
+            "name": "StateWriteReceipt"
           }
         }
       },

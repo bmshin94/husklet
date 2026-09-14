@@ -166,7 +166,7 @@ const REQUEST_TO_REPLY: &[(&str, &str)] = &[
     ("filesystem_remove", "done"),
     ("filesystem_remove_observed", "done"),
     ("state_read", "state"),
-    ("state_write", "identity"),
+    ("state_write", "state_write"),
     ("state_clear", "done"),
     ("preference_read", "preferences"),
     ("preference_set", "revision"),

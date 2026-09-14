@@ -1689,6 +1689,13 @@ pub struct ExtensionState {
     pub contents: Vec<u8>,
 }
 
+/// Receipt binding a checkpoint write to the exact state generation it replaced.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct StateWriteReceipt {
+    pub observed: String,
+    pub identity: String,
+}
+
 /// One deliberately small UI preference value. This is not arbitrary JSON:
 /// nested values, null, arrays, and objects are not part of the contract.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]

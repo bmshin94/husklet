@@ -1,6 +1,7 @@
 import {
   FileTextOperationError,
   StateWriteOperationError,
+  StateWriteProtocolError,
   connect,
   workspace,
   type FileEntry,
@@ -63,6 +64,8 @@ try {
     try {
       return await host.state.updateJson(checkpointCodec, update, { signal: controller.signal });
     } catch (cause) {
+      // A mismatched receipt is hostile/stale authority, not a reconnect ambiguity.
+      if (cause instanceof StateWriteProtocolError) throw cause;
       if (!(cause instanceof StateWriteOperationError)) throw cause;
       const resumed = await connect({ path: configuration.path, pendingLimit: 8, timeout: 30_000 });
       try {

@@ -86,7 +86,10 @@ test('JSON state codecs migrate, retry CAS conflicts, and remain bounded before 
           error: 'conflict',
           detail: 'extension state changed after it was read',
         });
-      return { reply: 'identity', with: `sha256:${'c'.repeat(64)}` };
+      return {
+        reply: 'state_write',
+        with: { observed: payload.observed, identity: `sha256:${'c'.repeat(64)}` },
+      };
     },
     onEvent() {
       return () => {};

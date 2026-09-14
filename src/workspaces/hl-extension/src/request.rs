@@ -979,6 +979,7 @@ pub enum Reply {
     FileRanges(Vec<crate::port::FileRange>),
     FileWrite(crate::port::FileWriteReceipt),
     State(crate::port::ExtensionState),
+    StateWrite(crate::port::StateWriteReceipt),
     Preferences(crate::port::ExtensionPreferences),
     Credential(crate::port::ExtensionCredential),
     PostgresOpen(crate::PostgresOpenOutcome),

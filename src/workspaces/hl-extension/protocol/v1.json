@@ -6308,6 +6308,26 @@
         }
       ]
     },
+    "StateWriteReceipt": {
+      "fields": [
+        {
+          "name": "observed",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "identity",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        }
+      ],
+      "kind": "struct",
+      "serde": {}
+    },
     "TabSummary": {
       "fields": [
         {
@@ -10291,7 +10311,7 @@
       "request": "state_read"
     },
     {
-      "reply": "identity",
+      "reply": "state_write",
       "request": "state_write"
     },
     {
@@ -10983,6 +11003,16 @@
             "of": {
               "kind": "ref",
               "name": "ExtensionState"
+            }
+          }
+        },
+        {
+          "name": "state_write",
+          "payload": {
+            "kind": "newtype",
+            "of": {
+              "kind": "ref",
+              "name": "StateWriteReceipt"
             }
           }
         },
@@ -16043,7 +16073,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:456d14bf8817f33e",
+  "source_fingerprint": "fnv1a64:2bc34ef4c46fd25f",
   "specification_version": 1,
   "topics": [
     {

@@ -152,6 +152,12 @@ export declare class StateWriteOperationError extends Error {
     readonly contents: any;
     constructor(observed: any, contents: any, cause: any);
 }
+/** The host returned checkpoint authority for another prior state generation. */
+export declare class StateWriteProtocolError extends Error {
+    readonly expectedObserved: any;
+    readonly received: any;
+    constructor(expectedObserved: any, received: any);
+}
 /** A file CAS write lost its outcome; exact path, identity, and candidate bytes are recoverable. */
 export declare class FileWriteOperationError extends Error {
     readonly path: any;

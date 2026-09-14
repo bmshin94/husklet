@@ -760,6 +760,12 @@ export declare class StateWriteOperationError extends Error {
   readonly contents: readonly number[];
   readonly cause: unknown;
 }
+
+/** The host returned checkpoint authority for another prior state generation. */
+export declare class StateWriteProtocolError extends Error {
+  readonly expectedObserved: string;
+  readonly received: Readonly<{ observed: string; identity: string }>;
+}
 export type WorkspaceEvent =
   | {
       event: 'key';

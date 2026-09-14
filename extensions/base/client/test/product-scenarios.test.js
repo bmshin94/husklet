@@ -247,18 +247,58 @@ test('LLM terminal agent runs a supervised command without parsing a prompt', as
           reply: 'terminal_command_start',
           with: {
             operation: frame.payload.with.operation,
-            command: { id: 'e'.repeat(32), owner: commandOwner, slot: 'term', generation: 4, revision: 8, running: true, exit_code: 0, pid: 19, command: ['sh', '-lc', 'explain status'] },
+            command: {
+              id: 'e'.repeat(32),
+              owner: commandOwner,
+              slot: 'term',
+              generation: 4,
+              revision: 8,
+              running: true,
+              exit_code: 0,
+              pid: 19,
+              command: ['sh', '-lc', 'explain status'],
+            },
           },
         });
       } else if (call === 'terminal_command_output') {
         respond(socket, frame, {
           reply: 'terminal_command_output',
-          with: { id: 'e'.repeat(32), owner: commandOwner, slot: 'term', generation: 4, revision: 8, output: { entries: [{ sequence: 1, timestamp_ms: 1, stream: 'stdout', bytes: Array.from(new TextEncoder().encode('healthy\n')) }], next: 1, more: false, eof: true, gap: false } },
+          with: {
+            id: 'e'.repeat(32),
+            owner: commandOwner,
+            slot: 'term',
+            generation: 4,
+            revision: 8,
+            output: {
+              entries: [
+                {
+                  sequence: 1,
+                  timestamp_ms: 1,
+                  stream: 'stdout',
+                  bytes: Array.from(new TextEncoder().encode('healthy\n')),
+                },
+              ],
+              next: 1,
+              more: false,
+              eof: true,
+              gap: false,
+            },
+          },
         });
       } else if (call === 'terminal_command_wait') {
         respond(socket, frame, {
           reply: 'terminal_command',
-          with: { id: 'e'.repeat(32), owner: commandOwner, slot: 'term', generation: 4, revision: 8, running: false, exit_code: 17, pid: 0, command: ['sh', '-lc', 'explain status'] },
+          with: {
+            id: 'e'.repeat(32),
+            owner: commandOwner,
+            slot: 'term',
+            generation: 4,
+            revision: 8,
+            running: false,
+            exit_code: 17,
+            pid: 0,
+            command: ['sh', '-lc', 'explain status'],
+          },
         });
       }
     },
@@ -417,8 +457,11 @@ test('embeddings indexer pages beyond a truncated inventory over fragmented Unix
         assert.doesNotMatch(checkpoint, /src\/deleted.md/);
         assert.match(checkpoint, /notes\/retained.md/);
         respondFragmented(socket, frame, {
-          reply: 'identity',
-          with: `sha256:${'d'.repeat(64)}`,
+          reply: 'state_write',
+          with: {
+            observed: frame.payload.with.observed,
+            identity: `sha256:${'d'.repeat(64)}`,
+          },
         });
       }
     },
@@ -623,7 +666,10 @@ test('embeddings workbench resumes, indexes changed ranges with an opaque creden
           },
         });
       else if (call === 'state_write')
-        respond(socket, frame, { reply: 'identity', with: `sha256:${'b'.repeat(64)}` });
+        respond(socket, frame, {
+          reply: 'state_write',
+          with: { observed: value.observed, identity: `sha256:${'b'.repeat(64)}` },
+        });
       else if (call === 'interface_open_tab')
         respond(socket, frame, { reply: 'identity', with: 'index-pane' });
       else respond(socket, frame, { reply: 'done' });
@@ -804,7 +850,10 @@ test('Git review resumes bounded inspection and applies one identity-observed fi
           with: { path: value.path, observed: value.observed, identity: 'file-v2' },
         });
       else if (call === 'state_write')
-        respond(socket, frame, { reply: 'identity', with: `sha256:${'2'.repeat(64)}` });
+        respond(socket, frame, {
+          reply: 'state_write',
+          with: { observed: value.observed, identity: `sha256:${'2'.repeat(64)}` },
+        });
       else if (call === 'interface_open_tab')
         respond(socket, frame, { reply: 'identity', with: 'review-pane' });
       else respond(socket, frame, { reply: 'done' });
@@ -1054,7 +1103,12 @@ test('Postgres browser refuses a replacement generation before resolving credent
       );
     },
     1,
-    ['containers:read', 'containers:execute', 'containers:input', 'credentials:expose-to-execution'],
+    [
+      'containers:read',
+      'containers:execute',
+      'containers:input',
+      'credentials:expose-to-execution',
+    ],
   );
   assert.deepEqual(run.calls, [
     { call: 'container_inspect_observed', with: { id, generation: 7 } },
