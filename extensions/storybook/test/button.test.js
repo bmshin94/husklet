@@ -160,4 +160,12 @@ test('Button documents a labelled non-invokable busy state', () => {
   const frame = host().render(h(ButtonWorkbench));
   const buttons = propsFor(frame.patches, 'Button');
   assert(buttons.some((props) => props.Label?.Text === 'Saving…' && props.Busy?.Flag === true));
+  assert(
+    frame.patches.some(
+      (patch) =>
+        patch.SetProp?.prop === 'Label' &&
+        patch.SetProp.value?.Text ===
+          'Busy preserves the action’s emphasis while its spinner communicates progress. Disabled is subdued because it is unavailable; busy is prominent because work is underway.',
+    ),
+  );
 });

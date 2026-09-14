@@ -561,6 +561,22 @@ mod unix {
             let disabled = find::<gtk::Button>(&root, |button| button_caption(button).as_deref() == Some("Disabled"));
             assert!(!disabled.is_sensitive());
             assert!(!disabled.grab_focus(), "disabled Button entered keyboard focus order");
+            let accent_pixels = |button: &gtk::Button| {
+                widget_pixels(&realized_window, button.upcast_ref())
+                    .chunks_exact(4)
+                    .filter(|pixel| {
+                        let minimum = pixel[..3].iter().min().copied().unwrap_or(0);
+                        let maximum = pixel[..3].iter().max().copied().unwrap_or(0);
+                        maximum.saturating_sub(minimum) > 30
+                    })
+                    .count()
+            };
+            let busy_accent = accent_pixels(&busy);
+            let disabled_accent = accent_pixels(&disabled);
+            assert!(
+                busy_accent > 100 && busy_accent > disabled_accent.saturating_mul(4),
+                "busy Button lost active accent emphasis: busy={busy_accent}, disabled={disabled_accent}"
+            );
             for (width, width_name) in [(600, "narrow"), (1_200, "wide")] {
                 allocate(&root, width, 1_500);
                 for (label, variant) in [

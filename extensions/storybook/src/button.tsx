@@ -145,7 +145,7 @@ export function ButtonWorkbench() {
         </Row>
         <Text
           label={
-            'Busy actions retain their label, show activity, and cannot run twice. Hover, pressed, and keyboard focus are rendered by the native host.'
+            'Busy preserves the action’s emphasis while its spinner communicates progress. Disabled is subdued because it is unavailable; busy is prominent because work is underway.'
           }
           color="text-dim"
           wrap

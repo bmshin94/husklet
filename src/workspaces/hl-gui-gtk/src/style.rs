@@ -286,8 +286,8 @@ fn standard_buttons(css: &mut String, theme: &Theme) {
          button.hl-button:focus > .hl-button-chrome, button.hl-button:focus-visible > .hl-button-chrome, button.hl-button > .hl-button-chrome.hl-focus-visible-proof {{ outline: none; box-shadow: inset 0 0 0 2px {accent}; }}\n\
          button.hl-button.variant-outline:focus > .hl-button-chrome, button.hl-button.variant-outline:focus-visible > .hl-button-chrome, button.hl-button.variant-outline > .hl-button-chrome.hl-focus-visible-proof {{ border: 2px solid {accent}; box-shadow: none; outline: none; }}\n\
          button.hl-button.variant-filled:focus > .hl-button-chrome, button.hl-button.variant-filled:focus-visible > .hl-button-chrome, button.hl-button.variant-filled > .hl-button-chrome.hl-focus-visible-proof {{ box-shadow: inset 0 0 0 2px {ground}; }}\n\
-         button.hl-button.variant-filled.hl-disabled > .hl-button-chrome, button.hl-button.variant-outline.hl-disabled > .hl-button-chrome, button.hl-button.variant-ghost.hl-disabled > .hl-button-chrome, button.hl-button.variant-plain.hl-disabled > .hl-button-chrome {{ color: {faint}; background: {surface}; border-color: {line}; box-shadow: none; }}\n\
-         button.hl-button.variant-ghost.hl-disabled > .hl-button-chrome, button.hl-button.variant-plain.hl-disabled > .hl-button-chrome {{ background: transparent; border-color: transparent; }}",
+         button.hl-button.variant-filled.hl-disabled:not(.hl-busy) > .hl-button-chrome, button.hl-button.variant-outline.hl-disabled:not(.hl-busy) > .hl-button-chrome, button.hl-button.variant-ghost.hl-disabled:not(.hl-busy) > .hl-button-chrome, button.hl-button.variant-plain.hl-disabled:not(.hl-busy) > .hl-button-chrome {{ color: {faint}; background: {surface}; border-color: {line}; box-shadow: none; }}\n\
+         button.hl-button.variant-ghost.hl-disabled:not(.hl-busy) > .hl-button-chrome, button.hl-button.variant-plain.hl-disabled:not(.hl-busy) > .hl-button-chrome {{ background: transparent; border-color: transparent; }}",
         raised = theme.color(Token::Raised).hex(),
         text = theme.color(Token::Text).hex(),
         ground = theme.color(Token::Ground).hex(),
@@ -624,8 +624,9 @@ mod tests {
             "button.hl-button.variant-outline:focus > .hl-button-chrome, button.hl-button.variant-outline:focus-visible > .hl-button-chrome, button.hl-button.variant-outline > .hl-button-chrome.hl-focus-visible-proof { border: 2px solid #559df7; box-shadow: none; outline: none; }"
         ));
         assert!(css.contains(
-            "button.hl-button.variant-filled.hl-disabled > .hl-button-chrome, button.hl-button.variant-outline.hl-disabled > .hl-button-chrome"
+            "button.hl-button.variant-filled.hl-disabled:not(.hl-busy) > .hl-button-chrome, button.hl-button.variant-outline.hl-disabled:not(.hl-busy) > .hl-button-chrome"
         ));
+        assert!(css.contains("button.hl-button.variant-filled.hl-disabled:not(.hl-busy) > .hl-button-chrome"));
         assert!(
             css.contains("button:focus-visible { outline: 2px"),
             "IconButton retains the native rule"
