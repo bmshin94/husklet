@@ -62,6 +62,7 @@ export {
   Extensions,
   acquisitionFailure,
   acquisitionCancellationRecovery,
+  acquisitionCancellationUnverified,
   acquisitionTechnicalDetail,
   acquisitionLabel,
   acquisitionProgressFraction,

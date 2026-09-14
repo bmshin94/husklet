@@ -2947,6 +2947,56 @@ test('a stale cancellation refreshes the authoritative phase and remains cancell
   assert.ok(labelled(stage, 'Cancel review'));
 });
 
+test('accepted cancellation with a lost status read is not reported as a failed mutation', async () => {
+  let reads = 0;
+  const stage = host();
+  stage.render(
+    h(Extensions, {
+      api: {
+        extensions: {
+          list: async () => [],
+          startAcquisition: async () => ({ job: 'cancelled-job' }),
+          acquisition: async () => {
+            reads += 1;
+            if (reads > 1) throw new Error('status socket closed');
+            return {
+              job: 'cancelled-job',
+              reference: 'registry.example/tool:1',
+              revision: 1,
+              state: 'inspecting',
+              progress: null,
+              candidate: null,
+              error: null,
+            };
+          },
+          waitForAcquisition: async () => new Promise(() => {}),
+          cancelAcquisition: async () => {},
+        },
+        watchExtensions: async () => () => {},
+      },
+    }),
+  );
+  await settled();
+  selectExtensionMode(stage, 'Discover');
+  await settled();
+  change(stage, 'registry.example/extension:version', 'registry.example/tool:1');
+  invoke(stage, 'Inspect');
+  await settled();
+  invoke(stage, 'Cancel inspection');
+  await settled();
+  await settled();
+
+  assert.ok(
+    labelled(
+      stage,
+      'Cancellation was accepted, but its final state could not be verified. Return to the catalogue before trying again. status socket closed',
+    ),
+  );
+  assert.ok(labelled(stage, 'Inspection cancelled'));
+  assert.ok(labelled(stage, 'Back to catalogue'));
+  assert.equal(labelled(stage, 'Cancellation failed: status socket closed'), undefined);
+});
+
 test('exact workspace environment consent carries its required verb and clears coherently', async () => {
   const installs = [];
   let installed = [];

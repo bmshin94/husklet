@@ -945,10 +945,17 @@ export function Extensions({
     cancelling.current = true;
     cancelledJob.current = acquisition.job;
     setBusy('cancel');
+    let accepted = false;
     try {
       await api.extensions.cancelAcquisition(acquisition.job, acquisition.revision);
+      accepted = true;
       setAcquisition(await api.extensions.acquisition(acquisition.job));
     } catch (cause) {
+      if (accepted) {
+        setAcquisition({ ...acquisition, state: 'cancelled', progress: null, error: null });
+        setError(acquisitionCancellationUnverified(message(cause)));
+        return;
+      }
       cancelledJob.current = '';
       try {
         const current = await api.extensions.acquisition(acquisition.job);
@@ -2968,6 +2975,10 @@ export function acquisitionCancellationRecovery(state: string): string {
     return 'The reviewed extension started saving before cancellation. Wait for its final state before acting again.';
   }
   return 'Acquisition advanced before cancellation. Review its current phase and cancel again if needed.';
+}
+
+export function acquisitionCancellationUnverified(detail: string): string {
+  return `Cancellation was accepted, but its final state could not be verified. Return to the catalogue before trying again. ${detail}`;
 }
 
 export function acquisitionProgressFraction(

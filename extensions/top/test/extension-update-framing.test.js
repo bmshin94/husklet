@@ -10,11 +10,16 @@ import { KIND, Reader, encode } from '../../../extensions/base/react/dist/wire.j
 import {
   Extensions,
   acquisitionCancellationRecovery,
+  acquisitionCancellationUnverified,
   lifecycleStateObserved,
 } from '../dist/app.js';
 import { host } from './host.js';
 
 test('digest-pinned same-version review rejects a substituted image over real Unix framing', async () => {
+  assert.equal(
+    acquisitionCancellationUnverified('status socket closed'),
+    'Cancellation was accepted, but its final state could not be verified. Return to the catalogue before trying again. status socket closed',
+  );
   assert.equal(
     acquisitionCancellationRecovery('ready'),
     'Inspection completed before cancellation. Review this candidate or cancel the review; nothing has been installed.',
