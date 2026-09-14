@@ -240,6 +240,34 @@ impl Candidate {
     }
 
     #[cfg(test)]
+    fn acquire_cancellable_from_socket(
+        socket: &std::path::Path,
+        architecture: hl_ws::Arch,
+        reference: &str,
+        progress: &Sender<Acquisition>,
+        cancellation: &Cancellation,
+    ) {
+        let result = Bridge::new(socket.to_path_buf())
+            .map_err(|error| error.to_string())
+            .and_then(|bridge| {
+                Self::acquire_with_bridge(
+                    reference,
+                    architecture.as_str(),
+                    progress,
+                    cancellation,
+                    &bridge,
+                    false,
+                )
+            });
+        let event = match result {
+            Ok(candidate) => Acquisition::Ready(candidate),
+            Err(_) if cancellation.is_cancelled() => Acquisition::Cancelled,
+            Err(reason) => Acquisition::Failed(reason),
+        };
+        let _ = progress.send(event);
+    }
+
+    #[cfg(test)]
     fn acquire_fresh_from_socket(
         socket: &std::path::Path,
         architecture: hl_ws::Arch,
@@ -355,13 +383,16 @@ fn extract(bridge: &Bridge, reference: &str, path: &str, cancellation: &Cancella
     let request = manifest_container_request(reference);
     let created = cancellable(bridge, cancellation, client.containers().create(&request, None))?
         .map_err(|error| error.to_string())?;
-    let archive = cancellable(bridge, cancellation, read(bridge, &created.id, path))?;
+    // Hold the cancellation result until after cleanup. Returning through `?`
+    // here would strand the inspection container precisely when a person
+    // closes the acquisition UI while the archive request is in flight.
+    let archive = cancellable(bridge, cancellation, read(bridge, &created.id, path));
     // The container is removed whatever the read did: one left behind for every
     // image a person looked at and did not install is a leak nobody would
     // connect to this screen.
     let _ = bridge
         .wait(async { tokio::time::timeout(CLEANUP_BOUND, client.containers().remove(&created.id, true, true)).await });
-    archive
+    archive?
 }
 
 fn manifest_container_request(reference: &str) -> CreateContainer {
@@ -465,7 +496,7 @@ pub fn document(archive: &[u8]) -> Result<String, String> {
 mod tests {
     use super::{
         document, immutable_content, manifest_container_request, manifest_path, protocol_compatibility, split,
-        Acquisition, Candidate,
+        Acquisition, Cancellation, Candidate,
     };
     use hl_extension::Manifest;
     use std::collections::BTreeMap;
@@ -689,6 +720,106 @@ mod tests {
         assert_eq!(
             server.join().unwrap(),
             "GET /v1.43/images/registry%2Etest%2Fteam%2Fextension%3Alatest/json HTTP/1.1"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelling_manifest_read_still_removes_the_inspection_container() {
+        use std::io::{Read as _, Write as _};
+
+        fn request(stream: &mut std::os::unix::net::UnixStream) -> String {
+            let mut bytes = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                let count = stream.read(&mut chunk).unwrap();
+                assert_ne!(count, 0, "request ended before its headers");
+                bytes.extend_from_slice(&chunk[..count]);
+            }
+            String::from_utf8(bytes).unwrap().lines().next().unwrap().to_owned()
+        }
+
+        let root = tempfile::TempDir::new().unwrap();
+        let socket = root.path().join("mock.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let (copy_seen, copied) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let digest = format!("sha256:{}", "a".repeat(64));
+            let mut requests = Vec::new();
+
+            let (mut inspect, _) = listener.accept().unwrap();
+            requests.push(request(&mut inspect));
+            let body = serde_json::json!({
+                "Id": digest,
+                "RepoTags": [], "RepoDigests": [], "Created": "", "Size": 0, "VirtualSize": 0,
+                "Os": "linux", "Architecture": "arm64",
+                "Config": {
+                    "Entrypoint": [], "Cmd": [], "Env": [], "WorkingDir": "", "User": "",
+                    "Labels": {
+                        "husklet.extension.protocol": hl_extension::PROTOCOL.to_string(),
+                        "husklet.extension.protocol.fingerprint": hl_extension::protocol_fingerprint()
+                    },
+                    "OnBuild": [], "ExposedPorts": {}, "Volumes": {}, "Healthcheck": null, "StopSignal": null
+                }
+            })
+            .to_string();
+            write!(inspect, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+
+            let (mut create, _) = listener.accept().unwrap();
+            requests.push(request(&mut create));
+            let body = r#"{"Id":"inspection","Warnings":[]}"#;
+            write!(create, "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+
+            let (mut copy, _) = listener.accept().unwrap();
+            requests.push(request(&mut copy));
+            copy_seen.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            drop(copy);
+
+            listener.set_nonblocking(true).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            while std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut remove, _)) => {
+                        requests.push(request(&mut remove));
+                        write!(remove, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                            .unwrap();
+                        break;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("cleanup listener failed: {error}"),
+                }
+            }
+            requests
+        });
+
+        let cancellation = Cancellation::default();
+        let worker_cancellation = cancellation.clone();
+        let acquisition_socket = socket.clone();
+        let worker = std::thread::spawn(move || {
+            let (progress, received) = std::sync::mpsc::channel();
+            Candidate::acquire_cancellable_from_socket(
+                &acquisition_socket,
+                hl_ws::Arch::Arm64,
+                "registry.test/team/extension:latest",
+                &progress,
+                &worker_cancellation,
+            );
+            drop(progress);
+            received.into_iter().last().unwrap()
+        });
+        copied.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        cancellation.cancel();
+
+        assert_eq!(worker.join().unwrap(), Acquisition::Cancelled);
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 4, "inspect, create, copy, and cleanup must all occur");
+        assert!(
+            requests[3].starts_with("DELETE /v1.43/containers/inspection?"),
+            "got {:?}",
+            requests[3]
         );
     }
 
