@@ -6518,6 +6518,68 @@ test('real Unix control frames ping both directions and close every pending oper
   }
 });
 
+test('a lifecycle callback closing its own Unix session emits one generation close', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-reentrant-close-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const frames = [];
+  const connections = new Set();
+  let callbackClose;
+  let peerEnded;
+  const ended = new Promise((resolve) => {
+    peerEnded = resolve;
+  });
+  const server = net.createServer((socket) => {
+    connections.add(socket);
+    socket.on('close', () => connections.delete(socket));
+    socket.on('end', peerEnded);
+    const reader = new Reader();
+    socket.on('data', (chunk) => frames.push(...reader.take(chunk)));
+    socket.write(
+      encode({
+        channel: CONTROL,
+        kind: KIND.open,
+        payload: { protocol: 1, peer: 'reentrant_close', granted: [] },
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const client = net.createConnection(socketPath);
+    await new Promise((resolve, reject) => {
+      client.once('connect', resolve);
+      client.once('error', reject);
+    });
+    const end = client.end.bind(client);
+    let endCalls = 0;
+    client.end = (...arguments_) => {
+      endCalls += 1;
+      return end(...arguments_);
+    };
+    let session;
+    session = new Session(client, {
+      onClose: () => {
+        callbackClose = session.close();
+      },
+    });
+    await session.ready;
+
+    await session.close();
+    await callbackClose;
+    await ended;
+
+    assert.equal(endCalls, 1, 'reentrant lifecycle cleanup starts one socket shutdown');
+    assert.equal(
+      frames.filter((frame) => frame.channel === CONTROL && frame.kind === KIND.close).length,
+      1,
+      'one session generation surrenders its authority exactly once',
+    );
+  } finally {
+    for (const connection of connections) connection.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('a coalesced Unix close revokes later GUI and row frames in the same read', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-close-boundary-'));
   const socketPath = path.join(directory, 'host.sock');

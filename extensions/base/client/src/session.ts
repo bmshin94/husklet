@@ -741,6 +741,12 @@ export class Session {
 
   close() {
     if (this.#closing) return this.#closing;
+    // `#finish` invokes the extension's lifecycle callback synchronously. A
+    // callback that closes its own session must not enter this method again
+    // before `#closing` is assigned and write a second control-close frame.
+    // A remotely closed or failed session has already surrendered this socket
+    // generation, so it likewise has nothing left to send.
+    if (this.#closed) return Promise.resolve();
     this.#finish(new Error('extension session closed'));
     this.#closing = new Promise<void>((resolve) => {
       if (this.#socket.destroyed) return resolve();
