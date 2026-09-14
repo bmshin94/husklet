@@ -144,6 +144,10 @@ static const hl_option_definition hl_option_definitions[] = {
                      "answer the guest PROT_NONE prefix query from a per-thread clean-page cache instead of "
                      "walking the whole ledger",
                      HL_OPTION_FLAG),
+    HL_LAUNCH_OPTION("HL_X86_BUS_RANGE_COALESCE",
+                     "merge abutting guest PROT_NONE / read-only / non-executable intervals on insert "
+                     "instead of keeping every mmap-sized fragment separate",
+                     HL_OPTION_FLAG),
     HL_LAUNCH_OPTION("HL_X86_OWNER_INDEX",
                      "resolve the x86 body-owner generation slot through an occupancy index instead of a "
                      "full table walk",

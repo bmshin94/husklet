@@ -170,6 +170,9 @@ struct LaunchArguments {
     /// Answer the guest PROT_NONE prefix query from a per-thread clean-page cache instead of walking the whole ledger (off by default).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
     x86_gna_page_cache: Option<TranslitFeatureControl>,
+    /// Merge abutting guest PROT_NONE / read-only / non-executable intervals on insert instead of keeping every mmap-sized fragment separate (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_bus_range_coalesce: Option<TranslitFeatureControl>,
     /// Control automatic same-ISA native syscall supervision.
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true)]
     native_supervised: Option<NativeSupervisedControl>,
@@ -550,6 +553,11 @@ fn execute(guest: Guest, launch: &LaunchArguments) -> Result<hl_engine::engine::
             "--x86-gna-page-cache is available only in the x86-64 worker".to_owned(),
         ));
     }
+    if launch.x86_bus_range_coalesce.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-bus-range-coalesce is available only in the x86-64 worker".to_owned(),
+        ));
+    }
     if launch.exec_census_lazy.is_some() && guest != Guest::X86_64 {
         return Err(Failure::Request(
             "--exec-census-lazy is available only in the x86-64 worker".to_owned(),
@@ -716,6 +724,7 @@ fn rootfs_plan(
         (launch.x86_rmload_fold, "HL_X86_RMLOAD_FOLD"),
         (launch.x86_owner_index, "HL_X86_OWNER_INDEX"),
         (launch.x86_gna_page_cache, "HL_X86_GNA_PAGE_CACHE"),
+        (launch.x86_bus_range_coalesce, "HL_X86_BUS_RANGE_COALESCE"),
         (launch.translit_riprel_readonly, "HL_TRANSLIT_RIPREL_READONLY"),
         (launch.translit_riprel_load_bridge, "HL_TRANSLIT_RIPREL_LOAD_BRIDGE"),
         (launch.translit_fs_load_bridge, "HL_TRANSLIT_FS_LOAD_BRIDGE"),
@@ -1091,6 +1100,7 @@ mod tests {
         assert_eq!(defaults.x86_rmload_fold, None);
         assert_eq!(defaults.x86_owner_index, None);
         assert_eq!(defaults.x86_gna_page_cache, None);
+        assert_eq!(defaults.x86_bus_range_coalesce, None);
         assert_eq!(defaults.exec_ibtc_lazy, None);
         assert_eq!(defaults.exec_census_lazy, None);
         assert_eq!(defaults.call_sim_diag_only, None);
@@ -1116,6 +1126,7 @@ mod tests {
             "--x86-rmload-fold=off",
             "--x86-owner-index=on",
             "--x86-gna-page-cache=on",
+            "--x86-bus-range-coalesce=on",
             "--exec-ibtc-lazy=on",
             "--exec-census-lazy=on",
             "--call-sim-diag-only=off",
@@ -1155,6 +1166,7 @@ mod tests {
         assert_eq!(selected.x86_rmload_fold, Some(super::TranslitFeatureControl::Off));
         assert_eq!(selected.x86_owner_index, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.x86_gna_page_cache, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_bus_range_coalesce, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.exec_ibtc_lazy, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.exec_census_lazy, Some(super::TranslitFeatureControl::On));
         assert_eq!(
@@ -1466,6 +1478,7 @@ mod tests {
         for flag in [
             "--x86-owner-index",
             "--x86-gna-page-cache",
+            "--x86-bus-range-coalesce",
             "--x86-bus-thunk",
             "--x86-mt-chain",
             "--x86-mt-ibtc",
@@ -1796,6 +1809,7 @@ mod tests {
         assert_eq!(defaults.options.get("HL_X86_RMLOAD_FOLD"), None);
         assert_eq!(defaults.options.get("HL_X86_OWNER_INDEX"), None);
         assert_eq!(defaults.options.get("HL_X86_GNA_PAGE_CACHE"), None);
+        assert_eq!(defaults.options.get("HL_X86_BUS_RANGE_COALESCE"), None);
         assert_eq!(defaults.options.get("HL_EXEC_IBTC_LAZY"), None);
         assert_eq!(defaults.options.get("HL_EXEC_CENSUS_LAZY"), None);
         assert_eq!(defaults.options.get("HL_CALL_SIM_DIAG_ONLY"), None);

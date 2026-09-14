@@ -263,6 +263,11 @@ const DEFINITIONS: &[Definition] = &[
         Flag
     ),
     launch!(
+        "HL_X86_BUS_RANGE_COALESCE",
+        "merge abutting guest PROT_NONE / read-only / non-executable intervals on insert instead of keeping every mmap-sized fragment separate",
+        Flag
+    ),
+    launch!(
         "HL_X86_OWNER_INDEX",
         "resolve the x86 body-owner generation slot through an occupancy index instead of a full table walk",
         Flag

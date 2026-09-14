@@ -379,11 +379,115 @@ int hl_linux_bus_active(void) {
     return active;
 }
 
+/* HL_X86_BUS_RANGE_COALESCE -- merge abutting intervals on insert.
+   ---------------------------------------------------------------------------
+   Every one of these ledgers is a set of [lo,hi) intervals carrying NO other
+   state: no provenance, no owner, no refcount, no distinct removal lifetime.
+   The entry struct is {uint64_t lo, hi} and nothing else, and every reader
+   (gna_hit / gna_all / gna_prefix / gro_hit / gro_prefix / gnx_hit) asks a
+   question about the UNION of the set.  The one reader that touches the
+   arrays directly, maps_prot_at in process_maps.c, also derives its answer
+   from the union -- and its `edge` (how far the verdict holds) is currently
+   TRUNCATED at every abutting boundary, so it splits /proc/self/maps into two
+   consecutive rows with identical perms where Linux, which merges VMAs of
+   equal attributes, shows one.  Merging abutting intervals is therefore a
+   union-preserving normalisation that loses no information and makes that one
+   row rendering more faithful, not less.
+
+   The add paths already clear the overlap before appending, so the live set is
+   DISJOINT but never COALESCED.  Measured on a cold cc1 -O2 run, that leaves
+   g_gna at 487 live intervals that describe only 115 distinct spans and g_gnx
+   at 440 describing 129 -- and drives both to the 512 capacity, where the add
+   silently DROPS the interval (43 times for g_gna, 7,326 for g_gnx on that
+   run) and the middle-split silently drops its tail (271 times for g_gnx).
+   A dropped PROT_NONE interval is a missing EFAULT; a dropped non-executable
+   interval is an instruction fetch Linux would have refused.
+
+   REMOVAL needs no new code.  *_clear_raw already splits an interval that
+   straddles the cleared range -- it was written for exactly the "mprotect a
+   sub-range of a big PROT_NONE reservation" case, which is the same operation
+   as unmapping the middle of a merged interval.  The split's one-extra-slot
+   capacity guard (`count < GNA_MAX`) is also already there; coalescing takes
+   the peak population from 512 to roughly 190, so that guard stops firing
+   rather than starts.
+
+   The ADD path, in contrast, becomes SIMPLER under coalescing: an interval
+   that overlaps OR abuts the added one denotes the same predicate over the
+   same bytes, so it is absorbed whole and the added bounds grow to the union.
+   No splitting arises on insert at all.
+
+   THE OFF PATH IS THE ORIGINAL BODY VERBATIM.  The absorbing scan is a
+   SEPARATE function from *_clear_raw and the choice is made ONCE per add
+   (93k times on the cc1 run), never inside a scan loop.  A sibling lane
+   measured +1.60% with its flag off after folding new bookkeeping into a scan
+   loop behind a predicate; not one instruction is added to any scanned entry
+   here.
+
+   g_gbus is deliberately NOT coalesced: it holds no entries at all on this
+   workload (its min/max envelope rejects every query in O(1)), and its
+   park/unpark pairing moves intervals between two arrays by intersection, a
+   contract that merging would have to be re-argued against for no measured
+   gain. */
+static int g_bus_range_coalesce_state = -1;
+static int bus_range_coalesce_selected(void) {
+    if (g_bus_range_coalesce_state < 0)
+        g_bus_range_coalesce_state = hl_option_flag_value("HL_X86_BUS_RANGE_COALESCE", 0);
+    return g_bus_range_coalesce_state;
+}
+
+/* Absorb every live interval that overlaps OR abuts [*lo,*hi) into it, so the
+   caller appends ONE interval covering their union.  Reachable only with
+   HL_X86_BUS_RANGE_COALESCE on.
+
+   Growing the bounds can expose a further neighbour, so the scan repeats until
+   a pass grows nothing.  Under the invariant this function itself maintains --
+   no two live intervals overlap or abut -- the second pass finds nothing and
+   exits, because an interval abutting the NEW bound would have had to abut the
+   one just absorbed.  The loop is kept unconditional anyway: the checkpoint
+   restore path and the test hooks install a saved array wholesale, and each
+   continuing pass strictly removes an entry, so it terminates regardless. */
+#define BUS_RANGE_ABSORB(NAME, ARR, COUNTVAR)                                                                          \
+    static void NAME(uint64_t *io_lo, uint64_t *io_hi) {                                                               \
+        uint64_t lo = *io_lo, hi = *io_hi;                                                                             \
+        for (int pass = 0; pass < GNA_MAX; ++pass) {                                                                   \
+            int grew = 0;                                                                                              \
+            int count = __atomic_load_n(&COUNTVAR, __ATOMIC_RELAXED);                                                  \
+            for (int i = 0; i < count;) {                                                                              \
+                uint64_t b = __atomic_load_n(&ARR[i].lo, __ATOMIC_RELAXED);                                            \
+                uint64_t e = __atomic_load_n(&ARR[i].hi, __ATOMIC_RELAXED);                                            \
+                if (e < lo || b > hi) { /* disjoint AND not abutting: keep */                                          \
+                    ++i;                                                                                               \
+                    continue;                                                                                          \
+                }                                                                                                      \
+                if (b < lo) {                                                                                          \
+                    lo = b;                                                                                            \
+                    grew = 1;                                                                                          \
+                }                                                                                                      \
+                if (e > hi) {                                                                                          \
+                    hi = e;                                                                                            \
+                    grew = 1;                                                                                          \
+                }                                                                                                      \
+                --count; /* swap the tail entry down; re-examine slot i */                                             \
+                __atomic_store_n(&ARR[i].lo, __atomic_load_n(&ARR[count].lo, __ATOMIC_RELAXED), __ATOMIC_RELAXED);     \
+                __atomic_store_n(&ARR[i].hi, __atomic_load_n(&ARR[count].hi, __ATOMIC_RELAXED), __ATOMIC_RELAXED);     \
+                __atomic_store_n(&COUNTVAR, count, __ATOMIC_RELEASE);                                                  \
+            }                                                                                                          \
+            if (!grew) break;                                                                                          \
+        }                                                                                                              \
+        *io_lo = lo;                                                                                                   \
+        *io_hi = hi;                                                                                                   \
+    }
+
+BUS_RANGE_ABSORB(gna_absorb_adjacent, g_gna, g_ngna)
+
 static void gna_add(uint64_t lo, uint64_t hi) {
     if (hi <= lo) return;
     gna_writer_lock();
     atomic_fetch_add_explicit(&g_gna_generation, 1, memory_order_acq_rel);
-    gna_clear_raw(lo, hi); // coalesce inside the same odd-generation transaction
+    if (bus_range_coalesce_selected())
+        gna_absorb_adjacent(&lo, &hi); // absorb overlapping AND abutting; appends their union
+    else
+        gna_clear_raw(lo, hi); // coalesce inside the same odd-generation transaction
     int count = __atomic_load_n(&g_ngna, __ATOMIC_RELAXED);
     if (count < GNA_MAX) {
         __atomic_store_n(&g_gna[count].lo, lo, __ATOMIC_RELAXED);
@@ -486,7 +590,8 @@ static int gna_hit(uint64_t a, uint64_t len) {
 
 // True iff EVERY guest page of [a,a+len) is in a tracked guest PROT_NONE region -- the whole-MAPPING
 // question, which gna_hit ("any byte") must not be used for: a glibc pthread stack is one mmap whose first
-// page is the guard. Walks pages: gna_add does not coalesce a piecewise-mprotect'd reservation's intervals.
+// page is the guard. Walks PAGES, not intervals, so it is insensitive to how the coverage is split across
+// entries -- true whether or not HL_X86_BUS_RANGE_COALESCE merged a piecewise-mprotect'd reservation.
 static int gna_all(uint64_t a, uint64_t len) {
     if (!len || __atomic_load_n(&g_ngna, __ATOMIC_ACQUIRE) == 0) return 0;
     uint64_t end = a + len;
@@ -696,6 +801,130 @@ static void gna_probe_round(uint64_t guest, uint64_t base, uint64_t *out) {
 
 #define GNA_DIFF_TOTAL (GNA_DIFF_PROBES + 4u)
 
+
+/* ---------------------------------------------------------------------------
+   HL_X86_BUS_RANGE_COALESCE -- the cases MERGING introduces.
+
+   Coalescing changes STORED DATA on a path that gates memory-fault behaviour,
+   so the contract it must meet is not "it is faster" but "the merged ledger
+   answers every question exactly as the fragmented one did".  That is a
+   differential, and it is checked here by running an identical scripted
+   sequence of adds and removals twice -- once with merging off, once with it
+   on -- and comparing every answer.  Crossed with the page cache's own off /
+   on / on-warm arms, so the cache is also proven correct against a COALESCED
+   ledger, which is a ledger shape it never saw before.
+
+   The script covers exactly the cases merging introduces: two abutting ranges
+   merged; three merged where the MIDDLE arrives last; a query spanning a
+   merged boundary; removal of the exact MIDDLE of a merged range (the split);
+   removal of a whole merged range; removal of a PREFIX and of a SUFFIX; and
+   an interleaved add/remove sequence driving the population up and down
+   across the merge threshold.  gna_all is included because it is the one
+   reader that walks PAGES rather than intervals, and so is the reader least
+   likely to agree with the others if a merge were wrong.
+   --------------------------------------------------------------------------- */
+/* Restore a ledger snapshot taken before the battery ran. */
+static void gna_snapshot_restore(const void *saved, int saved_count) {
+    gna_writer_lock();
+    atomic_fetch_add_explicit(&g_gna_generation, 1, memory_order_acq_rel);
+    memcpy(g_gna, saved, sizeof g_gna);
+    __atomic_store_n(&g_ngna, saved_count, __ATOMIC_RELEASE);
+    atomic_fetch_add_explicit(&g_gna_generation, 1, memory_order_release);
+    gna_writer_unlock();
+}
+
+#define GNA_COAL_PROBES 35u
+
+static unsigned gna_coalesce_probe_round(uint64_t guest, uint64_t base, uint64_t *out) {
+#define G(n) (guest + (uint64_t)(n)*UINT64_C(4096))
+#define B(n) (base + (uint64_t)(n)*UINT64_C(4096))
+    unsigned i = 0;
+    gna_clear(G(0), G(32));
+
+    /* (a) MERGE OF TWO ABUTTING RANGES, and a query spanning the boundary. */
+    gna_add(G(2), G(3));
+    gna_add(G(3), G(4));
+    out[i++] = gna_prefix(B(2), 1);                    /* start of the merged span: refused */
+    out[i++] = gna_prefix(B(4) - 1, 1);                /* its last byte: refused */
+    out[i++] = gna_prefix(B(4), 1);                    /* one past it: granted */
+    out[i++] = gna_prefix(B(1), UINT64_C(0x3000));     /* SPANS THE MERGED BOUNDARY */
+    out[i++] = gna_prefix(B(3) - 8, 16);               /* straddles the internal seam */
+    out[i++] = (uint64_t)gna_hit(B(3), 1);             /* the seam itself */
+    out[i++] = (uint64_t)gna_all(B(2), UINT64_C(0x2000));
+    out[i++] = gna_prefix(B(1), UINT64_C(0x1000));     /* the page BELOW stays granted */
+    out[i++] = gna_prefix(B(4), UINT64_C(0x1000));     /* the page ABOVE stays granted */
+
+    /* (b) MERGE OF THREE WHERE THE MIDDLE ARRIVES LAST.  The two probes in the
+       still-open hole are what distinguish a correct merge from one whose
+       reach is too wide: an absorb that swallowed a NEAR but non-abutting
+       neighbour would invent coverage across exactly this gap. */
+    gna_add(G(6), G(7));
+    gna_add(G(8), G(9));
+    out[i++] = gna_prefix(B(7), UINT64_C(0x1000));     /* THE HOLE: still granted */
+    out[i++] = (uint64_t)gna_hit(B(7), UINT64_C(0x1000));
+    out[i++] = gna_prefix(B(6), UINT64_C(0x3000));     /* the hole is still open */
+    gna_add(G(7), G(8));                               /* ...and now it closes */
+    out[i++] = gna_prefix(B(6), UINT64_C(0x3000));
+    out[i++] = gna_prefix(B(7), 1);
+    out[i++] = gna_prefix(B(9), 1);
+    out[i++] = gna_prefix(B(5), UINT64_C(0x5000));     /* spans BOTH merged seams */
+    out[i++] = (uint64_t)gna_all(B(6), UINT64_C(0x3000));
+
+    /* (c) REMOVAL OF THE EXACT MIDDLE of a merged range -- the SPLIT case. */
+    gna_clear(G(7), G(8));
+    out[i++] = gna_prefix(B(7), UINT64_C(0x1000));     /* the hole is accessible again */
+    out[i++] = gna_prefix(B(6), UINT64_C(0x3000));     /* still refused at the start */
+    out[i++] = (uint64_t)gna_hit(B(7), UINT64_C(0x1000));
+    out[i++] = (uint64_t)gna_hit(B(8), 1);
+    out[i++] = (uint64_t)gna_all(B(6), UINT64_C(0x3000));
+
+    /* (d) REMOVAL OF A PREFIX, then of a SUFFIX, of a merged range. */
+    gna_add(G(7), G(8));                               /* merged back to [6,9) */
+    gna_clear(G(6), G(7));                             /* prefix removed */
+    out[i++] = gna_prefix(B(6), UINT64_C(0x1000));
+    out[i++] = gna_prefix(B(7), 1);
+    gna_clear(G(8), G(9));                             /* suffix removed */
+    out[i++] = gna_prefix(B(8), UINT64_C(0x1000));
+    out[i++] = gna_prefix(B(7), UINT64_C(0x2000));
+    out[i++] = (uint64_t)gna_hit(B(7), UINT64_C(0x1000));
+
+    /* (e) REMOVAL OF A WHOLE MERGED RANGE. */
+    gna_clear(G(7), G(8));
+    out[i++] = gna_prefix(B(6), UINT64_C(0x3000));
+    out[i++] = (uint64_t)gna_hit(B(6), UINT64_C(0x3000));
+
+    /* (f) INTERLEAVED ADD/REMOVE driving the population up and down across the
+       merge threshold: 24 abutting pages in, every other one out (which under
+       merging SPLITS the single entry 12 times), then all of them back. */
+    for (int p = 8; p < 32; ++p) gna_add(G(p), G(p + 1));
+    out[i++] = gna_prefix(B(8), UINT64_C(0x18000));
+    for (int p = 8; p < 32; p += 2) gna_clear(G(p), G(p + 1));
+    out[i++] = gna_prefix(B(8), UINT64_C(0x1000));
+    out[i++] = gna_prefix(B(9), UINT64_C(0x1000));
+    for (int p = 8; p < 32; p += 2) gna_add(G(p), G(p + 1));
+    out[i++] = gna_prefix(B(8), UINT64_C(0x18000));
+    out[i++] = (uint64_t)gna_all(B(8), UINT64_C(0x18000));
+    gna_clear(G(0), G(32));
+    out[i++] = gna_prefix(B(8), UINT64_C(0x18000));
+#undef G
+#undef B
+    return i;
+}
+
+#define GNA_ROUND_TOTAL (GNA_DIFF_TOTAL + GNA_COAL_PROBES)
+
+/* Reinstate the page-cache battery's three-interval window, then run both
+   probe sets.  The window is reinstated per round because the coalescing
+   script deliberately ends with it empty. */
+static int gna_full_round(uint64_t guest, uint64_t base, uint64_t *out) {
+    gna_clear(guest - UINT64_C(0x10000), guest + UINT64_C(0x20000));
+    gna_add(guest + UINT64_C(0x2000), guest + UINT64_C(0x3000));
+    gna_add(guest + UINT64_C(0x3000), guest + UINT64_C(0x4000)); /* ADJACENT to the first */
+    gna_add(guest + UINT64_C(0x6000), guest + UINT64_C(0x7000)); /* after a GAP */
+    gna_probe_round(guest, base, out);
+    return gna_coalesce_probe_round(guest, base, out + GNA_DIFF_TOTAL) == GNA_COAL_PROBES ? 0 : -1;
+}
+
 static int gna_page_cache_differential_test(uint64_t *probes) {
     uint64_t *saved = malloc(sizeof g_gna);
     if (saved == NULL) return -ENOMEM;
@@ -705,59 +934,178 @@ static int gna_page_cache_differential_test(uint64_t *probes) {
     gna_writer_unlock();
     int saved_state = g_gna_page_cache_state;
 
+    int saved_coalesce = g_bus_range_coalesce_state;
+
     uint64_t guest = UINT64_C(0x50000000);
     guest -= nonpie_fold(guest) & UINT64_C(4095);
     uint64_t base = nonpie_fold(guest);
 
     /* Work on a window of the ledger rather than resetting it, so unrelated
-       live entries stay in place and the walk stays representative. */
-    gna_clear(guest - UINT64_C(0x10000), guest + UINT64_C(0x20000));
-    gna_add(guest + UINT64_C(0x2000), guest + UINT64_C(0x3000));
-    gna_add(guest + UINT64_C(0x3000), guest + UINT64_C(0x4000)); /* ADJACENT to the first */
-    gna_add(guest + UINT64_C(0x6000), guest + UINT64_C(0x7000)); /* after a GAP */
-
-    uint64_t off[GNA_DIFF_TOTAL], on1[GNA_DIFF_TOTAL], on2[GNA_DIFF_TOTAL];
+       live entries stay in place and the walk stays representative.
+       gna_full_round reinstates the window itself, because the coalescing
+       script deliberately empties it. */
+    static uint64_t answers[2][3][GNA_ROUND_TOTAL];
     int result = 0;
-    g_gna_page_cache_state = 0;
-    memset(g_gna_clean_page, 0, sizeof g_gna_clean_page);
-    memset(g_gna_clean_generation, 0, sizeof g_gna_clean_generation);
-    gna_probe_round(guest, base, off);
-    g_gna_page_cache_state = 1;
-    gna_probe_round(guest, base, on1);
-    gna_probe_round(guest, base, on2); /* warm */
-    for (unsigned i = 0; i < GNA_DIFF_TOTAL; ++i)
-        if (off[i] != on1[i] || off[i] != on2[i]) result = -(int)(100 + i);
+    for (int coalesce = 0; coalesce < 2 && result == 0; ++coalesce) {
+        g_bus_range_coalesce_state = coalesce;
+        g_gna_page_cache_state = 0;
+        memset(g_gna_clean_page, 0, sizeof g_gna_clean_page);
+        memset(g_gna_clean_generation, 0, sizeof g_gna_clean_generation);
+        if (gna_full_round(guest, base, answers[coalesce][0]) != 0) result = -90;
+        g_gna_page_cache_state = 1;
+        if (gna_full_round(guest, base, answers[coalesce][1]) != 0) result = -90;
+        if (gna_full_round(guest, base, answers[coalesce][2]) != 0) result = -90; /* warm */
+    }
+
+    /* (1) The PAGE CACHE agrees with the full walk -- under BOTH ledger
+       shapes, so it is also proven against a coalesced ledger. */
+    for (int coalesce = 0; coalesce < 2 && result == 0; ++coalesce)
+        for (unsigned i = 0; i < GNA_ROUND_TOTAL; ++i)
+            if (answers[coalesce][0][i] != answers[coalesce][1][i] ||
+                answers[coalesce][0][i] != answers[coalesce][2][i])
+                result = -(int)(100 + i);
+
+    /* (2) The MERGED ledger answers exactly as the fragmented one, on every
+       probe and in every page-cache arm.  This is the contract coalescing has
+       to meet: it changes stored data, so it must change no answer. */
+    for (int arm = 0; arm < 3 && result == 0; ++arm)
+        for (unsigned i = 0; i < GNA_ROUND_TOTAL; ++i)
+            if (answers[0][arm][i] != answers[1][arm][i]) result = -(int)(300 + i);
 
     /* The battery must be non-vacuous: it has to contain both refusals and
-       grants, or an always-"len" cache would pass it. */
+       grants, or an always-"len" cache -- or an always-"0" one -- would pass
+       it.  Asserted separately over the page-cache probes and over the
+       coalescing probes, so neither half can carry the other. */
     if (result == 0) {
         int refusals = 0, grants = 0;
         for (unsigned i = 0; i < GNA_DIFF_PROBES; ++i) {
-            if (off[i] == 0) refusals++;
+            if (answers[0][0][i] == 0) refusals++;
             else grants++;
         }
         if (refusals < 4 || grants < 4) result = -99;
+        refusals = grants = 0;
+        for (unsigned i = GNA_DIFF_TOTAL; i < GNA_ROUND_TOTAL; ++i) {
+            if (answers[0][0][i] == 0) refusals++;
+            else grants++;
+        }
+        if (refusals < 6 || grants < 6) result = -98;
     }
-    if (probes != NULL) *probes = GNA_DIFF_TOTAL;
+    if (probes != NULL) *probes = GNA_ROUND_TOTAL;
 
+    g_bus_range_coalesce_state = saved_coalesce;
     gna_clear(guest - UINT64_C(0x10000), guest + UINT64_C(0x20000));
-    gna_writer_lock();
-    atomic_fetch_add_explicit(&g_gna_generation, 1, memory_order_acq_rel);
-    memcpy(g_gna, saved, sizeof g_gna);
-    __atomic_store_n(&g_ngna, saved_count, __ATOMIC_RELEASE);
-    atomic_fetch_add_explicit(&g_gna_generation, 1, memory_order_release);
-    gna_writer_unlock();
+    gna_snapshot_restore(saved, saved_count);
     free(saved);
     g_gna_page_cache_state = saved_state;
     return result;
 }
+
+/* Scenario 68.  The differential above proves merging changes no ANSWER; it
+   cannot prove merging happened at all, and a no-op would satisfy it.  This
+   asserts the structural facts directionally:
+
+     * 24 abutting pages occupy 24 entries with the option off and exactly 1
+       with it on -- the merge is real;
+     * at CAPACITY the two differ in CORRECTNESS, not merely in size.  512 is a
+       hard ceiling with no eviction: gna_add past it silently DROPS the
+       interval, and the ledger then reports as ACCESSIBLE a page the guest
+       made PROT_NONE -- a missing EFAULT, which is silent corruption.  600
+       abutting pages reproduce that with merging off, and with merging on the
+       same 600 pages occupy one entry and every one of them is refused.
+       (This is not hypothetical: an instrumented cc1 -O2 run of THIS tree
+       drops 43 g_gna adds and 7,326 g_gnx adds, plus 271 g_gnx split tails.) */
+static int gna_coalesce_capacity_test(uint64_t *probes) {
+    uint64_t *saved = malloc(sizeof g_gna);
+    if (saved == NULL) return -ENOMEM;
+    gna_writer_lock();
+    int saved_count = __atomic_load_n(&g_ngna, __ATOMIC_RELAXED);
+    memcpy(saved, g_gna, sizeof g_gna);
+    gna_writer_unlock();
+    int saved_state = g_bus_range_coalesce_state;
+
+    uint64_t guest = UINT64_C(0x50000000);
+    guest -= nonpie_fold(guest) & UINT64_C(4095);
+    uint64_t base = nonpie_fold(guest);
+    uint64_t span = UINT64_C(4096) * 700;
+#define G(n) (guest + (uint64_t)(n)*UINT64_C(4096))
+#define B(n) (base + (uint64_t)(n)*UINT64_C(4096))
+    int result = 0, checks = 0;
+
+    /* The merge is real: 24 abutting pages, off then on. */
+    g_bus_range_coalesce_state = 0;
+    gna_clear(guest, guest + span);
+    int before = __atomic_load_n(&g_ngna, __ATOMIC_RELAXED);
+    for (int p = 0; p < 24; ++p) gna_add(G(p), G(p + 1));
+    int live_off = __atomic_load_n(&g_ngna, __ATOMIC_RELAXED) - before;
+    g_bus_range_coalesce_state = 1;
+    gna_clear(guest, guest + span);
+    before = __atomic_load_n(&g_ngna, __ATOMIC_RELAXED);
+    for (int p = 0; p < 24; ++p) gna_add(G(p), G(p + 1));
+    int live_on = __atomic_load_n(&g_ngna, __ATOMIC_RELAXED) - before;
+    checks++;
+    if (live_off != 24) result = -91;
+    checks++;
+    if (live_on != 1) result = -92;
+
+    /* A ledger that arrives ALREADY non-coalesced -- which the checkpoint
+       restore path and the test hooks can both install wholesale -- must still
+       collapse.  Build two abutting entries with merging off, turn it on, and
+       add a third abutting the second: absorbing the second extends the bound
+       onto the first, so only a scan that REPEATS after the bound grows finds
+       it.  A single-pass absorb leaves two entries here, not one. */
+    g_bus_range_coalesce_state = 0;
+    gna_clear(guest, guest + span);
+    before = __atomic_load_n(&g_ngna, __ATOMIC_RELAXED);
+    gna_add(G(2), G(3));
+    gna_add(G(3), G(4));
+    g_bus_range_coalesce_state = 1;
+    gna_add(G(4), G(5));
+    int chained = __atomic_load_n(&g_ngna, __ATOMIC_RELAXED) - before;
+    uint64_t chained_lo = gna_prefix(B(2), UINT64_C(0x3000));
+    checks++;
+    if (chained != 1 || chained_lo != 0) result = -96;
+
+    /* At capacity: 600 abutting pages.  Off overflows and LOSES coverage. */
+    g_bus_range_coalesce_state = 0;
+    gna_clear(guest, guest + span);
+    for (int p = 0; p < 600; ++p) gna_add(G(p), G(p + 1));
+    int cap_off = __atomic_load_n(&g_ngna, __ATOMIC_RELAXED);
+    uint64_t last_off = gna_prefix(B(599), UINT64_C(0x1000));
+    g_bus_range_coalesce_state = 1;
+    gna_clear(guest, guest + span);
+    before = __atomic_load_n(&g_ngna, __ATOMIC_RELAXED);
+    for (int p = 0; p < 600; ++p) gna_add(G(p), G(p + 1));
+    int cap_on = __atomic_load_n(&g_ngna, __ATOMIC_RELAXED) - before;
+    uint64_t last_on = gna_prefix(B(599), UINT64_C(0x1000));
+    uint64_t first_on = gna_prefix(B(0), UINT64_C(0x1000));
+    checks++;
+    if (cap_off != GNA_MAX) result = -93;          /* the overflow must really occur */
+    checks++;
+    if (last_off != UINT64_C(0x1000)) result = -94; /* ...and must really lose the page */
+    checks++;
+    if (cap_on != 1 || last_on != 0 || first_on != 0) result = -95; /* merged: one entry, all refused */
+#undef G
+#undef B
+    if (probes != NULL) *probes = (uint64_t)checks;
+    gna_clear(guest, guest + span);
+    gna_snapshot_restore(saved, saved_count);
+    free(saved);
+    g_bus_range_coalesce_state = saved_state;
+    return result;
+}
+
 #endif
+
+BUS_RANGE_ABSORB(gro_absorb_adjacent, g_gro, g_ngro)
 
 static void gro_add(uint64_t lo, uint64_t hi) {
     if (hi <= lo) return;
     gro_writer_lock();
     atomic_fetch_add_explicit(&g_gro_generation, 1, memory_order_acq_rel);
-    gro_clear_raw(lo, hi);
+    if (bus_range_coalesce_selected())
+        gro_absorb_adjacent(&lo, &hi);
+    else
+        gro_clear_raw(lo, hi);
     if (g_ngro < GNA_MAX) {
         __atomic_store_n(&g_gro[g_ngro].lo, lo, __ATOMIC_RELAXED);
         __atomic_store_n(&g_gro[g_ngro].hi, hi, __ATOMIC_RELAXED);
@@ -896,12 +1244,17 @@ static void gnx_clear_raw(uint64_t lo, uint64_t hi) {
     }
 }
 
+BUS_RANGE_ABSORB(gnx_absorb_adjacent, g_gnx, g_ngnx)
+
 static void gnx_add(uint64_t lo, uint64_t hi) {
     if (hi <= lo) return;
     gnx_writer_lock();
     int decode_authority = hl_guest_fetch_authority_begin();
     atomic_fetch_add_explicit(&g_gnx_generation, 1, memory_order_acq_rel);
-    gnx_clear_raw(lo, hi);
+    if (bus_range_coalesce_selected())
+        gnx_absorb_adjacent(&lo, &hi);
+    else
+        gnx_clear_raw(lo, hi);
     int count = __atomic_load_n(&g_ngnx, __ATOMIC_RELAXED);
     if (count < GNA_MAX) {
         __atomic_store_n(&g_gnx[count].lo, lo, __ATOMIC_RELAXED);
@@ -1131,6 +1484,7 @@ HL_API int HL_TARGET_LOCAL(exec_page_cache_test)(uint32_t scenario, uint64_t *sc
     case 51:
     case 52: result = map_source_index_test(scenario, scans); break;
     case 67: result = gna_page_cache_differential_test(scans); break;
+    case 68: result = gna_coalesce_capacity_test(scans); break;
     case 18: result = HL_TARGET_LOCAL(jit_rollover_mapping_test)(scans); break;
     case 53: result = HL_TARGET_LOCAL(jit_preferred_mapping_test)(scans); break;
     case 54: result = HL_TARGET_LOCAL(jit_fork_mapping_ownership_test)(scans); break;
