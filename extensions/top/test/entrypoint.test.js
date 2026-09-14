@@ -278,7 +278,13 @@ test(
                                       },
                                     }
                                   : name === 'image_pull_start'
-                                    ? { reply: 'image_pull_job', with: { job: 'p1' } }
+                                    ? {
+                                        reply: 'image_pull_job',
+                                        with: {
+                                          job: 'p1',
+                                          reference: frame.payload.with.reference,
+                                        },
+                                      }
                                     : name === 'image_pull_status'
                                       ? {
                                           reply: 'image_pull',
