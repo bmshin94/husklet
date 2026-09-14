@@ -4,6 +4,7 @@ import {
   Column,
   DataTable,
   Entry,
+  Expander,
   RecoveryState,
   Heading,
   ResourceState,
@@ -60,6 +61,7 @@ export function Processes({
   const [error, setError] = React.useState<unknown>(null);
   const [filter, setFilter] = React.useState('');
   const [sort, setSort] = React.useState({ column: 'container', descending: false });
+  const [snapshotDetailsOpen, setSnapshotDetailsOpen] = React.useState(false);
   const loadRevision = React.useRef(0);
   const load = React.useCallback(async () => {
     const revision = ++loadRevision.current;
@@ -141,7 +143,7 @@ export function Processes({
   return (
     <Page
       title="Processes"
-      subtitle="Live process snapshots across visible containers; nothing here is a durable command record."
+      subtitle="Processes observed in workspace containers."
       action={<Toolbar loading={state === 'loading'} onRefresh={load} />}
     >
       <ResourceState
@@ -160,18 +162,6 @@ export function Processes({
             error={partialFailureDiagnostic}
           />
         ) : null}
-        <Text
-          label={
-            completeNamespace
-              ? 'Full container namespace snapshots; PIDs identify only this observation and may be reused.'
-              : 'Initial processes only; PIDs identify this snapshot and may be reused.'
-          }
-          color="text-dim"
-          wrap
-        />
-        {observed > 0 ? (
-          <Text label={`Observed ${OBSERVED_AT.format(observed)} UTC`} color="text-dim" />
-        ) : null}
         <Entry
           value={filter}
           placeholder="Filter container, user, PID, or command"
@@ -189,6 +179,31 @@ export function Processes({
             }
           }}
         />
+        <Expander
+          label="About this snapshot"
+          expanded={snapshotDetailsOpen}
+          width="fill"
+          onExpand={(event) =>
+            setSnapshotDetailsOpen(
+              'expanded' in event ? Boolean(event.expanded) : Boolean(event.value),
+            )
+          }
+        >
+          <Column gap={1} width="fill">
+            <Text
+              label={
+                completeNamespace
+                  ? 'Full container namespace snapshots; PIDs identify only this observation and may be reused.'
+                  : 'Initial processes only; PIDs identify this snapshot and may be reused.'
+              }
+              color="text-dim"
+              wrap
+            />
+            {observed > 0 ? (
+              <Text label={`Observed ${OBSERVED_AT.format(observed)} UTC`} color="text-dim" />
+            ) : null}
+          </Column>
+        </Expander>
         {filter.trim() ? (
           <Text label="Filter applies to the bounded snapshot shown here." color="text-dim" />
         ) : null}

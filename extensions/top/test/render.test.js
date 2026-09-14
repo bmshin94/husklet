@@ -5617,10 +5617,23 @@ test('process snapshots disclose initial-only reusable PID scope and host trunca
   );
   await settled();
   await settled();
+  assert.equal(taggedProperty(stage, 'About this snapshot', 'Expander', 'Expanded')?.Flag, false);
   assert.ok(
     labelled(stage, 'Initial processes only; PIDs identify this snapshot and may be reused.'),
   );
+  assert.ok(
+    ancestorTags(
+      stage,
+      'Initial processes only; PIDs identify this snapshot and may be reused.',
+    ).includes('Expander'),
+  );
   assert.ok(labelled(stage, 'Observed Nov 14, 2023, 22:13 UTC'));
+  expand(stage, 'About this snapshot');
+  await settled();
+  assert.equal(taggedProperty(stage, 'About this snapshot', 'Expander', 'Expanded')?.Flag, true);
+  reportExpansion(stage, 'About this snapshot', false);
+  await settled();
+  assert.equal(taggedProperty(stage, 'About this snapshot', 'Expander', 'Expanded')?.Flag, false);
   assert.ok(!labelled(stage, 'Observed 2023-11-14T22:13:20.000Z'));
   assert.ok(labelled(stage, 'The host process snapshot was truncated at its safety limit.'));
   assert.equal(

@@ -1826,6 +1826,71 @@ mod unix {
                 } else {
                     assert_eq!(visible, ["container", "pid", "user", "cpu", "memory", "command"]);
                 }
+                if fixture == "populated" {
+                    let details = find_expander(&root, "About this snapshot");
+                    assert_eq!(details.accessible_role(), gtk::AccessibleRole::Button);
+                    assert!(
+                        details.is_focusable(),
+                        "{width_name} snapshot details are keyboard reachable"
+                    );
+                    assert!(!details.is_expanded(), "{width_name} snapshot details start collapsed");
+                    assert!(
+                        !has_label(
+                            &root,
+                            "Full container namespace snapshots; PIDs identify only this observation and may be reused."
+                        ),
+                        "{width_name} PID implementation detail is visible before the developer asks for it"
+                    );
+                    let _ = surface.reports().drain();
+                    details.emit_by_name::<()>("activate", &[]);
+                    settle_toolkit();
+                    send_report(
+                        &surface,
+                        &mut wire,
+                        if width == 600 { 13_050 } else { 13_000 },
+                        |event| matches!(event, hl_gui::Event::Expand { .. }),
+                    );
+                    apply_next_render(
+                        &mut wire,
+                        &mut tree,
+                        &mut surface,
+                        "opening process snapshot details",
+                    );
+                    assert!(details.is_expanded(), "{width_name} snapshot details open");
+                    find_mapped_labelled(
+                        &root,
+                        "Full container namespace snapshots; PIDs identify only this observation and may be reused.",
+                    );
+                    find_mapped_labelled(&root, "Observed Aug 30, 2024, 06:40 UTC");
+                    capture_stable(
+                        &window,
+                        &format!("process-snapshot-details-{width_name}"),
+                        width,
+                        800,
+                    );
+                    details.emit_by_name::<()>("activate", &[]);
+                    settle_toolkit();
+                    send_report(
+                        &surface,
+                        &mut wire,
+                        if width == 600 { 13_051 } else { 13_001 },
+                        |event| matches!(event, hl_gui::Event::Expand { .. }),
+                    );
+                    apply_next_render(
+                        &mut wire,
+                        &mut tree,
+                        &mut surface,
+                        "closing process snapshot details",
+                    );
+                    assert!(!details.is_expanded(), "{width_name} snapshot details close again");
+                    assert!(
+                        !has_label(
+                            &root,
+                            "Full container namespace snapshots; PIDs identify only this observation and may be reused."
+                        ),
+                        "{width_name} PID detail remains visible after collapse"
+                    );
+                }
             }
             if fixture == "partial-processes" && name == "processes" {
                 let summary = "1 container process snapshot unavailable; available containers remain visible.";
