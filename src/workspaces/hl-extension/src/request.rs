@@ -427,6 +427,8 @@ pub enum Request {
         slot: String,
         generation: u64,
         revision: u64,
+        operation: String,
+        offset: u64,
         contents: Vec<u8>,
     },
     TerminalCommandCloseInput {
@@ -435,6 +437,8 @@ pub enum Request {
         slot: String,
         generation: u64,
         revision: u64,
+        operation: String,
+        offset: u64,
     },
     TerminalReadPane {
         slot: String,

@@ -65,11 +65,50 @@ pub struct Session {
 #[derive(Default)]
 pub struct OwnedOperations {
     executions: std::collections::BTreeSet<String>,
+    command_inputs: std::collections::BTreeMap<String, CommandInputState>,
+}
+
+#[derive(Default)]
+struct CommandInputState {
+    offset: u64,
+    closed: bool,
+    operations: std::collections::BTreeMap<String, CommandInputOperation>,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+enum CommandInputOperation {
+    Write { offset: u64, digest: [u8; 32], committed: u32 },
+    Close { offset: u64 },
+}
+
+const COMMAND_INPUT_OPERATIONS: usize = 4096;
+
+fn command_input_operation(operation: &str) -> Result<(), Failure> {
+    if (16..=128).contains(&operation.len())
+        && operation
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Ok(());
+    }
+    Err(Failure::Conflict {
+        detail: "terminal input operation must be 16 through 128 lowercase hexadecimal characters".into(),
+    })
+}
+
+fn command_input_digest(contents: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(contents).into()
 }
 
 impl OwnedOperations {
     pub fn insert(&mut self, execution: String) -> bool {
         self.executions.insert(execution)
+    }
+
+    fn remove_execution(&mut self, execution: &str) {
+        self.executions.remove(execution);
+        self.command_inputs.remove(execution);
     }
 }
 
@@ -1213,8 +1252,7 @@ impl Session {
                 self.owned_executions
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .executions
-                    .remove(id);
+                    .remove_execution(id);
                 Ok(Reply::Done)
             }
             Request::ExecutionWrite { id, contents } => {
@@ -1949,6 +1987,7 @@ impl Session {
                 slot,
                 generation,
                 revision,
+                ..
             } => (id, owner, slot, *generation, *revision),
             _ => unreachable!(),
         };
@@ -2021,6 +2060,51 @@ impl Session {
                         detail: format!("terminal command input must contain between 1 and {PANE_INPUT_BYTES} bytes"),
                     });
                 }
+                let Request::TerminalCommandWrite { operation, offset, .. } = request else {
+                    unreachable!()
+                };
+                command_input_operation(operation)?;
+                let digest = command_input_digest(contents);
+                let committed = u32::try_from(contents.len()).expect("pane input bound fits u32");
+                let mut owned = self
+                    .owned_executions
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let input = owned.command_inputs.entry(id.clone()).or_default();
+                let asked = CommandInputOperation::Write {
+                    offset: *offset,
+                    digest,
+                    committed,
+                };
+                if let Some(previous) = input.operations.get(operation) {
+                    if previous != &asked {
+                        return Err(Failure::Conflict {
+                            detail: "terminal input operation was already used for different bytes or offset".into(),
+                        });
+                    }
+                    return Ok(Reply::TerminalCommandInput(crate::port::TerminalCommandInput {
+                        id: id.clone(),
+                        operation: operation.clone(),
+                        offset: *offset,
+                        committed,
+                        closed: false,
+                    }));
+                }
+                if input.closed {
+                    return Err(Failure::Conflict {
+                        detail: "terminal command input is already closed".into(),
+                    });
+                }
+                if input.offset != *offset {
+                    return Err(Failure::Conflict {
+                        detail: format!("terminal command input offset must be {}, received {offset}", input.offset),
+                    });
+                }
+                if input.operations.len() >= COMMAND_INPUT_OPERATIONS {
+                    return Err(Failure::Conflict {
+                        detail: "terminal command input is limited to 4096 idempotent operations".into(),
+                    });
+                }
                 let execution = services.containers.execution(id)?;
                 if !execution.running {
                     return Err(Failure::Conflict {
@@ -2028,20 +2112,71 @@ impl Session {
                     });
                 }
                 services.control.execution_write(id, contents)?;
+                input.offset = input.offset.checked_add(u64::from(committed)).ok_or_else(|| Failure::Conflict {
+                    detail: "terminal command input offset overflowed".into(),
+                })?;
+                input.operations.insert(operation.clone(), asked);
                 Ok(Reply::TerminalCommandInput(crate::port::TerminalCommandInput {
                     id: id.clone(),
-                    committed: u32::try_from(contents.len()).expect("pane input bound fits u32"),
+                    operation: operation.clone(),
+                    offset: *offset,
+                    committed,
+                    closed: false,
                 }))
             }
             Request::TerminalCommandCloseInput { .. } => {
-                let execution = services.containers.execution(id)?;
-                if !execution.running {
+                let Request::TerminalCommandCloseInput { operation, offset, .. } = request else {
+                    unreachable!()
+                };
+                command_input_operation(operation)?;
+                let mut owned = self
+                    .owned_executions
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let input = owned.command_inputs.entry(id.clone()).or_default();
+                let asked = CommandInputOperation::Close { offset: *offset };
+                if let Some(previous) = input.operations.get(operation) {
+                    if previous != &asked {
+                        return Err(Failure::Conflict {
+                            detail: "terminal input operation was already used for a different close".into(),
+                        });
+                    }
+                    return Ok(Reply::TerminalCommandInput(crate::port::TerminalCommandInput {
+                        id: id.clone(),
+                        operation: operation.clone(),
+                        offset: *offset,
+                        committed: 0,
+                        closed: true,
+                    }));
+                }
+                if input.offset != *offset {
                     return Err(Failure::Conflict {
-                        detail: "terminal command input can only be closed while it is running".into(),
+                        detail: format!("terminal command input offset must be {}, received {offset}", input.offset),
                     });
                 }
-                services.control.execution_close_input(id)?;
-                Ok(Reply::Done)
+                if input.operations.len() >= COMMAND_INPUT_OPERATIONS {
+                    return Err(Failure::Conflict {
+                        detail: "terminal command input is limited to 4096 idempotent operations".into(),
+                    });
+                }
+                if !input.closed {
+                    let execution = services.containers.execution(id)?;
+                    if !execution.running {
+                        return Err(Failure::Conflict {
+                            detail: "terminal command input can only be closed while it is running".into(),
+                        });
+                    }
+                    services.control.execution_close_input(id)?;
+                    input.closed = true;
+                }
+                input.operations.insert(operation.clone(), asked);
+                Ok(Reply::TerminalCommandInput(crate::port::TerminalCommandInput {
+                    id: id.clone(),
+                    operation: operation.clone(),
+                    offset: *offset,
+                    committed: 0,
+                    closed: true,
+                }))
             }
             Request::TerminalCommandStart { .. } => unreachable!(),
             _ => unreachable!(),

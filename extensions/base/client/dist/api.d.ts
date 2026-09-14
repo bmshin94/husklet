@@ -988,6 +988,15 @@ export declare class TerminalCommandOperationError extends Error {
     readonly resume: Readonly<TerminalCommandResumeToken>;
     readonly cause: unknown;
 }
+/** A supervised input acknowledgement was lost; retry the exact token, offset, and bytes safely. */
+export declare class TerminalCommandInputOperationError extends Error {
+    readonly command: Readonly<TerminalCommand>;
+    readonly operation: string;
+    readonly offset: number;
+    readonly input?: readonly number[];
+    readonly close: boolean;
+    readonly cause: unknown;
+}
 export type TerminalCommandResumeToken = {
     version: 1;
     command: Readonly<TerminalCommand>;
@@ -1928,8 +1937,14 @@ export interface WorkspaceApi {
             timeoutMs?: number;
         }): Promise<TerminalCommand>;
         /** Returns only after the whole input chunk was flushed by the host transport. */
-        commandWrite(command: TerminalCommand, input: string | Iterable<number>): Promise<TerminalCommandInput>;
-        commandCloseInput(command: TerminalCommand): Promise<void>;
+        commandWrite(command: TerminalCommand, input: string | Iterable<number>, options?: {
+            operation?: string;
+            offset?: number;
+        }): Promise<TerminalCommandInput>;
+        commandCloseInput(command: TerminalCommand, options?: {
+            operation?: string;
+            offset?: number;
+        }): Promise<TerminalCommandInput>;
         /**
          * Run, collect bounded UTF-8 output, and return authoritative process completion.
          * Abort interrupts idle output polling immediately before cancelling the owned command.

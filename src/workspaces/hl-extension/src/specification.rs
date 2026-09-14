@@ -130,7 +130,7 @@ const REQUEST_TO_REPLY: &[(&str, &str)] = &[
     ("terminal_command_wait", "terminal_command"),
     ("terminal_command_cancel", "terminal_command"),
     ("terminal_command_write", "terminal_command_input"),
-    ("terminal_command_close_input", "done"),
+    ("terminal_command_close_input", "terminal_command_input"),
     ("terminal_read_pane", "text"),
     ("terminal_read_history", "terminal_history"),
     ("pane_semantic_read", "semantics"),

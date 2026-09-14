@@ -4,6 +4,35 @@ import { semanticText, semanticXml } from './semantic.js';
 export { semanticText, semanticXml };
 import { ExtensionError, Session } from './session.js';
 import { encodeRequest, PROTOCOL_REPLIES, PROTOCOL_REQUEST_CAPABILITIES, PROTOCOL_TOPICS, } from './generated-protocol.js';
+function terminalInputOperation(operation) {
+    const value = operation ?? globalThis.crypto?.randomUUID().replaceAll('-', '');
+    if (typeof value !== 'string' ||
+        value.length < 16 ||
+        value.length > 128 ||
+        !/^[0-9a-f]+$/.test(value)) {
+        throw new TypeError('terminal input operation must be 16 through 128 lowercase hexadecimal characters');
+    }
+    return value;
+}
+/** A supervised input reply was lost; retry this exact operation and offset safely. */
+export class TerminalCommandInputOperationError extends Error {
+    command;
+    operation;
+    offset;
+    input;
+    close;
+    cause;
+    constructor(command, operation, offset, input, close, cause) {
+        super(`terminal command ${close ? 'input close' : 'input write'} at offset ${offset} may have committed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+        this.name = 'TerminalCommandInputOperationError';
+        this.command = immutableCopy(command);
+        this.operation = operation;
+        this.offset = offset;
+        this.input = input === undefined ? undefined : Object.freeze([...input]);
+        this.close = close;
+        this.cause = cause;
+    }
+}
 /** A credential CAS write may have committed before its revision reply was lost. */
 export class CredentialSetOperationError extends Error {
     key;
@@ -2797,31 +2826,69 @@ export function workspace(session, { signal } = {}) {
                     timeout_ms: timeoutMs,
                 }), 'terminal_command'));
             },
-            commandWrite: async (command, input) => {
+            commandWrite: async (command, input, { operation: askedOperation, offset = 0 } = {}) => {
                 command = exactTerminalCommand(command);
                 const contents = exactExecutionInput(input);
-                const receipt = expect(await session.call('terminal_command_write', {
-                    id: command.id,
-                    owner: command.owner,
-                    slot: command.slot,
-                    generation: command.generation,
-                    revision: command.revision,
-                    contents: Array.from(contents),
-                }), 'terminal_command_input');
-                if (receipt.id !== command.id || receipt.committed !== contents.byteLength) {
+                const operation = terminalInputOperation(askedOperation);
+                if (!Number.isSafeInteger(offset) || offset < 0) {
+                    throw new RangeError('terminal command input offset must be a nonnegative safe integer');
+                }
+                let response;
+                try {
+                    response = await session.call('terminal_command_write', {
+                        id: command.id,
+                        owner: command.owner,
+                        slot: command.slot,
+                        generation: command.generation,
+                        revision: command.revision,
+                        operation,
+                        offset,
+                        contents: Array.from(contents),
+                    });
+                }
+                catch (cause) {
+                    throw new TerminalCommandInputOperationError(command, operation, offset, contents, false, cause);
+                }
+                const receipt = expect(response, 'terminal_command_input');
+                if (receipt.id !== command.id ||
+                    receipt.operation !== operation ||
+                    receipt.offset !== offset ||
+                    receipt.committed !== contents.byteLength ||
+                    receipt.closed) {
                     throw new TypeError('host returned an invalid terminal command input receipt');
                 }
                 return receipt;
             },
-            commandCloseInput: (command) => {
+            commandCloseInput: async (command, { operation: askedOperation, offset = 0 } = {}) => {
                 command = exactTerminalCommand(command);
-                return done('terminal_command_close_input', {
-                    id: command.id,
-                    owner: command.owner,
-                    slot: command.slot,
-                    generation: command.generation,
-                    revision: command.revision,
-                });
+                const operation = terminalInputOperation(askedOperation);
+                if (!Number.isSafeInteger(offset) || offset < 0) {
+                    throw new RangeError('terminal command input offset must be a nonnegative safe integer');
+                }
+                let response;
+                try {
+                    response = await session.call('terminal_command_close_input', {
+                        id: command.id,
+                        owner: command.owner,
+                        slot: command.slot,
+                        generation: command.generation,
+                        revision: command.revision,
+                        operation,
+                        offset,
+                    });
+                }
+                catch (cause) {
+                    throw new TerminalCommandInputOperationError(command, operation, offset, undefined, true, cause);
+                }
+                const receipt = expect(response, 'terminal_command_input');
+                if (receipt.id !== command.id ||
+                    receipt.operation !== operation ||
+                    receipt.offset !== offset ||
+                    receipt.committed !== 0 ||
+                    !receipt.closed) {
+                    throw new TypeError('host returned an invalid terminal command input close receipt');
+                }
+                return receipt;
             },
             commandText: async (pane, { command: argv, workingDirectory, input, maxBytes, pageLimit = 16, pollIntervalMs = 25, signal: abortSignal, cancelSignal = 'SIGTERM', cancelTimeoutMs = 5_000, }) => {
                 if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 16 * 1024 * 1024) {
@@ -2856,8 +2923,9 @@ export function workspace(session, { signal } = {}) {
                     });
                     if (input !== undefined) {
                         phase = 'input';
-                        await api.terminal.commandWrite(owned, input);
-                        await api.terminal.commandCloseInput(owned);
+                        const contents = exactExecutionInput(input);
+                        await api.terminal.commandWrite(owned, contents, { offset: 0 });
+                        await api.terminal.commandCloseInput(owned, { offset: contents.byteLength });
                     }
                     for (;;) {
                         phase = 'output';

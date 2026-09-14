@@ -147,6 +147,7 @@ groups
   .get('Terminal and panes')
   .push(
     '- A supervised terminal command remains inspectable, readable, writable, waitable, and cancellable by its immutable returned identity after its originating pane is replaced or the extension reconnects. The pane snapshot fences creation only.',
+    '- Supervised stdin writes and EOF use a caller-retained lowercase-hex operation token and exact byte offset. A lost reply is exposed as `TerminalCommandInputOperationError`; reconnect and retry its frozen token, offset, and bytes to receive the existing host receipt without writing twice. Reusing a token for different bytes, skipping or reordering an offset, or writing after acknowledged EOF fails closed.',
     '- Every supervised command carries its authenticated, immutable installation incarnation. All follow-up calls echo that owner and the Rust host rejects copied or lifecycle-stale command authority before execution lookup. Reconnecting the same installed record remains valid; disable, update, regrant, uninstall, and reinstall rotate or discard the incarnation.',
     '- `host.terminal.commandText(...)` interrupts idle polling immediately on abort, cancels the exact owned command, and throws `TerminalCommandOperationError` after any post-start failure. Its frozen, JSON-safe `resume` token retains the immutable command, exact acknowledged output cursor and bytes, and original aggregate byte ceiling across every reconnect; pass it directly to `resumeCommandText(...)`.',
   );

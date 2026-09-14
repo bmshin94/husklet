@@ -3163,6 +3163,8 @@ mod tests {
                 slot: "s1".into(),
                 generation: 0,
                 revision: 0,
+                operation: "1111111111111111".into(),
+                offset: 0,
                 contents: vec![0, 3, b'\n', 255],
             },
         );

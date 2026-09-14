@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:e58ea6e692615dae
+// Protocol artifact fnv1a64:5e7318303c024fbd
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -426,7 +426,7 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "terminal_command_wait": "terminal_command",
   "terminal_command_cancel": "terminal_command",
   "terminal_command_write": "terminal_command_input",
-  "terminal_command_close_input": "done",
+  "terminal_command_close_input": "terminal_command_input",
   "terminal_read_pane": "text",
   "terminal_read_history": "terminal_history",
   "pane_semantic_read": "semantics",
@@ -7756,6 +7756,24 @@ const definitions = {
         }
       },
       {
+        "name": "operation",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "offset",
+        "optional": false,
+        "schema": {
+          "bits": 64,
+          "kind": "integer",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "signed": false
+        }
+      },
+      {
         "name": "committed",
         "optional": false,
         "schema": {
@@ -7764,6 +7782,13 @@ const definitions = {
           "maximum": 4294967295,
           "minimum": 0,
           "signed": false
+        }
+      },
+      {
+        "name": "closed",
+        "optional": false,
+        "schema": {
+          "kind": "boolean"
         }
       }
     ],
@@ -12307,6 +12332,24 @@ const roots = {
               }
             },
             {
+              "name": "operation",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            },
+            {
+              "name": "offset",
+              "optional": false,
+              "schema": {
+                "bits": 64,
+                "kind": "integer",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "signed": false
+              }
+            },
+            {
               "name": "contents",
               "optional": false,
               "schema": {
@@ -12362,6 +12405,24 @@ const roots = {
             },
             {
               "name": "revision",
+              "optional": false,
+              "schema": {
+                "bits": 64,
+                "kind": "integer",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "signed": false
+              }
+            },
+            {
+              "name": "operation",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            },
+            {
+              "name": "offset",
               "optional": false,
               "schema": {
                 "bits": 64,

@@ -171,7 +171,13 @@ pub struct TerminalCommandOutput {
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct TerminalCommandInput {
     pub id: String,
+    /// Caller-selected idempotency identity for this exact input operation.
+    pub operation: String,
+    /// Total input bytes committed before this operation.
+    pub offset: u64,
     pub committed: u32,
+    /// Whether stdin is authoritatively closed after this operation.
+    pub closed: bool,
 }
 
 /// Bounded container creation authority with no host bind-mount path.

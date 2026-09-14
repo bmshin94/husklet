@@ -3,6 +3,16 @@ export { PROTOCOL_SPECIFICATION_VERSION, PROTOCOL_VERSION, PROTOCOL_BOUNDS, PROT
 import { semanticText, semanticXml } from './semantic.js';
 export { semanticText, semanticXml };
 import type { CallOptions, ConnectOptions, PaneText, Session as ClientSession, WorkspaceApi } from './api.js';
+/** A supervised input reply was lost; retry this exact operation and offset safely. */
+export declare class TerminalCommandInputOperationError extends Error {
+    readonly command: any;
+    readonly operation: any;
+    readonly offset: any;
+    readonly input: any;
+    readonly close: any;
+    readonly cause: any;
+    constructor(command: any, operation: any, offset: any, input: any, close: any, cause: any);
+}
 /** A credential CAS write may have committed before its revision reply was lost. */
 export declare class CredentialSetOperationError extends Error {
     readonly key: any;

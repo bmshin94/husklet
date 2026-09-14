@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   connect,
   ExtensionError,
+  TerminalCommandInputOperationError,
   TerminalCommandOperationError,
   workspace,
 } from '../dist/index.js';
@@ -53,10 +54,37 @@ test('supervised terminal command is authoritative over fragmented real Unix fra
           });
           payload = { reply: 'terminal_command', with: running };
         } else if (call === 'terminal_command_write') {
-          assert.deepEqual(frame.payload.with, { id, owner, ...pane, contents: [113, 10] });
-          payload = { reply: 'terminal_command_input', with: { id, committed: 2 } };
+          assert.deepEqual(frame.payload.with, {
+            id,
+            owner,
+            ...pane,
+            operation: frame.payload.with.operation,
+            offset: 0,
+            contents: [113, 10],
+          });
+          assert.match(frame.payload.with.operation, /^[0-9a-f]{32}$/);
+          payload = {
+            reply: 'terminal_command_input',
+            with: {
+              id,
+              operation: frame.payload.with.operation,
+              offset: 0,
+              committed: 2,
+              closed: false,
+            },
+          };
         } else if (call === 'terminal_command_close_input') {
-          payload = { reply: 'done' };
+          assert.equal(frame.payload.with.offset, 2);
+          payload = {
+            reply: 'terminal_command_input',
+            with: {
+              id,
+              operation: frame.payload.with.operation,
+              offset: 2,
+              committed: 0,
+              closed: true,
+            },
+          };
         } else if (call === 'terminal_command_output') {
           output += 1;
           payload = {
@@ -130,6 +158,85 @@ test('supervised terminal command is authoritative over fragmented real Unix fra
       ],
     );
     await session.close();
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('lost supervised input reply carries one exact retry across a fragmented reconnect', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-terminal-input-retry-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const received = [];
+  let connection = 0;
+  const server = net.createServer((socket) => {
+    const current = ++connection;
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.channel !== 2) continue;
+        assert.equal(frame.payload.call, 'terminal_command_write');
+        received.push(frame.payload.with);
+        if (current === 1) {
+          socket.destroy();
+          continue;
+        }
+        fragmented(socket, {
+          channel: 2,
+          kind: KIND.response,
+          payload: {
+            reply: 'terminal_command_input',
+            with: {
+              id,
+              operation: frame.payload.with.operation,
+              offset: frame.payload.with.offset,
+              committed: 3,
+              closed: false,
+            },
+          },
+        });
+      }
+    });
+    fragmented(socket, {
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: {
+        protocol: 1,
+        peer: 'terminal-command-input-retry',
+        granted: ['terminals:input'],
+      },
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const first = await connect({ path: socketPath });
+    let ambiguous;
+    try {
+      await workspace(first).terminal.commandWrite(running, [1, 2, 3], { offset: 7 });
+      assert.fail('reply loss must remain explicit');
+    } catch (error) {
+      assert(error instanceof TerminalCommandInputOperationError);
+      ambiguous = error;
+    }
+    assert.deepEqual(ambiguous.input, [1, 2, 3]);
+    assert.equal(ambiguous.offset, 7);
+    assert.equal(ambiguous.close, false);
+
+    const second = await connect({ path: socketPath });
+    const receipt = await workspace(second).terminal.commandWrite(
+      ambiguous.command,
+      ambiguous.input,
+      { operation: ambiguous.operation, offset: ambiguous.offset },
+    );
+    assert.deepEqual(receipt, {
+      id,
+      operation: ambiguous.operation,
+      offset: 7,
+      committed: 3,
+      closed: false,
+    });
+    assert.deepEqual(received[1], received[0], 'reconnect must replay only the exact operation');
+    second.close();
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(directory, { recursive: true, force: true });

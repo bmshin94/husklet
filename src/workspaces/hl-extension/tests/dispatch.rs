@@ -756,6 +756,8 @@ fn supervised_terminal_command_has_owned_identity_output_input_and_completion_wi
                 slot: "s1".into(),
                 generation: 0,
                 revision: 0,
+                operation: "1111111111111111".into(),
+                offset: 0,
                 contents: b"question\n".to_vec(),
             },
             &services(&host),
@@ -765,9 +767,117 @@ fn supervised_terminal_command_has_owned_identity_output_input_and_completion_wi
         written,
         Reply::TerminalCommandInput(hl_extension::port::TerminalCommandInput {
             id: started.id.clone(),
+            operation: "1111111111111111".into(),
+            offset: 0,
             committed: 9,
+            closed: false,
         })
     );
+
+    host.ledger.clear();
+    let mut reconnected = session(&[Capability::TerminalInput], &[])
+        .with_execution_ownership(ownership.clone());
+    let retry = reconnected
+        .dispatch(
+            &Request::TerminalCommandWrite {
+                id: started.id.clone(),
+                owner: COMMAND_OWNER.into(),
+                slot: "s1".into(),
+                generation: 0,
+                revision: 0,
+                operation: "1111111111111111".into(),
+                offset: 0,
+                contents: b"question\n".to_vec(),
+            },
+            &services(&host),
+        )
+        .expect("an exact retry after reconnect returns its durable receipt");
+    assert_eq!(retry, written);
+    assert!(
+        host.ledger.reached().is_empty(),
+        "a receipt retry must not inspect or write the execution again"
+    );
+    assert!(matches!(
+        reconnected.dispatch(
+            &Request::TerminalCommandWrite {
+                id: started.id.clone(),
+                owner: COMMAND_OWNER.into(),
+                slot: "s1".into(),
+                generation: 0,
+                revision: 0,
+                operation: "1111111111111111".into(),
+                offset: 0,
+                contents: b"changed\n".to_vec(),
+            },
+            &services(&host),
+        ),
+        Err(Failure::Conflict { .. })
+    ));
+
+    let closed = reconnected
+        .dispatch(
+            &Request::TerminalCommandCloseInput {
+                id: started.id.clone(),
+                owner: COMMAND_OWNER.into(),
+                slot: "s1".into(),
+                generation: 0,
+                revision: 0,
+                operation: "2222222222222222".into(),
+                offset: 9,
+            },
+            &services(&host),
+        )
+        .expect("ordered EOF");
+    host.ledger.clear();
+    let close_retry = reconnected
+        .dispatch(
+            &Request::TerminalCommandCloseInput {
+                id: started.id.clone(),
+                owner: COMMAND_OWNER.into(),
+                slot: "s1".into(),
+                generation: 0,
+                revision: 0,
+                operation: "2222222222222222".into(),
+                offset: 9,
+            },
+            &services(&host),
+        )
+        .expect("an exact EOF retry returns its durable receipt");
+    assert_eq!(close_retry, closed);
+    assert!(host.ledger.reached().is_empty(), "EOF was not replayed");
+    let write_retry_after_eof = reconnected
+        .dispatch(
+            &Request::TerminalCommandWrite {
+                id: started.id.clone(),
+                owner: COMMAND_OWNER.into(),
+                slot: "s1".into(),
+                generation: 0,
+                revision: 0,
+                operation: "1111111111111111".into(),
+                offset: 0,
+                contents: b"question\n".to_vec(),
+            },
+            &services(&host),
+        )
+        .expect("the original write receipt stays stable after EOF");
+    assert_eq!(write_retry_after_eof, written);
+    assert!(matches!(
+        reconnected.dispatch(
+            &Request::TerminalCommandWrite {
+                id: started.id.clone(),
+                owner: COMMAND_OWNER.into(),
+                slot: "s1".into(),
+                generation: 0,
+                revision: 0,
+                operation: "3333333333333333".into(),
+                offset: 9,
+                contents: b"late\n".to_vec(),
+            },
+            &services(&host),
+        ),
+        Err(Failure::Conflict { .. })
+    ));
+    assert!(host.ledger.reached().is_empty(), "post-EOF input reached the host");
 
     let output = active
         .dispatch(
@@ -907,6 +1017,8 @@ fn terminal_command_identity_cannot_be_forged_around_a_foreign_execution() {
             slot: "s1".into(),
             generation: 0,
             revision: 0,
+            operation: "1111111111111111".into(),
+            offset: 0,
             contents: vec![0, 3, b'\n', 255],
         },
         Request::TerminalCommandCloseInput {
@@ -915,6 +1027,8 @@ fn terminal_command_identity_cannot_be_forged_around_a_foreign_execution() {
             slot: "s1".into(),
             generation: 0,
             revision: 0,
+            operation: "2222222222222222".into(),
+            offset: 4,
         },
         Request::TerminalCommandCancel {
             id,
@@ -2119,6 +2233,8 @@ fn calls() -> Vec<(Request, Capability)> {
                 slot: "s1".into(),
                 generation: 0,
                 revision: 0,
+                operation: "1111111111111111".into(),
+                offset: 0,
                 contents: vec![1],
             },
             Capability::TerminalInput,
@@ -2130,6 +2246,8 @@ fn calls() -> Vec<(Request, Capability)> {
                 slot: "s1".into(),
                 generation: 0,
                 revision: 0,
+                operation: "2222222222222222".into(),
+                offset: 0,
             },
             Capability::TerminalInput,
         ),

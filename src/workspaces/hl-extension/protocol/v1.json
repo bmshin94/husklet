@@ -7387,6 +7387,24 @@
           }
         },
         {
+          "name": "operation",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "offset",
+          "optional": false,
+          "schema": {
+            "bits": 64,
+            "kind": "integer",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "signed": false
+          }
+        },
+        {
           "name": "committed",
           "optional": false,
           "schema": {
@@ -7395,6 +7413,13 @@
             "maximum": 4294967295,
             "minimum": 0,
             "signed": false
+          }
+        },
+        {
+          "name": "closed",
+          "optional": false,
+          "schema": {
+            "kind": "boolean"
           }
         }
       ],
@@ -9995,7 +10020,7 @@
       "request": "terminal_command_write"
     },
     {
-      "reply": "done",
+      "reply": "terminal_command_input",
       "request": "terminal_command_close_input"
     },
     {
@@ -13162,6 +13187,24 @@
                 }
               },
               {
+                "name": "operation",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              },
+              {
+                "name": "offset",
+                "optional": false,
+                "schema": {
+                  "bits": 64,
+                  "kind": "integer",
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "signed": false
+                }
+              },
+              {
                 "name": "contents",
                 "optional": false,
                 "schema": {
@@ -13217,6 +13260,24 @@
               },
               {
                 "name": "revision",
+                "optional": false,
+                "schema": {
+                  "bits": 64,
+                  "kind": "integer",
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "signed": false
+                }
+              },
+              {
+                "name": "operation",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              },
+              {
+                "name": "offset",
                 "optional": false,
                 "schema": {
                   "bits": 64,
@@ -15828,7 +15889,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:9f9a484f13ff8683",
+  "source_fingerprint": "fnv1a64:7610505c22d2967d",
   "specification_version": 1,
   "topics": [
     {
