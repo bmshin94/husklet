@@ -541,7 +541,10 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
                 ));
             }
             self.live(&mut state, &lease)?;
-            return Ok(PostgresOpenOutcome::Reconciled { lease });
+            return Ok(PostgresOpenOutcome::Reconciled {
+                operation: operation.clone(),
+                lease,
+            });
         }
         if state.opens.len() >= OPEN_LIMIT {
             return Err(HostError::Conflict("postgres open operation limit reached".into()));
@@ -595,7 +598,10 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
         state
             .opens
             .insert(operation.as_str().into(), (connection.clone(), id.clone()));
-        Ok(PostgresOpenOutcome::Opened { lease: id })
+        Ok(PostgresOpenOutcome::Opened {
+            operation: operation.clone(),
+            lease: id,
+        })
     }
 
     fn start_once(
@@ -617,6 +623,8 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
                 ));
             }
             return Ok(PostgresStartOutcome::Reconciled {
+                lease: lease.clone(),
+                operation: query.operation.clone(),
                 query: existing.id.clone(),
                 state: existing.state.clone(),
             });
@@ -637,7 +645,11 @@ impl<A: Authority, P: Peer> PostgresBroker for HostPostgres<A, P> {
                 replay: None,
             },
         );
-        Ok(PostgresStartOutcome::Started { query: id })
+        Ok(PostgresStartOutcome::Started {
+            lease: lease.clone(),
+            operation: query.operation.clone(),
+            query: id,
+        })
     }
 
     fn status(
@@ -1040,7 +1052,7 @@ mod tests {
             &resolver,
         );
         let broker = HostPostgres::new(owner.clone(), authority, peer.clone());
-        let PostgresOpenOutcome::Opened { lease } = broker
+        let PostgresOpenOutcome::Opened { lease, .. } = broker
             .open_once(
                 &owner,
                 &QueryOperationToken::new("production-open").unwrap(),
@@ -1269,9 +1281,13 @@ mod tests {
         let owner = installation('a');
         let broker = HostPostgres::new(owner.clone(), authority, peer.clone());
         let operation = QueryOperationToken::new("open-a").unwrap();
-        let PostgresOpenOutcome::Opened { lease } = broker.open_once(&owner, &operation, &connection()).unwrap() else {
+        let PostgresOpenOutcome::Opened {
+            operation: opened_operation,
+            lease,
+        } = broker.open_once(&owner, &operation, &connection()).unwrap() else {
             panic!()
         };
+        assert_eq!(opened_operation, operation);
         assert!(matches!(
             broker.open_once(&owner, &operation, &connection()).unwrap(),
             PostgresOpenOutcome::Reconciled { .. }
@@ -1289,7 +1305,14 @@ mod tests {
         ));
         let request = query("operation-a", "select 42");
         let started = broker.start_once(&owner, &lease, &request).unwrap();
-        assert!(matches!(started, PostgresStartOutcome::Started { .. }));
+        assert!(matches!(
+            &started,
+            PostgresStartOutcome::Started {
+                lease: started_lease,
+                operation: started_operation,
+                ..
+            } if started_lease == &lease && started_operation == &request.operation
+        ));
         assert!(matches!(
             broker.start_once(&owner, &lease, &request).unwrap(),
             PostgresStartOutcome::Reconciled {
@@ -1303,7 +1326,7 @@ mod tests {
         ));
         let public = format!("{started:?}");
         assert!(!public.contains("host-only-password"));
-        let PostgresStartOutcome::Started { query } = started else {
+        let PostgresStartOutcome::Started { query, .. } = started else {
             panic!()
         };
         assert_eq!(
@@ -1331,7 +1354,7 @@ mod tests {
         let peer = FakePeer::default();
         let owner = installation('a');
         let broker = HostPostgres::new(owner.clone(), authority, peer.clone());
-        let PostgresOpenOutcome::Opened { lease } = broker
+        let PostgresOpenOutcome::Opened { lease, .. } = broker
             .open_once(&owner, &QueryOperationToken::new("retry-close").unwrap(), &connection())
             .unwrap()
         else {
@@ -1364,14 +1387,14 @@ mod tests {
         let peer = FakePeer::default();
         let owner = installation('a');
         let broker = HostPostgres::new(owner.clone(), authority.clone(), peer.clone());
-        let PostgresOpenOutcome::Opened { lease } = broker
+        let PostgresOpenOutcome::Opened { lease, .. } = broker
             .open_once(&owner, &QueryOperationToken::new("open-a").unwrap(), &connection())
             .unwrap()
         else {
             panic!()
         };
         let request = query("operation-a", "select 42");
-        let PostgresStartOutcome::Started { query } = broker.start_once(&owner, &lease, &request).unwrap() else {
+        let PostgresStartOutcome::Started { query, .. } = broker.start_once(&owner, &lease, &request).unwrap() else {
             panic!()
         };
         let first = broker.page(&owner, &lease, &query, None).unwrap();
@@ -1409,7 +1432,7 @@ mod tests {
         let peer = FakePeer::default();
         let owner = installation('a');
         let broker = HostPostgres::new(owner.clone(), authority.clone(), peer.clone());
-        let PostgresOpenOutcome::Opened { lease } = broker
+        let PostgresOpenOutcome::Opened { lease, .. } = broker
             .open_once(&owner, &QueryOperationToken::new("open-a").unwrap(), &connection())
             .unwrap()
         else {

@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:2b6b5afa73cf8096
+// Protocol artifact fnv1a64:87333b987e5e8114
 export const PROTOCOL_SPECIFICATION_VERSION: 1;
 export const PROTOCOL_VERSION: 1;
 export const PROTOCOL_BOUNDS: Readonly<{ "extension_job_bytes": number; "extension_reference_bytes": number; "pane_input_bytes": number; "pane_inventory_items": number; "pane_text_bytes": number; "resource_inventory_items": number; "semantic_action_value_bytes": number; "semantic_depth": number; "semantic_nodes": number; "semantic_text_bytes": number; "terminal_command_argument_bytes": number; "terminal_command_bytes": number }>;
@@ -104,12 +104,12 @@ export type PointerPhase = "move" | "enter" | "leave" | "press" | "release" | "c
 export type PostgresConnection = { "container_id": string; "container_generation": number; "network": string; "port": number; "database": string; "user": string; "credential_keys": Array<string> };
 export type PostgresCursor = string;
 export type PostgresLeaseId = string;
-export type PostgresOpenOutcome = { disposition: "opened" } & { "lease": PostgresLeaseId } | { disposition: "reconciled" } & { "lease": PostgresLeaseId };
+export type PostgresOpenOutcome = { disposition: "opened" } & { "operation": QueryOperationToken; "lease": PostgresLeaseId } | { disposition: "reconciled" } & { "operation": QueryOperationToken; "lease": PostgresLeaseId };
 export type PostgresPage = { "query": PostgresQueryId; "cursor"?: PostgresCursor | null; "columns": Array<string>; "rows": Array<Array<string | null>>; "next_cursor"?: PostgresCursor | null; "bytes": number };
 export type PostgresQuery = { "operation": QueryOperationToken; "statement": string; "page_rows": number; "page_bytes": number };
 export type PostgresQueryId = string;
 export type PostgresQueryState = "running" | "completed" | "cancelled" | "failed";
-export type PostgresStartOutcome = { disposition: "started" } & { "query": PostgresQueryId } | { disposition: "reconciled" } & { "query": PostgresQueryId; "state": PostgresQueryState };
+export type PostgresStartOutcome = { disposition: "started" } & { "lease": PostgresLeaseId; "operation": QueryOperationToken; "query": PostgresQueryId } | { disposition: "reconciled" } & { "lease": PostgresLeaseId; "operation": QueryOperationToken; "query": PostgresQueryId; "state": PostgresQueryState };
 export type PreferenceValue = { kind: "boolean"; value: boolean } | { kind: "number"; value: number } | { kind: "string"; value: string };
 export type ProcessList = { "container_id"?: string; "titles": Array<string>; "processes": Array<Array<string>>; "snapshot": string; "next"?: number | null; "more": boolean; "observed_at_ms"?: number; "scope"?: ProcessScope; "pid_identity"?: ProcessPidIdentity; "truncated"?: boolean };
 export type ProcessPidIdentity = "snapshot";

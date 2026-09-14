@@ -31,6 +31,15 @@ export declare class PostgresPageProtocolError extends Error {
     readonly receivedCursor: any;
     constructor(query: any, cursor: any, receivedQuery: any, receivedCursor: any);
 }
+/** The host returned database authority for another operation or lease. */
+export declare class PostgresOperationProtocolError extends Error {
+    readonly phase: any;
+    readonly expectedOperation: any;
+    readonly receivedOperation: any;
+    readonly expectedLease: any;
+    readonly receivedLease: any;
+    constructor(phase: any, expectedOperation: any, receivedOperation: any, expectedLease: any, receivedLease: any);
+}
 /** A credential CAS write may have committed before its revision reply was lost. */
 export declare class CredentialSetOperationError extends Error {
     readonly key: any;

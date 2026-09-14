@@ -243,9 +243,13 @@ pub enum PostgresQueryState {
 #[serde(tag = "disposition", rename_all = "snake_case")]
 pub enum PostgresStartOutcome {
     Started {
+        lease: PostgresLeaseId,
+        operation: QueryOperationToken,
         query: PostgresQueryId,
     },
     Reconciled {
+        lease: PostgresLeaseId,
+        operation: QueryOperationToken,
         query: PostgresQueryId,
         state: PostgresQueryState,
     },
@@ -254,8 +258,14 @@ pub enum PostgresStartOutcome {
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(tag = "disposition", rename_all = "snake_case")]
 pub enum PostgresOpenOutcome {
-    Opened { lease: PostgresLeaseId },
-    Reconciled { lease: PostgresLeaseId },
+    Opened {
+        operation: QueryOperationToken,
+        lease: PostgresLeaseId,
+    },
+    Reconciled {
+        operation: QueryOperationToken,
+        lease: PostgresLeaseId,
+    },
 }
 
 /// One bounded page. Cursor is opaque; an absent cursor means completion.
@@ -490,6 +500,8 @@ mod tests {
                 .is_err()
         );
         let outcome = PostgresStartOutcome::Reconciled {
+            lease: PostgresLeaseId::new("lease-1").unwrap(),
+            operation: QueryOperationToken::new("op-1").unwrap(),
             query: PostgresQueryId::new("query-1").unwrap(),
             state: PostgresQueryState::Completed,
         };

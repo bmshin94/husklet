@@ -1015,6 +1015,14 @@ export declare class PostgresPageProtocolError extends Error {
     readonly receivedQuery: PostgresQueryId;
     readonly receivedCursor: PostgresCursor | null;
 }
+/** The host returned database authority for another operation or lease. */
+export declare class PostgresOperationProtocolError extends Error {
+    readonly phase: 'open' | 'start';
+    readonly expectedOperation: string;
+    readonly receivedOperation: string;
+    readonly expectedLease?: PostgresLeaseId;
+    readonly receivedLease?: PostgresLeaseId;
+}
 export type TerminalCommandResumeToken = {
     version: 1;
     command: Readonly<TerminalCommand>;

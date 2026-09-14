@@ -263,6 +263,7 @@ order; the JavaScript client's checks are never treated as a security boundary.
 - `host.postgres.cancel(...)` — `postgres_query_cancel`, requires `credentials:use`.
 - `host.postgres.closeQuery(...)` — `postgres_query_close`, requires `credentials:use`.
 - `host.postgres.closeLease(...)` — `postgres_lease_close`, requires `credentials:use`.
+- Open and query-start outcomes echo the exact operation token; query-start also echoes its lease. `PostgresOperationProtocolError` rejects stale or hostile authority before a caller can use a lease or query ID. Retrying the same bounded request after reconnect reconciles to the existing lease/query instead of creating another.
 - Every `host.postgres.page(...)` reply carries its exact query and input cursor. The host retains the immediately preceding bounded page, so retrying that cursor after a lost reply returns identical rows without advancing the database stream; the client rejects a mismatched receipt before exposing rows.
 
 ## Images

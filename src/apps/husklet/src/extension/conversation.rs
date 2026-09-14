@@ -1410,14 +1410,20 @@ mod tests {
                 if existing != connection {
                     return Err(HostError::Conflict("open token request changed".into()));
                 }
-                return Ok(PostgresOpenOutcome::Reconciled { lease: lease.clone() });
+                return Ok(PostgresOpenOutcome::Reconciled {
+                    operation: operation.clone(),
+                    lease: lease.clone(),
+                });
             }
             self.peer_opens.fetch_add(1, Ordering::SeqCst);
             let lease = PostgresLeaseId::new(format!("lease-{}", state.opens.len() + 1))?;
             state
                 .opens
                 .insert(operation.as_str().into(), (connection.clone(), lease.clone()));
-            Ok(PostgresOpenOutcome::Opened { lease })
+            Ok(PostgresOpenOutcome::Opened {
+                operation: operation.clone(),
+                lease,
+            })
         }
 
         fn start_once(
@@ -1436,6 +1442,8 @@ mod tests {
                     return Err(HostError::Conflict("query token request changed".into()));
                 }
                 return Ok(PostgresStartOutcome::Reconciled {
+                    lease: lease.clone(),
+                    operation: query.operation.clone(),
                     query: id.clone(),
                     state: status.clone(),
                 });
@@ -1446,7 +1454,11 @@ mod tests {
                 query.operation.as_str().into(),
                 (query.clone(), id.clone(), PostgresQueryState::Running),
             );
-            Ok(PostgresStartOutcome::Started { query: id })
+            Ok(PostgresStartOutcome::Started {
+                lease: lease.clone(),
+                operation: query.operation.clone(),
+                query: id,
+            })
         }
 
         fn status(
@@ -2209,9 +2221,13 @@ mod tests {
         let mut wire = Wire::new(stream);
         shake(&mut wire, PROTOCOL);
         let answer = fragmented_ask(&mut writer, &mut wire, &open);
-        let Ok(Reply::PostgresOpen(PostgresOpenOutcome::Reconciled { lease })) = codec::read_reply(&answer) else {
+        let Ok(Reply::PostgresOpen(PostgresOpenOutcome::Reconciled {
+            operation: open_receipt,
+            lease,
+        })) = codec::read_reply(&answer) else {
             panic!("lost open reply was not reconciled")
         };
+        assert_eq!(open_receipt, QueryOperationToken::new("open-once").unwrap());
         assert_eq!(
             broker.peer_opens.load(Ordering::SeqCst),
             1,
@@ -2238,12 +2254,16 @@ mod tests {
         shake(&mut wire, PROTOCOL);
         let answer = fragmented_ask(&mut writer, &mut wire, &start);
         let Ok(Reply::PostgresStart(PostgresStartOutcome::Reconciled {
+            lease: start_lease,
+            operation: start_receipt,
             query: query_id,
             state: PostgresQueryState::Running,
         })) = codec::read_reply(&answer)
         else {
             panic!("lost query reply was not reconciled")
         };
+        assert_eq!(start_lease, lease);
+        assert_eq!(start_receipt, query.operation);
         assert_eq!(
             broker.peer_starts.load(Ordering::SeqCst),
             1,

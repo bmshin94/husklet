@@ -1,4 +1,10 @@
-import { ExtensionError, PostgresPageProtocolError, connect, workspace } from '@husklet/client';
+import {
+  ExtensionError,
+  PostgresOperationProtocolError,
+  PostgresPageProtocolError,
+  connect,
+  workspace,
+} from '@husklet/client';
 
 declare const process: {
   argv: string[];
@@ -41,7 +47,21 @@ if (
 
 let session = await connect({ path: configuration.path, pendingLimit: 4, timeout: 5_000 });
 let host = workspace(session);
-const opened = await host.postgres.openOnce(configuration.openOperation, {
+async function retryAfterDisconnect<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof ExtensionError || error instanceof PostgresOperationProtocolError) {
+      throw error;
+    }
+    await session.close().catch(() => {});
+    session = await connect({ path: configuration!.path, pendingLimit: 4, timeout: 5_000 });
+    host = workspace(session);
+    return operation();
+  }
+}
+
+const connection = {
   container_id: configuration.containerId,
   container_generation: configuration.containerGeneration,
   network: configuration.network,
@@ -50,13 +70,17 @@ const opened = await host.postgres.openOnce(configuration.openOperation, {
   user: configuration.user,
   // Only this name crosses the socket. Husklet resolves the password inside the host broker.
   credential_keys: [configuration.passwordCredential],
-});
-const started = await host.postgres.startOnce(opened.lease, {
+};
+const opened = await retryAfterDisconnect(() =>
+  host.postgres.openOnce(configuration.openOperation, connection),
+);
+const query = {
   operation: configuration.queryOperation,
   statement: configuration.statement,
   page_rows: 250,
   page_bytes: 512 * 1024,
-});
+};
+const started = await retryAfterDisconnect(() => host.postgres.startOnce(opened.lease, query));
 
 let cursor: string | undefined;
 let rowCount = 0;

@@ -4918,6 +4918,14 @@
           "payload": {
             "fields": [
               {
+                "name": "operation",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "QueryOperationToken"
+                }
+              },
+              {
                 "name": "lease",
                 "optional": false,
                 "schema": {
@@ -4933,6 +4941,14 @@
           "name": "reconciled",
           "payload": {
             "fields": [
+              {
+                "name": "operation",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "QueryOperationToken"
+                }
+              },
               {
                 "name": "lease",
                 "optional": false,
@@ -5118,6 +5134,22 @@
           "payload": {
             "fields": [
               {
+                "name": "lease",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "PostgresLeaseId"
+                }
+              },
+              {
+                "name": "operation",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "QueryOperationToken"
+                }
+              },
+              {
                 "name": "query",
                 "optional": false,
                 "schema": {
@@ -5133,6 +5165,22 @@
           "name": "reconciled",
           "payload": {
             "fields": [
+              {
+                "name": "lease",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "PostgresLeaseId"
+                }
+              },
+              {
+                "name": "operation",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "QueryOperationToken"
+                }
+              },
               {
                 "name": "query",
                 "optional": false,
@@ -15957,7 +16005,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:24b527ddf282d17a",
+  "source_fingerprint": "fnv1a64:127aa8c1f18c7cbb",
   "specification_version": 1,
   "topics": [
     {

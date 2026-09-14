@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:2b6b5afa73cf8096
+// Protocol artifact fnv1a64:87333b987e5e8114
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -5287,6 +5287,14 @@ const definitions = {
         "payload": {
           "fields": [
             {
+              "name": "operation",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "QueryOperationToken"
+              }
+            },
+            {
               "name": "lease",
               "optional": false,
               "schema": {
@@ -5302,6 +5310,14 @@ const definitions = {
         "name": "reconciled",
         "payload": {
           "fields": [
+            {
+              "name": "operation",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "QueryOperationToken"
+              }
+            },
             {
               "name": "lease",
               "optional": false,
@@ -5487,6 +5503,22 @@ const definitions = {
         "payload": {
           "fields": [
             {
+              "name": "lease",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresLeaseId"
+              }
+            },
+            {
+              "name": "operation",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "QueryOperationToken"
+              }
+            },
+            {
               "name": "query",
               "optional": false,
               "schema": {
@@ -5502,6 +5534,22 @@ const definitions = {
         "name": "reconciled",
         "payload": {
           "fields": [
+            {
+              "name": "lease",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresLeaseId"
+              }
+            },
+            {
+              "name": "operation",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "QueryOperationToken"
+              }
+            },
             {
               "name": "query",
               "optional": false,

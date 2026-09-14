@@ -71,6 +71,23 @@ export class PostgresPageProtocolError extends Error {
         this.receivedCursor = receivedCursor;
     }
 }
+/** The host returned database authority for another operation or lease. */
+export class PostgresOperationProtocolError extends Error {
+    phase;
+    expectedOperation;
+    receivedOperation;
+    expectedLease;
+    receivedLease;
+    constructor(phase, expectedOperation, receivedOperation, expectedLease, receivedLease) {
+        super(`host returned PostgreSQL ${phase} authority for another ${expectedLease === undefined ? 'operation' : 'operation or lease'}`);
+        this.name = 'PostgresOperationProtocolError';
+        this.phase = phase;
+        this.expectedOperation = expectedOperation;
+        this.receivedOperation = receivedOperation;
+        this.expectedLease = expectedLease;
+        this.receivedLease = receivedLease;
+    }
+}
 /** A credential CAS write may have committed before its revision reply was lost. */
 export class CredentialSetOperationError extends Error {
     key;
@@ -4271,8 +4288,20 @@ export function workspace(session, { signal } = {}) {
             remove: async (observed, key) => expect(await session.call('credential_remove', { observed, key: exactCredentialKey(key) }), 'revision'),
         },
         postgres: {
-            openOnce: async (operation, connection) => expect(await session.call('postgres_open_once', { operation, connection }), 'postgres_open'),
-            startOnce: async (lease, query) => expect(await session.call('postgres_query_start_once', { lease, query }), 'postgres_start'),
+            openOnce: async (operation, connection) => {
+                const outcome = expect(await session.call('postgres_open_once', { operation, connection }), 'postgres_open');
+                if (outcome.operation !== operation) {
+                    throw new PostgresOperationProtocolError('open', operation, outcome.operation, undefined, undefined);
+                }
+                return outcome;
+            },
+            startOnce: async (lease, query) => {
+                const outcome = expect(await session.call('postgres_query_start_once', { lease, query }), 'postgres_start');
+                if (outcome.operation !== query.operation || outcome.lease !== lease) {
+                    throw new PostgresOperationProtocolError('start', query.operation, outcome.operation, lease, outcome.lease);
+                }
+                return outcome;
+            },
             status: async (lease, query) => expect(await session.call('postgres_query_status', { lease, query }), 'postgres_state'),
             page: async (lease, query, cursor) => {
                 const page = expect(await session.call('postgres_query_page', { lease, query, cursor: cursor ?? null }), 'postgres_page');
