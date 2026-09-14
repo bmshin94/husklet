@@ -4016,7 +4016,10 @@ mod unix {
             &review_root,
             "Direct OCI image · no catalogue publisher verification. Confirm the source and reviewed image digest before granting access."
         ));
-        assert!(has_label(&review_root, "Create, start, stop, and delete workspaces"));
+        assert!(
+            !has_label(&review_root, "Create, start, stop, and delete workspaces"),
+            "individual optional grants stay out of the initial review surface"
+        );
         assert!(has_label(
             &review_root,
             "Image removal can delete named images or every unused workspace image. Workspace lifecycle access can create or delete workspaces and start or stop workloads."
@@ -4025,6 +4028,11 @@ mod unix {
             &review_root,
             "1 required permission is off: Render this extension interface. Optional access stays off."
         ));
+        let exact_grants = find_expander(&review_root, "Exact grants · 0/19 selected");
+        assert!(
+            !exact_grants.is_expanded(),
+            "permission matrix stays collapsed until the developer asks for exact grants"
+        );
         let update = find_button(&review_root, "Update with selected access");
         assert!(!update.is_sensitive(), "mandatory consent cannot be omitted");
         let required = find_button(&review_root, "Select required access");
@@ -4052,6 +4060,8 @@ mod unix {
             || None,
         );
         let review_root = surface.widget().clone().upcast::<gtk::Widget>();
+        find_expander(&review_root, "Exact grants · 1/19 selected").set_expanded(true);
+        settle_toolkit();
         let volume_create = find_label(&review_root, "Create new volumes")
             .mnemonic_widget()
             .and_then(|widget| widget.downcast::<gtk::Switch>().ok())
@@ -4663,32 +4673,39 @@ mod unix {
                     .compute_bounds(root)
                     .expect("decision status belongs to review footer");
                 let rows = widgets_with_class(root, "hl-form-control-label");
-                assert!(!rows.is_empty(), "{width_name} review fixture has permission rows");
-                let scroll = rows[0]
-                    .ancestor(gtk::ScrolledWindow::static_type())
-                    .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
-                    .expect("permission rows belong to the review viewport");
-                scroll.vadjustment().set_value(0.0);
-                settle_toolkit();
-                let viewport = scroll.compute_bounds(root).expect("review viewport belongs to root");
-                let viewport_end = viewport.y() + viewport.height();
-                let mut last_whole = 0.0_f32;
-                for row in rows {
-                    let bounds = row.compute_bounds(root).expect("permission row belongs to root");
-                    let natural_end = bounds.y() + row.height() as f32;
+                if state == "update-required" {
                     assert!(
-                        bounds.y() >= viewport_end || natural_end <= viewport_end,
-                        "{width_name} {state} paints a partial permission row: row={bounds:?}, natural_end={natural_end}, viewport={viewport:?}"
+                        rows.is_empty(),
+                        "{width_name} initial review exposes optional permission rows"
                     );
-                    if natural_end <= viewport_end {
-                        last_whole = last_whole.max(natural_end);
+                } else {
+                    assert!(!rows.is_empty(), "{width_name} review fixture has permission rows");
+                    let scroll = rows[0]
+                        .ancestor(gtk::ScrolledWindow::static_type())
+                        .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
+                        .expect("permission rows belong to the review viewport");
+                    scroll.vadjustment().set_value(0.0);
+                    settle_toolkit();
+                    let viewport = scroll.compute_bounds(root).expect("review viewport belongs to root");
+                    let viewport_end = viewport.y() + viewport.height();
+                    let mut last_whole = 0.0_f32;
+                    for row in rows {
+                        let bounds = row.compute_bounds(root).expect("permission row belongs to root");
+                        let natural_end = bounds.y() + row.height() as f32;
+                        assert!(
+                            bounds.y() >= viewport_end || natural_end <= viewport_end,
+                            "{width_name} {state} paints a partial permission row: row={bounds:?}, natural_end={natural_end}, viewport={viewport:?}"
+                        );
+                        if natural_end <= viewport_end {
+                            last_whole = last_whole.max(natural_end);
+                        }
                     }
+                    let footer_top = update_bounds.y() - 8.0;
+                    assert!(
+                        last_whole + 8.0 <= footer_top,
+                        "{width_name} {state} last complete permission row lacks footer clearance: end={last_whole}, footer={footer_top}"
+                    );
                 }
-                let footer_top = update_bounds.y() - 8.0;
-                assert!(
-                    last_whole + 8.0 <= footer_top,
-                    "{width_name} {state} last complete permission row lacks footer clearance: end={last_whole}, footer={footer_top}"
-                );
                 assert!(
                     status_bounds.y() + status_bounds.height() <= update_bounds.y(),
                     "{width_name} decision status does not own its first row: status={status_bounds:?}, actions={update_bounds:?}"
@@ -4849,116 +4866,14 @@ mod unix {
             }
             if state == "update-required" {
                 capture(&capture_window, &format!("extensions-{state}-{width_name}"), width, 800);
-                let credential = find_label(root, "Expose to launched process credential service.token");
-                let scroll = credential
-                    .ancestor(gtk::ScrolledWindow::static_type())
-                    .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
-                    .expect("required review retains its scrolling viewport");
-                let viewport = scroll
-                    .compute_bounds(root)
-                    .expect("required review viewport belongs to root");
-                let initial = credential
-                    .compute_bounds(root)
-                    .expect("required review final credential is rooted");
-                let initially_below = initial.y() + initial.height() > viewport.y() + viewport.height();
-                if width == 600 {
-                    assert!(
-                        initially_below,
-                        "narrow required review must begin with its final credential below the viewport"
-                    );
-                }
-                let update = find_button(root, "Update with selected access");
-                let cancel = find_button(root, "Cancel review");
-                let footer = update
-                    .parent()
-                    .and_then(|actions| actions.parent())
-                    .and_then(|row| row.parent())
-                    .expect("required review decision row belongs to its footer");
-                let footer_before = footer.compute_bounds(root).expect("review footer belongs to root");
-                let separator_top = footer_before.y() + 8.0;
-                let header = find_label(root, "Review developer-tool-01");
-                let header_before = header
-                    .compute_bounds(&capture_window)
-                    .expect("review identity belongs to capture window");
+                let details = find_expander(root, "Exact grants · 0/19 selected");
                 assert!(
-                    header_before.x() >= 16.0,
-                    "{width_name} review identity clips the capture viewport: {header_before:?}"
-                );
-                let control = credential
-                    .mnemonic_widget()
-                    .expect("required credential label names its permission switch");
-                assert!(
-                    control.is_focusable(),
-                    "required credential switch is keyboard reachable"
+                    !details.is_expanded(),
+                    "{width_name} initial review opens its exact permission matrix"
                 );
                 assert!(
-                    control.grab_focus(),
-                    "{width_name} keyboard focus reaches the final required credential"
-                );
-                for _ in 0..8 {
-                    settle_frame();
-                }
-                let mut scrolled = credential
-                    .compute_bounds(root)
-                    .expect("focus-revealed required credential remains rooted");
-                if scrolled.y() + scrolled.height() > separator_top - 8.0 {
-                    assert!(
-                        scroll.emit_scroll_child(gtk::ScrollType::End, false),
-                        "{width_name} permission viewport accepts the keyboard End action"
-                    );
-                    for _ in 0..8 {
-                        settle_frame();
-                    }
-                    scrolled = credential
-                        .compute_bounds(root)
-                        .expect("keyboard-scrolled required credential remains rooted");
-                }
-                assert!(
-                    !initially_below || scrolled.y() < initial.y(),
-                    "{width_name} keyboard focus did not reveal the final required credential: viewport={viewport:?}, credential={initial:?}->{scrolled:?}"
-                );
-                let footer_after = footer
-                    .compute_bounds(root)
-                    .expect("focused review footer belongs to root");
-                let header_after = header
-                    .compute_bounds(&capture_window)
-                    .expect("focused review identity belongs to capture window");
-                assert_eq!(
-                    footer_before, footer_after,
-                    "{width_name} focus moved the fixed decision footer"
-                );
-                assert_eq!(
-                    header_before, header_after,
-                    "{width_name} focus moved the fixed review identity"
-                );
-                assert!(has_label(&footer, "No access selected · 19 requested"));
-                assert!(
-                    (64.0..=80.0).contains(&footer_after.height()),
-                    "{width_name} review footer is {}px instead of its compact 64–80px range",
-                    footer_after.height()
-                );
-                assert!(
-                    scrolled.y() + scrolled.height() <= separator_top - 8.0,
-                    "{width_name} required review final credential lacks footer clearance: credential={scrolled:?}, separator={separator_top}"
-                );
-                assert!(capture_window.child_focus(gtk::DirectionType::TabForward));
-                settle_frame();
-                assert!(
-                    cancel.has_focus(),
-                    "{width_name} Tab skips the unavailable primary decision and reaches Cancel review"
-                );
-                assert_eq!(
-                    footer
-                        .compute_bounds(root)
-                        .expect("tabbed review footer belongs to root"),
-                    footer_before,
-                    "{width_name} keyboard traversal moved the fixed decision footer"
-                );
-                capture(
-                    &capture_window,
-                    &format!("extensions-{state}-last-credential-{width_name}"),
-                    width,
-                    800,
+                    !has_label(root, "Expose to launched process credential service.token"),
+                    "{width_name} collapsed review still materializes its last optional credential"
                 );
             }
             if !matches!(state, "update-review" | "update-required") {

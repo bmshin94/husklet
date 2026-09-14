@@ -781,7 +781,11 @@ export function Extensions({
             setGrantedFilesystem(emptyFilesystemGrant());
             setGrantedWorkspaceEnvironment({ read: [], write: [] });
             setGrantedCredentials({ read: [], write: [], expose_to_execution: [] });
-            setPermissionDetailsExpanded((status.candidate.required?.length ?? 0) > 0);
+            // The decision summary already names every missing required grant.
+            // Keep the full matrix deliberate: opening a review should not turn
+            // one required permission into a viewport-filling wall of optional
+            // switches.
+            setPermissionDetailsExpanded(false);
           }
         }
         if (

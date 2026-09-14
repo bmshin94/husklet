@@ -2515,6 +2515,7 @@ for (const updating of [false, true]) {
         'images:remove',
         'images:prune',
       ],
+      required: ['images:read'],
       requested_images: {
         read: [{ reference: 'registry.example/database:1' }],
         use: [{ digest: `sha256:${'b'.repeat(64)}` }],
@@ -2555,6 +2556,11 @@ for (const updating of [false, true]) {
     invoke(stage, 'Inspect');
     await settled();
     await settled();
+    assert.equal(
+      taggedProperty(stage, 'Exact grants · 0/10 selected', 'Expander', 'Expanded')?.Flag,
+      false,
+      'a required grant stays summarized until the developer deliberately opens the matrix',
+    );
     expand(stage, 'Exact grants · 0/10 selected');
     assert.ok(labelled(stage, 'Each image switch includes only the matching product action.'));
     assert.deepEqual(latestSwitchValues(stage), Array(10).fill(false));
