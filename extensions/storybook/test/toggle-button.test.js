@@ -25,9 +25,18 @@ test('ToggleButton teaches persistent selected and unselected semantics', () => 
   const toggles = propsFor(frame.patches, 'ToggleButton');
   const text = propsFor(frame.patches, 'Text').map((props) => props.Label?.Text);
 
-  assert.deepEqual(headings.slice(0, 3), ['Toggle Button', 'Overview', 'Selected and unselected']);
+  assert.deepEqual(headings.slice(0, 4), [
+    'Toggle Button',
+    'Overview',
+    'Sizes',
+    'Selected and unselected',
+  ]);
   assert(toggles.some((props) => props.Checked?.Flag === true));
   assert(toggles.some((props) => props.Checked?.Flag === false));
+  assert.deepEqual(
+    toggles.slice(1, 4).map((props) => props.Size?.ControlSize),
+    ['Small', 'Medium', 'Large'],
+  );
   assert(text.some((label) => label?.includes('pressed')));
   assert(text.some((label) => label?.includes('ToggleButtonGroup')));
 });

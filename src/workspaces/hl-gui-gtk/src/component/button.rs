@@ -69,6 +69,7 @@ fn action() -> gtk::Button {
 
 fn toggle() -> gtk::ToggleButton {
     let widget = gtk::ToggleButton::new();
+    widget.add_css_class("size-medium");
     widget.set_halign(gtk::Align::Start);
     widget
 }

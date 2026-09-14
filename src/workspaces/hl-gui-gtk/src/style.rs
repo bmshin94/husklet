@@ -374,6 +374,9 @@ fn components(css: &mut String, theme: &Theme) {
          .hl-iconbutton {{ min-width: 30px; min-height: 30px; padding: 3px; border-color: transparent; background: transparent; }}\n\
          .hl-iconbutton:hover {{ background: {raised}; border-color: {line}; }}\n\
          .hl-togglebutton {{ background: transparent; border-color: {line}; }}\n\
+         .hl-togglebutton.size-small {{ min-height: 28px; padding: 0 8px; font-size: 12px; border-radius: 6px; }}\n\
+         .hl-togglebutton.size-medium {{ min-height: 36px; padding: 0 12px; font-size: 14px; border-radius: 6px; }}\n\
+         .hl-togglebutton.size-large {{ min-height: 44px; padding: 0 16px; font-size: 16px; border-radius: 8px; }}\n\
          .hl-togglebutton:checked, .hl-togglebutton:checked:hover {{ background: {raised}; color: {text}; border-color: {accent}; box-shadow: inset 0 -3px 0 {accent}; font-weight: 700; }}\n\
          .hl-togglebutton:checked:focus-visible {{ outline: 2px solid {accent}; outline-offset: 2px; box-shadow: inset 0 -3px 0 {accent}; }}\n\
          .hl-expander > title, .hl-accordion > title {{ min-height: 28px; padding: 2px 4px; border: 1px solid transparent; border-radius: {radius}px; }}\n\
@@ -533,6 +536,15 @@ mod tests {
         assert!(
             css.contains(".hl-togglebutton:checked:focus-visible { outline: 2px solid #559df7; outline-offset: 2px;")
         );
+        assert!(css.contains(
+            ".hl-togglebutton.size-small { min-height: 28px; padding: 0 8px; font-size: 12px; border-radius: 6px;"
+        ));
+        assert!(css.contains(
+            ".hl-togglebutton.size-medium { min-height: 36px; padding: 0 12px; font-size: 14px; border-radius: 6px;"
+        ));
+        assert!(css.contains(
+            ".hl-togglebutton.size-large { min-height: 44px; padding: 0 16px; font-size: 16px; border-radius: 8px;"
+        ));
         assert!(css.contains(".hl-listitembutton, .hl-listitembutton.variant-ghost { background: transparent;"));
         assert!(css.contains(
             ".hl-listitembutton.variant-filled { background: alpha(#559df7, .14); color: #f0f2f5; border-color: alpha(#559df7, .38); box-shadow: inset 3px 0 0 #559df7; font-weight: 600;"

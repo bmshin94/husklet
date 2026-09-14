@@ -172,7 +172,7 @@ fn next_descendant(root: &gtk::Widget, current: &gtk::Widget) -> Option<gtk::Wid
 /// Restores a property to its constructed default.
 pub(crate) fn clear(widget: &gtk::Widget, node: &Node, prop: Prop, reports: &crate::event::Reports) {
     apply(widget, node, prop, &PropValue::Nothing, reports);
-    if prop == Prop::Size && matches!(node.tag, Tag::Button | Tag::IconButton) {
+    if prop == Prop::Size && matches!(node.tag, Tag::Button | Tag::IconButton | Tag::ToggleButton) {
         widget.add_css_class("size-medium");
     }
 }

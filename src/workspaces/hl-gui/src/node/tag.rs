@@ -223,7 +223,7 @@ catalogue! {
     // Buttons: every shape of invocation.
     Button: children, props[Label, Icon, Enabled, Busy, Variant, Tone, Size], triggers[Invoke, Key, Focus, Pointer, Context],
     IconButton: children, props[Icon, Label, Enabled, Variant, Tone, Size], triggers[Invoke, Key, Focus, Pointer, Context],
-    ToggleButton: children, props[Label, Icon, Checked, Selected, Enabled, Variant, Tone], triggers[Toggle, Invoke, Key, Focus, Pointer, Context],
+    ToggleButton: children, props[Label, Icon, Checked, Selected, Enabled, Variant, Tone, Size], triggers[Toggle, Invoke, Key, Focus, Pointer, Context],
     ButtonGroup: children, props[Gap, Orientation, Wrap], triggers[],
     ToggleButtonGroup: children, props[Gap, Orientation, Wrap], triggers[],
     SplitButton: children, props[Label, Gap], triggers[],

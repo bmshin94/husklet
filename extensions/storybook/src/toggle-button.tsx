@@ -52,6 +52,20 @@ export function ToggleButtonWorkbench() {
         />
       </DocumentationSection>
 
+      <DocumentationSection title="Sizes">
+        <Row gap={3} wrap align="end">
+          <FieldSpecimen label="Small · 28px" helper="Compact segmented navigation and toolbars.">
+            <ToggleButton label="Pin tab" checked size="small" />
+          </FieldSpecimen>
+          <FieldSpecimen label="Medium · 36px" helper="Default controls in forms and settings.">
+            <ToggleButton label="Pin tab" checked size="medium" />
+          </FieldSpecimen>
+          <FieldSpecimen label="Large · 44px" helper="Prominent touch-oriented controls.">
+            <ToggleButton label="Pin tab" checked size="large" />
+          </FieldSpecimen>
+        </Row>
+      </DocumentationSection>
+
       <DocumentationSection title="Selected and unselected">
         <SpecimenGrid>
           <FieldSpecimen

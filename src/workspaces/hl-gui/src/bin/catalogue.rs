@@ -156,6 +156,12 @@ fn prop_notes(tag: Tag) -> String {
                 "Square hit area: small 28px, medium 36px, or large 44px; icon optical size remains subordinate.",
             ),
         ],
+        Tag::ToggleButton => &[
+            (
+                "Size",
+                "Control height: small 28px for compact segmented navigation, medium 36px by default, or large 44px for touch-oriented controls.",
+            ),
+        ],
         Tag::Entry => &[
             (
                 "Value",

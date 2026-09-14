@@ -1297,6 +1297,18 @@ mod unix {
             settle_window_width(&realized_window, 1_200);
         }
         let toggle_before = if story == "ToggleButton" {
+            for (class, expected) in [("size-small", 28), ("size-medium", 36), ("size-large", 44)] {
+                let sizes = descendants::<gtk::ToggleButton>(&root)
+                    .into_iter()
+                    .filter(|button| button.has_css_class(class))
+                    .map(|button| button.height())
+                    .collect::<Vec<_>>();
+                assert!(!sizes.is_empty(), "ToggleButton has no {class} specimen");
+                assert!(
+                    sizes.iter().all(|height| *height == expected),
+                    "ToggleButton {class} heights {sizes:?} differ from {expected}px"
+                );
+            }
             let toggle =
                 find::<gtk::ToggleButton>(&root, |button| button.tooltip_text().as_deref() == Some("Pin this tab"));
             let label = find::<gtk::Label>(&toggle.clone().upcast(), |label| label.text() == "Pin tab");

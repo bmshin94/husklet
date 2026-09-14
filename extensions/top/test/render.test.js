@@ -1596,6 +1596,12 @@ test('extension modes isolate collections and reset controls in deterministic ke
   );
   await settled();
   await settled();
+  assert.deepEqual(taggedProperty(stage, 'Installed', 'ToggleButton', 'Size'), {
+    ControlSize: 'Small',
+  });
+  assert.deepEqual(taggedProperty(stage, 'Discover', 'ToggleButton', 'Size'), {
+    ControlSize: 'Small',
+  });
   let labels = orderedLabels(stage);
   assert.ok(labels.includes('Find installed extensions'));
   assert.ok(!labels.includes('Find extensions'));

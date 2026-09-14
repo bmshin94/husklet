@@ -1287,11 +1287,13 @@ export function Extensions({
               <ToggleButton
                 label="Installed"
                 selected={mode === 'installed'}
+                size="small"
                 onToggle={() => selectMode('installed')}
               />
               <ToggleButton
                 label="Discover"
                 selected={mode === 'discover'}
+                size="small"
                 onToggle={() => selectMode('discover')}
               />
             </ToggleButtonGroup>

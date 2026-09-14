@@ -1978,6 +1978,11 @@ mod unix {
                 .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
                 .expect("Extensions heading belongs to its mode viewport");
             let installed_adjustment = installed_scroll.vadjustment();
+            for label in ["Installed", "Discover"] {
+                let mode = find_toggle(&root, label);
+                assert!(mode.has_css_class("size-small"), "{label} mode selector is not compact");
+                assert_eq!(mode.height(), 28, "{label} mode selector is not 28px high");
+            }
             installed_adjustment.configure(100.0, 0.0, 200.0, 1.0, 10.0, 50.0);
             settle_toolkit();
             assert!(
