@@ -2223,10 +2223,12 @@ export interface WorkspaceApi {
             signal?: AbortSignal;
         }): Promise<{
             changed: true;
+            written: true;
             before: PaneText;
             after: PaneText;
         } | {
             changed: false;
+            written: true;
             before: PaneText;
         }>;
         /** Write against the exact bounded terminal snapshot already inspected by the caller. */
@@ -2236,10 +2238,12 @@ export interface WorkspaceApi {
             signal?: AbortSignal;
         }): Promise<{
             changed: true;
+            written: true;
             before: PaneText;
             after: PaneText;
         } | {
             changed: false;
+            written: true;
             before: PaneText;
         }>;
         /** Write against an observed terminal and return bounded text only from that pane generation. */
@@ -2249,10 +2253,12 @@ export interface WorkspaceApi {
             signal?: AbortSignal;
         }): Promise<{
             changed: true;
+            written: true;
             before: PaneText;
             after: ReadablePane;
         } | {
             changed: false;
+            written: true;
             before: PaneText;
         }>;
         /** Refuse queued/dead input, then write against the exact live terminal observation. */

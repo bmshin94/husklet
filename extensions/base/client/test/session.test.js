@@ -9287,6 +9287,7 @@ test('real Unix writeAndWait subscribes and reads before bytes, then returns adv
     assert.deepEqual(calls, [], 'invalid input must not subscribe, read, or write');
     const result = await terminal.writeAndWait(slot, 4, 7, [0, 3, 255], { lines: 20 });
     assert.equal(result.changed, true);
+    assert.equal(result.written, true);
     assert.equal(result.before.revision, 7);
     assert.equal(result.after.revision, 8);
     assert.deepEqual(calls, [
@@ -9301,6 +9302,7 @@ test('real Unix writeAndWait subscribes and reads before bytes, then returns adv
     reads = 0;
     assert.deepEqual(await terminal.writeAndWait(slot, 4, 7, [3], { lines: 20, timeoutMs: 5 }), {
       changed: false,
+      written: true,
       before: screen(7, ['$ ']),
     });
     assert.deepEqual(calls, [

@@ -6530,7 +6530,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       for (;;) {
         if (!announced) {
           const remaining = deadline - Date.now();
-          if (remaining < 1) return { changed: false, before };
+          if (remaining < 1) return { changed: false, written: true as const, before };
           const aborted = new Promise((_, reject) => {
             abort = () => reject(outputAbort(signal));
             signal?.addEventListener('abort', abort, { once: true });
@@ -6547,7 +6547,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           signal?.removeEventListener('abort', abort!);
           abort = undefined;
           clearTimeout(timer);
-          if (change === null) return { changed: false, before };
+          if (change === null) return { changed: false, written: true as const, before };
         } else {
           announced = undefined;
         }
@@ -6559,7 +6559,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         if (after.generation !== generation) {
           throw new Error('terminal pane was replaced before input result could be verified');
         }
-        return { changed: true, before, after: readable ?? after };
+        return { changed: true, written: true as const, before, after: readable ?? after };
       }
     } catch (cause) {
       if (

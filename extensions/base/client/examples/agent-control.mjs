@@ -38,6 +38,7 @@ try {
   process.stdout.write(
     `${JSON.stringify({
       terminal: terminal.readable.text,
+      inputAcknowledged: written.written,
       terminalAfter: written.changed ? written.after.lines.join('\n') : null,
       ui: ui.readable.text,
       uiAfter: acted.changed ? acted.after.text : null,

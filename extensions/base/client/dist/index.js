@@ -5197,7 +5197,7 @@ export function workspace(session, { signal } = {}) {
                 if (!announced) {
                     const remaining = deadline - Date.now();
                     if (remaining < 1)
-                        return { changed: false, before };
+                        return { changed: false, written: true, before };
                     const aborted = new Promise((_, reject) => {
                         abort = () => reject(outputAbort(signal));
                         signal?.addEventListener('abort', abort, { once: true });
@@ -5215,7 +5215,7 @@ export function workspace(session, { signal } = {}) {
                     abort = undefined;
                     clearTimeout(timer);
                     if (change === null)
-                        return { changed: false, before };
+                        return { changed: false, written: true, before };
                 }
                 else {
                     announced = undefined;
@@ -5229,7 +5229,7 @@ export function workspace(session, { signal } = {}) {
                 if (after.generation !== generation) {
                     throw new Error('terminal pane was replaced before input result could be verified');
                 }
-                return { changed: true, before, after: readable ?? after };
+                return { changed: true, written: true, before, after: readable ?? after };
             }
         }
         catch (cause) {

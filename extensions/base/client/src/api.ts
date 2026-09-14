@@ -2243,7 +2243,8 @@ export interface WorkspaceApi {
       input: string | Iterable<number>,
       options?: { lines?: number; timeoutMs?: number; signal?: AbortSignal },
     ): Promise<
-      { changed: true; before: PaneText; after: PaneText } | { changed: false; before: PaneText }
+      | { changed: true; written: true; before: PaneText; after: PaneText }
+      | { changed: false; written: true; before: PaneText }
     >;
     /** Write against the exact bounded terminal snapshot already inspected by the caller. */
     writeObservedAndWait(
@@ -2251,7 +2252,8 @@ export interface WorkspaceApi {
       input: string | Iterable<number>,
       options?: { lines?: number; timeoutMs?: number; signal?: AbortSignal },
     ): Promise<
-      { changed: true; before: PaneText; after: PaneText } | { changed: false; before: PaneText }
+      | { changed: true; written: true; before: PaneText; after: PaneText }
+      | { changed: false; written: true; before: PaneText }
     >;
     /** Write against an observed terminal and return bounded text only from that pane generation. */
     writeObservedAndWaitForText(
@@ -2259,8 +2261,8 @@ export interface WorkspaceApi {
       input: string | Iterable<number>,
       options?: { lines?: number; timeoutMs?: number; signal?: AbortSignal },
     ): Promise<
-      | { changed: true; before: PaneText; after: ReadablePane }
-      | { changed: false; before: PaneText }
+      | { changed: true; written: true; before: PaneText; after: ReadablePane }
+      | { changed: false; written: true; before: PaneText }
     >;
     /** Refuse queued/dead input, then write against the exact live terminal observation. */
     writeLiveObservedAndWaitForText(
