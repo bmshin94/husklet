@@ -168,32 +168,53 @@ impl Gallery {
     pub fn enrol_semantics(
         &self,
         extension: &str,
+        generation: u64,
         semantics: Rc<dyn Fn(&str) -> Result<hl_extension::PaneSemanticTree, hl_extension::HostError>>,
         action: Rc<dyn Fn(&str, &hl_extension::PaneSemanticAction) -> Result<(), hl_extension::HostError>>,
     ) {
-        if let Some(exhibit) = self.0.borrow_mut().get_mut(extension) {
+        if let Some(exhibit) = self
+            .0
+            .borrow_mut()
+            .get_mut(extension)
+            .filter(|exhibit| exhibit.generation == generation)
+        {
             exhibit.semantics = Some(semantics);
             exhibit.action = Some(action);
         }
     }
 
     /// Connects stable pane slots to independently retained renderer trees.
-    pub fn enrol_panes(&self, extension: &str, pane: Rc<dyn Fn(&str) -> gtk::Widget>) {
-        if let Some(exhibit) = self.0.borrow_mut().get_mut(extension) {
+    pub fn enrol_panes(&self, extension: &str, generation: u64, pane: Rc<dyn Fn(&str) -> gtk::Widget>) {
+        if let Some(exhibit) = self
+            .0
+            .borrow_mut()
+            .get_mut(extension)
+            .filter(|exhibit| exhibit.generation == generation)
+        {
             exhibit.pane = Some(pane);
         }
     }
 
-    pub fn enrol_retirement(&self, extension: &str, retire: Rc<dyn Fn(&str)>) {
-        if let Some(exhibit) = self.0.borrow_mut().get_mut(extension) {
+    pub fn enrol_retirement(&self, extension: &str, generation: u64, retire: Rc<dyn Fn(&str)>) {
+        if let Some(exhibit) = self
+            .0
+            .borrow_mut()
+            .get_mut(extension)
+            .filter(|exhibit| exhibit.generation == generation)
+        {
             exhibit.retire = Some(retire);
         }
     }
 
     /// Binds immediate authority invalidation to lifecycle withdrawal. The
     /// callback must not wait; owned teardown continues on the host driver.
-    pub fn enrol_shutdown(&self, extension: &str, shutdown: Rc<dyn Fn()>) {
-        if let Some(exhibit) = self.0.borrow_mut().get_mut(extension) {
+    pub fn enrol_shutdown(&self, extension: &str, generation: u64, shutdown: Rc<dyn Fn()>) {
+        if let Some(exhibit) = self
+            .0
+            .borrow_mut()
+            .get_mut(extension)
+            .filter(|exhibit| exhibit.generation == generation)
+        {
             exhibit.shutdown = Some(shutdown);
         }
     }

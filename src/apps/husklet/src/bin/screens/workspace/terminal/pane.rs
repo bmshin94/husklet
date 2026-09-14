@@ -1533,6 +1533,7 @@ mod focus_ownership_tests {
             );
             gallery.enrol_semantics(
                 "top",
+                generation,
                 Rc::new(|_| Err(hl_extension::HostError::Unsupported("test fixture".into()))),
                 Rc::new(|_, _| Ok(())),
             );
@@ -1605,6 +1606,7 @@ mod focus_ownership_tests {
             let generation = gallery.enrol("top", &interface, &home, &[pane_provider], Rc::new(|_| {}));
             gallery.enrol_semantics(
                 "top",
+                generation,
                 Rc::new(|_| Err(hl_extension::HostError::Unsupported("test fixture".into()))),
                 Rc::new(|_, _| Ok(())),
             );
@@ -1677,6 +1679,60 @@ mod focus_ownership_tests {
             assert!(chooser.popover().is_none());
             gtk::style_context_remove_provider_for_display(&display, &provider);
             tw.closing.set(true);
+        });
+        if !ran {
+            println!("skipped: no display connection");
+        }
+    }
+
+    #[test]
+    fn late_lifecycle_registration_cannot_take_authority_from_replacement_gui() {
+        let ran = crate::test_support::on_the_toolkit_thread(|| {
+            let gallery = screens::workspace::extensions::Gallery::new();
+            let old_interface = gtk::Label::new(Some("old"));
+            let old_home = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            old_home.append(&old_interface);
+            let old = gallery.enrol("top", &old_interface, &old_home, &[], Rc::new(|_| {}));
+
+            let current_interface = gtk::Label::new(Some("current"));
+            let current_home = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            current_home.append(&current_interface);
+            let current = gallery.enrol(
+                "top",
+                &current_interface,
+                &current_home,
+                &[],
+                Rc::new(|_| {}),
+            );
+
+            let current_stops = Rc::new(Cell::new(0));
+            let counted = Rc::clone(&current_stops);
+            gallery.enrol_shutdown("top", current, Rc::new(move || counted.set(counted.get() + 1)));
+            gallery.enrol_panes(
+                "top",
+                current,
+                Rc::new(|_| gtk::Label::new(Some("current pane")).upcast()),
+            );
+
+            let old_stops = Rc::new(Cell::new(0));
+            let counted = Rc::clone(&old_stops);
+            gallery.enrol_shutdown("top", old, Rc::new(move || counted.set(counted.get() + 1)));
+            gallery.enrol_panes(
+                "top",
+                old,
+                Rc::new(|_| gtk::Label::new(Some("stale pane")).upcast()),
+            );
+            assert!(gallery.retains_panes("top"));
+            let pane = gallery.pane("top", "slot").expect("replacement pane");
+            assert_eq!(
+                pane.downcast::<gtk::Label>().unwrap().text(),
+                "current pane",
+                "late old-generation pane callback cannot replace current GUI authority"
+            );
+
+            gallery.withdraw("top");
+            assert_eq!(old_stops.get(), 0, "replacement withdrawal cannot stop the stale host");
+            assert_eq!(current_stops.get(), 1, "replacement host owns its GUI lifecycle");
         });
         if !ran {
             println!("skipped: no display connection");

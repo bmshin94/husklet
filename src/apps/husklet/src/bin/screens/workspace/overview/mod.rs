@@ -145,6 +145,7 @@ impl<'a> Overview<'a> {
         ready_generation.set(Some(generation));
         gallery.enrol_shutdown(
             name.as_str(),
+            generation,
             Rc::new(move || {
                 if let Some(host) = stopping.upgrade() {
                     host.request_stop();
@@ -155,6 +156,7 @@ impl<'a> Overview<'a> {
         let weak = Rc::downgrade(&page);
         gallery.enrol_panes(
             name.as_str(),
+            generation,
             Rc::new(move |slot| {
                 weak.upgrade()
                     .map(|page| page.borrow_mut().pane(slot))
@@ -164,6 +166,7 @@ impl<'a> Overview<'a> {
         let weak = Rc::downgrade(&page);
         gallery.enrol_retirement(
             name.as_str(),
+            generation,
             Rc::new(move |slot| {
                 if let Some(page) = weak.upgrade() {
                     page.borrow_mut().retire(slot);
@@ -184,7 +187,7 @@ impl<'a> Overview<'a> {
                 .borrow()
                 .semantic_action_at(slot, request)
         });
-        gallery.enrol_semantics(name.as_str(), semantics, action);
+        gallery.enrol_semantics(name.as_str(), generation, semantics, action);
         holder.upcast()
     }
 
