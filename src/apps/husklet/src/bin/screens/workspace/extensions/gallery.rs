@@ -283,6 +283,14 @@ impl Gallery {
         self.0.borrow().get(extension).map(|entry| entry.generation)
     }
 
+    /// Whether `generation` is still the exact GUI lifecycle registered for
+    /// this extension. Image identity cannot answer this: a retry may replace a
+    /// host without changing its image digest.
+    #[must_use]
+    pub fn is_generation(&self, extension: &str, generation: u64) -> bool {
+        self.generation(extension) == Some(generation)
+    }
+
     /// Stops advertising an extension whose lifecycle page is being removed.
     /// Pane restoration runs first, so any lent interface has already returned
     /// home before this final strong callback and provider list are forgotten.

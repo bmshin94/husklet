@@ -47,7 +47,7 @@ impl<'a> Overview<'a> {
         gallery: &Gallery,
         window: Option<std::rc::Weak<screens::workspace::terminal::TermWin>>,
         faulted: Rc<dyn Fn(u32)>,
-    ) -> gtk::Widget {
+    ) -> (gtk::Widget, u64) {
         use hl::extension::{Order, Report};
         use screens::workspace::extension::{Delivery, Signal};
 
@@ -188,7 +188,7 @@ impl<'a> Overview<'a> {
                 .semantic_action_at(slot, request)
         });
         gallery.enrol_semantics(name.as_str(), generation, semantics, action);
-        holder.upcast()
+        (holder.upcast(), generation)
     }
 
     /// The workspace's extensions, as pages on the shell.
@@ -231,16 +231,21 @@ impl<'a> Overview<'a> {
             let name = entry.name.clone();
             let image_digest = entry.image_digest.clone();
             let anchored = Rc::clone(&anchored);
+            let fault_gallery = shown.clone();
+            let fault_generation = Rc::new(Cell::new(None));
+            let published_generation = Rc::clone(&fault_generation);
             let faulted = Rc::new(move |restarts| {
-                if let Some(shelf) = anchored.borrow().upgrade() {
-                    shelf.fault(&name, &image_digest, restarts);
-                }
+                with_current_generation(&fault_gallery, name.as_str(), published_generation.get(), || {
+                    if let Some(shelf) = anchored.borrow().upgrade() {
+                        shelf.fault(&name, &image_digest, restarts);
+                    }
+                });
             });
             let events = observed
                 .as_ref()
                 .and_then(std::rc::Weak::upgrade)
                 .map_or_else(hl::extension::Events::default, |window| window.observer());
-            let surface = Self::surface(
+            let (surface, generation) = Self::surface(
                 &held,
                 &entry.name,
                 providers,
@@ -250,6 +255,7 @@ impl<'a> Overview<'a> {
                 observed.clone(),
                 faulted,
             );
+            fault_generation.set(Some(generation));
             if let Some(window) = observed.as_ref().and_then(std::rc::Weak::upgrade) {
                 screens::workspace::terminal::PaneChooser::recover(&window, entry.name.as_str());
             }
@@ -369,6 +375,12 @@ impl<'a> Overview<'a> {
     }
 }
 
+fn with_current_generation(gallery: &Gallery, name: &str, generation: Option<u64>, action: impl FnOnce()) {
+    if generation.is_some_and(|generation| gallery.is_generation(name, generation)) {
+        action();
+    }
+}
+
 fn open_roster(
     workspace: &WorkspaceConfig,
     local_extension: Option<&str>,
@@ -409,8 +421,11 @@ fn notification_id(extension: &str, id: &str) -> String {
 
 #[cfg(test)]
 mod notification_tests {
-    use super::{notification_id, notification_title, open_roster, top_section};
+    use super::{notification_id, notification_title, open_roster, top_section, with_current_generation};
+    use gtk::prelude::*;
     use hl::config::WorkspaceConfig;
+    use std::cell::Cell;
+    use std::rc::Rc;
 
     #[test]
     fn host_owns_visible_attribution_and_stable_replacement_identity() {
@@ -472,5 +487,36 @@ mod notification_tests {
 
         assert_ne!(reopened.image_digest, first, "the rebuilt bundle replaces stale authority");
         assert_eq!(reopened.stage, hl_extension::Stage::Duty);
+    }
+
+    #[test]
+    fn stale_same_digest_fault_cannot_unmount_the_replacement_gui() {
+        let ran = crate::test_support::on_the_toolkit_thread(|| {
+            let gallery = super::Gallery::new();
+            let old_widget = gtk::Label::new(Some("old"));
+            let old_home = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            old_home.append(&old_widget);
+            let old = gallery.enrol("top", &old_widget, &old_home, &[], Rc::new(|_| {}));
+
+            // A retry of the identical installation has the same image digest,
+            // but it is a distinct host and GUI authority.
+            let image_digest = "sha256:same";
+            let current_widget = gtk::Label::new(Some("current"));
+            let current_home = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            current_home.append(&current_widget);
+            let current = gallery.enrol("top", &current_widget, &current_home, &[], Rc::new(|_| {}));
+            assert_eq!(image_digest, "sha256:same");
+
+            let unmounts = Cell::new(0);
+            with_current_generation(&gallery, "top", Some(old), || unmounts.set(unmounts.get() + 1));
+            assert_eq!(unmounts.get(), 0, "the stale host fault cannot unmount its replacement");
+            assert!(gallery.holds("top"), "the replacement GUI remains mounted");
+
+            with_current_generation(&gallery, "top", Some(current), || unmounts.set(unmounts.get() + 1));
+            assert_eq!(unmounts.get(), 1, "the current host fault retains lifecycle authority");
+        });
+        if !ran {
+            println!("skipped: no display connection");
+        }
     }
 }
