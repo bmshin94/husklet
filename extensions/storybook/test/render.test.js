@@ -668,6 +668,9 @@ test('the component selector switches the single document preview', () => {
   const stage = host();
   const first = stage.render(h(Playground));
   const selector = created(first.patches).find((entry) => entry.tag === 'Select').id;
+  const document = created(first.patches)
+    .filter((entry) => entry.tag === 'Scroll')
+    .at(-1).id;
   const before = stage.frames.length;
   assert.ok(
     stage.surface.dispatch({
@@ -680,6 +683,15 @@ test('the component selector switches the single document preview', () => {
   const patches = stage.since(before);
   assert.ok(created(patches).some((entry) => entry.tag === 'Switch'));
   assert.ok(node(patches, 'Heading', 'Switch'));
+  assert.ok(
+    patches.some((patch) => patch.Remove?.id === document),
+    'the next page inherited the previous document viewport and scroll position',
+  );
+  assert.equal(
+    created(patches).filter((entry) => entry.tag === 'Scroll').length,
+    1,
+    'switching pages rebuilt navigation instead of only replacing the document viewport',
+  );
 });
 
 test('global component navigation reaches every catalogue component without simultaneous materialization', () => {

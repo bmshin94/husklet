@@ -186,7 +186,7 @@ export function Playground({
         onFamily={setActiveFamily}
         onSelect={selectStory}
       />
-      <Scroll grow width="fill" height="fill">
+      <Scroll key={`document-${selected}`} grow width="fill" height="fill">
         {hasComponentPage ? (
           selected === 'TestReportView' ? (
             <TestReportWorkbench source={testSource} />

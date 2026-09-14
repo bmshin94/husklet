@@ -413,12 +413,8 @@ mod unix {
                         "rightmost {caption} specimen is absent or clipped"
                     );
                 }
-                let ghost = find::<gtk::Button>(&root, |button| {
-                    button_caption(button).as_deref() == Some("Ghost")
-                });
-                let plain = find::<gtk::Button>(&root, |button| {
-                    button_caption(button).as_deref() == Some("Plain")
-                });
+                let ghost = find::<gtk::Button>(&root, |button| button_caption(button).as_deref() == Some("Ghost"));
+                let plain = find::<gtk::Button>(&root, |button| button_caption(button).as_deref() == Some("Plain"));
                 assert!(
                     ghost.has_css_class("variant-ghost") && ghost.has_css_class("tone-neutral"),
                     "Button Ghost specimen lost its deliberately dim neutral treatment"
@@ -2934,6 +2930,60 @@ mod unix {
             assert!(model.select_item(0, true), "selected evidence survives the rerender");
             settle_toolkit();
             capture_story(&realized_window, "DataTable ready selected");
+        }
+        if story == "Button" {
+            let document = descendants::<gtk::ScrolledWindow>(&root)
+                .into_iter()
+                .max_by(|left, right| left.vadjustment().upper().total_cmp(&right.vadjustment().upper()))
+                .expect("Button owns a scrolling document viewport");
+            let adjustment = document.vadjustment();
+            adjustment.set_value((adjustment.upper() - adjustment.page_size()).max(0.0));
+            settle_toolkit();
+            assert!(
+                adjustment.value() > 0.0,
+                "Button document can be scrolled before navigation"
+            );
+            capture_story(&realized_window, "Button before IconButton navigation");
+
+            let destination = find::<gtk::Button>(&root, |button| {
+                button.has_css_class("hl-listitembutton") && button_caption(button).as_deref() == Some("IconButton")
+            });
+            let _ = surface.reports().drain();
+            destination.emit_clicked();
+            settle_toolkit();
+            let event = surface
+                .reports()
+                .drain()
+                .into_iter()
+                .find(|event| matches!(event, hl_gui::Event::Invoke { .. }))
+                .expect("IconButton navigation emits one native invocation");
+            let payload = codec::interaction(&event, Some(PRIMARY_SLOT))
+                .expect("navigation invocation has a production wire encoding");
+            wire.send(&Frame::new(ChannelId::new(100), Kind::Event, payload))
+                .expect("navigation invocation returns to Node");
+            let navigation = receive_rerender(&mut wire, story);
+            tree.apply(&navigation, &mut surface)
+                .expect("IconButton document rerender applies in GTK");
+            settle_toolkit();
+
+            assert!(
+                document.parent().is_none(),
+                "the previous page viewport remained mounted after navigation"
+            );
+            let next_document = descendants::<gtk::ScrolledWindow>(&root)
+                .into_iter()
+                .max_by(|left, right| left.vadjustment().upper().total_cmp(&right.vadjustment().upper()))
+                .expect("IconButton owns a scrolling document viewport");
+            assert!(
+                next_document.vadjustment().value() <= 1.0,
+                "IconButton opened at the previous page scroll position: {}",
+                next_document.vadjustment().value()
+            );
+            assert!(
+                find::<gtk::Label>(&root, |label| label.text() == "IconButton").is_visible(),
+                "the newly selected page title is visible at the top"
+            );
+            capture_story(&realized_window, "IconButton after scrolled Button navigation");
         }
         assert_contained(&root, story);
         assert!(
