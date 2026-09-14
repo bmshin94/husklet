@@ -2,15 +2,15 @@
 
 use std::collections::BTreeMap;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 
 use hl_extension::port::{
     HostError, ImageDetails, ImagePruneResult, ImagePullChange, ImagePullJob, ImagePullStatus, ImageStore, ImageSummary,
 };
 
-use super::{failure, Bridge};
+use super::{Bridge, failure};
 
 /// The image port over the workspace's container daemon.
 pub struct ImageLibrary {
@@ -99,14 +99,12 @@ impl ImageStore for ImageLibrary {
         let bridge = Arc::clone(&self.bridge);
         let registry = Arc::clone(&self.pulls);
         let worker_job = job.clone();
+        let worker_reference = reference.clone();
         std::thread::spawn(move || {
-            let outcome = bridge.wait(pull_job(&bridge, &reference, &worker_job, &registry, &cancel));
+            let outcome = bridge.wait(pull_job(&bridge, &worker_reference, &worker_job, &registry, &cancel));
             finish_pull(&registry, &worker_job, &cancel, outcome);
         });
-        Ok(ImagePullJob {
-            job,
-            reference: reference.to_owned(),
-        })
+        Ok(ImagePullJob { job, reference })
     }
 
     fn pull_status(&self, owner: &str, job: &str) -> Result<ImagePullStatus, HostError> {
