@@ -2474,6 +2474,52 @@ static void jit_body_owner_highwater_publish(unsigned exclusive) {
 
 #define JIT_BODY_OWNER_SLOTS (sizeof(g_body_owners) / sizeof(g_body_owners[0]))
 
+/* How far a slot search has to look.  INVARIANT: a slot whose `entry` is
+   non-NULL always has an index below g_body_owner_highwater.  It holds because
+   the only place that makes an `entry` non-NULL is jit_body_owner_set_for(),
+   which raises the highwater past that slot BEFORE the release store that
+   publishes the entry; because the highwater is otherwise monotonic; and
+   because the one place that lowers it, jit_body_owner_clear(), first NULLs
+   every slot below the old highwater -- hence every non-NULL slot -- and only
+   then resets it to 0.  jit_body_owner_drop_generation() only ever clears a
+   slot, which cannot violate the implication.
+
+   The search has two jobs and the bound is exact for BOTH:
+     - "which slot owns this generation?"  Such a slot has a non-NULL entry, so
+       it lies below the highwater and cannot be skipped.
+     - "which is the FIRST empty slot?"  If any slot below the highwater is
+       empty, the first one found is the same slot the full walk would return.
+       If none is, the answer is the first empty slot at or above the highwater,
+       which jit_body_owner_first_empty_from() resolves -- normally at the very
+       first index it looks at, since nothing there has ever been published.
+   So this bounds how far the search looks and never which slot it picks.
+
+   This is deliberately NOT gated on a launch option.  The unbounded walk ran
+   once per translation under jit_dispatch_lock() and was ~40% of cc1's retired
+   instruction stream, which left the default path balanced on whether the
+   compiler happened to inline it well; unrelated edits elsewhere in this unity
+   translation unit moved it by 13.6%.  Bounding it removes that cliff for
+   every build, not for opted-in ones.
+
+   All writers run under the dispatcher lock, so the load below cannot race a
+   publication in practice.  Even if it did, it is no weaker than the walk it
+   replaces: a reader that races a publisher either observes the raised
+   highwater or would equally have observed the not-yet-stored NULL entry. */
+static unsigned jit_body_owner_search_bound(void) {
+    unsigned highwater = atomic_load_explicit(&g_body_owner_highwater, memory_order_acquire);
+    return highwater > JIT_BODY_OWNER_SLOTS ? (unsigned)JIT_BODY_OWNER_SLOTS : highwater;
+}
+
+/* First slot at or above `from` with no published entry.  Above the highwater
+   this is `from` itself; the loop exists so the answer stays exactly the full
+   walk's answer even if the invariant above were ever broken by a later edit. */
+static jit_body_owner_set *jit_body_owner_first_empty_from(unsigned from) {
+    for (size_t i = from; i < JIT_BODY_OWNER_SLOTS; i++)
+        if (atomic_load_explicit(&g_body_owners[i].entry, memory_order_acquire) == NULL)
+            return &g_body_owners[i];
+    return NULL;
+}
+
 /* Occupancy index over g_body_owners (HL_X86_OWNER_INDEX, off by default).
 
    jit_body_owner_set_for() answers "which slot owns this generation?" by
@@ -2553,10 +2599,11 @@ static jit_body_owner_set *jit_body_owner_set_indexed(uint64_t generation) {
    walk is off the measured path and the index deliberately does not shortcut
    it: keeping the identical choice keeps published slot identities stable. */
 static jit_body_owner_set *jit_body_owner_first_empty(void) {
-    for (size_t i = 0; i < JIT_BODY_OWNER_SLOTS; i++)
+    unsigned bound = jit_body_owner_search_bound();
+    for (unsigned i = 0; i < bound; i++)
         if (atomic_load_explicit(&g_body_owners[i].entry, memory_order_acquire) == NULL)
             return &g_body_owners[i];
-    return NULL;
+    return jit_body_owner_first_empty_from(bound);
 }
 #if defined(HL_NATIVE_TEST_HOOKS)
 static _Atomic int g_body_owner_publish_pause;
@@ -2580,11 +2627,14 @@ static jit_body_owner_set *jit_body_owner_set_for(uint64_t generation, int creat
         if (!create) return NULL;
         empty = jit_body_owner_first_empty();
     } else {
-        for (size_t i = 0; i < sizeof(g_body_owners) / sizeof(g_body_owners[0]); i++) {
+        /* Bounded by the published highwater; see jit_body_owner_search_bound(). */
+        unsigned bound = jit_body_owner_search_bound();
+        for (unsigned i = 0; i < bound; i++) {
             jit_body_owner_entry *entries = atomic_load_explicit(&g_body_owners[i].entry, memory_order_acquire);
             if (entries != NULL && g_body_owners[i].generation == generation) return &g_body_owners[i];
             if (empty == NULL && entries == NULL) empty = &g_body_owners[i];
         }
+        if (empty == NULL && create) empty = jit_body_owner_first_empty_from(bound);
     }
     if (!create || empty == NULL) return NULL;
     // Keep the 16-byte search entry compact: one parallel 16-bit mask per range carries the complete
