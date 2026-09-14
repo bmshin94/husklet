@@ -19,9 +19,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use hl_extension::{
-    Authority, ChannelId, Channels, Compatibility, Emission, Failure, Frame, Hello, Kind, Limits, Outbox, PROTOCOL,
+    codec, Authority, ChannelId, Channels, Compatibility, Emission, Failure, Frame, Hello, Kind, Limits, Outbox,
     PaneChange, PaneChangeKind, Permission, Reply, Services, Session, Snapshot, Streams, Subscriptions, SurfaceFrame,
-    SurfaceMutation, Topic, Transit, Welcome, Wire, codec,
+    SurfaceMutation, Topic, Transit, Welcome, Wire, PROTOCOL,
 };
 
 /// Interface work an extension has produced and the GUI has not collected yet.
@@ -1285,10 +1285,10 @@ mod tests {
         ImageSummary, PaneSummary, TabSummary, TerminalSurface, WorkspaceFiles,
     };
     use hl_extension::{
-        Authority, Capability, Channels, ExtensionName, Failure, Flags, Frame, Grant, Hello, Kind, PROTOCOL,
+        codec, Authority, Capability, Channels, ExtensionName, Failure, Flags, Frame, Grant, Hello, Kind,
         PostgresBroker, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage,
         PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, PreferenceValue, QueryOperationToken,
-        RelativePath, Reply, Request, Services, Transit, Wire, WorkspaceInfo, codec,
+        RelativePath, Reply, Request, Services, Transit, Wire, WorkspaceInfo, PROTOCOL,
     };
     use hl_rpc::InstallationIdentity;
 
@@ -2149,7 +2149,9 @@ mod tests {
             Grant::new([
                 Capability::ContainerRead,
                 Capability::ExtensionRead,
+                Capability::ExtensionAcquire,
                 Capability::ExtensionInstall,
+                Capability::ExtensionUpdate,
                 Capability::Interface,
                 Capability::NotificationPublish,
             ]),
@@ -3066,7 +3068,7 @@ mod tests {
             };
             let authority = Authority::new(
                 ExtensionName::new("sample").expect("name"),
-                Grant::new([Capability::ExtensionInstall]),
+                Grant::new([Capability::ExtensionAcquire]),
                 Vec::new(),
             );
             let mut conversation = Conversation::new(ours, authority, "dev", Queue::new())?;
@@ -3103,7 +3105,7 @@ mod tests {
             let host = Host { ledger: host_ledger };
             let authority = Authority::new(
                 ExtensionName::new("sample").expect("name"),
-                Grant::new([Capability::ExtensionInstall]),
+                Grant::new([Capability::ExtensionAcquire]),
                 Vec::new(),
             );
             let mut conversation = Conversation::new(ours, authority, "dev", Queue::new())?;
@@ -3754,12 +3756,10 @@ mod tests {
             if capability == Capability::WorkspaceEnvironmentWrite.as_str())
         );
         assert!(ledger.reached().is_empty(), "the host create callback was reached");
-        assert!(
-            !answer
-                .payload
-                .windows(b"must-not-cross".len())
-                .any(|part| part == b"must-not-cross")
-        );
+        assert!(!answer
+            .payload
+            .windows(b"must-not-cross".len())
+            .any(|part| part == b"must-not-cross"));
         drop(wire);
         assert_eq!(served.join().unwrap(), Ok(()));
     }

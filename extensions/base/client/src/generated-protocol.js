@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:a809fd1290aec55c
+// Protocol artifact fnv1a64:f84bc63f90d1bd43
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -205,7 +205,17 @@ export const PROTOCOL_CAPABILITIES = Object.freeze([
   {
     "executes": false,
     "mutates": true,
+    "wire": "extensions:acquire"
+  },
+  {
+    "executes": false,
+    "mutates": true,
     "wire": "extensions:install"
+  },
+  {
+    "executes": false,
+    "mutates": true,
+    "wire": "extensions:update"
   },
   {
     "executes": false,
@@ -320,7 +330,7 @@ export const PROTOCOL_TOPICS = Object.freeze([
     "wire": "extensions"
   },
   {
-    "capability": "extensions:install",
+    "capability": "extensions:acquire",
     "snapshot": "extension_acquisitions",
     "wire": "extension-acquisitions"
   },
@@ -506,12 +516,12 @@ export const PROTOCOL_REQUEST_CAPABILITIES = Object.freeze({
   "extension_disable": "extensions:control",
   "extension_retry": "extensions:control",
   "extension_remove": "extensions:remove",
-  "extension_acquisition_start": "extensions:install",
-  "extension_acquisition_status": "extensions:install",
-  "extension_acquisition_cancel": "extensions:install",
+  "extension_acquisition_start": "extensions:acquire",
+  "extension_acquisition_status": "extensions:acquire",
+  "extension_acquisition_cancel": "extensions:acquire",
   "notification_publish": "notifications:publish",
   "extension_install": "extensions:install",
-  "extension_update": "extensions:install",
+  "extension_update": "extensions:update",
   "container_list": "containers:read",
   "container_inspect": "containers:read",
   "container_inspect_observed": "containers:read",
@@ -922,7 +932,19 @@ const definitions = {
         }
       },
       {
+        "name": "extensions:acquire",
+        "payload": {
+          "kind": "unit"
+        }
+      },
+      {
         "name": "extensions:install",
+        "payload": {
+          "kind": "unit"
+        }
+      },
+      {
+        "name": "extensions:update",
         "payload": {
           "kind": "unit"
         }

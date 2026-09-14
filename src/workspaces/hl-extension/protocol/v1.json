@@ -202,7 +202,17 @@
     {
       "executes": false,
       "mutates": true,
+      "wire": "extensions:acquire"
+    },
+    {
+      "executes": false,
+      "mutates": true,
       "wire": "extensions:install"
+    },
+    {
+      "executes": false,
+      "mutates": true,
+      "wire": "extensions:update"
     },
     {
       "executes": false,
@@ -551,7 +561,19 @@
           }
         },
         {
+          "name": "extensions:acquire",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
           "name": "extensions:install",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
+          "name": "extensions:update",
           "payload": {
             "kind": "unit"
           }
@@ -9536,15 +9558,15 @@
       "request": "extension_remove"
     },
     {
-      "capability": "extensions:install",
+      "capability": "extensions:acquire",
       "request": "extension_acquisition_start"
     },
     {
-      "capability": "extensions:install",
+      "capability": "extensions:acquire",
       "request": "extension_acquisition_status"
     },
     {
-      "capability": "extensions:install",
+      "capability": "extensions:acquire",
       "request": "extension_acquisition_cancel"
     },
     {
@@ -9556,7 +9578,7 @@
       "request": "extension_install"
     },
     {
-      "capability": "extensions:install",
+      "capability": "extensions:update",
       "request": "extension_update"
     },
     {
@@ -16368,7 +16390,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:cfe9d3f88a5d63b6",
+  "source_fingerprint": "fnv1a64:ff5fafae1599910b",
   "specification_version": 1,
   "topics": [
     {
@@ -16422,7 +16444,7 @@
       "wire": "extensions"
     },
     {
-      "capability": "extensions:install",
+      "capability": "extensions:acquire",
       "snapshot": "extension_acquisitions",
       "wire": "extension-acquisitions"
     },

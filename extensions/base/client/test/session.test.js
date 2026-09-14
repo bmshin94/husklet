@@ -5662,7 +5662,7 @@ test('real Unix acquisition wait reconnects from authoritative status without a 
         payload: {
           protocol: 1,
           peer: 'acquisition-wait',
-          granted: ['extensions:install'],
+          granted: ['extensions:acquire'],
         },
       }),
     );
@@ -5751,7 +5751,7 @@ test('real Unix acquisition cancellation proves exact terminal status across fra
     fragmented(socket, {
       channel: CONTROL,
       kind: KIND.open,
-      payload: { protocol: 1, peer: 'acquisition-cancel', granted: ['extensions:install'] },
+      payload: { protocol: 1, peer: 'acquisition-cancel', granted: ['extensions:acquire'] },
     });
   });
   await new Promise((resolve) => server.listen(socketPath, resolve));
@@ -5820,7 +5820,7 @@ test('real Unix acquisition rejects impossible progress without poisoning the se
     fragmented(socket, {
       channel: CONTROL,
       kind: KIND.open,
-      payload: { protocol: 1, peer: 'catalogue', granted: ['extensions:install'] },
+      payload: { protocol: 1, peer: 'catalogue', granted: ['extensions:acquire'] },
     });
   });
   await new Promise((resolve) => server.listen(socketPath, resolve));
@@ -8127,7 +8127,7 @@ test('real Unix install wait inspects revision, arms inventory, then commits exa
         payload: {
           protocol: 1,
           peer: 'install-wait',
-          granted: ['extensions:read', 'extensions:install'],
+          granted: ['extensions:read', 'extensions:acquire', 'extensions:install'],
         },
       }),
     );
@@ -8246,7 +8246,7 @@ test('real Unix update wait preserves enabled and disabled lifecycle through fra
           payload: {
             protocol: 1,
             peer: 'update-lifecycle',
-            granted: ['extensions:read', 'extensions:install'],
+            granted: ['extensions:read', 'extensions:acquire', 'extensions:update'],
           },
         }),
       );
@@ -8354,7 +8354,7 @@ test('real Unix install wait rejects broader published authority and preserves t
         payload: {
           protocol: 1,
           peer: 'install-authority',
-          granted: ['extensions:read', 'extensions:install'],
+          granted: ['extensions:read', 'extensions:acquire', 'extensions:install'],
         },
       }),
     );

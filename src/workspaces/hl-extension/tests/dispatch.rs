@@ -1905,18 +1905,18 @@ fn calls() -> Vec<(Request, Capability)> {
                 reference: "registry/example:1".into(),
                 refresh: false,
             },
-            Capability::ExtensionInstall,
+            Capability::ExtensionAcquire,
         ),
         (
             Request::ExtensionAcquisitionStatus { job: "job-1".into() },
-            Capability::ExtensionInstall,
+            Capability::ExtensionAcquire,
         ),
         (
             Request::ExtensionAcquisitionCancel {
                 job: "job-1".into(),
                 revision: 7,
             },
-            Capability::ExtensionInstall,
+            Capability::ExtensionAcquire,
         ),
         (
             Request::NotificationPublish {
@@ -1958,7 +1958,7 @@ fn calls() -> Vec<(Request, Capability)> {
                 workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
                 credentials: hl_extension::CredentialGrant::default(),
             },
-            Capability::ExtensionInstall,
+            Capability::ExtensionUpdate,
         ),
         (Request::ContainerList, Capability::ContainerRead),
         (Request::ContainerInspect { id: "c1".into() }, Capability::ContainerRead),
@@ -3105,9 +3105,38 @@ fn extension_acquisition_identifiers_are_bounded_before_the_host() {
 }
 
 #[test]
-fn extension_acquisition_cancellation_preserves_the_observed_revision() {
+fn extension_install_authority_cannot_replace_an_installed_extension() {
     let host = Host::new();
     let mut session = session(&[Capability::ExtensionInstall], &[]);
+    let failure = session
+        .dispatch(
+            &Request::ExtensionUpdate {
+                job: "job-1".into(),
+                revision: 7,
+                image_digest: format!("sha256:{}", "a".repeat(64)),
+                granted: Grant::default(),
+                containers: hl_extension::ContainerGrant::default(),
+                images: hl_extension::ImageGrant::default(),
+                networks: hl_extension::NetworkGrant::default(),
+                volumes: hl_extension::VolumeGrant::default(),
+                filesystem: hl_extension::FilesystemGrant::default(),
+                workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+                credentials: hl_extension::CredentialGrant::default(),
+            },
+            &services(&host),
+        )
+        .expect_err("install-only authority must not update an existing extension");
+    assert!(matches!(failure, Failure::Denied { ref capability, .. } if capability == "extensions:update"));
+    assert!(
+        host.ledger.reached().is_empty(),
+        "denial must precede the host mutation port"
+    );
+}
+
+#[test]
+fn extension_acquisition_cancellation_preserves_the_observed_revision() {
+    let host = Host::new();
+    let mut session = session(&[Capability::ExtensionAcquire], &[]);
     assert_eq!(
         session
             .dispatch(
@@ -3220,9 +3249,7 @@ fn terminal_pane_input_is_exactly_once_across_authenticated_reconnects() {
         contents: contents.to_vec(),
     };
     let first_request = write(0, b"deploy\n");
-    let first = opener
-        .dispatch(&first_request, &services(&host))
-        .expect("first write");
+    let first = opener.dispatch(&first_request, &services(&host)).expect("first write");
     let replay = session(&[Capability::TerminalInput], &[])
         .with_execution_ownership(ownership.clone())
         .dispatch(&first_request, &services(&host))
@@ -3250,7 +3277,11 @@ fn terminal_pane_input_is_exactly_once_across_authenticated_reconnects() {
             .dispatch(&write(302, b"future"), &services(&host)),
         Err(Failure::Conflict { detail }) if detail.contains("must be 301")
     ));
-    assert_eq!(host.ledger.reached().len(), 301, "out-of-order concurrency fails before the PTY");
+    assert_eq!(
+        host.ledger.reached().len(),
+        301,
+        "out-of-order concurrency fails before the PTY"
+    );
     session(&[Capability::TerminalInput], &[])
         .with_execution_ownership(ownership.clone())
         .dispatch(&write(301, b"next"), &services(&host))

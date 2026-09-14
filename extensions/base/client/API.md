@@ -308,19 +308,19 @@ order; the JavaScript client's checks are never treated as a security boundary.
 - `host.extensions.disable(...)` — `extension_disable`, requires `extensions:control`.
 - `host.extensions.retry(...)` — `extension_retry`, requires `extensions:control`.
 - `host.extensions.remove(...)` — `extension_remove`, requires `extensions:remove`.
-- `host.extensions.startAcquisition(...)` — `extension_acquisition_start`, requires `extensions:install`.
-- `host.extensions.acquisition(...)` — `extension_acquisition_status`, requires `extensions:install`.
-- `host.extensions.cancelAcquisition(...)` — `extension_acquisition_cancel`, requires `extensions:install`.
+- `host.extensions.startAcquisition(...)` — `extension_acquisition_start`, requires `extensions:acquire`.
+- `host.extensions.acquisition(...)` — `extension_acquisition_status`, requires `extensions:acquire`.
+- `host.extensions.cancelAcquisition(...)` — `extension_acquisition_cancel`, requires `extensions:acquire`.
 - `host.extensions.install(...)` — `extension_install`, requires `extensions:install`.
-- `host.extensions.update(...)` — `extension_update`, requires `extensions:install`.
-- `host.extensions.waitForAcquisition(...)` — waits for an exact acquisition job revision to advance, then reads its authoritative full status; requires `extensions:install`.
-- `host.extensions.cancelAcquisitionAndWait(job, revision, options)` — subscribes before cancellation, rechecks the exact revision, and returns only after authoritative `cancelled` status or an explicit timeout; `options.signal` aborts observation and releases the subscription; requires `extensions:install`.
+- `host.extensions.update(...)` — `extension_update`, requires `extensions:update`.
+- `host.extensions.waitForAcquisition(...)` — waits for an exact acquisition job revision to advance, then reads its authoritative full status; requires `extensions:acquire`.
+- `host.extensions.cancelAcquisitionAndWait(job, revision, options)` — subscribes before cancellation, rechecks the exact revision, and returns only after authoritative `cancelled` status or an explicit timeout; `options.signal` aborts observation and releases the subscription; requires `extensions:acquire`.
 - `host.extensions.enableAndWait(...)` — arms inventory before enabling an exact installed digest, then verifies it reached active duty rather than a faulted enabled record; requires `extensions:read` and `extensions:control`.
 - `host.extensions.disableAndWait(...)` — arms inventory before disabling an exact installed digest, then verifies durable standby; provider withdrawal remains separately observable; requires `extensions:read` and `extensions:control`.
 - `host.extensions.retryAndWait(...)` — arms inventory before retrying an exact faulted digest, rejects replacement/disappearance, then verifies durable duty; requires `extensions:read` and `extensions:control`.
 - `host.extensions.removeAndWait(...)` — arms inventory before removing an exact installed digest, then proves that digest is absent and reports any same-name replacement; requires `extensions:read` and `extensions:remove`.
 - `host.extensions.recoverRemoval(error)` — after a removal reply is lost, reads authoritative inventory without replaying deletion; the removed digest must be absent and any same-name replacement is returned explicitly.
-- `host.extensions.installAndWait(job, revision, review)` / `updateAndWait(job, revision, review)` — accept all reviewed capabilities and resource grants in one named object, inspect the exact ready acquisition revision, send its immutable digest as commit CAS authority, and arm inventory before commit. A new install is published and enabled atomically; updates preserve the prior enabled state. Both verify the resulting lifecycle state: enabled records must reach duty and disabled records must remain standby. Requires `extensions:install` and `extensions:read`.
+- `host.extensions.installAndWait(job, revision, review)` / `updateAndWait(job, revision, review)` — accept all reviewed capabilities and resource grants in one named object, inspect the exact ready acquisition revision, send its immutable digest as commit CAS authority, and arm inventory before commit. A new install is published and enabled atomically; updates preserve the prior enabled state. Both verify the resulting lifecycle state: enabled records must reach duty and disabled records must remain standby. Acquisition requires `extensions:acquire`; commit requires `extensions:install` or `extensions:update` respectively, plus `extensions:read` for lifecycle verification.
 - `host.extensions.recoverCommit(error)` — after an install/update reply is lost, waits for the exact acquisition job to finish and accepts only the acquired digest, version, and complete reviewed grants from authoritative inventory; it never replays the commit.
 - `host.containers.startAndWait(...)` — acknowledges bounded inventory before starting an immutable ID, ignores the unchanged initial snapshot, and returns only on a later running state; requires `containers:read` and `containers:lifecycle`.
 - `host.containers.stopAndWait(...)` — acknowledges bounded inventory before stopping an immutable ID, ignores unchanged/running snapshots, and returns only on a later exited state; requires `containers:read` and `containers:lifecycle`.
@@ -372,7 +372,7 @@ client delivers an event. Always unsubscribe or use a `watch*` disposer.
 - `host.subscribe('terminal')` / `host.unsubscribe('terminal')` — requires `terminals:read`.
 - `host.subscribe('pane-changes')` / `host.unsubscribe('pane-changes')` — requires `panes:observe`.
 - `host.subscribe('extensions')` / `host.unsubscribe('extensions')` — requires `extensions:read`.
-- `host.subscribe('extension-acquisitions')` / `host.unsubscribe('extension-acquisitions')` — requires `extensions:install`.
+- `host.subscribe('extension-acquisitions')` / `host.unsubscribe('extension-acquisitions')` — requires `extensions:acquire`.
 - `host.subscribe('workspace-lifecycle')` / `host.unsubscribe('workspace-lifecycle')` — requires `workspaces:read`.
 - `host.subscribe('workspace-events')` / `host.unsubscribe('workspace-events')` — requires `workspaces:events`.
 - `host.subscribe('filesystem')` / `host.unsubscribe('filesystem')` — requires `filesystem:read`.

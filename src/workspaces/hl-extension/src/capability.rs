@@ -115,8 +115,14 @@ pub enum Capability {
     #[serde(rename = "extensions:remove")]
     ExtensionRemove,
     /// Acquiring and consent-committing extension images.
+    #[serde(rename = "extensions:acquire")]
+    ExtensionAcquire,
+    /// Committing a newly acquired extension image under a vacant name.
     #[serde(rename = "extensions:install")]
     ExtensionInstall,
+    /// Replacing an installed extension with a reviewed acquired image.
+    #[serde(rename = "extensions:update")]
+    ExtensionUpdate,
     #[serde(rename = "filesystem:read")]
     FilesystemRead,
     #[serde(rename = "filesystem:write")]
@@ -195,7 +201,9 @@ impl Capability {
             Self::ExtensionRead => "extensions:read",
             Self::ExtensionControl => "extensions:control",
             Self::ExtensionRemove => "extensions:remove",
+            Self::ExtensionAcquire => "extensions:acquire",
             Self::ExtensionInstall => "extensions:install",
+            Self::ExtensionUpdate => "extensions:update",
             Self::FilesystemRead => "filesystem:read",
             Self::FilesystemWrite => "filesystem:write",
             Self::StateRead => "state:read",
@@ -242,7 +250,9 @@ impl Capability {
                 | Self::PaneSemanticControl
                 | Self::ExtensionControl
                 | Self::ExtensionRemove
+                | Self::ExtensionAcquire
                 | Self::ExtensionInstall
+                | Self::ExtensionUpdate
                 | Self::FilesystemWrite
                 | Self::StateWrite
                 | Self::PreferenceWrite
@@ -307,7 +317,9 @@ impl Capability {
         Self::ExtensionRead,
         Self::ExtensionControl,
         Self::ExtensionRemove,
+        Self::ExtensionAcquire,
         Self::ExtensionInstall,
+        Self::ExtensionUpdate,
         Self::FilesystemRead,
         Self::FilesystemWrite,
         Self::StateRead,

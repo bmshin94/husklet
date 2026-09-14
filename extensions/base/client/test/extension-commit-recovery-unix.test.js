@@ -115,7 +115,7 @@ test('lost install reply recovers exact reviewed authority without replay over f
       payload: {
         protocol: 1,
         peer: `commit-${current}`,
-        granted: ['extensions:read', 'extensions:install'],
+        granted: ['extensions:read', 'extensions:acquire', 'extensions:install'],
       },
     });
   });
@@ -147,7 +147,7 @@ test('lost install reply recovers exact reviewed authority without replay over f
     );
     await second.close();
 
-    published = { ...summary, granted: ['extensions:read', 'extensions:install'] };
+    published = { ...summary, granted: ['extensions:read', 'extensions:acquire', 'extensions:install'] };
     const third = await connect({ path: socketPath });
     await assert.rejects(
       workspace(third).extensions.recoverCommit(failure),
@@ -202,7 +202,7 @@ test('malformed acquisition authority never reaches a fragmented Unix socket', a
       payload: {
         protocol: 1,
         peer: 'acquisition-authority',
-        granted: ['extensions:install'],
+        granted: ['extensions:acquire', 'extensions:install', 'extensions:update'],
       },
     });
     socket.write(greeting.subarray(0, 3));

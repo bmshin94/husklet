@@ -459,6 +459,44 @@ fn an_exact_index_root_refuses_adjacent_file_reads_over_a_real_socket() {
 }
 
 #[test]
+fn install_only_extension_cannot_update_over_a_real_socket() {
+    let (host_end, extension_end) = connected_pair();
+    let host = Host::new();
+    let mut session = Session::new(Authority::new(
+        ExtensionName::new("installer").unwrap(),
+        Grant::new([Capability::ExtensionInstall]),
+        Vec::new(),
+    ));
+    let request = Request::ExtensionUpdate {
+        job: "job-1".into(),
+        revision: 7,
+        image_digest: format!("sha256:{}", "a".repeat(64)),
+        granted: Grant::default(),
+        containers: hl_extension::ContainerGrant::default(),
+        images: hl_extension::ImageGrant::default(),
+        networks: hl_extension::NetworkGrant::default(),
+        volumes: hl_extension::VolumeGrant::default(),
+        filesystem: hl_extension::FilesystemGrant::default(),
+        workspace_environment: hl_extension::WorkspaceEnvironmentGrant::default(),
+        credentials: hl_extension::CredentialGrant::default(),
+    };
+    let mut sender = hl_extension::Wire::new(extension_end);
+    let mut receiver = hl_extension::Wire::new(host_end);
+
+    sender.send(&codec::request(&request).unwrap()).unwrap();
+    let decoded = codec::read_request(&receiver.receive().unwrap()).unwrap();
+    let failure = session
+        .dispatch(&decoded, &services(&host))
+        .expect_err("install authority must not replace an installed extension");
+    receiver.send(&codec::failure(&failure).unwrap()).unwrap();
+
+    assert!(matches!(
+        codec::read_failure(&sender.receive().unwrap()),
+        Ok(Failure::Denied { capability, .. }) if capability == Capability::ExtensionUpdate.as_str()
+    ));
+}
+
+#[test]
 fn observed_file_mutations_reject_a_stale_agent_and_keep_the_real_socket_usable() {
     let (host_end, extension_end) = connected_pair();
     let host = Host::new();
@@ -1432,7 +1470,10 @@ fn terminal_history_cursor_crosses_a_fragmented_real_socket() {
         panic!("wrong history reply")
     };
     assert_eq!(page.slot, "pane-7");
-    assert_eq!(page.lines, ["Some(TerminalHistoryCursor(\"opaque-current\")):at most 20"]);
+    assert_eq!(
+        page.lines,
+        ["Some(TerminalHistoryCursor(\"opaque-current\")):at most 20"]
+    );
     assert_eq!(page.next, Some(TerminalHistoryCursor("opaque-next".into())));
 }
 

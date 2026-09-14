@@ -2,10 +2,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use syn::{Attribute, Fields, GenericArgument, Item, PathArguments, Type};
 
-use crate::{Capability, Frame, Kind, Topic, PROTOCOL};
+use crate::{Capability, Frame, Kind, PROTOCOL, Topic};
 
 const SOURCES: &[(&str, &str)] = &[
     ("src/lib.rs", include_str!("lib.rs")),
@@ -206,11 +206,11 @@ fn request_capability(request: &str) -> Capability {
         "extension_list" | "extension_catalogue" | "extension_inspect" => Capability::ExtensionRead,
         "extension_enable" | "extension_disable" | "extension_retry" => Capability::ExtensionControl,
         "extension_remove" => Capability::ExtensionRemove,
-        "extension_acquisition_start"
-        | "extension_acquisition_status"
-        | "extension_acquisition_cancel"
-        | "extension_install"
-        | "extension_update" => Capability::ExtensionInstall,
+        "extension_acquisition_start" | "extension_acquisition_status" | "extension_acquisition_cancel" => {
+            Capability::ExtensionAcquire
+        }
+        "extension_install" => Capability::ExtensionInstall,
+        "extension_update" => Capability::ExtensionUpdate,
         "container_list"
         | "container_inspect"
         | "container_inspect_observed"
@@ -243,12 +243,16 @@ fn request_capability(request: &str) -> Capability {
         "network_disconnect" => Capability::NetworkDisconnect,
         "terminal_tabs" | "terminal_topology" => Capability::TerminalRead,
         "pane_list" => Capability::PaneObserve,
-        "terminal_read_pane" | "terminal_read_history" | "terminal_command_inspect" | "terminal_command_output" | "terminal_command_wait" => {
-            Capability::TerminalOutput
-        }
+        "terminal_read_pane"
+        | "terminal_read_history"
+        | "terminal_command_inspect"
+        | "terminal_command_output"
+        | "terminal_command_wait" => Capability::TerminalOutput,
         "pane_semantic_read" => Capability::PaneSemanticRead,
         "pane_semantic_action" => Capability::PaneSemanticControl,
-        "terminal_input_open" | "terminal_write_pane" | "terminal_command_write" | "terminal_command_close_input" => Capability::TerminalInput,
+        "terminal_input_open" | "terminal_write_pane" | "terminal_command_write" | "terminal_command_close_input" => {
+            Capability::TerminalInput
+        }
         "terminal_spawn" | "terminal_spawn_observed" | "terminal_command_start" | "terminal_command_cancel" => {
             Capability::TerminalProcessControl
         }

@@ -709,9 +709,9 @@ impl Request {
             Self::ExtensionRemove { .. } => Capability::ExtensionRemove,
             Self::ExtensionAcquisitionStart { .. }
             | Self::ExtensionAcquisitionStatus { .. }
-            | Self::ExtensionAcquisitionCancel { .. }
-            | Self::ExtensionInstall { .. }
-            | Self::ExtensionUpdate { .. } => Capability::ExtensionInstall,
+            | Self::ExtensionAcquisitionCancel { .. } => Capability::ExtensionAcquire,
+            Self::ExtensionInstall { .. } => Capability::ExtensionInstall,
+            Self::ExtensionUpdate { .. } => Capability::ExtensionUpdate,
             Self::ContainerList
             | Self::ContainerInspect { .. }
             | Self::ContainerInspectObserved { .. }
@@ -891,7 +891,7 @@ impl Topic {
             Self::Terminal => Capability::TerminalRead,
             Self::PaneChanges => Capability::PaneObserve,
             Self::Extensions => Capability::ExtensionRead,
-            Self::ExtensionAcquisitions => Capability::ExtensionInstall,
+            Self::ExtensionAcquisitions => Capability::ExtensionAcquire,
             Self::WorkspaceLifecycle => Capability::WorkspaceRead,
             Self::WorkspaceEvents => Capability::WorkspaceEvents,
             Self::Filesystem => Capability::FilesystemRead,
@@ -1264,7 +1264,7 @@ mod tests {
         assert_eq!(Topic::Containers.capability(), Capability::ContainerRead);
         assert_eq!(Topic::Terminal.capability(), Capability::TerminalRead);
         assert_eq!(Topic::Extensions.capability(), Capability::ExtensionRead);
-        assert_eq!(Topic::ExtensionAcquisitions.capability(), Capability::ExtensionInstall);
+        assert_eq!(Topic::ExtensionAcquisitions.capability(), Capability::ExtensionAcquire);
         assert_eq!(Topic::WorkspaceLifecycle.capability(), Capability::WorkspaceRead);
     }
 
