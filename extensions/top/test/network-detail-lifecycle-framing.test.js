@@ -130,8 +130,13 @@ test(
       await until(() => inspections === 1 && labelled(stage, 'Network details'));
       choose(stage, container);
       await until(() => labelled(stage, 'Disconnect'));
-      invoke(stage, 'Remove');
-      assert.ok(labelled(stage, `Remove immutable network ${id} (old-net)?`));
+      invoke(stage, 'Remove network…');
+      assert.ok(
+        labelled(
+          stage,
+          'Removing network old-net disconnects it from the workspace and cannot be undone.',
+        ),
+      );
       const start = stage.frames.length;
       invoke(stage, 'Refresh');
       await until(
@@ -140,7 +145,10 @@ test(
       );
       const patches = stage.frames.slice(start).flatMap((frame) => frame.patches);
       assert.ok(patches.some((patch) => 'Remove' in patch));
-      for (const stale of [`Remove immutable network ${id} (old-net)?`, 'old-scope'])
+      for (const stale of [
+        'Removing network old-net disconnects it from the workspace and cannot be undone.',
+        'old-scope',
+      ])
         assert.equal(
           patches.some((patch) => patch.SetProp?.value?.Text === stale),
           false,

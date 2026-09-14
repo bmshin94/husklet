@@ -81,8 +81,10 @@ test(
       invoke(stage, 'Volumes');
       await until(() => labelled(stage, 'Reading volumes…'));
       await until(() => labelled(stage, 'stale-cache'));
-      invoke(stage, 'Remove');
-      assert.ok(labelled(stage, `Remove volume stale-cache generation ${'a'.repeat(32)}?`));
+      invoke(stage, 'Delete volume…');
+      assert.ok(
+        labelled(stage, 'Removing volume stale-cache permanently deletes its stored data.'),
+      );
 
       const refreshStart = stage.frames.length;
       invoke(stage, 'Refresh');
@@ -93,7 +95,7 @@ test(
         'loading unmounts stale volume card and confirmation',
       );
       await until(() => labelled(stage, 'volume inventory unavailable'));
-      for (const stale of ['Inspect', 'Remove', 'Confirm remove']) {
+      for (const stale of ['Inspect', 'Delete volume…', 'Remove volume']) {
         assert.equal(
           refreshPatches.some((patch) => patch.SetProp?.value?.Text === stale),
           false,
@@ -108,7 +110,7 @@ test(
       invoke(stage, 'Refresh');
       await until(() => labelled(stage, 'current-cache'));
       assert.equal(attempts, 4);
-      assert.ok(labelled(stage, 'Remove'));
+      assert.ok(labelled(stage, 'Delete volume…'));
       assert.ok(labelled(stage, 'Inspect'));
     } finally {
       stage?.render(null);

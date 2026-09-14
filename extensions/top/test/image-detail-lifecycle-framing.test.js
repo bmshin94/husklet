@@ -111,8 +111,8 @@ test(
       invoke(stage, 'Inspect');
       await until(() => lengths(mutations).length === 1);
       assert.deepEqual(lengths(mutations)[0], { source: IMAGE_DETAIL_SOURCE, version: 1, rows: 8 });
-      invoke(stage, 'Remove');
-      assert.ok(labelled(stage, `Remove old/image:1 (${digest.slice(0, 12)})?`));
+      invoke(stage, 'Remove image…');
+      assert.ok(labelled(stage, `Removing old/image:1 (${digest.slice(0, 12)}) cannot be undone.`));
 
       const refreshStart = stage.frames.length;
       invoke(stage, 'Refresh');
@@ -124,7 +124,9 @@ test(
       );
       assert.equal(
         refreshPatches.some(
-          (patch) => patch.SetProp?.value?.Text === `Remove old/image:1 (${digest.slice(0, 12)})?`,
+          (patch) =>
+            patch.SetProp?.value?.Text ===
+            `Removing old/image:1 (${digest.slice(0, 12)}) cannot be undone.`,
         ),
         false,
         'removal consent does not remount for a reused digest',

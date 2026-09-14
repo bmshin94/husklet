@@ -6,7 +6,6 @@ import {
   CardContent,
   Column,
   Container,
-  ConfirmAction,
   EmptyState,
   Entry,
   Expander,
@@ -451,35 +450,18 @@ export function Networks({
                         </>
                       )
                     }
-                    overflow={
-                      network.kind !== 'builtin' ? (
-                        <Expander
-                          label="Remove network…"
-                          variant="outline"
-                          width="content"
-                          align="start"
-                          tooltip="Remove this network from the workspace"
-                        >
-                          <Column gap={1}>
-                            <Text
-                              label="Removing this network disconnects it from the workspace and cannot be undone."
-                              color="text-dim"
-                              wrap
-                            />
-                            <Row>
-                              <ConfirmAction
-                                authorityKey={`network:${id}:remove`}
-                                label="Remove"
-                                confirmLabel="Confirm remove"
-                                pendingLabel="Confirm remove"
-                                question={`Remove immutable network ${id} (${network.name})?`}
-                                size="small"
-                                onConfirm={() => remove(network)}
-                              />
-                            </Row>
-                          </Column>
-                        </Expander>
-                      ) : null
+                    danger={
+                      network.kind !== 'builtin'
+                        ? {
+                            authorityKey: `network:${id}:remove`,
+                            label: 'Remove network…',
+                            tooltip: 'Remove this network from the workspace',
+                            question: `Removing network ${network.name} disconnects it from the workspace and cannot be undone.`,
+                            confirmLabel: 'Remove network',
+                            pendingLabel: 'Removing…',
+                            onConfirm: () => remove(network),
+                          }
+                        : undefined
                     }
                   />
                   {membershipUnknown ? (

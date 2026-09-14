@@ -4,10 +4,8 @@ import {
   Card,
   CardContent,
   Column,
-  ConfirmAction,
   EmptyState,
   Entry,
-  Expander,
   FormControl,
   FormLabel,
   Heading,
@@ -229,7 +227,7 @@ export function Volumes({
                 label={volume.name}
                 detail={volume.driver}
                 actions={
-                  inspectionNeedsAccess ? null : (
+                  inspectionNeedsAccess ? undefined : (
                     <InlineButton
                       label={
                         inspection.name !== volume.name
@@ -247,35 +245,18 @@ export function Volumes({
                     />
                   )
                 }
-                overflow={
-                  inspectionNeedsAccess ? null : (
-                    <Expander
-                      label="Delete volume…"
-                      variant="outline"
-                      width="content"
-                      align="start"
-                      tooltip="Remove this volume and permanently delete its stored data"
-                    >
-                      <Column gap={1}>
-                        <Text
-                          label="Removing this volume permanently deletes its stored data."
-                          color="text-dim"
-                          wrap
-                        />
-                        <Row>
-                          <ConfirmAction
-                            authorityKey={`volume:${volume.name}:${volume.generation}:remove`}
-                            label="Remove"
-                            confirmLabel="Confirm remove"
-                            pendingLabel="Confirm remove"
-                            question={`Remove volume ${volume.name} generation ${volume.generation}?`}
-                            size="small"
-                            onConfirm={() => remove(volume)}
-                          />
-                        </Row>
-                      </Column>
-                    </Expander>
-                  )
+                danger={
+                  inspectionNeedsAccess
+                    ? undefined
+                    : {
+                        authorityKey: `volume:${volume.name}:${volume.generation}:remove`,
+                        label: 'Delete volume…',
+                        tooltip: 'Remove this volume and permanently delete its stored data',
+                        question: `Removing volume ${volume.name} permanently deletes its stored data.`,
+                        confirmLabel: 'Remove volume',
+                        pendingLabel: 'Removing…',
+                        onConfirm: () => remove(volume),
+                      }
                 }
               />
               {inspectionNeedsAccess ? (

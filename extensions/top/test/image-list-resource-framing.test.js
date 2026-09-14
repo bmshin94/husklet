@@ -94,7 +94,7 @@ test(
       invoke(stage, 'Images');
       await until(() => labelled(stage, 'Reading images…'));
       await until(() => labelled(stage, 'stale/image:1'));
-      assert.ok(labelled(stage, 'Remove'));
+      assert.ok(labelled(stage, 'Remove image…'));
       assert.ok(labelled(stage, 'Prune unused images'));
       invoke(stage, 'Workspace');
       await until(() => labelled(stage, 'Available locally') && labelled(stage, '1'));
@@ -117,7 +117,7 @@ test(
         'loading unmounts stale image cards and prune authority',
       );
       await until(() => labelled(stage, 'image inventory unavailable'));
-      for (const stale of ['Remove', 'Prune unused images']) {
+      for (const stale of ['Remove image…', 'Remove image', 'Prune unused images']) {
         assert.equal(
           refreshPatches.some((patch) => patch.SetProp?.value?.Text === stale),
           false,
@@ -134,7 +134,7 @@ test(
       invoke(stage, 'Refresh');
       await until(() => labelled(stage, 'current/image:2'));
       assert.equal(attempts, 4);
-      assert.ok(labelled(stage, 'Remove'));
+      assert.ok(labelled(stage, 'Remove image…'));
       assert.ok(labelled(stage, 'Prune unused images'));
     } finally {
       stage?.render(null);

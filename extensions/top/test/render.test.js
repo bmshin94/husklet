@@ -6008,10 +6008,10 @@ test('image removal and prune require an explicit confirmation step', async () =
     stage.frames
       .flatMap((current) => current.patches)
       .filter((patch) => 'SetProp' in patch && patch.SetProp.prop === 'Label');
-  const remove = labels().find((patch) => patch.SetProp.value.Text === 'Remove').SetProp.id;
+  const remove = labels().find((patch) => patch.SetProp.value.Text === 'Remove image…').SetProp.id;
   assert.ok(
     frame.patches.some(
-      (patch) => patch.SetProp?.id === remove && patch.SetProp.value?.Variant === 'Outline',
+      (patch) => patch.SetProp?.id === remove && patch.SetProp.value?.Variant === 'Ghost',
     ),
     'the initial image removal is visibly outlined before confirmation',
   );
@@ -6024,14 +6024,16 @@ test('image removal and prune require an explicit confirmation step', async () =
     }),
   );
   assert.deepEqual(calls, [], 'opening image removal performs no operation');
-  assert.ok(labels().some((patch) => patch.SetProp.value.Text === 'Confirm remove'));
-  assert.ok(labelled(stage, `Remove alpine:3.20 (${originalDigest.slice(0, 12)})?`));
+  assert.ok(labels().some((patch) => patch.SetProp.value.Text === 'Remove image'));
+  assert.ok(
+    labelled(stage, `Removing alpine:3.20 (${originalDigest.slice(0, 12)}) cannot be undone.`),
+  );
   const staleConfirm = labels()
-    .filter((patch) => patch.SetProp.value.Text === 'Confirm remove')
+    .filter((patch) => patch.SetProp.value.Text === 'Remove image')
     .at(-1).SetProp.id;
   assert.equal(
     frame.patches.some(
-      (patch) => 'SetProp' in patch && patch.SetProp.value?.Text === 'Confirm remove',
+      (patch) => 'SetProp' in patch && patch.SetProp.value?.Text === 'Remove image',
     ),
     false,
   );
@@ -6045,12 +6047,8 @@ test('image removal and prune require an explicit confirmation step', async () =
   });
   await settled();
   assert.deepEqual(calls, [], 'stale digest consent cannot reach removal authority after refresh');
-  assert.ok(
-    labelled(stage, `Image ${originalDigest} changed or disappeared; inspect and confirm again.`),
-  );
-  invoke(stage, 'Remove');
-  assert.ok(labelled(stage, `Remove alpine:3.20 (${refreshedDigest.slice(0, 12)})?`));
-  invoke(stage, 'Confirm remove');
+  invoke(stage, 'Remove image…');
+  invoke(stage, 'Remove image');
   await settled();
   assert.deepEqual(calls, [['remove', refreshedDigest]]);
   assert.ok(labelled(stage, `Image ${refreshedDigest} was removed and its absence was verified.`));
@@ -6493,7 +6491,7 @@ test('volume and network panels render bounded real inventories and controls', (
     frame.patches
       .filter((patch) => 'SetProp' in patch && patch.SetProp.prop === 'Label')
       .map((patch) => patch.SetProp.value.Text);
-  for (const label of ['Volumes', 'cache', 'Create', 'Inspect', 'Remove'])
+  for (const label of ['Volumes', 'cache', 'Create', 'Inspect', 'Delete volume…'])
     assert.ok(labels(volumeFrame).includes(label), label);
   const volumeStage = stageFromFrame(volumeFrame);
   assert.equal(taggedProperty(volumeStage, 'cache', 'CardHeader', 'Align')?.Align, 'Start');
@@ -6513,7 +6511,7 @@ test('volume and network panels render bounded real inventories and controls', (
     'Responsive',
     'CardContent',
   ]);
-  for (const label of ['Networks', 'private', 'Remove'])
+  for (const label of ['Networks', 'private', 'Remove network…'])
     assert.ok(labels(networkFrame).includes(label), label);
   const networkInventoryStage = stageFromFrame(networkFrame);
   assert.deepEqual(taggedProperty(networkInventoryStage, 'Networks', 'Heading', 'Scale'), {
@@ -6540,7 +6538,7 @@ test('volume and network panels render bounded real inventories and controls', (
   );
   assert.ok(labels(networkFrame).includes('Built-in · protected'));
   assert.equal(
-    labels(networkFrame).filter((label) => label === 'Remove').length,
+    labels(networkFrame).filter((label) => label === 'Remove network…').length,
     2,
     'only the custom network offers removal in both responsive presentations',
   );
@@ -6591,8 +6589,8 @@ test('volume and network panels render bounded real inventories and controls', (
         patch.SetProp.value.Flag === true,
     );
   };
-  assert.equal(destructive(volumeFrame, 'Remove'), false);
-  assert.equal(destructive(networkFrame, 'Remove'), false);
+  assert.equal(destructive(volumeFrame, 'Delete volume…'), false);
+  assert.equal(destructive(networkFrame, 'Remove network…'), false);
 });
 
 test('network inspection exposes loading, retry, empty and domain-specific details', async () => {
@@ -8548,11 +8546,11 @@ test('volume and network mutations expose danger only on final confirm and cance
       resource: resource([{ name: 'cache', driver: 'local', generation: volumeGeneration }]),
     }),
   );
-  invoke(volumes, 'Remove');
+  invoke(volumes, 'Delete volume…');
   assert.deepEqual(calls, []);
-  assert.equal(isDestructive(volumes, 'Confirm remove'), true);
-  assert.ok(labelled(volumes, `Remove volume cache generation ${volumeGeneration}?`));
-  const staleVolumeConfirm = labelled(volumes, 'Confirm remove').SetProp.id;
+  assert.equal(isDestructive(volumes, 'Remove volume'), true);
+  assert.ok(labelled(volumes, 'Removing volume cache permanently deletes its stored data.'));
+  const staleVolumeConfirm = labelled(volumes, 'Remove volume').SetProp.id;
   volumes.render(
     h(Volumes, {
       api: controlled,
@@ -8569,8 +8567,8 @@ test('volume and network mutations expose danger only on final confirm and cance
   });
   await settled();
   assert.deepEqual(calls, []);
-  invoke(volumes, 'Remove');
-  invoke(volumes, 'Confirm remove');
+  invoke(volumes, 'Delete volume…');
+  invoke(volumes, 'Remove volume');
   await settled();
   assert.deepEqual(calls, [['volume.remove', 'cache', refreshedVolumeGeneration]]);
   assert.ok(
@@ -8615,13 +8613,18 @@ test('volume and network mutations expose danger only on final confirm and cance
   invoke(networks, 'Confirm disconnect');
   await settled();
   assert.deepEqual(calls.at(-1), ['network.disconnect', networkId, containerId]);
-  invoke(networks, 'Remove');
-  assert.ok(labelled(networks, `Remove immutable network ${networkId} (private)?`));
+  invoke(networks, 'Remove network…');
+  assert.ok(
+    labelled(
+      networks,
+      'Removing network private disconnects it from the workspace and cannot be undone.',
+    ),
+  );
   assert.equal(
     calls.some(([name]) => name === 'network.remove'),
     false,
   );
-  const staleConfirm = labelled(networks, 'Confirm remove').SetProp.id;
+  const staleConfirm = labelled(networks, 'Remove network').SetProp.id;
   const refreshedNetworks = resource([
     { id: refreshedNetworkId, name: 'private', driver: 'bridge', scope: 'local', kind: 'custom' },
   ]);
@@ -8643,11 +8646,8 @@ test('volume and network mutations expose danger only on final confirm and cance
     calls.some(([name]) => name === 'network.remove'),
     false,
   );
-  assert.ok(
-    labelled(networks, `Network ${networkId} changed or disappeared; inspect and confirm again.`),
-  );
-  invoke(networks, 'Remove');
-  invoke(networks, 'Confirm remove');
+  invoke(networks, 'Remove network…');
+  invoke(networks, 'Remove network');
   await settled();
   await settled();
   assert.deepEqual(calls.at(-1), ['network.remove', refreshedNetworkId]);
@@ -8675,15 +8675,15 @@ test('shared volume confirmation disables both final actions while removal is pe
   };
   const stage = host();
   stage.render(h(Volumes, { api: controlled, resource }));
-  invoke(stage, 'Remove');
-  invoke(stage, 'Confirm remove');
+  invoke(stage, 'Delete volume…');
+  invoke(stage, 'Remove volume');
   await settled();
-  assert.equal(isEnabled(stage, 'Confirm remove'), false);
+  assert.equal(isEnabled(stage, 'Removing…'), false);
   assert.equal(isEnabled(stage, 'Cancel'), false);
   release();
   await settled();
   await settled();
-  assert.ok(labelled(stage, 'Remove'), 'successful removal closes the shared confirmation');
+  assert.ok(labelled(stage, 'Delete volume…'), 'successful removal closes the shared confirmation');
 });
 
 test('volume creation exposes pending failure and retained retry before claiming success', async () => {
@@ -9251,8 +9251,8 @@ test('a failed final confirmation stays visible and retryable', async () => {
   };
   const stage = host();
   stage.render(h(Volumes, { api: controlled, resource }));
-  invoke(stage, 'Remove');
-  invoke(stage, 'Confirm remove');
+  invoke(stage, 'Delete volume…');
+  invoke(stage, 'Remove volume');
   await settled();
 
   assert.equal(attempts, 1);
@@ -9261,7 +9261,7 @@ test('a failed final confirmation stays visible and retryable', async () => {
     'the semantic tree carries the bounded failure',
   );
   assert.equal(
-    isDestructive(stage, 'Confirm remove'),
+    isDestructive(stage, 'Remove volume'),
     true,
     'the final action remains available for retry',
   );
@@ -9296,7 +9296,9 @@ test('stale volume generation refuses authority and remains visibly retryable', 
   stage.render(h(Volumes, { api: controlled, resource }));
   const removes = stage.frames
     .flatMap((frame) => frame.patches)
-    .filter((patch) => patch.SetProp?.prop === 'Label' && patch.SetProp.value?.Text === 'Remove');
+    .filter(
+      (patch) => patch.SetProp?.prop === 'Label' && patch.SetProp.value?.Text === 'Delete volume…',
+    );
   assert.ok(
     stage.surface.dispatch({
       trigger: 'Invoke',
@@ -9305,12 +9307,12 @@ test('stale volume generation refuses authority and remains visibly retryable', 
       value: null,
     }),
   );
-  invoke(stage, 'Confirm remove');
+  invoke(stage, 'Remove volume');
   await settled();
   await settled();
   assert.deepEqual(calls, []);
   assert.ok(labelled(stage, 'Volume cache changed generation; inspect and confirm again.'));
-  assert.equal(isDestructive(stage, 'Confirm remove'), true);
+  assert.equal(isDestructive(stage, 'Remove volume'), true);
 });
 
 function labelled(stage, label) {

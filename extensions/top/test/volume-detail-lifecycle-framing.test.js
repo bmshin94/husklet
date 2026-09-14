@@ -107,15 +107,11 @@ test(
       change(stage, 'Volume name', 'draft-volume');
       invoke(stage, 'Inspect');
       await until(() => inspections === 1);
-      invoke(stage, 'Remove');
-      assert.ok(labelled(stage, `Remove volume ${name} generation ${oldGeneration}?`));
+      invoke(stage, 'Delete volume…');
+      assert.ok(labelled(stage, `Removing volume ${name} permanently deletes its stored data.`));
       const start = stage.frames.length;
       invoke(stage, 'Refresh');
-      await until(
-        () =>
-          labelled(stage, `Remove volume ${name} generation ${newGeneration}?`) === undefined &&
-          lists === 2,
-      );
+      await until(() => lists === 2);
       const patches = stage.frames.slice(start).flatMap((frame) => frame.patches);
       assert.ok(
         patches.some((patch) => 'Remove' in patch),
@@ -132,8 +128,8 @@ test(
       );
       await new Promise((resolve) => setTimeout(resolve, 170));
       assert.equal(lengths(mutations).length, 0, 'late old-generation detail cannot publish');
-      invoke(stage, 'Remove');
-      assert.ok(labelled(stage, `Remove volume ${name} generation ${newGeneration}?`));
+      invoke(stage, 'Delete volume…');
+      assert.ok(labelled(stage, `Removing volume ${name} permanently deletes its stored data.`));
       invoke(stage, 'Cancel');
       invoke(stage, 'Inspect');
       await until(() => lengths(mutations).length === 1);

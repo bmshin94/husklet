@@ -842,12 +842,7 @@ mod unix {
                     add_variable.has_css_class("variant-outline"),
                     "{width_name} Add variable must remain a compact secondary action"
                 );
-                assert_settings_stack(
-                    &root,
-                    width,
-                    &format!("{width_name}/credential-editor"),
-                    Some(3),
-                );
+                assert_settings_stack(&root, width, &format!("{width_name}/credential-editor"), Some(3));
                 capture(&window, &format!("settings-credential-edit-{width_name}"), width, 800);
             }
             if fixture == "populated" && name == "images" {
@@ -1129,18 +1124,15 @@ mod unix {
                     "{width_name} collapsed network record stacked its summary to {}px",
                     network_card.height()
                 );
-                let danger = find_expander(&network_card, "Remove network…");
-                assert!(danger.has_css_class("variant-outline"));
-                assert_eq!(
-                    danger.height(),
-                    28,
-                    "{width_name} network danger disclosure stays compact"
-                );
+                let danger = find_button(&network_card, "Remove network…");
+                assert!(danger.has_css_class("variant-ghost"));
+                assert!(danger.has_css_class("tone-danger"));
+                assert_eq!(danger.height(), 44, "{width_name} network danger hit target");
                 assert_eq!(
                     danger.tooltip_text().as_deref(),
                     Some("Remove this network from the workspace")
                 );
-                assert!(danger.grab_focus(), "network danger disclosure is keyboard reachable");
+                assert!(danger.grab_focus(), "network danger action is keyboard reachable");
                 assert!(
                     network_card.height() <= 80,
                     "{width_name} collapsed network record split danger into a {}px second band",
@@ -1159,10 +1151,7 @@ mod unix {
                     aligned <= 2.0,
                     "{width_name} network actions split across rows: manage={manage_bounds:?}, danger={danger_bounds:?}"
                 );
-                let widgets = [
-                    entry.clone().upcast::<gtk::Widget>(),
-                    create.clone().upcast(),
-                ];
+                let widgets = [entry.clone().upcast::<gtk::Widget>(), create.clone().upcast()];
                 let tops = widgets.iter().map(|widget| widget.allocation().y()).collect::<Vec<_>>();
                 assert!(
                     tops.iter().max().unwrap() - tops.iter().min().unwrap() <= 4,
@@ -1178,48 +1167,76 @@ mod unix {
                 );
                 assert!(entry.allocation().x() < create.allocation().x());
                 assert!(
-                    refresh.compute_bounds(&root).expect("network Refresh belongs to Top").y()
+                    refresh
+                        .compute_bounds(&root)
+                        .expect("network Refresh belongs to Top")
+                        .y()
                         < entry.compute_bounds(&root).expect("network name belongs to Top").y()
                 );
                 assert!(vertical_end(&root, refresh.upcast_ref()) <= 240);
-                if width == 1_200 {
-                    assert!(!danger.is_expanded(), "network danger disclosure starts collapsed");
-                    danger.emit_by_name::<()>("activate", &[]);
-                    settle_toolkit();
-                    assert!(danger.is_expanded(), "network danger disclosure opens in place");
+                if [600, 1_200].contains(&width) {
+                    invoke_and_apply_until_button(
+                        &mut wire,
+                        &mut tree,
+                        &mut surface,
+                        &root,
+                        "Remove network…",
+                        "Remove network",
+                        12_753 + if width == 600 { 50 } else { 0 },
+                    );
                     root.measure(gtk::Orientation::Horizontal, -1);
                     root.measure(gtk::Orientation::Vertical, width);
                     root.allocate(width, 1_600, -1, None);
                     settle_frame();
-                    let remove = find_button(&network_card, "Remove");
+                    let remove = find_button(&network_card, "Remove network");
                     assert!(remove.has_css_class("size-small"));
                     assert_standard_action(&remove, width_name, "network removal", 28);
                     assert!(remove.grab_focus(), "expanded network removal is keyboard reachable");
-                    capture_stable(&window, "network-danger-wide", width, 800);
+                    let question = find_label(
+                        &network_card,
+                        "Removing network development disconnects it from the workspace and cannot be undone.",
+                    );
+                    let question_bounds = question
+                        .compute_bounds(&network_card)
+                        .expect("network consequence belongs to its card");
                     assert!(
-                        danger.grab_focus(),
-                        "focus returns to network disclosure before its focused child is removed"
+                        question_bounds.y() >= manage_bounds.y() + manage_bounds.height(),
+                        "{width_name} network consequence remained squeezed into the action row"
                     );
-                    danger.emit_by_name::<()>("activate", &[]);
-                    settle_toolkit();
-                    assert!(!danger.is_expanded(), "network danger disclosure closes in place");
-                    assert_labels_painted(
+                    capture_stable(
                         &window,
-                        &root,
-                        &[
-                            "Workspace",
-                            "Settings",
-                            "Extensions",
-                            "Containers",
-                            "Processes",
-                            "Executions",
-                            "Images",
-                            "Volumes",
-                            "Networks",
-                            "Terminals",
-                        ],
-                        1,
+                        &format!("network-danger-{width_name}"),
+                        width,
+                        800,
                     );
+                    invoke_and_apply_until_button(
+                        &mut wire,
+                        &mut tree,
+                        &mut surface,
+                        &root,
+                        "Cancel",
+                        "Remove network…",
+                        12_754 + if width == 600 { 50 } else { 0 },
+                    );
+                    if width == 1_200 {
+                        assert_labels_painted(
+                            &window,
+                            &root,
+                            &[
+                                "Workspace",
+                                "Settings",
+                                "Extensions",
+                                "Containers",
+                                "Processes",
+                                "Executions",
+                                "Images",
+                                "Volumes",
+                                "Networks",
+                                "Terminals",
+                            ],
+                            1,
+                        );
+                    }
                 }
                 toggle_creation_panel(
                     &mut wire,
@@ -1252,15 +1269,15 @@ mod unix {
                 assert!(inspect.has_css_class("variant-outline"));
                 assert_inline_action(&inspect, width_name, "volume inspection");
                 assert_secondary_resource_toggle(&window, &root, &inspect, &format!("{width_name} volume inspection"));
-                let danger = find_expander(&card, "Delete volume…");
-                assert!(danger.has_css_class("variant-outline"));
-                assert_eq!(danger.height(), 28, "{width_name} volume danger disclosure height");
+                let danger = find_button(&card, "Delete volume…");
+                assert!(danger.has_css_class("variant-ghost"));
+                assert!(danger.has_css_class("tone-danger"));
+                assert_eq!(danger.height(), 44, "{width_name} volume danger hit target");
                 assert_eq!(
                     danger.tooltip_text().as_deref(),
                     Some("Remove this volume and permanently delete its stored data")
                 );
-                assert!(danger.grab_focus(), "volume danger disclosure is keyboard reachable");
-                assert!(!danger.is_expanded(), "volume danger disclosure starts collapsed");
+                assert!(danger.grab_focus(), "volume danger action is keyboard reachable");
                 let inspect_bounds = inspect.compute_bounds(&card).expect("Inspect belongs to volume card");
                 let danger_bounds = danger
                     .compute_bounds(&card)
@@ -1277,27 +1294,54 @@ mod unix {
                     "{width_name} first volume record ended at {}px",
                     vertical_end(&root, &card)
                 );
-                if width == 1_200 {
-                    danger.emit_by_name::<()>("activate", &[]);
-                    settle_toolkit();
-                    assert!(danger.is_expanded(), "volume danger disclosure opens in place");
+                if [600, 1_200].contains(&width) {
+                    invoke_and_apply_until_button(
+                        &mut wire,
+                        &mut tree,
+                        &mut surface,
+                        &root,
+                        "Delete volume…",
+                        "Remove volume",
+                        12_755 + if width == 600 { 50 } else { 0 },
+                    );
                     root.measure(gtk::Orientation::Horizontal, -1);
                     root.measure(gtk::Orientation::Vertical, width);
                     root.allocate(width, 1_600, -1, None);
                     settle_frame();
-                    find_mapped_labelled(&card, "Removing this volume permanently deletes its stored data.");
-                    let remove = find_button(&card, "Remove");
+                    find_mapped_labelled(
+                        &card,
+                        "Removing volume workspace-cache permanently deletes its stored data.",
+                    );
+                    let remove = find_button(&card, "Remove volume");
                     assert!(remove.has_css_class("size-small"));
                     assert_standard_action(&remove, width_name, "volume removal", 28);
                     assert!(remove.grab_focus(), "expanded volume removal is keyboard reachable");
-                    capture(&window, "volume-danger-wide", width, 800);
-                    assert!(
-                        danger.grab_focus(),
-                        "focus returns to the disclosure before its focused child is removed"
+                    let question = find_label(
+                        &card,
+                        "Removing volume workspace-cache permanently deletes its stored data.",
                     );
-                    danger.emit_by_name::<()>("activate", &[]);
-                    settle_toolkit();
-                    assert!(!danger.is_expanded(), "volume danger disclosure closes in place");
+                    let question_bounds = question
+                        .compute_bounds(&card)
+                        .expect("volume consequence belongs to its card");
+                    assert!(
+                        question_bounds.y() >= inspect_bounds.y() + inspect_bounds.height(),
+                        "{width_name} volume consequence remained squeezed into the action row"
+                    );
+                    capture(
+                        &window,
+                        &format!("volume-danger-{width_name}"),
+                        width,
+                        800,
+                    );
+                    invoke_and_apply_until_button(
+                        &mut wire,
+                        &mut tree,
+                        &mut surface,
+                        &root,
+                        "Cancel",
+                        "Delete volume…",
+                        12_756 + if width == 600 { 50 } else { 0 },
+                    );
                 }
             }
             if fixture == "populated" && name == "images" {
@@ -1320,18 +1364,15 @@ mod unix {
                 assert!(inspect.has_css_class("variant-outline"));
                 assert_inline_action(&inspect, width_name, "image inspection");
                 assert_secondary_resource_toggle(&window, &root, &inspect, &format!("{width_name} image inspection"));
-                let danger = find_expander(&card, "Remove image…");
-                assert!(danger.has_css_class("variant-outline"));
-                assert_eq!(
-                    danger.height(),
-                    28,
-                    "{width_name} image danger disclosure stays compact"
-                );
+                let danger = find_button(&card, "Remove image…");
+                assert!(danger.has_css_class("variant-ghost"));
+                assert!(danger.has_css_class("tone-danger"));
+                assert_eq!(danger.height(), 44, "{width_name} image danger hit target");
                 assert_eq!(
                     danger.tooltip_text().as_deref(),
                     Some("Remove this image from the workspace image store")
                 );
-                assert!(danger.grab_focus(), "image danger disclosure is keyboard reachable");
+                assert!(danger.grab_focus(), "image danger action is keyboard reachable");
                 if width == 600 {
                     assert_compact_chooser_pixels(&window, &root, width, width_name);
                 }
@@ -1351,7 +1392,7 @@ mod unix {
                     aligned <= 2.0,
                     "{width_name} image actions split across rows: inspect={inspect_bounds:?}, danger={danger_bounds:?}"
                 );
-                if width == 1_200 {
+                if [600, 1_200].contains(&width) {
                     let size = find_label(&card, "7.8 MiB")
                         .compute_bounds(&card)
                         .expect("image size belongs to its card");
@@ -1360,26 +1401,49 @@ mod unix {
                         (size.y() - action.y()).abs() <= 8.0,
                         "wide image metadata and action split into separate bands: size={size:?} action={action:?}"
                     );
-                    assert!(!danger.is_expanded(), "image danger disclosure starts collapsed");
-                    danger.emit_by_name::<()>("activate", &[]);
-                    settle_toolkit();
-                    assert!(danger.is_expanded(), "image danger disclosure opens in place");
+                    invoke_and_apply_until_button(
+                        &mut wire,
+                        &mut tree,
+                        &mut surface,
+                        &root,
+                        "Remove image…",
+                        "Remove image",
+                        12_757 + if width == 600 { 50 } else { 0 },
+                    );
                     root.measure(gtk::Orientation::Horizontal, -1);
                     root.measure(gtk::Orientation::Vertical, width);
                     root.allocate(width, 1_600, -1, None);
                     settle_frame();
-                    let remove = find_button(&card, "Remove");
+                    let remove = find_button(&card, "Remove image");
                     assert!(remove.has_css_class("size-small"));
                     assert_standard_action(&remove, width_name, "image removal", 28);
                     assert!(remove.grab_focus(), "expanded image removal is keyboard reachable");
-                    capture_stable(&window, "image-danger-wide", width, 800);
-                    assert!(
-                        danger.grab_focus(),
-                        "focus returns to image disclosure before its focused child is removed"
+                    let question = find_label(
+                        &card,
+                        "Removing alpine:3.20 (sha256:bbbbb) cannot be undone.",
                     );
-                    danger.emit_by_name::<()>("activate", &[]);
-                    settle_toolkit();
-                    assert!(!danger.is_expanded(), "image danger disclosure closes in place");
+                    let question_bounds = question
+                        .compute_bounds(&card)
+                        .expect("image consequence belongs to its card");
+                    assert!(
+                        question_bounds.y() >= inspect_bounds.y() + inspect_bounds.height(),
+                        "{width_name} image consequence remained squeezed into the action row"
+                    );
+                    capture_stable(
+                        &window,
+                        &format!("image-danger-{width_name}"),
+                        width,
+                        800,
+                    );
+                    invoke_and_apply_until_button(
+                        &mut wire,
+                        &mut tree,
+                        &mut surface,
+                        &root,
+                        "Cancel",
+                        "Remove image…",
+                        12_758 + if width == 600 { 50 } else { 0 },
+                    );
                 }
             }
             if fixture == "populated" && name == "executions" {
@@ -1850,24 +1914,14 @@ mod unix {
                         if width == 600 { 13_050 } else { 13_000 },
                         |event| matches!(event, hl_gui::Event::Expand { .. }),
                     );
-                    apply_next_render(
-                        &mut wire,
-                        &mut tree,
-                        &mut surface,
-                        "opening process snapshot details",
-                    );
+                    apply_next_render(&mut wire, &mut tree, &mut surface, "opening process snapshot details");
                     assert!(details.is_expanded(), "{width_name} snapshot details open");
                     find_mapped_labelled(
                         &root,
                         "Full container namespace snapshots; PIDs identify only this observation and may be reused.",
                     );
                     find_mapped_labelled(&root, "Observed Aug 30, 2024, 06:40 UTC");
-                    capture_stable(
-                        &window,
-                        &format!("process-snapshot-details-{width_name}"),
-                        width,
-                        800,
-                    );
+                    capture_stable(&window, &format!("process-snapshot-details-{width_name}"), width, 800);
                     details.emit_by_name::<()>("activate", &[]);
                     settle_toolkit();
                     send_report(
@@ -1876,12 +1930,7 @@ mod unix {
                         if width == 600 { 13_051 } else { 13_001 },
                         |event| matches!(event, hl_gui::Event::Expand { .. }),
                     );
-                    apply_next_render(
-                        &mut wire,
-                        &mut tree,
-                        &mut surface,
-                        "closing process snapshot details",
-                    );
+                    apply_next_render(&mut wire, &mut tree, &mut surface, "closing process snapshot details");
                     assert!(!details.is_expanded(), "{width_name} snapshot details close again");
                     assert!(
                         !has_label(
@@ -2838,7 +2887,7 @@ mod unix {
             let hide_connections = find_button(&expanded_root, "Hide connections");
             assert!(hide_connections.has_css_class("variant-outline"));
             assert!(hide_connections.has_css_class("tone-neutral"));
-            assert!(!find_expander(&expanded_root, "Remove network…").is_expanded());
+            assert!(find_button(&expanded_root, "Remove network…").is_sensitive());
             assert_label_order(
                 &expanded_root,
                 &["Remove network…", "Network details", "Container attachment"],
@@ -2971,7 +3020,7 @@ mod unix {
                 &format!("Container · {}", &container_id[..12])
             ));
             assert!(has_label(&success_root, "Technical details"));
-            assert!(!find_expander(&success_root, "Remove network…").is_expanded());
+            assert!(find_button(&success_root, "Remove network…").is_sensitive());
             assert_label_order(
                 &success_root,
                 &[
@@ -5576,7 +5625,10 @@ mod unix {
         }
         let entry = find_entry_placeholder(root, field);
         settle_frame();
-        assert!(!entry.is_mapped(), "{width_name} {page} creation fields are visible by default");
+        assert!(
+            !entry.is_mapped(),
+            "{width_name} {page} creation fields are visible by default"
+        );
         let trigger = find_button(root, action);
         assert_standard_action(&trigger, width_name, &format!("{page} create trigger"), 28);
         assert!(trigger.has_css_class("variant-outline"));
@@ -5588,7 +5640,10 @@ mod unix {
         root.measure(gtk::Orientation::Vertical, width);
         root.allocate(width, 1_600, -1, None);
         settle_frame();
-        assert!(entry.is_mapped(), "{width_name} {page} create action did not reveal its fields");
+        assert!(
+            entry.is_mapped(),
+            "{width_name} {page} create action did not reveal its fields"
+        );
         let close = find_button(root, cancel);
         assert!(close.has_css_class("variant-ghost"));
         assert_standard_action(&close, width_name, &format!("{page} create cancel"), 28);
@@ -5597,7 +5652,10 @@ mod unix {
         invoke_and_apply_until_button(wire, tree, surface, root, cancel, action, channel + 2);
         settle_frame();
         assert!(!entry.is_mapped(), "{width_name} {page} cancel did not hide its fields");
-        assert!(find_button(root, action).is_mapped(), "{width_name} {page} action did not return");
+        assert!(
+            find_button(root, action).is_mapped(),
+            "{width_name} {page} action did not return"
+        );
     }
 
     fn toggle_creation_panel(

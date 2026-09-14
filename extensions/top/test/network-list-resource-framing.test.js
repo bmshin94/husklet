@@ -133,8 +133,13 @@ test(
       choose(stage, containerId);
       await until(() => labelled(stage, 'Connect'));
       assert.equal(labelled(stage, 'Disconnect'), undefined);
-      invoke(stage, 'Remove');
-      assert.ok(labelled(stage, `Remove immutable network ${staleId} (stale-net)?`));
+      invoke(stage, 'Remove network…');
+      assert.ok(
+        labelled(
+          stage,
+          'Removing network stale-net disconnects it from the workspace and cannot be undone.',
+        ),
+      );
 
       const refreshStart = stage.frames.length;
       invoke(stage, 'Refresh');
@@ -149,9 +154,9 @@ test(
         'Manage connections',
         'Connect',
         'Disconnect',
-        'Remove',
+        'Remove network…',
+        'Remove network',
         'Confirm disconnect',
-        'Confirm remove',
       ]) {
         assert.equal(
           refreshPatches.some((patch) => patch.SetProp?.value?.Text === stale),
@@ -168,7 +173,8 @@ test(
       invoke(stage, 'Refresh');
       await until(() => labelled(stage, 'current-net'));
       assert.equal(attempts, 4);
-      for (const control of ['Manage connections', 'Remove']) assert.ok(labelled(stage, control));
+      for (const control of ['Manage connections', 'Remove network…'])
+        assert.ok(labelled(stage, control));
       const currentPatches = stage.frames.slice(currentStart).flatMap((frame) => frame.patches);
       for (const endpointControl of ['Connect', 'Disconnect'])
         assert.equal(

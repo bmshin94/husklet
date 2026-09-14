@@ -6,7 +6,6 @@ import {
   CardContent,
   CardHeader,
   Column,
-  ConfirmAction,
   Entry,
   Expander,
   FormControl,
@@ -348,31 +347,16 @@ export function Images({
                   onInvoke={() => void toggleInspection(item)}
                 />
               }
-              overflow={
-                <Expander
-                  label="Remove image…"
-                  variant="outline"
-                  width="content"
-                  align="start"
-                  tooltip="Remove this image from the workspace image store"
-                >
-                  <Column gap={1}>
-                    <Text label="Removing this image cannot be undone." color="text-dim" wrap />
-                    <Row>
-                      <ConfirmAction
-                        authorityKey={`image:${item.id}:remove`}
-                        label="Remove"
-                        confirmLabel="Confirm remove"
-                        pendingLabel="Confirm remove"
-                        question={`Remove ${item.reference || '<untagged>'} (${shortId(item.id)})?`}
-                        size="small"
-                        enabled={!busy}
-                        onConfirm={() => remove(item)}
-                      />
-                    </Row>
-                  </Column>
-                </Expander>
-              }
+              danger={{
+                authorityKey: `image:${item.id}:remove`,
+                label: 'Remove image…',
+                tooltip: 'Remove this image from the workspace image store',
+                question: `Removing ${item.reference || '<untagged>'} (${shortId(item.id)}) cannot be undone.`,
+                confirmLabel: 'Remove image',
+                pendingLabel: 'Removing…',
+                enabled: !busy,
+                onConfirm: () => remove(item),
+              }}
             />
             {inspection.id === item.id ? (
               <CardContent>

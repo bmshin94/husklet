@@ -6,7 +6,7 @@ import { host } from './host.js';
 
 const resource = (data) => ({ data, loading: false, error: null, reload: async () => {} });
 
-test('image inventory is a full-width compact summary with secondary inspection and disclosed destruction', async () => {
+test('image inventory keeps destruction compact until a full-width confirmation is requested', async () => {
   const stage = host();
   const frame = stage.render(
     h(Images, {
@@ -86,12 +86,20 @@ test('image inventory is a full-width compact summary with secondary inspection 
     'a horizontal-only spacer separates identity and status from the trailing action cluster',
   );
   assert.deepEqual(property(stage, 'Inspect', 'Variant'), { Variant: 'Outline' });
-  assert.deepEqual(property(stage, 'Remove image…', 'Variant'), { Variant: 'Outline' });
-  assert.deepEqual(property(stage, 'Remove image…', 'Width'), { Length: 'Content' });
+  assert.deepEqual(property(stage, 'Remove image…', 'Variant'), { Variant: 'Ghost' });
+  assert.deepEqual(property(stage, 'Remove image…', 'Tone'), { Tone: 'Danger' });
   assert.deepEqual(property(stage, 'Remove image…', 'Tooltip'), {
     Text: 'Remove this image from the workspace image store',
   });
-  assert.deepEqual(property(stage, 'Remove', 'Size'), { ControlSize: 'Small' });
+  invoke(stage, 'Remove image…');
+  assert.ok(labelled(stage, 'Removing alpine:3.20 (sha256:image) cannot be undone.'));
+  assert.deepEqual(ancestorTags(stage, 'Remove image').slice(0, 3), [
+    'Row',
+    'Column',
+    'CardContent',
+  ]);
+  assert.deepEqual(property(stage, 'Remove image', 'Size'), { ControlSize: 'Small' });
+  assert.deepEqual(property(stage, 'Remove image', 'Destructive'), { Flag: true });
   invoke(stage, 'Inspect');
   await settled();
   assert.ok(
@@ -102,7 +110,7 @@ test('image inventory is a full-width compact summary with secondary inspection 
   );
 });
 
-test('network inventory keeps management and destructive disclosure in one compact summary row', () => {
+test('network inventory keeps a compact trigger and gives confirmation the card width', () => {
   const stage = host();
   stage.render(
     h(Networks, {
@@ -138,7 +146,19 @@ test('network inventory keeps management and destructive disclosure in one compa
   assert.deepEqual(property(stage, 'Remove network…', 'Tooltip'), {
     Text: 'Remove this network from the workspace',
   });
-  assert.deepEqual(property(stage, 'Remove', 'Size'), { ControlSize: 'Small' });
+  invoke(stage, 'Remove network…');
+  assert.ok(
+    labelled(
+      stage,
+      'Removing network development disconnects it from the workspace and cannot be undone.',
+    ),
+  );
+  assert.deepEqual(ancestorTags(stage, 'Remove network').slice(0, 3), [
+    'Row',
+    'Column',
+    'CardContent',
+  ]);
+  assert.deepEqual(property(stage, 'Remove network', 'Size'), { ControlSize: 'Small' });
 });
 
 test('volume authority refusal gives one recovery path and withholds removal', async () => {
@@ -176,7 +196,7 @@ test('volume authority refusal gives one recovery path and withholds removal', a
   assert.equal(openedExtensions, 1);
 });
 
-test('volume inventory keeps inspection and destructive disclosure in one compact summary row', () => {
+test('volume inventory keeps inspection compact and expands danger below the summary', () => {
   const stage = host();
   stage.render(
     h(Volumes, {
@@ -203,7 +223,16 @@ test('volume inventory keeps inspection and destructive disclosure in one compac
   assert.deepEqual(property(stage, 'Delete volume…', 'Tooltip'), {
     Text: 'Remove this volume and permanently delete its stored data',
   });
-  assert.deepEqual(property(stage, 'Remove', 'Size'), { ControlSize: 'Small' });
+  invoke(stage, 'Delete volume…');
+  assert.ok(
+    labelled(stage, 'Removing volume workspace-cache permanently deletes its stored data.'),
+  );
+  assert.deepEqual(ancestorTags(stage, 'Remove volume').slice(0, 3), [
+    'Row',
+    'Column',
+    'CardContent',
+  ]);
+  assert.deepEqual(property(stage, 'Remove volume', 'Size'), { ControlSize: 'Small' });
 });
 
 test('resource inspection actions become explicit compact close actions', async () => {
