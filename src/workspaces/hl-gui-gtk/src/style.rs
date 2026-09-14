@@ -98,6 +98,7 @@ fn controls(css: &mut String, theme: &Theme) {
          checkbutton radio {{ border-radius: 50%; }}\n\
          checkbutton.hl-radio label {{ margin-left: 5px; }}\n\
          checkbutton check:checked, checkbutton radio:checked {{ background: {accent}; border-color: {accent}; }}\n\
+         checkbutton:disabled check:checked, checkbutton:disabled check:indeterminate, checkbutton:disabled radio:checked {{ background: {faint}; border-color: {faint}; color: {surface}; }}\n\
          checkbutton:focus check, checkbutton:focus-visible check, checkbutton:focus radio, checkbutton:focus-visible radio {{ outline: 2px solid {accent}; outline-offset: 2px; }}\n\
          .hl-table {{ background: {ground}; border: 1px solid {line}; border-radius: {radius}px; }}\n\
          .hl-tablehead .hl-tablecell {{ background: {raised}; color: {text}; font-weight: 600; }}\n\
@@ -667,6 +668,9 @@ mod tests {
         assert!(css.contains("checkbutton radio { border-radius: 50%;"));
         assert!(css.contains(
             "checkbutton check:checked, checkbutton radio:checked { background: #559df7; border-color: #559df7;"
+        ));
+        assert!(css.contains(
+            "checkbutton:disabled check:checked, checkbutton:disabled check:indeterminate, checkbutton:disabled radio:checked { background: #a9b0bc; border-color: #a9b0bc; color: #171a20;"
         ));
         assert!(css.contains(
             "checkbutton:focus check, checkbutton:focus-visible check, checkbutton:focus radio, checkbutton:focus-visible radio { outline: 2px solid #559df7; outline-offset: 2px;"

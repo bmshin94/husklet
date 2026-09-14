@@ -71,6 +71,10 @@ test('Checkbox documents enabled and disabled unchecked, checked, and mixed stat
       label?.includes('pressing Space on a mixed parent resolves it to checked'),
     ),
   );
+  assert(
+    text.some((label) => label?.includes('retains its value in neutral chrome')),
+    'the reference does not distinguish retained disabled values from enabled selections',
+  );
   assert(text.indexOf('State matrix') < text.indexOf('API'));
 });
 

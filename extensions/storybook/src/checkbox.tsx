@@ -95,6 +95,11 @@ export function CheckboxWorkbench() {
           label="Mixed is a presentation state, not a third submitted value. Clicking the label or pressing Space on a mixed parent resolves it to checked; the next activation clears it. Keep native focus visible and announce the selected count in the label."
           wrap
         />
+        <Text
+          label="A disabled checked or mixed control retains its value in neutral chrome; it must not look like an enabled selection. Explain why it cannot be changed in nearby helper text."
+          color="text-dim"
+          wrap
+        />
       </DocumentationSection>
       <DocumentationSection title="Choose the right control">
         <Text

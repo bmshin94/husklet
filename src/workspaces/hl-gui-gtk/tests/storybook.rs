@@ -785,6 +785,20 @@ mod unix {
                 "wide Checkbox fixture did not exercise an expanding row: {}px",
                 checkbox.width()
             );
+            let states: Vec<gtk::CheckButton> = descendants::<gtk::CheckButton>(&root)
+                .into_iter()
+                .filter(|button| button.label().as_deref() == Some("Diagnostics"))
+                .collect();
+            assert_eq!(states.len(), 6, "Checkbox state matrix is incomplete");
+            let retained: Vec<&gtk::CheckButton> = states
+                .iter()
+                .filter(|button| !button.is_sensitive() && (button.is_active() || button.is_inconsistent()))
+                .collect();
+            assert_eq!(retained.len(), 2, "disabled checked and mixed states are both required");
+            assert!(
+                retained.iter().all(|button| button.height() == 18),
+                "retained disabled states changed the compact row geometry"
+            );
             capture_story(&realized_window, "Checkbox focused mixed");
             let _ = surface.reports().drain();
         }
