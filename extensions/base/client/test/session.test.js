@@ -9388,6 +9388,8 @@ test('observed terminal input keeps snapshot authority intact over one-byte Unix
   const socketPath = path.join(directory, 'host.sock');
   const received = [];
   const connections = new Set();
+  const writers = ['b'.repeat(32), 'c'.repeat(32)];
+  let openedWriters = 0;
   const server = net.createServer((socket) => {
     connections.add(socket);
     socket.on('close', () => connections.delete(socket));
@@ -9397,12 +9399,14 @@ test('observed terminal input keeps snapshot authority intact over one-byte Unix
         if (frame.channel !== 2) continue;
         received.push(frame.payload);
         if (frame.payload.call === 'terminal_input_open') {
+          const writer = writers[openedWriters++];
+          assert.ok(writer, 'the client opens only the expected replacement writer');
           const response = encode({
             channel: 2,
             kind: KIND.response,
             payload: {
               reply: 'terminal_input_writer',
-              with: { writer: 'b'.repeat(32), next_sequence: 0 },
+              with: { writer, next_sequence: 0 },
             },
           });
           for (const byte of response) socket.write(Uint8Array.of(byte));
@@ -9468,6 +9472,30 @@ test('observed terminal input keeps snapshot authority intact over one-byte Unix
         'echo stale',
       ),
       /pane snapshot is stale/,
+    );
+    await terminal.writeObserved(
+      { slot: 'pane-a', generation: 7, revision: 10, lines: ['$ current'], truncated: false },
+      'echo recovered',
+    );
+    assert.deepEqual(
+      received.map((request) =>
+        request.call === 'terminal_write_pane'
+          ? {
+              call: request.call,
+              writer: request.with.writer,
+              sequence: request.with.sequence,
+              revision: request.with.revision,
+            }
+          : { call: request.call },
+      ),
+      [
+        { call: 'terminal_input_open' },
+        { call: 'terminal_write_pane', writer: writers[0], sequence: 0, revision: 10 },
+        { call: 'terminal_write_pane', writer: writers[0], sequence: 1, revision: 9 },
+        { call: 'terminal_input_open' },
+        { call: 'terminal_write_pane', writer: writers[1], sequence: 0, revision: 10 },
+      ],
+      'a definitive stale refusal rotates the automatic writer instead of leaving a sequence hole',
     );
     await session.close();
   } finally {

@@ -1862,17 +1862,35 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       }
       return { writer, sequence };
     }
-    terminalInputWriter ??= session.call('terminal_input_open').then((reply) => {
-      const opened = expect(reply, 'terminal_input_writer');
-      if (!/^[0-9a-f]{32}$/.test(opened.writer) || !Number.isSafeInteger(opened.next_sequence)) {
-        throw new TypeError('host returned an invalid terminal input writer');
-      }
-      return { writer: opened.writer, next: opened.next_sequence };
-    });
+    if (!terminalInputWriter) {
+      const opening = session.call('terminal_input_open').then((reply) => {
+        const opened = expect(reply, 'terminal_input_writer');
+        if (!/^[0-9a-f]{32}$/.test(opened.writer) || !Number.isSafeInteger(opened.next_sequence)) {
+          throw new TypeError('host returned an invalid terminal input writer');
+        }
+        return { writer: opened.writer, next: opened.next_sequence };
+      });
+      const retained = opening.catch((cause) => {
+        if (terminalInputWriter === retained) terminalInputWriter = undefined;
+        throw cause;
+      });
+      terminalInputWriter = retained;
+    }
     const state = await terminalInputWriter;
     const allocated = state.next;
     state.next += 1;
     return { writer: state.writer, sequence: allocated };
+  };
+  const retireTerminalInput = async (writer: string) => {
+    const retained = terminalInputWriter;
+    if (!retained) return;
+    try {
+      const state = await retained;
+      if (state.writer === writer && terminalInputWriter === retained)
+        terminalInputWriter = undefined;
+    } catch {
+      if (terminalInputWriter === retained) terminalInputWriter = undefined;
+    }
   };
   const readTerminalHistory = async (
     observed: { slot: string; generation: number; revision: number },
@@ -4391,14 +4409,24 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         }
         const contents = exactPaneInput(input);
         const { writer, sequence } = await allocateTerminalInput(askedWriter, askedSequence);
-        const reply = await session.call('terminal_write_pane', {
-          slot,
-          generation,
-          revision,
-          writer,
-          sequence,
-          contents: [...contents],
-        });
+        let reply;
+        try {
+          reply = await session.call('terminal_write_pane', {
+            slot,
+            generation,
+            revision,
+            writer,
+            sequence,
+            contents: [...contents],
+          });
+        } catch (cause) {
+          // A refusal does not consume the host's sequence, while a lost reply
+          // may have consumed it. In both cases, abandon this automatic epoch:
+          // explicit recovery retains its exact writer/sequence, and unrelated
+          // later input starts from a fresh host-issued cursor.
+          await retireTerminalInput(writer);
+          throw cause;
+        }
         const receipt = expect(reply, 'terminal_pane_input');
         if (
           receipt.slot !== slot ||
