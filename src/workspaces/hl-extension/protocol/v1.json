@@ -3442,6 +3442,13 @@
           "schema": {
             "kind": "string"
           }
+        },
+        {
+          "name": "reference",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
         }
       ],
       "kind": "struct",
@@ -16181,7 +16188,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:ec3f54442558cc6e",
+  "source_fingerprint": "fnv1a64:8cf886c5e31e3106",
   "specification_version": 1,
   "topics": [
     {

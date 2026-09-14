@@ -1988,7 +1988,7 @@ test('image pull jobs and progress watcher preserve exact typed wire shapes', as
     encode({
       channel: 2,
       kind: KIND.response,
-      payload: { reply: 'image_pull_job', with: { job: '7' } },
+      payload: { reply: 'image_pull_job', with: { job: '7', reference: 'alpine:3.20' } },
     }),
   );
   assert.deepEqual((await next()).payload, { call: 'image_pull_status', with: { job: '7' } });
@@ -2049,7 +2049,8 @@ test('image pull completes through start and status without cancelling', async (
   const api = workspace({
     async call(name) {
       calls.push(name);
-      if (name === 'image_pull_start') return { reply: 'image_pull_job', with: { job: 'job' } };
+      if (name === 'image_pull_start')
+        return { reply: 'image_pull_job', with: { job: 'job', reference: 'alpine:3.20' } };
       return {
         reply: 'image_pull',
         with: { job: 'job', reference: image.reference, revision: 2, state: 'complete', image },
@@ -2469,7 +2470,8 @@ test('image pull preserves host failure when best-effort cancellation also fails
   const api = workspace({
     async call(name) {
       calls.push(name);
-      if (name === 'image_pull_start') return { reply: 'image_pull_job', with: { job: 'job' } };
+      if (name === 'image_pull_start')
+        return { reply: 'image_pull_job', with: { job: 'job', reference: 'alpine:3.20' } };
       if (name === 'image_pull_status')
         return {
           reply: 'image_pull',
@@ -2498,7 +2500,8 @@ test('image pull timeout and AbortSignal cancel the owned host job and preserve 
     const api = workspace({
       async call(name) {
         calls.push(name);
-        if (name === 'image_pull_start') return { reply: 'image_pull_job', with: { job: 'job' } };
+        if (name === 'image_pull_start')
+          return { reply: 'image_pull_job', with: { job: 'job', reference: 'alpine:3.20' } };
         if (name === 'image_pull_status') {
           if (mode === 'abort') controller.abort(new Error('caller stopped pull'));
           return {

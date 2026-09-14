@@ -231,6 +231,18 @@ export class ContainerCreateOnceProtocolError extends Error {
   }
 }
 
+/** The host returned an image-pull job for another image reference. */
+export class ImagePullStartProtocolError extends Error {
+  readonly expectedReference;
+  readonly receivedReference;
+  constructor(expectedReference, receivedReference) {
+    super('host returned an image-pull job for another image reference');
+    this.name = 'ImagePullStartProtocolError';
+    this.expectedReference = expectedReference;
+    this.receivedReference = receivedReference;
+  }
+}
+
 /** A credential removal may have committed before its reply was lost. */
 export class CredentialRemoveOperationError extends Error {
   readonly key;
@@ -3438,10 +3450,13 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           throw new RangeError('image pull timeoutMs must be an integer from 1 to 86400000');
         }
         requireOutputActive(signal);
-        const { job } = expect(
+        const pullJob = expect(
           await session.call('image_pull_start', { reference }),
           'image_pull_job',
         );
+        if (pullJob.reference !== reference)
+          throw new ImagePullStartProtocolError(reference, pullJob.reference);
+        const { job } = pullJob;
         const deadline = Date.now() + timeoutMs;
         try {
           for (;;) {
@@ -3463,8 +3478,12 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           throw error;
         }
       },
-      startPull: async (reference) =>
-        expect(await session.call('image_pull_start', { reference }), 'image_pull_job'),
+      startPull: async (reference) => {
+        const job = expect(await session.call('image_pull_start', { reference }), 'image_pull_job');
+        if (job.reference !== reference)
+          throw new ImagePullStartProtocolError(reference, job.reference);
+        return job;
+      },
       pullStatus: async (job) =>
         expect(await session.call('image_pull_status', { job }), 'image_pull'),
       cancelPull: (job) => done('image_pull_cancel', { job }),

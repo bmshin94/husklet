@@ -340,6 +340,7 @@ pub struct ImagePruneResult {
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ImagePullJob {
     pub job: String,
+    pub reference: String,
 }
 
 /// Latest truthful state of one image pull. Byte totals are absent when the registry omits them.

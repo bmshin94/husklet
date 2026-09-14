@@ -65,6 +65,12 @@ export declare class ContainerCreateOnceProtocolError extends Error {
     readonly receivedToken: any;
     constructor(expectedToken: any, receivedToken: any);
 }
+/** The host returned an image-pull job for another image reference. */
+export declare class ImagePullStartProtocolError extends Error {
+    readonly expectedReference: any;
+    readonly receivedReference: any;
+    constructor(expectedReference: any, receivedReference: any);
+}
 /** A credential removal may have committed before its reply was lost. */
 export declare class CredentialRemoveOperationError extends Error {
     readonly key: any;

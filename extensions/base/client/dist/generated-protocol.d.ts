@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:3a205fb7a596094f
+// Protocol artifact fnv1a64:2a2a71f60053add9
 export const PROTOCOL_SPECIFICATION_VERSION: 1;
 export const PROTOCOL_VERSION: 1;
 export const PROTOCOL_BOUNDS: Readonly<{ "extension_job_bytes": number; "extension_reference_bytes": number; "pane_input_bytes": number; "pane_inventory_items": number; "pane_text_bytes": number; "resource_inventory_items": number; "semantic_action_value_bytes": number; "semantic_depth": number; "semantic_nodes": number; "semantic_text_bytes": number; "terminal_command_argument_bytes": number; "terminal_command_bytes": number }>;
@@ -73,7 +73,7 @@ export type ImageGrant = { "read"?: Array<ImageSelector>; "use"?: Array<ImageSel
 export type ImageInventory = { "images": Array<ImageSummary>; "truncated": boolean };
 export type ImagePruneResult = { "deleted": number; "space_reclaimed": number };
 export type ImagePullChange = { "sequence": number; "job": string; "revision": number; "state": string; "coalesced": number };
-export type ImagePullJob = { "job": string };
+export type ImagePullJob = { "job": string; "reference": string };
 export type ImagePullStatus = { "job": string; "reference": string; "revision": number; "state": string; "status"?: string | null; "layer"?: string | null; "current"?: number | null; "total"?: number | null; "image"?: ImageSummary | null; "error"?: string | null };
 export type ImageSelector = { "digest": string } | { "reference": string } | { "all": boolean };
 export type ImageSummary = { "id": string; "reference": string; "references"?: Array<string>; "size": number; "created": number };

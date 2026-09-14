@@ -17,6 +17,7 @@ import {
   FileIdentityChangedError,
   FileWriteOperationError,
   FilesystemJournalGapError,
+  ImagePullStartProtocolError,
   JsonLineDecodeError,
   JsonLineParseError,
   PaneInventoryChangedError,
@@ -29,6 +30,48 @@ import {
   workspace,
 } from '../dist/index.js';
 import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
+
+test('fragmented Unix image pull refuses a job for another reference', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-image-pull-authority-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const server = net.createServer((socket) => {
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.payload.call !== 'image_pull_start') continue;
+        const reply = encode({
+          channel: 2,
+          kind: KIND.response,
+          payload: {
+            reply: 'image_pull_job',
+            with: { job: 'hostile-job', reference: 'registry.example/private:latest' },
+          },
+        });
+        for (const byte of reply) socket.write(Uint8Array.of(byte));
+      }
+    });
+    socket.write(
+      encode({
+        channel: CONTROL,
+        kind: KIND.open,
+        payload: { protocol: 1, peer: 'image-pull-authority', granted: ['images:pull'] },
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  let session;
+  try {
+    session = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(session).images.startPull('alpine:3.20'),
+      (error) => error instanceof ImagePullStartProtocolError,
+    );
+  } finally {
+    await session?.close();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 const FILE_JOURNAL = '0123456789abcdef0123456789abcdef';
 const REPLACEMENT_FILE_JOURNAL = 'fedcba9876543210fedcba9876543210';

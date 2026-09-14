@@ -103,7 +103,10 @@ impl ImageStore for ImageLibrary {
             let outcome = bridge.wait(pull_job(&bridge, &reference, &worker_job, &registry, &cancel));
             finish_pull(&registry, &worker_job, &cancel, outcome);
         });
-        Ok(ImagePullJob { job })
+        Ok(ImagePullJob {
+            job,
+            reference: reference.to_owned(),
+        })
     }
 
     fn pull_status(&self, owner: &str, job: &str) -> Result<ImagePullStatus, HostError> {

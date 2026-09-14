@@ -470,6 +470,13 @@ export interface ImagePruneResult {
 }
 export interface ImagePullJob {
   job: string;
+  reference: string;
+}
+
+/** The host returned an image-pull job for another image reference. */
+export declare class ImagePullStartProtocolError extends Error {
+  readonly expectedReference: string;
+  readonly receivedReference: string;
 }
 export interface ImagePullStatus {
   job: string;
