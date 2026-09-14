@@ -1799,7 +1799,7 @@ mod unix {
                 &mut wire,
                 &mut tree,
                 &mut surface,
-                "Remove storybook? Its private workspace data will be permanently deleted.",
+                "Remove storybook? Its private data and grants will be deleted. Created containers, images, volumes, and networks remain.",
                 |request| panic!("unexpected removal confirmation request: {request:?}"),
             );
             let confirmation_root = surface.widget().clone().upcast::<gtk::Widget>();
@@ -1808,7 +1808,7 @@ mod unix {
             let open = find_button(&confirmation_root, "Open");
             let question = find_label(
                 &confirmation_root,
-                "Remove storybook? Its private workspace data will be permanently deleted.",
+                "Remove storybook? Its private data and grants will be deleted. Created containers, images, volumes, and networks remain.",
             );
             for (width_name, width) in [("wide", 1_200), ("narrow", 600)] {
                 resize_window(&window, width, 800);
@@ -1821,7 +1821,7 @@ mod unix {
                 assert_contained(&confirmation_root, &format!("extension removal/{width_name}"));
                 assert!(has_label(
                     &confirmation_root,
-                    "Remove storybook? Its private workspace data will be permanently deleted."
+                    "Remove storybook? Its private data and grants will be deleted. Created containers, images, volumes, and networks remain."
                 ));
                 assert_standard_action(&confirm, width_name, "destructive confirmation", 28);
                 assert_standard_action(&cancel, width_name, "removal cancellation", 28);
@@ -1895,7 +1895,7 @@ mod unix {
             let deadline = Instant::now() + DEADLINE;
             while has_label(
                 surface.widget().upcast_ref(),
-                "Remove storybook? Its private workspace data will be permanently deleted.",
+                "Remove storybook? Its private data and grants will be deleted. Created containers, images, volumes, and networks remain.",
             ) {
                 let frame = receive_until(&mut wire, deadline).expect("cancellation rerenders");
                 if frame.kind == hl_extension::Kind::Credit {
@@ -1914,7 +1914,7 @@ mod unix {
             assert!(
                 !has_label(
                     surface.widget().upcast_ref(),
-                    "Remove storybook? Its private workspace data will be permanently deleted."
+                    "Remove storybook? Its private data and grants will be deleted. Created containers, images, volumes, and networks remain."
                 ),
                 "cancellation closes destructive confirmation"
             );

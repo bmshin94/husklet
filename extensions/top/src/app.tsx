@@ -68,6 +68,7 @@ export {
   catalogueTrust,
   catalogueCandidateMismatch,
   compactImageReference,
+  extensionRemovalQuestion,
   filterCatalogueEntries,
   filterInstalledExtensions,
   installedExtensionNeedsAttention,

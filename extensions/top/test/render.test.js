@@ -33,6 +33,7 @@ import {
   catalogueTrust,
   catalogueCandidateMismatch,
   compactImageReference,
+  extensionRemovalQuestion,
   capabilityLabel,
   filterCatalogueEntries,
   filterInstalledExtensions,
@@ -58,6 +59,13 @@ test('every host capability has explicit consent language and workspace lifecycl
   }
   assert.equal(capabilityLabel('workspaces:configure'), 'Modify workspace settings');
   assert.equal(capabilityLabel('workspaces:control'), 'Create, start, stop, and delete workspaces');
+});
+
+test('extension removal states exactly what is deleted and what remains', () => {
+  assert.equal(
+    extensionRemovalQuestion('database'),
+    'Remove database? Its private data and grants will be deleted. Created containers, images, volumes, and networks remain.',
+  );
 });
 
 test('catalogue display strings cannot forge verified publisher status', () => {
@@ -3637,7 +3645,10 @@ test('installed extension removal requires final consent and a failure remains r
   invoke(stage, 'Remove extension');
   assert.deepEqual(calls, [], 'opening consent carries no removal authority');
   assert.ok(
-    labelled(stage, 'Remove assistant? Its private workspace data will be permanently deleted.'),
+    labelled(
+      stage,
+      'Remove assistant? Its private data and grants will be deleted. Created containers, images, volumes, and networks remain.',
+    ),
   );
   invoke(stage, 'Remove assistant');
   invoke(stage, 'Remove assistant');

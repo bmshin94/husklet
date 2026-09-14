@@ -2653,7 +2653,7 @@ export function Extensions({
                                             <ConfirmAction
                                               label="Remove extension"
                                               confirmLabel={`Remove ${extension.name}`}
-                                              question={`Remove ${extension.name}? Its private workspace data will be permanently deleted.`}
+                                              question={extensionRemovalQuestion(extension.name)}
                                               authorityKey={extension.image_digest}
                                               enabled={!busy}
                                               size="small"
@@ -2962,6 +2962,10 @@ function lifecycleResult(action: LifecycleAction): string {
       : action === 'retry'
         ? 'recovered'
         : 'removed';
+}
+
+export function extensionRemovalQuestion(name: string): string {
+  return `Remove ${name}? Its private data and grants will be deleted. Created containers, images, volumes, and networks remain.`;
 }
 
 function lifecycleStateObserved(
