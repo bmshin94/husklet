@@ -12,10 +12,18 @@ import {
   acquisitionCancellationRecovery,
   acquisitionCancellationUnverified,
   lifecycleStateObserved,
+  lifecycleReconciliationFailure,
 } from '../dist/app.js';
 import { host } from './host.js';
 
 test('digest-pinned same-version review rejects a substituted image over real Unix framing', async () => {
+  assert.equal(
+    lifecycleReconciliationFailure(
+      'connection closed before enable reply.',
+      'inventory socket closed',
+    ),
+    'connection closed before enable reply. Current extension state could not be verified: inventory socket closed',
+  );
   assert.equal(
     acquisitionCancellationUnverified('status socket closed'),
     'Cancellation was accepted, but its final state could not be verified. Return to the catalogue before trying again. status socket closed',

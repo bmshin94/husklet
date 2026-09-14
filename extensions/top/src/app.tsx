@@ -76,6 +76,7 @@ export {
   filterInstalledExtensions,
   installedExtensionNeedsAttention,
   lifecycleStateObserved,
+  lifecycleReconciliationFailure,
   staleCatalogueExpectation,
 } from './extensions.js';
 

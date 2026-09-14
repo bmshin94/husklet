@@ -1037,8 +1037,12 @@ export function Extensions({
           });
           return;
         }
-      } catch {
-        // Preserve the original operation failure when reconciliation is also unavailable.
+      } catch (reconciliationCause) {
+        setLifecycleFailure({
+          ...operation,
+          detail: lifecycleReconciliationFailure(message(cause), message(reconciliationCause)),
+        });
+        return;
       }
       setLifecycleFailure({ ...operation, detail: message(cause) });
     } finally {
@@ -2855,6 +2859,10 @@ export function Extensions({
       ) : null}
     </Column>
   );
+}
+
+export function lifecycleReconciliationFailure(operation: string, verification: string): string {
+  return `${operation} Current extension state could not be verified: ${verification}`;
 }
 
 function AcquisitionProgressAction({
