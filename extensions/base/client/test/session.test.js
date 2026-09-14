@@ -7093,6 +7093,34 @@ test('a malformed greeting fails immediately instead of stranding readiness', as
   }
 });
 
+test('a concurrent-client reset reports session ownership before readiness', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-busy-session-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const connections = new Set();
+  const server = net.createServer((socket) => {
+    connections.add(socket);
+    socket.on('close', () => connections.delete(socket));
+    socket.end(
+      encode({
+        channel: CONTROL,
+        kind: KIND.reset,
+        payload: Buffer.from('another client already owns this extension session'),
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    await assert.rejects(
+      connect({ path: socketPath, connectTimeout: 1_000 }),
+      /another client already owns this extension session/,
+    );
+  } finally {
+    for (const connection of connections) connection.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('missing, malformed, and duplicated greetings fail closed before calls', async () => {
   for (const greeting of [
     { protocol: 1, granted: [] },

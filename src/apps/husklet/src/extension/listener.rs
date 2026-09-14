@@ -21,6 +21,8 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use hl_extension::{Frame, Kind, Wire};
+
 use super::SidecarSpec;
 
 /// The one connection an extension may hold at a time, kept as a second
@@ -311,11 +313,24 @@ where
     };
     if held.is_some() {
         // One extension, one conversation. A second caller is closed rather
-        // than queued, so it learns immediately instead of waiting on a
-        // session it will never be given.
+        // than queued. Give a protocol-aware client an actionable reason so
+        // it does not misdiagnose session ownership as a broken host socket.
+        refuse_busy(stream);
         return held;
     }
     serve(stream, attend, live)
+}
+
+/// Refuses a concurrent client without letting a peer that does not read hold
+/// the accept loop. A fresh Unix stream has room for this one small frame, and
+/// the write deadline remains the fail-closed bound if the kernel disagrees.
+fn refuse_busy(stream: UnixStream) {
+    const REASON: &[u8] = b"another client already owns this extension session";
+    let _ = stream.set_write_timeout(Some(Listener::POLL));
+    let mut wire = Wire::new(stream);
+    let _ = wire.send(&Frame::control(Kind::Reset, REASON.to_vec()));
+    let stream = wire.into_stream();
+    let _ = stream.shutdown(std::net::Shutdown::Both);
 }
 
 /// Joins a conversation that has already finished, so a long-lived listener
@@ -351,7 +366,7 @@ mod tests {
     use std::sync::{Arc, Barrier, Mutex, mpsc};
     use std::time::{Duration, Instant};
 
-    use hl_extension::{Capability, ExtensionName, Grant, Manifest, Resources};
+    use hl_extension::{Capability, ExtensionName, Grant, Kind, Manifest, Resources, Wire};
 
     use super::super::Image;
     use super::{Listener, SidecarSpec};
@@ -476,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn a_second_caller_does_not_take_the_conversation_from_the_first() {
+    fn a_concurrent_client_is_told_who_owns_the_session_and_can_retry_afterward() {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let socket = temporary.path().join("run/extension.sock");
         let entered = Arc::new(AtomicUsize::new(0));
@@ -493,10 +508,31 @@ mod tests {
         let first = UnixStream::connect(&socket).expect("connected");
         assert!(until(|| entered.load(Ordering::Acquire) == 1));
 
-        let second = UnixStream::connect(&socket).expect("connected");
+        let second = UnixStream::connect(&socket).expect("second connected");
+        second
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("bounded rejection read");
+        let reset = Wire::new(second).receive().expect("busy reset");
 
-        assert!(!until(|| entered.load(Ordering::Acquire) > 1), "one at a time");
-        drop((first, second));
+        assert_eq!(entered.load(Ordering::Acquire), 1, "one conversation at a time");
+        assert_eq!(reset.kind, Kind::Reset);
+        assert_eq!(reset.channel, hl_extension::ChannelId::CONTROL);
+        assert!(
+            String::from_utf8(reset.payload)
+                .expect("reset text")
+                .contains("already owns this extension session")
+        );
+
+        drop(first);
+        release.wait();
+        assert!(until(|| !listener.is_busy()), "first conversation retired");
+
+        let third = UnixStream::connect(&socket).expect("healthy reconnect");
+        assert!(
+            until(|| entered.load(Ordering::Acquire) == 2),
+            "healthy reconnect served after ownership was released"
+        );
+        drop(third);
         release.wait();
         listener.close().expect("closed");
     }
