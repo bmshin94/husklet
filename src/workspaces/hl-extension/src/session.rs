@@ -2731,9 +2731,11 @@ impl Session {
                         detail: "credentials are limited to 64 KiB".into(),
                     });
                 }
-                port.credential_set(*observed, key, value.as_bytes())
-                    .map(Reply::Revision)
-                    .map_err(Failure::from)
+                Ok(Reply::CredentialWrite(crate::port::CredentialWriteReceipt {
+                    key: key.clone(),
+                    observed: *observed,
+                    revision: port.credential_set(*observed, key, value.as_bytes())?,
+                }))
             }
             Request::CredentialRemove { observed, key } => {
                 validate_credential_key(key)?;

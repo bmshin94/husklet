@@ -1,4 +1,8 @@
-import { ExecutionStartOperationError, type WorkspaceApi } from '@husklet/client';
+import {
+  CredentialWriteProtocolError,
+  ExecutionStartOperationError,
+  type WorkspaceApi,
+} from '@husklet/client';
 
 /**
  * Start a process with host-injected credentials. On reply loss, reconnect only to identify
@@ -61,6 +65,7 @@ export async function rotateDatabaseCredential(
   try {
     return await host.credentials.setObserved(before.revision, key, replacement);
   } catch (cause) {
+    if (cause instanceof CredentialWriteProtocolError) throw cause;
     const after = await host.credentials.read(key);
     const same =
       after.value?.length === replacement.length &&

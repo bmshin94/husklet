@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:ca60f85d0545b007
+// Protocol artifact fnv1a64:ef50c9f4ba805913
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -468,7 +468,7 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "preference_set": "revision",
   "preference_remove": "revision",
   "credential_read": "credential",
-  "credential_set": "revision",
+  "credential_set": "credential_write",
   "credential_remove": "revision",
   "postgres_open_once": "postgres_open",
   "postgres_query_start_once": "postgres_start",
@@ -1797,6 +1797,41 @@ const definitions = {
     "serde": {
       "transparent": true
     }
+  },
+  "CredentialWriteReceipt": {
+    "fields": [
+      {
+        "name": "key",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "observed",
+        "optional": false,
+        "schema": {
+          "bits": 64,
+          "kind": "integer",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "signed": false
+        }
+      },
+      {
+        "name": "revision",
+        "optional": false,
+        "schema": {
+          "bits": 64,
+          "kind": "integer",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "signed": false
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {}
   },
   "DirectoryPage": {
     "fields": [
@@ -10204,6 +10239,16 @@ const roots = {
           "of": {
             "kind": "ref",
             "name": "ExtensionCredential"
+          }
+        }
+      },
+      {
+        "name": "credential_write",
+        "payload": {
+          "kind": "newtype",
+          "of": {
+            "kind": "ref",
+            "name": "CredentialWriteReceipt"
           }
         }
       },

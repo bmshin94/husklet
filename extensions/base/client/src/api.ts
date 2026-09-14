@@ -739,6 +739,12 @@ export declare class CredentialSetOperationError extends Error {
   readonly value: readonly number[];
   readonly cause: unknown;
 }
+
+/** The host returned non-secret credential authority for another key or revision. */
+export declare class CredentialWriteProtocolError extends Error {
+  readonly expected: Readonly<{ key: string; observed: number }>;
+  readonly received: Readonly<{ key: string; observed: number; revision: number }>;
+}
 export interface StateCodec<T> {
   decode(value: unknown): T;
   encode(value: T): unknown;

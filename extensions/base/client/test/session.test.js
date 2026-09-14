@@ -8,6 +8,7 @@ import test from 'node:test';
 import { queryObjects } from 'node:v8';
 import {
   connect,
+  CredentialWriteProtocolError,
   ExecutionDeadlineError,
   ExecutionOperationError,
   ExecutionOutputGapError,
@@ -1667,6 +1668,7 @@ test('real Unix credential calls reveal only the named value and preserve CAS fr
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-credential-'));
   const socketPath = path.join(directory, 'host.sock');
   const calls = [];
+  let credentialSets = 0;
   const connections = new Set();
   const server = net.createServer((socket) => {
     connections.add(socket);
@@ -1676,13 +1678,23 @@ test('real Unix credential calls reveal only the named value and preserve CAS fr
       for (const frame of reader.take(chunk)) {
         if (frame.kind !== KIND.request) continue;
         calls.push(frame.payload);
+        if (frame.payload.call === 'credential_set') credentialSets += 1;
         const reply =
           frame.payload.call === 'credential_read'
             ? {
                 reply: 'credential',
                 with: { key: 'postgres.password', revision: 7, value: [0, 255, 10] },
               }
-            : { reply: 'revision', with: frame.payload.call === 'credential_set' ? 8 : 9 };
+            : frame.payload.call === 'credential_set'
+              ? {
+                  reply: 'credential_write',
+                  with: {
+                    key: credentialSets === 1 ? frame.payload.with.key : 'other.password',
+                    observed: credentialSets === 1 ? frame.payload.with.observed : 99,
+                    revision: 8,
+                  },
+                }
+              : { reply: 'revision', with: 9 };
         socket.write(encode({ channel: frame.channel, kind: KIND.response, payload: reply }));
       }
     });
@@ -1708,6 +1720,13 @@ test('real Unix credential calls reveal only the named value and preserve CAS fr
       value: [0, 255, 10],
     });
     assert.equal(await credentials.set(7, 'postgres.password', [0, 255, 10]), 8);
+    await assert.rejects(credentials.set(8, 'postgres.password', [1]), (error) => {
+      assert(error instanceof CredentialWriteProtocolError);
+      assert.deepEqual(error.expected, { key: 'postgres.password', observed: 8 });
+      assert.equal(error.received.key, 'other.password');
+      assert.equal(JSON.stringify(error).includes('0,255,10'), false);
+      return true;
+    });
     assert.equal(await credentials.remove(8, 'postgres.password'), 9);
     assert.deepEqual(calls, [
       { call: 'credential_read', with: { key: 'postgres.password' } },
@@ -1715,6 +1734,7 @@ test('real Unix credential calls reveal only the named value and preserve CAS fr
         call: 'credential_set',
         with: { observed: 7, key: 'postgres.password', value: [0, 255, 10] },
       },
+      { call: 'credential_set', with: { observed: 8, key: 'postgres.password', value: [1] } },
       { call: 'credential_remove', with: { observed: 8, key: 'postgres.password' } },
     ]);
     await session.close();

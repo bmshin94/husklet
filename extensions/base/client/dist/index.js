@@ -113,6 +113,17 @@ export class CredentialSetOperationError extends Error {
         this.cause = cause;
     }
 }
+/** The host returned non-secret credential authority for another key or revision. */
+export class CredentialWriteProtocolError extends Error {
+    expected;
+    received;
+    constructor(expected, received) {
+        super('host returned a credential write receipt for another key or revision');
+        this.name = 'CredentialWriteProtocolError';
+        this.expected = Object.freeze({ ...expected });
+        this.received = Object.freeze({ ...received });
+    }
+}
 function immutableCopy(value) {
     if (Array.isArray(value))
         return Object.freeze(value.map(immutableCopy));
@@ -4300,11 +4311,17 @@ export function workspace(session, { signal } = {}) {
                     source?.fill(0);
                 }
             },
-            set: async (observed, key, value) => expect(await session.call('credential_set', {
-                observed,
-                key: exactCredentialKey(key),
-                value: exactCredentialBytes(value),
-            }), 'revision'),
+            set: async (observed, key, value) => {
+                const exactKey = exactCredentialKey(key);
+                const receipt = expect(await session.call('credential_set', {
+                    observed,
+                    key: exactKey,
+                    value: exactCredentialBytes(value),
+                }), 'credential_write');
+                if (receipt.key !== exactKey || receipt.observed !== observed)
+                    throw new CredentialWriteProtocolError({ key: exactKey, observed }, receipt);
+                return receipt.revision;
+            },
             setObserved: async (observed, key, value) => {
                 const exactKey = exactCredentialKey(key);
                 const exactValue = exactCredentialBytes(value);
@@ -4312,6 +4329,8 @@ export function workspace(session, { signal } = {}) {
                     return await api.credentials.set(observed, exactKey, exactValue);
                 }
                 catch (error) {
+                    if (error instanceof CredentialWriteProtocolError)
+                        throw error;
                     throw new CredentialSetOperationError(exactKey, observed, exactValue, error);
                 }
             },

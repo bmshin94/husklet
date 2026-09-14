@@ -982,6 +982,7 @@ pub enum Reply {
     StateWrite(crate::port::StateWriteReceipt),
     Preferences(crate::port::ExtensionPreferences),
     Credential(crate::port::ExtensionCredential),
+    CredentialWrite(crate::port::CredentialWriteReceipt),
     PostgresOpen(crate::PostgresOpenOutcome),
     PostgresStart(crate::PostgresStartOutcome),
     PostgresState(crate::PostgresQueryState),

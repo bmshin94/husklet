@@ -1728,6 +1728,14 @@ pub struct ExtensionCredential {
     pub value: Option<Vec<u8>>,
 }
 
+/// Non-secret receipt binding a credential update to its key and prior revision.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct CredentialWriteReceipt {
+    pub key: String,
+    pub observed: u64,
+    pub revision: u64,
+}
+
 /// Host-private durable state for one idempotent container creation.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ContainerCreationRecord {

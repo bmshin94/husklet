@@ -207,6 +207,18 @@ export class CredentialSetOperationError extends Error {
   }
 }
 
+/** The host returned non-secret credential authority for another key or revision. */
+export class CredentialWriteProtocolError extends Error {
+  readonly expected;
+  readonly received;
+  constructor(expected, received) {
+    super('host returned a credential write receipt for another key or revision');
+    this.name = 'CredentialWriteProtocolError';
+    this.expected = Object.freeze({ ...expected });
+    this.received = Object.freeze({ ...received });
+  }
+}
+
 function immutableCopy<T>(value: T): T {
   if (Array.isArray(value)) return Object.freeze(value.map(immutableCopy)) as T;
   if (value !== null && typeof value === 'object')
@@ -5576,21 +5588,27 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           source?.fill(0);
         }
       },
-      set: async (observed, key, value) =>
-        expect(
+      set: async (observed, key, value) => {
+        const exactKey = exactCredentialKey(key);
+        const receipt = expect(
           await session.call('credential_set', {
             observed,
-            key: exactCredentialKey(key),
+            key: exactKey,
             value: exactCredentialBytes(value),
           }),
-          'revision',
-        ),
+          'credential_write',
+        );
+        if (receipt.key !== exactKey || receipt.observed !== observed)
+          throw new CredentialWriteProtocolError({ key: exactKey, observed }, receipt);
+        return receipt.revision;
+      },
       setObserved: async (observed, key, value) => {
         const exactKey = exactCredentialKey(key);
         const exactValue = exactCredentialBytes(value);
         try {
           return await api.credentials.set(observed, exactKey, exactValue);
         } catch (error) {
+          if (error instanceof CredentialWriteProtocolError) throw error;
           throw new CredentialSetOperationError(exactKey, observed, exactValue, error);
         }
       },

@@ -53,6 +53,12 @@ export declare class CredentialSetOperationError extends Error {
     readonly value: any;
     constructor(key: any, observed: any, value: any, cause: any);
 }
+/** The host returned non-secret credential authority for another key or revision. */
+export declare class CredentialWriteProtocolError extends Error {
+    readonly expected: any;
+    readonly received: any;
+    constructor(expected: any, received: any);
+}
 /** An extension install/update may have committed before its reply was lost. */
 export declare class ExtensionCommitOperationError extends Error {
     readonly operation: any;
