@@ -839,7 +839,9 @@ export function Extensions({
       setNotice(
         result.changed
           ? {
-              label: `${result.extension.name} ${updating ? 'updated' : 'installed'} and verified.`,
+              label: `${result.extension.name} ${
+                updating ? 'updated' : 'installed'
+              } and confirmed in installed extensions.`,
               uncertain: false,
             }
           : {

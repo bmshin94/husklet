@@ -2508,6 +2508,16 @@ for (const updating of [false, true]) {
     invoke(stage, updating ? 'Update with selected access' : 'Install with selected access');
     await settled();
     await settled();
+    assert.ok(
+      labelled(
+        stage,
+        `image-tool ${updating ? 'updated' : 'installed'} and confirmed in installed extensions.`,
+      ),
+    );
+    assert.equal(
+      labelled(stage, `image-tool ${updating ? 'updated' : 'installed'} and verified.`),
+      undefined,
+    );
     assert.deepEqual(calls[0][2].capabilities, []);
     assert.deepEqual(calls[0][2].images, {
       read: [],

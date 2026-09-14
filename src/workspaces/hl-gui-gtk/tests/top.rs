@@ -3958,7 +3958,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "developer-tool-01 updated and verified.",
+            "developer-tool-01 updated and confirmed in installed extensions.",
             |request| match request {
                 Request::ExtensionAcquisitionStatus { job } => {
                     Reply::ExtensionAcquisition(ExtensionAcquisitionStatus {
@@ -4113,6 +4113,21 @@ mod unix {
         drain_extension_renders(wire, tree, surface);
         let success_root = surface.widget().clone().upcast::<gtk::Widget>();
         assert!(!has_label(&success_root, "Update available"));
+        assert!(
+            has_label(
+                &success_root,
+                "developer-tool-01 updated and confirmed in installed extensions."
+            ),
+            "operation confirmation names installed inventory rather than implying publisher verification"
+        );
+        assert!(
+            has_label(&success_root, "Community · Unverified"),
+            "publisher trust remains explicitly independent of operation confirmation"
+        );
+        assert!(
+            !has_label(&success_root, "developer-tool-01 updated and verified."),
+            "ambiguous verification language must not contradict publisher trust"
+        );
         assert!(
             has_label(&success_root, "Installed extensions"),
             "verified publication moves to the durable installed inventory"
