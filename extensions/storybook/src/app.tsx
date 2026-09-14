@@ -10,6 +10,7 @@ import {
   Button,
   Column,
   Entry,
+  Expander,
   Heading,
   InlineMessage,
   ListItemButton,
@@ -375,6 +376,9 @@ export function Preview({
   triggers?: string[];
 }) {
   const [interactions, setInteractions] = useState<Interaction[]>([]);
+  const [catalogueProps, setCatalogueProps] = useState<Record<string, unknown>>(() => ({
+    ...(opened?.props ?? {}),
+  }));
   const sequence = useRef(0);
   const handlers = interactionProps(triggers, (trigger, event) => {
     const interaction = { sequence: ++sequence.current, trigger, detail: interactionDetail(event) };
@@ -391,11 +395,14 @@ export function Preview({
     return (
       <CatalogueDocument
         name={name}
-        instance={instance}
+        instance={{ ...instance, props: catalogueProps }}
         handlers={handlers}
         triggers={triggers}
         interactions={interactions}
         clearInteractions={() => setInteractions([])}
+        onChange={(property, value) =>
+          setCatalogueProps((current) => ({ ...current, [property]: value }))
+        }
       />
     );
   }
@@ -518,6 +525,7 @@ export function CatalogueDocument({
   triggers,
   interactions,
   clearInteractions,
+  onChange,
 }: {
   name: string;
   instance: StoryDefaults;
@@ -525,6 +533,7 @@ export function CatalogueDocument({
   triggers: string[];
   interactions: Interaction[];
   clearInteractions: () => void;
+  onChange: Change;
 }) {
   const contract = component(name);
   const family = grouped().find((candidate) => candidate.name === contract.family);
@@ -541,6 +550,8 @@ export function CatalogueDocument({
     },
     instance.children.map(child),
   );
+  const properties = rows(name);
+  const editableProperties = properties.filter((property) => property.editable);
   return (
     <ComponentDocument name={spaced(name)} summary={summary}>
       <DocumentationSection title="Overview">
@@ -550,8 +561,26 @@ export function CatalogueDocument({
           </Row>
         </Section>
       </DocumentationSection>
+      <DocumentationSection title="Live properties">
+        <Text
+          label="Tune this specimen without leaving its reference page. The JSX example updates with it."
+          color="text-dim"
+          wrap
+        />
+        {editableProperties.length > 0 ? (
+          <Expander
+            label={`Edit properties · ${editableProperties.length}`}
+            expanded={false}
+            width="fill"
+          >
+            <PropertyFields rows={editableProperties} props={instance.props} onChange={onChange} />
+          </Expander>
+        ) : (
+          <Text label="This component has no editable properties." color="text-dim" />
+        )}
+      </DocumentationSection>
       <DocumentationSection title="API">
-        <ApiReference example={exampleFor(name, instance.props)} rows={rows(name)} />
+        <ApiReference example={exampleFor(name, instance.props)} rows={properties} />
       </DocumentationSection>
       <SpecimenGrid>
         <DocumentationSection title="Usage">
@@ -714,6 +743,34 @@ export function Inspector({
   props: Record<string, unknown>;
   onChange: Change;
 }) {
+  return (
+    <Scroll width={{ chars: 32 }} height={'fill'}>
+      <Column pad={3} gap={2}>
+        <Heading key={'title'} label={`${name} properties`} scale={'caption'} wrap={true} />
+        <Text key={'note'} label={notes.values} color={'text-dim'} wrap={true} />
+        <PropertyFields rows={properties} props={props} onChange={onChange} />
+        {triggers.length === 0
+          ? []
+          : [
+              <ListSubheader key={'interactions'} label={'interactions'} />,
+              ...triggers.map((trigger) => (
+                <Text key={`trigger-${trigger}`} label={`on${trigger}`} color={'text-dim'} />
+              )),
+            ]}
+      </Column>
+    </Scroll>
+  );
+}
+
+function PropertyFields({
+  rows: properties,
+  props,
+  onChange,
+}: {
+  rows: ControlRow[];
+  props: Record<string, unknown>;
+  onChange: Change;
+}) {
   type Group = { key: string; group: string; editable: boolean; rows: ControlRow[] };
   const groups: Group[] = [];
   let current: Group | null = null;
@@ -726,26 +783,14 @@ export function Inspector({
     current.rows.push(row);
   }
   return (
-    <Scroll width={{ chars: 32 }} height={'fill'}>
-      <Column pad={3} gap={2}>
-        <Heading key={'title'} label={`${name} properties`} scale={'caption'} wrap={true} />
-        <Text key={'note'} label={notes.values} color={'text-dim'} wrap={true} />
-        {groups.flatMap((group) => [
-          <ListSubheader key={`group-${group.key}`} label={group.group} />,
-          ...group.rows.map((row) => (
-            <Field key={row.name} row={row} value={props[row.name]} onChange={onChange} />
-          )),
-        ])}
-        {triggers.length === 0
-          ? []
-          : [
-              <ListSubheader key={'interactions'} label={'interactions'} />,
-              ...triggers.map((trigger) => (
-                <Text key={`trigger-${trigger}`} label={`on${trigger}`} color={'text-dim'} />
-              )),
-            ]}
-      </Column>
-    </Scroll>
+    <Column gap={1} width="fill">
+      {groups.flatMap((group) => [
+        <ListSubheader key={`group-${group.key}`} label={group.group} />,
+        ...group.rows.map((row) => (
+          <Field key={row.name} row={row} value={props[row.name]} onChange={onChange} />
+        )),
+      ])}
+    </Column>
   );
 }
 

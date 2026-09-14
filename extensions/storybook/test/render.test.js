@@ -96,6 +96,7 @@ test('every catalogue component receives a complete generated reference page', (
       .filter((patch) => patch.SetProp?.prop === 'Label')
       .map((patch) => patch.SetProp.value.Text);
     assert.ok(labels.includes('Overview'), `<${tag.name}> has no overview`);
+    assert.ok(labels.includes('Live properties'), `<${tag.name}> has no live property editor`);
     assert.ok(labels.includes('API'), `<${tag.name}> has no API reference`);
     assert.ok(labels.includes('Usage'), `<${tag.name}> has no usage guidance`);
     assert.ok(labels.includes('Interactions'), `<${tag.name}> has no interaction contract`);
@@ -104,6 +105,50 @@ test('every catalogue component receives a complete generated reference page', (
       `<${tag.name}> has no live specimen`,
     );
   }
+});
+
+test('generated component pages edit the live specimen and copyable example together', async () => {
+  const stage = host();
+  const frame = stage.render(
+    h(Preview, {
+      name: 'Text',
+      opened: defaults('Text'),
+      triggers: [],
+    }),
+  );
+  const specimen = node(frame.patches, 'Text', 'Some text');
+  const editor = created(frame.patches).find((entry) => entry.tag === 'Entry')?.id;
+  assert.notEqual(specimen, null, 'Text page begins with its live specimen');
+  assert.notEqual(editor, undefined, 'Text page exposes its label editor without a bespoke story');
+
+  const before = stage.frames.length;
+  assert.ok(
+    stage.surface.dispatch({
+      trigger: 'Change',
+      node: editor,
+      id: `${editor}:Change`,
+      value: 'Edited live copy',
+    }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const changed = stage.since(before);
+  assert.ok(
+    changed.some(
+      (patch) =>
+        patch.SetProp?.id === specimen &&
+        patch.SetProp.prop === 'Label' &&
+        patch.SetProp.value?.Text === 'Edited live copy',
+    ),
+    'editing label updates the specimen in the same component document',
+  );
+  assert.ok(
+    changed.some(
+      (patch) =>
+        patch.SetProp?.prop === 'Value' &&
+        patch.SetProp.value?.Text === '<Text label="Edited live copy" />',
+    ),
+    'the copyable example follows the edited specimen',
+  );
 });
 
 test('generated examples are concise valid-looking JSX derived from specimen defaults', () => {
