@@ -3331,7 +3331,8 @@ export function workspace(session, { signal } = {}) {
                 exactFilesystemPageSize(limit);
                 const page = expect(await session.call('filesystem_changes', { observed: journal, after, limit }), 'file_changes');
                 exactFilesystemJournal(page.journal);
-                if ((page.journal !== journal && !page.truncated) ||
+                if (page.after !== after ||
+                    (page.journal !== journal && !page.truncated) ||
                     page.changes.length > limit ||
                     (!page.truncated && page.next < after) ||
                     page.current < page.next ||

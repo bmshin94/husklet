@@ -534,6 +534,7 @@ impl WorkspaceFiles for WorkspaceDirectory {
         let next = if more { next } else { journal.revision };
         Ok(FileChangePage {
             journal: journal.identity.clone(),
+            after,
             more: !truncated && more,
             changes,
             next: if truncated { journal.revision } else { next },

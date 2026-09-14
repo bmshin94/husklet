@@ -1244,6 +1244,7 @@ impl WorkspaceFiles for Host {
         self.ledger.note("files.changes_since");
         Ok(hl_extension::port::FileChangePage {
             journal: "a".repeat(32),
+            after: _after,
             changes: self
                 .leak_filesystem_paths
                 .get()
@@ -4538,6 +4539,7 @@ fn filesystem_replies_are_confined_even_when_the_host_adapter_returns_sibling_pa
         page.changes.is_empty(),
         "adapter leakage must be removed at the session boundary"
     );
+    assert_eq!(page.after, 0, "the reply must echo the exact requested cursor");
     assert_eq!(
         page.next, 1,
         "the scoped journal cursor still advances past irrelevant changes"

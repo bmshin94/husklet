@@ -178,6 +178,7 @@ test('real Unix filesystem catch-up is bounded, resumable, and journal-gap safe'
           payload = {
             reply: 'file_changes',
             with: {
+              after: input.after,
               changes: [
                 {
                   revision,
@@ -202,6 +203,7 @@ test('real Unix filesystem catch-up is bounded, resumable, and journal-gap safe'
           payload = {
             reply: 'file_changes',
             with: {
+              after: input.after,
               changes: [],
               journal: REPLACEMENT_FILE_JOURNAL,
               next: 8,
@@ -214,6 +216,7 @@ test('real Unix filesystem catch-up is bounded, resumable, and journal-gap safe'
           payload = {
             reply: 'file_changes',
             with: {
+              after: input.after,
               changes: [{ revision: 9, kind: 'remove', path: 'src/old.ts', entry: null }],
               journal: REPLACEMENT_FILE_JOURNAL,
               next: 9,
@@ -2289,6 +2292,7 @@ test('real Unix beginWalk captures the reconciliation cursor before recursive en
                   reply: 'file_changes',
                   with: {
                     journal: FILE_JOURNAL,
+                    after: frame.payload.with.after,
                     changes: [],
                     next: 41,
                     current: 41,
@@ -2357,6 +2361,7 @@ test('real Unix change iterator reports a typed journal rotation and remains reu
                 reply: 'file_changes',
                 with: {
                   journal: replacementJournal,
+                  after: frame.payload.with.after,
                   changes: [],
                   next: 88,
                   current: 88,
@@ -2435,7 +2440,7 @@ test('real Unix change iterator reports a typed journal rotation and remains reu
   }
 });
 
-test('real Unix change iterator rejects a non-advancing continuation and keeps the session reusable', async () => {
+test('real Unix change iterator rejects a reply for another cursor over fragmented frames', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-journal-stall-'));
   const socketPath = path.join(directory, 'host.sock');
   const calls = [];
@@ -2455,9 +2460,10 @@ test('real Unix change iterator rejects a non-advancing continuation and keeps t
                 with: {
                   journal: FILE_JOURNAL,
                   changes: [],
-                  next: 12,
+                  after: 11,
+                  next: 13,
                   current: 13,
-                  more: true,
+                  more: false,
                   truncated: false,
                 },
               }
@@ -2514,6 +2520,7 @@ test('real Unix filesystem watcher publishes filtered cursor-only progress for r
   const connections = new Set();
   const page = {
     journal: FILE_JOURNAL,
+    after: 7,
     changes: [],
     next: 19,
     current: 19,
@@ -2608,6 +2615,7 @@ test('real Unix latest-change watcher supersedes long test work without blocking
                 reply: 'file_changes',
                 with: {
                   journal: FILE_JOURNAL,
+                  after: frame.payload.with.after,
                   changes: [
                     {
                       revision,
@@ -2736,6 +2744,7 @@ test('real Unix filesystem watcher exposes listener failure without poisoning th
                 reply: 'file_changes',
                 with: {
                   journal: FILE_JOURNAL,
+                  after: frame.payload.with.after,
                   changes: [{ revision: 3, kind: 'modify', path: 'src/a.ts', entry: null }],
                   next: 3,
                   current: 3,

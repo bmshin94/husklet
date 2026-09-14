@@ -885,6 +885,8 @@ pub struct FileChange {
 pub struct FileChangePage {
     pub changes: Vec<FileChange>,
     pub journal: String,
+    /// Cursor supplied by the request that produced this page.
+    pub after: u64,
     pub next: u64,
     pub current: u64,
     pub more: bool,

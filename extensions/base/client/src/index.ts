@@ -4315,6 +4315,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         );
         exactFilesystemJournal(page.journal);
         if (
+          page.after !== after ||
           (page.journal !== journal && !page.truncated) ||
           page.changes.length > limit ||
           (!page.truncated && page.next < after) ||

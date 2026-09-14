@@ -1430,6 +1430,30 @@ fn terminal_history_cursor_crosses_a_fragmented_real_socket() {
 }
 
 #[test]
+fn filesystem_change_request_cursor_crosses_a_fragmented_real_socket() {
+    let (host_end, mut extension_end) = connected_pair();
+    let page = hl_extension::FileChangePage {
+        changes: Vec::new(),
+        journal: "0123456789abcdef0123456789abcdef".into(),
+        after: 41,
+        next: 47,
+        current: 47,
+        more: false,
+        truncated: false,
+    };
+    let mut encoded = Vec::new();
+    hl_extension::Wire::new(&mut encoded)
+        .send(&codec::reply(&Reply::FileChanges(page.clone())).expect("reply encodes"))
+        .expect("frame encodes");
+    for byte in encoded {
+        extension_end.write_all(&[byte]).expect("fragment crosses socket");
+    }
+    let mut receiver = hl_extension::Wire::new(host_end);
+    let decoded = codec::read_reply(&receiver.receive().expect("reply arrives")).expect("reply decodes");
+    assert_eq!(decoded, Reply::FileChanges(page));
+}
+
+#[test]
 fn legacy_and_maximal_network_alias_calls_cross_a_real_socket() {
     let (host_end, extension_end) = connected_pair();
     let host = Host::new();

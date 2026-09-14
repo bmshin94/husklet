@@ -2688,6 +2688,17 @@
           }
         },
         {
+          "name": "after",
+          "optional": false,
+          "schema": {
+            "bits": 64,
+            "kind": "integer",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "signed": false
+          }
+        },
+        {
           "name": "next",
           "optional": false,
           "schema": {
@@ -15908,7 +15919,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:868d1ff4099aa2ea",
+  "source_fingerprint": "fnv1a64:42ae1bef18eda572",
   "specification_version": 1,
   "topics": [
     {

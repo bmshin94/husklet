@@ -658,6 +658,8 @@ export interface FileChange {
 export interface FileChangePage {
     changes: FileChange[];
     journal: string;
+    /** Cursor supplied by the request that produced this page. */
+    after: number;
     next: number;
     current: number;
     more: boolean;

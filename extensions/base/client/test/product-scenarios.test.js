@@ -395,6 +395,7 @@ test('embeddings indexer pages beyond a truncated inventory over fragmented Unix
           reply: 'file_changes',
           with: {
             journal: FILE_JOURNAL,
+            after: frame.payload.with.after,
             changes: [],
             next: 7,
             current: 7,
@@ -484,6 +485,7 @@ test('embeddings indexer refuses publication after journal invalidation', async 
           reply: 'file_changes',
           with: {
             journal: FILE_JOURNAL,
+            after: frame.payload.with.after,
             changes: [{ revision: 21, kind: 'invalidate', path: 'src/a.md', entry: null }],
             next: 21,
             current: 21,
@@ -533,6 +535,7 @@ test('embeddings workbench resumes, indexes changed ranges with an opaque creden
           reply: 'file_changes',
           with: {
             journal: FILE_JOURNAL,
+            after: frame.payload.with.after,
             changes: [
               {
                 revision: 6,

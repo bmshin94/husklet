@@ -1485,6 +1485,7 @@ test('filesystem change watcher advances opaque pages and exposes truncation', a
   const pages = [
     {
       journal: FILE_JOURNAL,
+      after: 10,
       changes: [
         {
           revision: 11,
@@ -1500,6 +1501,7 @@ test('filesystem change watcher advances opaque pages and exposes truncation', a
     },
     {
       journal: FILE_JOURNAL,
+      after: 11,
       changes: [{ revision: 12, kind: 'remove', path: 'src/gone.ts', entry: null }],
       next: 12,
       current: 12,
@@ -1515,6 +1517,7 @@ test('filesystem change watcher advances opaque pages and exposes truncation', a
         reply: 'file_changes',
         with: pages.shift() ?? {
           journal: FILE_JOURNAL,
+          after: 12,
           changes: [],
           next: 12,
           current: 12,
@@ -1558,6 +1561,7 @@ test('filesystem change watcher exposes a cursor advance with no visible paths',
   const calls = [];
   const page = {
     journal: FILE_JOURNAL,
+    after: 7,
     changes: [],
     next: 19,
     current: 19,
@@ -1605,6 +1609,7 @@ test('latest filesystem work bounds the uncommitted changes retained across supe
         reply: 'file_changes',
         with: {
           journal: FILE_JOURNAL,
+          after: payload.after,
           changes: [{ revision, kind: 'modify', path: `src/${revision}.ts`, entry: null }],
           next: revision,
           current: revision,
@@ -1665,6 +1670,7 @@ test('real Unix change-page iteration applies backpressure and surfaces overflow
         reply: 'file_changes',
         with: {
           journal: FILE_JOURNAL,
+          after: 10,
           changes: [
             {
               revision: 11,
@@ -1694,6 +1700,7 @@ test('real Unix change-page iteration applies backpressure and surfaces overflow
         reply: 'file_changes',
         with: {
           journal: NEXT_FILE_JOURNAL,
+          after: 11,
           changes: [],
           next: 20,
           current: 20,
@@ -1719,6 +1726,7 @@ test('real Unix change-page iteration applies backpressure and surfaces overflow
         reply: 'file_changes',
         with: {
           journal: FILE_JOURNAL,
+          after: 20,
           changes: [{ revision: 20, kind: 'remove', path: 'src/stale.ts', entry: null }],
           next: 20,
           current: 20,
@@ -1750,6 +1758,7 @@ test('real Unix change-page iteration applies backpressure and surfaces overflow
         reply: 'file_changes',
         with: {
           journal: NEXT_FILE_JOURNAL,
+          after: 20,
           changes: [],
           next: 20,
           current: 20,
@@ -1781,6 +1790,7 @@ test('callback filesystem watcher reports listener failure through its stop hand
         reply: 'file_changes',
         with: {
           journal: FILE_JOURNAL,
+          after: 0,
           changes: [{ revision: 1, kind: 'remove', path: 'stale.ts', entry: null }],
           next: 1,
           current: 1,

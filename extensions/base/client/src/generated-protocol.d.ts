@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:ddbda7537419c95b
+// Protocol artifact fnv1a64:0f97def63df67db7
 export const PROTOCOL_SPECIFICATION_VERSION: 1;
 export const PROTOCOL_VERSION: 1;
 export const PROTOCOL_BOUNDS: Readonly<{ "extension_job_bytes": number; "extension_reference_bytes": number; "pane_input_bytes": number; "pane_inventory_items": number; "pane_text_bytes": number; "resource_inventory_items": number; "semantic_action_value_bytes": number; "semantic_depth": number; "semantic_nodes": number; "semantic_text_bytes": number; "terminal_command_argument_bytes": number; "terminal_command_bytes": number }>;
@@ -55,7 +55,7 @@ export type ExtensionState = { "identity": string; "contents": Array<number> };
 export type ExtensionSummary = { "name": string; "image_digest": string; "status": string; "version"?: string; "enabled"?: boolean; "pane_providers"?: Array<PaneProvider>; "granted"?: Grant; "images"?: ImageGrant; "containers"?: ContainerGrant; "networks"?: NetworkGrant; "volumes"?: VolumeGrant; "filesystem"?: FilesystemGrant; "workspace_environment"?: WorkspaceEnvironmentGrant; "credentials"?: CredentialGrant };
 export type FileChange = { "revision": number; "kind": FileChangeKind; "path": RelativePath; "entry"?: Entry | null };
 export type FileChangeKind = "create" | "modify" | "remove" | "invalidate";
-export type FileChangePage = { "changes": Array<FileChange>; "journal": string; "next": number; "current": number; "more": boolean; "truncated": boolean };
+export type FileChangePage = { "changes": Array<FileChange>; "journal": string; "after": number; "next": number; "current": number; "more": boolean; "truncated": boolean };
 export type FileInventory = { "entries": Array<Entry>; "complete": boolean; "coalesced": number; "journal": string; "revision": number };
 export type FileRange = { "path": RelativePath; "identity": string; "offset": number; "total": number; "contents": Array<number>; "eof": boolean; "truncated": boolean };
 export type FileRangeRequest = { "path": RelativePath; "offset": number; "limit": number; "observed"?: string | null };

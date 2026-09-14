@@ -198,6 +198,7 @@ try {
     {
       changes: caughtUp.changes,
       journal: caughtUp.cursor.journal,
+      after: inventory.revision,
       next: caughtUp.cursor.revision,
       current: caughtUp.current,
       more: !caughtUp.caughtUp,
