@@ -2723,7 +2723,13 @@ impl Session {
             }
             Request::PostgresQueryStatus { lease, query } => broker
                 .status(installation, lease, query)
-                .map(Reply::PostgresState)
+                .map(|state| {
+                    Reply::PostgresState(crate::PostgresStateReceipt {
+                        lease: lease.clone(),
+                        query: query.clone(),
+                        state,
+                    })
+                })
                 .map_err(Into::into),
             Request::PostgresQueryPage { lease, query, cursor } => broker
                 .page(installation, lease, query, cursor.as_ref())
@@ -2731,7 +2737,13 @@ impl Session {
                 .map_err(Into::into),
             Request::PostgresQueryCancel { lease, query } => broker
                 .cancel(installation, lease, query)
-                .map(Reply::PostgresState)
+                .map(|state| {
+                    Reply::PostgresState(crate::PostgresStateReceipt {
+                        lease: lease.clone(),
+                        query: query.clone(),
+                        state,
+                    })
+                })
                 .map_err(Into::into),
             Request::PostgresQueryClose { lease, query } => broker
                 .close_query(installation, lease, query)

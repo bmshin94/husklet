@@ -167,6 +167,23 @@ export class PostgresPageProtocolError extends Error {
   }
 }
 
+/** The host returned database state for another lease or query. */
+export class PostgresStateProtocolError extends Error {
+  readonly expectedLease;
+  readonly expectedQuery;
+  readonly receivedLease;
+  readonly receivedQuery;
+
+  constructor(expectedLease, expectedQuery, receivedLease, receivedQuery) {
+    super('host returned PostgreSQL state for another lease or query');
+    this.name = 'PostgresStateProtocolError';
+    this.expectedLease = expectedLease;
+    this.expectedQuery = expectedQuery;
+    this.receivedLease = receivedLease;
+    this.receivedQuery = receivedQuery;
+  }
+}
+
 /** The host returned database authority for another operation or lease. */
 export class PostgresOperationProtocolError extends Error {
   readonly phase;
@@ -5847,8 +5864,16 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         }
         return outcome;
       },
-      status: async (lease, query) =>
-        expect(await session.call('postgres_query_status', { lease, query }), 'postgres_state'),
+      status: async (lease, query) => {
+        const receipt = expect(
+          await session.call('postgres_query_status', { lease, query }),
+          'postgres_state',
+        );
+        if (receipt.lease !== lease || receipt.query !== query) {
+          throw new PostgresStateProtocolError(lease, query, receipt.lease, receipt.query);
+        }
+        return receipt.state;
+      },
       page: async (lease, query, cursor) => {
         const page = expect(
           await session.call('postgres_query_page', { lease, query, cursor: cursor ?? null }),
@@ -5861,8 +5886,16 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         }
         return page;
       },
-      cancel: async (lease, query) =>
-        expect(await session.call('postgres_query_cancel', { lease, query }), 'postgres_state'),
+      cancel: async (lease, query) => {
+        const receipt = expect(
+          await session.call('postgres_query_cancel', { lease, query }),
+          'postgres_state',
+        );
+        if (receipt.lease !== lease || receipt.query !== query) {
+          throw new PostgresStateProtocolError(lease, query, receipt.lease, receipt.query);
+        }
+        return receipt.state;
+      },
       closeQuery: async (lease, query) => {
         expect(await session.call('postgres_query_close', { lease, query }), 'done');
       },

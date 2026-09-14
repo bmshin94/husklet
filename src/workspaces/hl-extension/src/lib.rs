@@ -37,7 +37,8 @@ pub use capability::{Capability, Grant};
 pub use codec::Coding;
 pub use database::{
     CredentialRevision, PostgresBroker, PostgresConnection, PostgresCursor, PostgresLease, PostgresLeaseId,
-    PostgresLeaseRevocation, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome,
+    PostgresLeaseRevocation, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState,
+    PostgresStartOutcome, PostgresStateReceipt,
     QueryOperationToken,
 };
 pub use hl_rpc::{

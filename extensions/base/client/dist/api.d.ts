@@ -1078,6 +1078,13 @@ export declare class PostgresPageProtocolError extends Error {
     readonly receivedQuery: PostgresQueryId;
     readonly receivedCursor: PostgresCursor | null;
 }
+/** The host returned database state for another lease or query. */
+export declare class PostgresStateProtocolError extends Error {
+    readonly expectedLease: PostgresLeaseId;
+    readonly expectedQuery: PostgresQueryId;
+    readonly receivedLease: PostgresLeaseId;
+    readonly receivedQuery: PostgresQueryId;
+}
 /** The host returned database authority for another operation or lease. */
 export declare class PostgresOperationProtocolError extends Error {
     readonly phase: 'open' | 'start';

@@ -238,6 +238,15 @@ pub enum PostgresQueryState {
     Failed,
 }
 
+/// State observed for one exact lease and query pair.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PostgresStateReceipt {
+    pub lease: PostgresLeaseId,
+    pub query: PostgresQueryId,
+    pub state: PostgresQueryState,
+}
+
 /// Explicit result of a start-or-reconcile call.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(tag = "disposition", rename_all = "snake_case")]

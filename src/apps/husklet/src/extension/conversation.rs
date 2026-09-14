@@ -2319,7 +2319,10 @@ mod tests {
                     query: query_id.clone()
                 },
             )),
-            Ok(Reply::PostgresState(PostgresQueryState::Running))
+            Ok(Reply::PostgresState(receipt))
+                if receipt.lease == lease
+                    && receipt.query == query_id
+                    && receipt.state == PostgresQueryState::Running
         ));
         let page_request = Request::PostgresQueryPage {
             lease: lease.clone(),
@@ -2342,7 +2345,10 @@ mod tests {
                     query: query_id.clone()
                 },
             )),
-            Ok(Reply::PostgresState(PostgresQueryState::Cancelled))
+            Ok(Reply::PostgresState(receipt))
+                if receipt.lease == lease
+                    && receipt.query == query_id
+                    && receipt.state == PostgresQueryState::Cancelled
         ));
         assert!(matches!(
             codec::read_reply(&fragmented_ask(

@@ -37,6 +37,14 @@ export declare class PostgresPageProtocolError extends Error {
     readonly receivedCursor: any;
     constructor(query: any, cursor: any, receivedQuery: any, receivedCursor: any);
 }
+/** The host returned database state for another lease or query. */
+export declare class PostgresStateProtocolError extends Error {
+    readonly expectedLease: any;
+    readonly expectedQuery: any;
+    readonly receivedLease: any;
+    readonly receivedQuery: any;
+    constructor(expectedLease: any, expectedQuery: any, receivedLease: any, receivedQuery: any);
+}
 /** The host returned database authority for another operation or lease. */
 export declare class PostgresOperationProtocolError extends Error {
     readonly phase: any;

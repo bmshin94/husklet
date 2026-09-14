@@ -5293,6 +5293,38 @@
         }
       ]
     },
+    "PostgresStateReceipt": {
+      "fields": [
+        {
+          "name": "lease",
+          "optional": false,
+          "schema": {
+            "kind": "ref",
+            "name": "PostgresLeaseId"
+          }
+        },
+        {
+          "name": "query",
+          "optional": false,
+          "schema": {
+            "kind": "ref",
+            "name": "PostgresQueryId"
+          }
+        },
+        {
+          "name": "state",
+          "optional": false,
+          "schema": {
+            "kind": "ref",
+            "name": "PostgresQueryState"
+          }
+        }
+      ],
+      "kind": "struct",
+      "serde": {
+        "deny_unknown_fields": true
+      }
+    },
     "PreferenceValue": {
       "kind": "enum",
       "serde": {
@@ -11293,7 +11325,7 @@
             "kind": "newtype",
             "of": {
               "kind": "ref",
-              "name": "PostgresQueryState"
+              "name": "PostgresStateReceipt"
             }
           }
         },
@@ -16328,7 +16360,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:bd0e4ec0334b265e",
+  "source_fingerprint": "fnv1a64:25de50d7c8313e71",
   "specification_version": 1,
   "topics": [
     {

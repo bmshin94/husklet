@@ -992,7 +992,7 @@ pub enum Reply {
     ContainerCreateOnce(crate::port::ContainerCreateOnceReceipt),
     PostgresOpen(crate::PostgresOpenOutcome),
     PostgresStart(crate::PostgresStartOutcome),
-    PostgresState(crate::PostgresQueryState),
+    PostgresState(crate::PostgresStateReceipt),
     PostgresPage(crate::PostgresPage),
     Revision(u64),
     Identity(String),

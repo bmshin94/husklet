@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:255e313b8c8ca538
+// Protocol artifact fnv1a64:8e51086d10b1f0d4
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -5664,6 +5664,38 @@ const definitions = {
       }
     ]
   },
+  "PostgresStateReceipt": {
+    "fields": [
+      {
+        "name": "lease",
+        "optional": false,
+        "schema": {
+          "kind": "ref",
+          "name": "PostgresLeaseId"
+        }
+      },
+      {
+        "name": "query",
+        "optional": false,
+        "schema": {
+          "kind": "ref",
+          "name": "PostgresQueryId"
+        }
+      },
+      {
+        "name": "state",
+        "optional": false,
+        "schema": {
+          "kind": "ref",
+          "name": "PostgresQueryState"
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {
+      "deny_unknown_fields": true
+    }
+  },
   "PreferenceValue": {
     "kind": "enum",
     "serde": {
@@ -10432,7 +10464,7 @@ const roots = {
           "kind": "newtype",
           "of": {
             "kind": "ref",
-            "name": "PostgresQueryState"
+            "name": "PostgresStateReceipt"
           }
         }
       },
