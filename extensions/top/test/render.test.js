@@ -5980,7 +5980,7 @@ test('volume and network panels render bounded real inventories and controls', (
   assert.equal(taggedProperty(volumeStage, 'cache', 'CardHeader', 'Align')?.Align, 'Start');
   assert.ok(taggedProperty(volumeStage, 'cache', 'CardHeader', 'Width'));
   assert.deepEqual(ancestorTags(volumeStage, 'Inspect').slice(0, 4), [
-    'Row',
+    'CardActions',
     'Row',
     'Responsive',
     'CardContent',
@@ -5989,7 +5989,7 @@ test('volume and network panels render bounded real inventories and controls', (
     Variant: 'Outline',
   });
   assert.deepEqual(ancestorTags(volumeStage, 'Danger zone').slice(0, 4), [
-    'Row',
+    'CardActions',
     'Row',
     'Responsive',
     'CardContent',
@@ -6010,7 +6010,7 @@ test('volume and network panels render bounded real inventories and controls', (
     'custom-network danger controls share the compact summary rather than adding a footer band',
   );
   assert.deepEqual(ancestorTags(networkInventoryStage, 'Danger zone').slice(0, 4), [
-    'Row',
+    'CardActions',
     'Row',
     'Responsive',
     'CardContent',
@@ -6048,9 +6048,9 @@ test('volume and network panels render bounded real inventories and controls', (
     ancestorTags(networkStage, 'Manage connections').includes('CardContent'),
     'the primary connection-management action appears in the summary band',
   );
-  assert.equal(ancestorTags(networkStage, 'Manage connections').includes('CardActions'), false);
+  assert.equal(ancestorTags(networkStage, 'Manage connections').includes('CardActions'), true);
   assert.deepEqual(ancestorTags(networkStage, 'Manage connections').slice(0, 3), [
-    'Row',
+    'CardActions',
     'Row',
     'Responsive',
   ]);
@@ -7348,11 +7348,11 @@ test('container controls follow the real daemon lifecycle states', () => {
   assert.equal(taggedProperty(stage, 'Details', 'InlineButton', 'Tone')?.Tone, 'Neutral');
   assert.equal(
     ancestorTags(stage, 'Details').includes('CardActions'),
-    false,
-    'frequent lifecycle actions do not create a detached footer band',
+    true,
+    'frequent lifecycle actions use the shared action-group component',
   );
   assert.deepEqual(ancestorTags(stage, 'Details').slice(0, 4), [
-    'Row',
+    'CardActions',
     'Row',
     'Responsive',
     'CardContent',
@@ -7735,7 +7735,7 @@ test('execution details, separate bounded streams, wait and retry are operationa
   const details = new ExecutionDetailsSource();
   const stage = host();
   stage.render(h(Executions, { api: controlled, resource, executionDetails: details }));
-  assert.deepEqual(ancestorTags(stage, 'Details').slice(0, 2), ['Row', 'Row']);
+  assert.deepEqual(ancestorTags(stage, 'Details').slice(0, 2), ['CardActions', 'Row']);
   assert.ok(
     ancestorTags(stage, 'Details').includes('Card'),
     'execution actions stay inside their resource record',

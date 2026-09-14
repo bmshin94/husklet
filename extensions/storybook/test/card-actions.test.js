@@ -35,6 +35,29 @@ test('CardActions owns a focused single-component workbench', () => {
   assert(rows.some((row) => row.Justify?.Align === 'Start'));
   assert(rows.some((row) => row.Justify?.Align === 'End'));
   assert(rows.some((row) => row.Justify?.Align === 'Center'));
+  for (const alignment of ['Start', 'Center', 'End']) {
+    assert.ok(
+      creations(frame, 'Text').some((id) => props(frame, id).Label?.Text === alignment),
+      `${alignment} alignment specimen needs a visible caption`,
+    );
+  }
+  const alignedSpecimens = rows.filter((row) =>
+    ['Actions aligned start', 'Actions aligned center', 'Actions aligned end'].includes(
+      row.Tooltip?.Text,
+    ),
+  );
+  assert.equal(alignedSpecimens.length, 3);
+  assert(
+    alignedSpecimens.every((row) => row.Width?.Bounds?.maximum?.Chars === 36),
+    'alignment specimens stay bounded instead of scattering controls across the page',
+  );
+  assert.equal(
+    creations(frame, 'Column')
+      .map((id) => props(frame, id))
+      .filter((column) => column.Width?.Length?.Chars === 48).length,
+    3,
+    'each alignment comparison owns the same compact measure',
+  );
   const buttons = creations(frame, 'Button').map((id) => props(frame, id));
   assert(buttons.length >= 10);
   assert(buttons.every((button) => button.Size?.ControlSize === 'Small'));

@@ -1,5 +1,5 @@
 import React from 'react';
-import { CardContent, CardHeader, Responsive, Row, Spacer } from '@husklet/react';
+import { CardActions, CardContent, CardHeader, Responsive, Row, Spacer } from '@husklet/react';
 
 type ResourceSummaryCommon = {
   status?: React.ReactNode;
@@ -44,19 +44,19 @@ export function ResourceSummary({
         <Row gap={2} align="stretch" justify="center" wrap width="fill">
           {identity(12)}
           {status}
-          <Row gap={1} align="center" justify="center" wrap>
+          <CardActions gap={1} align="center" justify="center">
             {centered(actions)}
             {centered(overflow)}
-          </Row>
+          </CardActions>
         </Row>
         <Row gap={2} align="stretch" justify="center" width="fill" height={{ step: 11 }}>
           {identity(20)}
           {status}
           <Spacer width="fill" />
-          <Row gap={1} align="center" justify="center">
+          <CardActions gap={1} align="center" justify="center">
             {centered(actions)}
             {centered(overflow)}
-          </Row>
+          </CardActions>
         </Row>
       </Responsive>
     </CardContent>

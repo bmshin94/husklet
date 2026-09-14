@@ -58,13 +58,13 @@ test('image inventory is a full-width compact summary with secondary inspection 
     'inspection remains a secondary action rather than competing with image pull',
   );
   assert.deepEqual(ancestorTags(stage, 'Inspect').slice(0, 4), [
-    'Row',
+    'CardActions',
     'Row',
     'Responsive',
     'CardContent',
   ]);
   assert.deepEqual(ancestorTags(stage, 'Danger zone').slice(0, 4), [
-    'Row',
+    'CardActions',
     'Row',
     'Responsive',
     'CardContent',
@@ -122,14 +122,14 @@ test('network inventory keeps management and destructive disclosure in one compa
   );
 
   assert.deepEqual(ancestorTags(stage, 'Manage connections').slice(0, 4), [
-    'Row',
+    'CardActions',
     'Row',
     'Responsive',
     'CardContent',
   ]);
   assert.equal(tag(stage, 'Manage connections'), 'InlineButton');
   assert.deepEqual(ancestorTags(stage, 'Danger zone').slice(0, 4), [
-    'Row',
+    'CardActions',
     'Row',
     'Responsive',
     'CardContent',
@@ -188,13 +188,13 @@ test('volume inventory keeps inspection and destructive disclosure in one compac
   assert.equal(tag(stage, 'Inspect'), 'InlineButton');
   assert.deepEqual(property(stage, 'Inspect', 'Variant'), { Variant: 'Outline' });
   assert.deepEqual(ancestorTags(stage, 'Inspect').slice(0, 4), [
-    'Row',
+    'CardActions',
     'Row',
     'Responsive',
     'CardContent',
   ]);
   assert.deepEqual(ancestorTags(stage, 'Danger zone').slice(0, 4), [
-    'Row',
+    'CardActions',
     'Row',
     'Responsive',
     'CardContent',

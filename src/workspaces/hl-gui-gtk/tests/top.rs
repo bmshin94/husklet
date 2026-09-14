@@ -875,13 +875,9 @@ mod unix {
                 let danger_bounds = danger
                     .compute_bounds(&network_card)
                     .expect("Danger zone belongs to network card");
-                let aligned = if width == 600 {
-                    (manage_bounds.y() - danger_bounds.y()).abs()
-                } else {
-                    ((manage_bounds.y() + manage_bounds.height() / 2.0)
-                        - (danger_bounds.y() + danger_bounds.height() / 2.0))
-                        .abs()
-                };
+                let aligned = ((manage_bounds.y() + manage_bounds.height() / 2.0)
+                    - (danger_bounds.y() + danger_bounds.height() / 2.0))
+                    .abs();
                 assert!(
                     aligned <= 2.0,
                     "{width_name} network actions split across rows: manage={manage_bounds:?}, danger={danger_bounds:?}"
@@ -980,13 +976,9 @@ mod unix {
                 let danger_bounds = danger
                     .compute_bounds(&card)
                     .expect("Danger zone belongs to volume card");
-                let aligned = if width == 600 {
-                    (inspect_bounds.y() - danger_bounds.y()).abs()
-                } else {
-                    ((inspect_bounds.y() + inspect_bounds.height() / 2.0)
-                        - (danger_bounds.y() + danger_bounds.height() / 2.0))
-                        .abs()
-                };
+                let aligned = ((inspect_bounds.y() + inspect_bounds.height() / 2.0)
+                    - (danger_bounds.y() + danger_bounds.height() / 2.0))
+                    .abs();
                 assert!(
                     aligned <= 2.0,
                     "{width_name} volume actions split across rows: inspect={inspect_bounds:?}, danger={danger_bounds:?}"
@@ -1061,13 +1053,9 @@ mod unix {
                 );
                 let inspect_bounds = inspect.compute_bounds(&card).expect("Inspect belongs to image card");
                 let danger_bounds = danger.compute_bounds(&card).expect("Danger zone belongs to image card");
-                let aligned = if width == 600 {
-                    (inspect_bounds.y() - danger_bounds.y()).abs()
-                } else {
-                    ((inspect_bounds.y() + inspect_bounds.height() / 2.0)
-                        - (danger_bounds.y() + danger_bounds.height() / 2.0))
-                        .abs()
-                };
+                let aligned = ((inspect_bounds.y() + inspect_bounds.height() / 2.0)
+                    - (danger_bounds.y() + danger_bounds.height() / 2.0))
+                    .abs();
                 assert!(
                     aligned <= 2.0,
                     "{width_name} image actions split across rows: inspect={inspect_bounds:?}, danger={danger_bounds:?}"

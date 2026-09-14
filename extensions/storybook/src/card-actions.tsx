@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, CardActions, Code, Text } from '@husklet/react';
+import { Button, CardActions, Code, Column, Text } from '@husklet/react';
 
 import {
   ApiReference,
@@ -11,16 +11,29 @@ import { rows } from './editors.js';
 
 function Actions({ justify }: { justify: 'start' | 'center' | 'end' }) {
   return (
-    <CardActions
-      width="fill"
-      gap={1}
-      align="center"
-      justify={justify}
-      tooltip={`Actions aligned ${justify}`}
-    >
+    <CardActions width="fill" gap={1} align="center" justify={justify}>
       <Button label="Details" size="small" tone="accent" />
       <Button label="Start" size="small" variant="outline" />
     </CardActions>
+  );
+}
+
+function AlignmentSpecimen({ justify }: { justify: 'start' | 'center' | 'end' }) {
+  const label = justify[0].toUpperCase() + justify.slice(1);
+  return (
+    <Column gap={1} justify="start" width={{ chars: 48 }}>
+      <Text label={label} color="text-dim" />
+      <CardActions
+        width={{ maximum: { chars: 36 } }}
+        gap={1}
+        align="center"
+        justify={justify}
+        tooltip={`Actions aligned ${justify}`}
+      >
+        <Button label="Details" size="small" tone="accent" />
+        <Button label="Start" size="small" variant="outline" />
+      </CardActions>
+    </Column>
   );
 }
 
@@ -45,9 +58,9 @@ export function CardActionsWorkbench() {
           wrap
         />
         <SpecimenGrid>
-          <Actions justify="start" />
-          <Actions justify="center" />
-          <Actions justify="end" />
+          <AlignmentSpecimen justify="start" />
+          <AlignmentSpecimen justify="center" />
+          <AlignmentSpecimen justify="end" />
         </SpecimenGrid>
       </DocumentationSection>
 

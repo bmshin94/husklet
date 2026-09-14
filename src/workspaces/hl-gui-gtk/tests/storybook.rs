@@ -2272,7 +2272,36 @@ mod unix {
                 .filter(|row| row.has_css_class("hl-cardactions"))
                 .collect::<Vec<_>>();
             assert_eq!(rows.len(), 6, "every CardActions specimen crossed the real socket");
-            assert!(rows.iter().all(|row| row.valign() == gtk::Align::Center));
+            assert!(
+                rows.iter().all(|row| row.valign() == gtk::Align::Center),
+                "CardActions rows lost centered compact controls: {:?}",
+                rows.iter()
+                    .map(|row| (row.tooltip_text(), row.valign()))
+                    .collect::<Vec<_>>()
+            );
+            for alignment in ["Start", "Center", "End"] {
+                let label = find::<gtk::Label>(&root, |label| label.text() == alignment);
+                let comparison = label
+                    .parent()
+                    .and_then(|parent| parent.downcast::<gtk::Box>().ok())
+                    .expect("alignment caption belongs to its comparison column");
+                assert!(
+                    comparison.width() <= 400,
+                    "{alignment} comparison consumed {}px instead of a compact measure",
+                    comparison.width()
+                );
+                let specimen = rows
+                    .iter()
+                    .find(|row| {
+                        row.tooltip_text().as_deref() == Some(&format!("Actions aligned {}", alignment.to_lowercase()))
+                    })
+                    .unwrap_or_else(|| panic!("{alignment} alignment specimen crossed the socket"));
+                assert!(
+                    specimen.width() <= 360,
+                    "{alignment} actions scattered across {}px instead of a bounded comparison row",
+                    specimen.width()
+                );
+            }
             let buttons = descendants::<gtk::Button>(&root)
                 .into_iter()
                 .filter(|button| button.has_css_class("size-small"))
