@@ -62,18 +62,8 @@ export function IconButtonWorkbench() {
         />
       </Block>
       <Block title="Toolbar action">
-        <Row gap={2} align="center">
-          <Heading label="Containers" scale="title" />
-          <IconButton
-            icon="view-refresh-symbolic"
-            label="Refresh containers"
-            tooltip="Refresh containers"
-            size="small"
-            variant="ghost"
-          />
-        </Row>
         <Text
-          label="Use a compact ghost icon for a familiar secondary action beside a page heading."
+          label="Persistent page actions keep a visible verb. Reserve IconButton for familiar actions inside genuinely constrained toolbars or rows."
           color="text-dim"
           wrap
         />

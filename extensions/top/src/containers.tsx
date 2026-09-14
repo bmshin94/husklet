@@ -8,7 +8,6 @@ import {
   Expander,
   Heading,
   InlineButton,
-  IconButton,
   ResourceState,
   Row,
   Scroll,
@@ -410,7 +409,7 @@ function Toolbar({
   return (
     <Row gap={1} align={'center'}>
       {loading ? <Spinner /> : null}
-      <IconButton
+      <Button
         label="Refresh"
         tooltip="Refresh containers"
         icon="view-refresh-symbolic"

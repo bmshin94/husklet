@@ -375,13 +375,12 @@ mod unix {
             }
             if fixture == "populated" && name == "containers" {
                 let refresh = find_tooltip_button(&root, "Refresh containers");
-                assert_eq!(
-                    (refresh.width(), refresh.height()),
-                    (28, 28),
-                    "{width_name} container refresh must remain a compact toolbar icon action"
-                );
-                assert!(refresh.has_css_class("hl-iconbutton"));
+                assert_eq!(refresh.height(), 44, "{width_name} refresh loses its standard hit target");
+                assert!(refresh.width() >= 72, "{width_name} refresh verb is not visibly allocated");
+                assert!(refresh.has_css_class("hl-button"));
+                assert!(!refresh.has_css_class("hl-iconbutton"));
                 assert!(refresh.has_css_class("size-small"));
+                assert!(has_label(refresh.upcast_ref(), "Refresh"));
                 assert!(refresh.grab_focus(), "container refresh is keyboard reachable");
                 let card = widgets_with_class(&root, "hl-card")
                     .into_iter()

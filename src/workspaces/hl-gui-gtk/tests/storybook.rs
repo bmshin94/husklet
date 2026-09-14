@@ -663,7 +663,7 @@ mod unix {
             for (class, expected, icon) in [("size-small", 28, 14), ("size-medium", 36, 18), ("size-large", 44, 20)] {
                 let sizes = descendants::<gtk::Button>(&root)
                     .into_iter()
-                    .filter(|button| button.has_css_class(class))
+                    .filter(|button| button.has_css_class("hl-iconbutton") && button.has_css_class(class))
                     .map(|button| (button.width(), button.height()))
                     .collect::<Vec<_>>();
                 assert!(!sizes.is_empty(), "IconButton has no {class} specimens");
@@ -673,7 +673,7 @@ mod unix {
                 );
                 let icon_sizes = descendants::<gtk::Button>(&root)
                     .into_iter()
-                    .filter(|button| button.has_css_class(class))
+                    .filter(|button| button.has_css_class("hl-iconbutton") && button.has_css_class(class))
                     .filter_map(|button| button.child())
                     .filter_map(|child| child.downcast::<gtk::Image>().ok())
                     .map(|image| (image.width(), image.height()))
@@ -690,6 +690,9 @@ mod unix {
                 button.tooltip_text().as_deref() == Some("Use the host default for font size")
             });
             assert_eq!(override_.icon_name().as_deref(), Some("edit-clear-symbolic"));
+            find::<gtk::Label>(&root, |label| {
+                label.text().starts_with("Persistent page actions keep a visible verb")
+            });
             let focus = find::<gtk::Button>(&root, |button| {
                 button.tooltip_text().as_deref() == Some("Keyboard focus")
             });
