@@ -1019,6 +1019,14 @@ export declare class TerminalCommandStartOperationError extends Error {
   readonly cause: unknown;
 }
 
+/** The host acknowledged a start token with a different command request. */
+export declare class TerminalCommandStartProtocolError extends Error {
+  readonly expected: Readonly<
+    Pick<PaneText, 'slot' | 'generation' | 'revision'> & { command: readonly string[] }
+  >;
+  readonly received: Readonly<TerminalCommand>;
+}
+
 /** The host returned a PostgreSQL page for a different query or cursor. */
 export declare class PostgresPageProtocolError extends Error {
   readonly query: PostgresQueryId;

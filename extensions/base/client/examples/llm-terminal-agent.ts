@@ -2,6 +2,7 @@ import {
   SemanticActionOperationError,
   TerminalCommandOperationError,
   TerminalCommandStartOperationError,
+  TerminalCommandStartProtocolError,
   TerminalOperationError,
   connect,
   workspace,
@@ -131,6 +132,7 @@ try {
           });
           try {
             const resumedTerminal = workspace(resumedSession).terminal;
+            if (cause instanceof TerminalCommandStartProtocolError) throw cause;
             if (cause instanceof TerminalCommandStartOperationError) {
               const command = await resumedTerminal.recoverCommandStart(cause);
               result = await resumedTerminal.resumeCommandText({

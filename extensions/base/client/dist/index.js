@@ -56,6 +56,17 @@ export class TerminalCommandStartOperationError extends Error {
         this.cause = cause;
     }
 }
+/** The host acknowledged a start token with a different command request. */
+export class TerminalCommandStartProtocolError extends Error {
+    expected;
+    received;
+    constructor(expected, received) {
+        super('host returned a terminal command for a different start request');
+        this.name = 'TerminalCommandStartProtocolError';
+        this.expected = Object.freeze({ ...expected, command: Object.freeze([...expected.command]) });
+        this.received = received;
+    }
+}
 /** The host returned a PostgreSQL page for a different query or cursor. */
 export class PostgresPageProtocolError extends Error {
     query;
@@ -2844,8 +2855,10 @@ export function workspace(session, { signal } = {}) {
                 const started = exactTerminalCommand(receipt.command);
                 if (started.slot !== pane.slot ||
                     started.generation !== pane.generation ||
-                    started.revision !== pane.revision) {
-                    throw new TypeError('host started a terminal command against a different pane snapshot');
+                    started.revision !== pane.revision ||
+                    started.command.length !== argv.length ||
+                    started.command.some((argument, index) => argument !== argv[index])) {
+                    throw new TerminalCommandStartProtocolError({ ...pane, command: argv }, started);
                 }
                 return started;
             },

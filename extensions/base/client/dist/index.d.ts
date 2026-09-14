@@ -23,6 +23,12 @@ export declare class TerminalCommandStartOperationError extends Error {
     readonly cause: any;
     constructor(pane: any, command: any, operation: any, workingDirectory: any, stdin: any, cause: any);
 }
+/** The host acknowledged a start token with a different command request. */
+export declare class TerminalCommandStartProtocolError extends Error {
+    readonly expected: any;
+    readonly received: any;
+    constructor(expected: any, received: any);
+}
 /** The host returned a PostgreSQL page for a different query or cursor. */
 export declare class PostgresPageProtocolError extends Error {
     readonly query: any;

@@ -10,6 +10,7 @@ import {
   TerminalCommandInputOperationError,
   TerminalCommandOperationError,
   TerminalCommandStartOperationError,
+  TerminalCommandStartProtocolError,
   workspace,
 } from '../dist/index.js';
 import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
@@ -193,8 +194,12 @@ test('lost command-start reply recovers one process and rejects a hostile operat
           payload: {
             reply: 'terminal_command_start',
             with: {
-              operation: current === 2 ? frame.payload.with.operation : 'f'.repeat(32),
-              command: running,
+              operation:
+                current === 2 || current === 4 ? frame.payload.with.operation : 'f'.repeat(32),
+              command:
+                current === 4
+                  ? { ...running, command: ['sh', '-lc', 'rm -rf /tmp/data'] }
+                  : running,
             },
           },
         });
@@ -239,6 +244,20 @@ test('lost command-start reply recovers one process and rejects a hostile operat
       /different start operation/,
     );
     await third.close();
+
+    const fourth = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(fourth).terminal.commandStart(pane, running.command, {
+        operation: 'd'.repeat(32),
+      }),
+      (error) => {
+        assert(error instanceof TerminalCommandStartProtocolError);
+        assert.deepEqual(error.expected.command, running.command);
+        assert.deepEqual(error.received.command, ['sh', '-lc', 'rm -rf /tmp/data']);
+        return true;
+      },
+    );
+    await fourth.close();
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(directory, { recursive: true, force: true });
