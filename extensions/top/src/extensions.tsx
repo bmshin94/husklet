@@ -716,8 +716,10 @@ export function Extensions({
     void loadWorkspaceIdentity();
   }, [loadWorkspaceIdentity]);
   React.useEffect(() => {
+    let active = true;
     let dispose: (() => Promise<void>) | undefined;
     void watchExtensions((listing) => {
+      if (!active) return;
       ++inventoryEpoch.current;
       installedSnapshot.current = listing;
       setInstalled(listing);
@@ -725,15 +727,22 @@ export function Extensions({
       setInventoryError('');
     })
       .then((stop) => {
+        if (!active) {
+          void stop();
+          return;
+        }
         dispose = stop;
         setWatchError('');
       })
-      .catch((cause) =>
-        setWatchError(
-          `Live extension updates are unavailable: ${message(cause)} Refresh to read the current inventory.`,
-        ),
-      );
+      .catch((cause) => {
+        if (active) {
+          setWatchError(
+            `Live extension updates are unavailable: ${message(cause)} Refresh to read the current inventory.`,
+          );
+        }
+      });
     return () => {
+      active = false;
       void dispose?.();
     };
   }, [watchExtensions]);

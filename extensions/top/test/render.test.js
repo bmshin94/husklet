@@ -4251,6 +4251,72 @@ test('a newer lifecycle event wins over a stale lost-reply reconciliation list',
   );
 });
 
+test('a replaced extension watch cannot leak or publish stale inventory', async () => {
+  let publishOld;
+  let finishOldSubscription;
+  let oldDisposals = 0;
+  const oldSubscription = new Promise((resolve) => {
+    finishOldSubscription = () =>
+      resolve(async () => {
+        oldDisposals += 1;
+      });
+  });
+  const oldExtension = {
+    name: 'old-workspace-tool',
+    image_digest: `sha256:${'a'.repeat(64)}`,
+    version: '1.0.0',
+    enabled: true,
+    status: 'running',
+  };
+  const currentExtension = {
+    name: 'current-workspace-tool',
+    image_digest: `sha256:${'b'.repeat(64)}`,
+    version: '2.0.0',
+    enabled: true,
+    status: 'running',
+  };
+  const stage = host();
+  stage.render(
+    h(Extensions, {
+      api: {
+        extensions: { list: async () => [oldExtension] },
+        watchExtensions: async (listener) => {
+          publishOld = listener;
+          return oldSubscription;
+        },
+      },
+    }),
+  );
+  await settled();
+  assert.ok(labelled(stage, 'old-workspace-tool'));
+
+  stage.render(
+    h(Extensions, {
+      api: {
+        extensions: { list: async () => [currentExtension] },
+        watchExtensions: async () => async () => {},
+      },
+    }),
+  );
+  await settled();
+  await settled();
+  assert.ok(labelled(stage, 'current-workspace-tool'));
+
+  finishOldSubscription();
+  await settled();
+  assert.equal(oldDisposals, 1, 'a subscription resolving after cleanup is closed immediately');
+
+  publishOld([oldExtension]);
+  await settled();
+  const visible = orderedLabels(stage);
+  assert.ok(visible.includes('current-workspace-tool'));
+  assert.equal(
+    visible.includes('old-workspace-tool'),
+    false,
+    'a retired workspace watch cannot replace the current installed inventory',
+  );
+});
+
 test('Top is visibly required and offers no self-disable or self-removal trap', async () => {
   const stage = host();
   stage.render(
