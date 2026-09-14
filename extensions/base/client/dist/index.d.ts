@@ -250,6 +250,14 @@ export declare class FileChunkLimitError extends RangeError {
     readonly maxChunks: any;
     constructor(path: any, identity: any, offset: any, total: any, maxBytes: any, maxChunks: any);
 }
+/** A chunk stream lost transport or was cancelled after establishing an exact resume cursor. */
+export declare class FileChunkOperationError extends Error {
+    readonly path: any;
+    readonly identity: any;
+    readonly offset: any;
+    readonly total: any;
+    constructor(path: any, identity: any, offset: any, total: any, cause: any);
+}
 /** A bounded text read lost transport after an exact prefix had been acknowledged. */
 export declare class FileTextOperationError extends Error {
     readonly path: any;

@@ -1041,6 +1041,14 @@ export declare class FileChunkLimitError extends RangeError {
   readonly maxBytes: number;
   readonly maxChunks: number;
 }
+/** A chunk stream lost transport or was cancelled after establishing an exact resume cursor. */
+export declare class FileChunkOperationError extends Error {
+  readonly path: string;
+  readonly identity: string;
+  readonly offset: number;
+  readonly total: number | null;
+  readonly cause: unknown;
+}
 /** A bounded text read lost transport after an exact prefix had been acknowledged. */
 export declare class FileTextOperationError extends Error {
   readonly path: string;
@@ -2385,6 +2393,16 @@ export interface WorkspaceApi {
         maxChunks?: number;
         /** Pin every range to an identity obtained from stat, inventory, or persisted state. */
         observed?: string | null;
+        signal?: AbortSignal;
+      },
+    ): AsyncGenerator<FileRange, void, void>;
+    /** Resume an interrupted chunk stream from its exact file identity and acknowledged offset. */
+    resumeChunks(
+      failure: FileChunkOperationError,
+      options?: {
+        chunkBytes?: number;
+        maxBytes?: number;
+        maxChunks?: number;
         signal?: AbortSignal;
       },
     ): AsyncGenerator<FileRange, void, void>;

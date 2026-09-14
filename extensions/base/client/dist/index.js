@@ -625,6 +625,21 @@ export class FileChunkLimitError extends RangeError {
         this.maxChunks = maxChunks;
     }
 }
+/** A chunk stream lost transport or was cancelled after establishing an exact resume cursor. */
+export class FileChunkOperationError extends Error {
+    path;
+    identity;
+    offset;
+    total;
+    constructor(path, identity, offset, total, cause) {
+        super(`filesystem chunks for ${path} at identity ${identity} failed at resumable offset ${offset}`, { cause });
+        this.name = 'FileChunkOperationError';
+        this.path = path;
+        this.identity = identity;
+        this.offset = offset;
+        this.total = total;
+    }
+}
 /** A bounded text read lost transport after an exact prefix had been acknowledged. */
 export class FileTextOperationError extends Error {
     path;
@@ -3625,8 +3640,21 @@ export function workspace(session, { signal } = {}) {
                         throw new FileChunkLimitError(path, identity, cursor, total, maxBytes, maxChunks);
                     }
                     const requestLimit = Math.min(limit, maxBytes - delivered);
-                    const range = await scoped.files.readRange(path, cursor, requestLimit, identity);
-                    requireFilesystemActive(signal);
+                    let range;
+                    try {
+                        range = await scoped.files.readRange(path, cursor, requestLimit, identity);
+                        requireFilesystemActive(signal);
+                    }
+                    catch (cause) {
+                        if (identity &&
+                            !(cause instanceof FileIdentityChangedError) &&
+                            !(cause instanceof FileExtentChangedError) &&
+                            !(cause instanceof FileChunkLimitError) &&
+                            !(cause instanceof FileChunkOperationError)) {
+                            throw new FileChunkOperationError(path, identity, cursor, total ?? null, cause);
+                        }
+                        throw cause;
+                    }
                     identity ??= range.identity;
                     if (range.identity !== identity) {
                         throw new FileIdentityChangedError(path, identity, range.identity, cursor);
@@ -3643,6 +3671,23 @@ export function workspace(session, { signal } = {}) {
                     if (eof)
                         return;
                     cursor = next;
+                }
+            },
+            resumeChunks: async function* (failure, { chunkBytes = 65_536, maxBytes = 64 * 1024 * 1024, maxChunks = 4_096, signal, } = {}) {
+                if (!(failure instanceof FileChunkOperationError))
+                    throw new TypeError('filesystem chunk recovery requires a FileChunkOperationError');
+                for await (const range of api.files.readChunks(failure.path, {
+                    offset: failure.offset,
+                    chunkBytes,
+                    maxBytes,
+                    maxChunks,
+                    observed: failure.identity,
+                    signal,
+                })) {
+                    if (failure.total !== null && range.total !== failure.total) {
+                        throw new FileExtentChangedError(failure.path, failure.identity, failure.total, range.total, failure.offset);
+                    }
+                    yield range;
                 }
             },
             readText: async (path, { maxBytes, chunkBytes = 65_536, observed = null, signal, preservePartialOnAbort = false, }) => {
@@ -6562,6 +6607,7 @@ export const protocolCoverage = Object.freeze({
             'readRange',
             'readRanges',
             'readChunks',
+            'resumeChunks',
             'readText',
             'resumeText',
             'stat',
