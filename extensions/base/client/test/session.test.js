@@ -113,6 +113,7 @@ test('fragmented Unix file write recovery accepts only the exact committed revie
   let identity = 'source-v1';
   let contents = [111, 108, 100, 10];
   let connection = 0;
+  let requests = 0;
   const peers = new Set();
   const fragmented = (socket, frame) => {
     for (const byte of frame) socket.write(Uint8Array.of(byte));
@@ -126,6 +127,7 @@ test('fragmented Unix file write recovery accepts only the exact committed revie
     socket.on('data', (chunk) => {
       for (const frame of reader.take(chunk)) {
         if (frame.kind !== KIND.request) continue;
+        requests += 1;
         const input = frame.payload.with;
         if (frame.payload.call === 'filesystem_write_observed') {
           assert.deepEqual(input, {
@@ -199,6 +201,11 @@ test('fragmented Unix file write recovery accepts only the exact committed revie
   let resumed;
   try {
     first = await connect({ path: socketPath, timeout: 1_000 });
+    await assert.rejects(
+      workspace(first).files.writeObserved('src/review.ts', 'x'.repeat(257), reviewed),
+      /1\.\.256 bytes/,
+    );
+    assert.equal(requests, 0, 'malformed file authority never crossed the Unix socket');
     let failure;
     try {
       await workspace(first).files.writeObserved('src/review.ts', 'source-v1', reviewed);

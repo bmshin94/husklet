@@ -5382,6 +5382,14 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       write: (path, contents) =>
         done('filesystem_write', { path, contents: exactFileContents(contents) }),
       writeObserved: async (path, observed, contents) => {
+        if (
+          typeof observed !== 'string' ||
+          observed.length === 0 ||
+          observed.includes('\0') ||
+          new TextEncoder().encode(observed).byteLength > 256
+        ) {
+          throw new TypeError('observed file identity must be 1..256 bytes and NUL-free');
+        }
         const exact = exactFileContents(contents);
         try {
           const receipt = expect(
