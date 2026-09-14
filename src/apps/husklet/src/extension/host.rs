@@ -724,7 +724,15 @@ fn run<S: Supply>(supply: &Arc<S>, hall: &Hall, plan: &Plan) {
             Passage::Stopped => break,
             Passage::Renewal => continue,
             Passage::Unready(reason) => hall.loss(reason),
-            Passage::End(reason) => hall.loss(reason),
+            Passage::End(reason) => {
+                hall.loss(reason);
+                // The peer that owned this generation has gone away. Retire
+                // it before recovery calls `ensure`: otherwise a process that
+                // is still winding down can be classified as reusable and the
+                // new listener waits forever for a connection it will never
+                // make.
+                supply.halt(plan);
+            }
         }
         if !recover(&mut installation, hall, plan) {
             break;
@@ -1810,6 +1818,45 @@ tab_title = "Sample"
 
         host.close().expect("closed");
         assert!(!socket.exists(), "closing retires the replacement socket");
+    }
+
+    #[test]
+    fn a_disconnected_generation_is_stopped_before_its_replacement_starts() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let socket = temporary.path().join("run/extension.sock");
+        let token = Arc::new(());
+        let gallery = Gallery::default();
+        let bench = Arc::new(Bench::new(
+            &socket,
+            &[
+                Script {
+                    sequence: 1,
+                    draw: true,
+                    linger: false,
+                },
+                Script {
+                    sequence: 2,
+                    draw: true,
+                    linger: true,
+                },
+            ],
+            &token,
+        ));
+        let host = Host::open(Attendance(Arc::clone(&bench)), gallery.audience());
+
+        assert!(
+            until(|| gallery.frames() == vec![1, 2]),
+            "a fresh generation replaces the disconnected peer"
+        );
+        assert_eq!(bench.ensures(), 2, "recovery starts exactly one replacement");
+        assert_eq!(
+            bench.halts(),
+            1,
+            "the disconnected generation is retired before the replacement starts"
+        );
+
+        host.close().expect("closed");
+        assert_eq!(bench.halts(), 2, "owned shutdown retires the live replacement");
     }
 
     #[test]
