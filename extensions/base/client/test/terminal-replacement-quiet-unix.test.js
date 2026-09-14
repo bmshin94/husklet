@@ -5,10 +5,10 @@ import path from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import test from 'node:test';
 
-import { connect, workspace } from '../dist/index.js';
+import { connect, TerminalOperationError, workspace } from '../dist/index.js';
 import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
 
-test('quiet terminal input discloses replacement without settling unrelated output', async () => {
+test('quiet terminal input rejects replacement without settling unrelated output', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-quiet-replacement-'));
   const socketPath = path.join(directory, 'host.sock');
   const calls = [];
@@ -95,14 +95,13 @@ test('quiet terminal input discloses replacement without settling unrelated outp
   try {
     const session = await connect({ path: socketPath });
     const terminal = workspace(session).terminal;
-    const result = await terminal.writeObservedAndWaitForQuietText(screen(4, 7, '$ '), 'whoami\n', {
-      quietMs: 20,
-      timeoutMs: 1_000,
-    });
-    assert.equal(result.changed, true);
-    assert.equal(result.replaced, true);
-    assert.equal(result.settled, false);
-    assert.equal(result.after.snapshot.generation, 5);
+    await assert.rejects(
+      terminal.writeObservedAndWaitForQuietText(screen(4, 7, '$ '), 'whoami\n', {
+        quietMs: 20,
+        timeoutMs: 1_000,
+      }),
+      (error) => error instanceof TerminalOperationError && /replaced/.test(error.message),
+    );
     assert.equal(
       calls.filter((call) => call === 'event_subscribe').length,
       1,

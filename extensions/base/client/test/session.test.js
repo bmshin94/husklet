@@ -9684,7 +9684,7 @@ test('real Unix quiet terminal wait does not mistake local echo for an agent res
   }
 });
 
-test('real Unix writeAndWait refuses to attribute a replacement pane screen to sent input', async () => {
+test('real Unix projected input refuses to attribute replacement pane text to sent bytes', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-write-replacement-'));
   const socketPath = path.join(directory, 'host.sock');
   const calls = [];
@@ -9715,6 +9715,28 @@ test('real Unix writeAndWait refuses to attribute a replacement pane screen to s
           frame.payload.call === 'event_unsubscribe'
         ) {
           socket.write(encode({ channel: 2, kind: KIND.response, payload: { reply: 'done' } }));
+        } else if (frame.payload.call === 'pane_list') {
+          const reply = encode({
+            channel: 2,
+            kind: KIND.response,
+            payload: {
+              reply: 'panes',
+              with: {
+                panes: [{
+                  slot: 'pane-input',
+                  generation: 5,
+                  revision: 1,
+                  kind: 'terminal',
+                  provider: null,
+                  tab: 'tab-1',
+                  title: 'Replacement',
+                  focused: true,
+                }],
+                truncated: false,
+              },
+            },
+          });
+          for (const byte of reply) socket.write(Uint8Array.of(byte));
         } else if (frame.payload.call === 'terminal_read_pane') {
           reads += 1;
           socket.write(
@@ -9771,13 +9793,14 @@ test('real Unix writeAndWait refuses to attribute a replacement pane screen to s
     const session = await connect({ path: socketPath });
     const terminal = workspace(session).terminal;
     await assert.rejects(
-      terminal.writeAndWait('pane-input', 4, 7, [3]),
+      terminal.writeObservedAndWaitForText(screen(4, 7, '$ '), [3]),
       /pane was replaced before input result could be verified/,
     );
     assert.deepEqual(calls, [
       'event_subscribe',
       'terminal_read_pane',
       'terminal_write_pane',
+      'pane_list',
       'terminal_read_pane',
       'event_unsubscribe',
     ]);
