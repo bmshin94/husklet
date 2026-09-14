@@ -2847,6 +2847,19 @@ test('extension inspection keeps invalid and failed references recoverable with 
   await settled();
   await settled();
   assert.ok(labelled(stage, 'Couldn’t inspect extension'));
+  assert.ok(
+    labelled(stage, 'Extensions'),
+    'inspection recovery retains the page title instead of becoming an unlabelled replacement view',
+  );
+  assert.deepEqual(
+    property(stage, 'Extensions', 'Label'),
+    { Text: 'Extensions' },
+    'the retained title is still present in the current acquisition frame',
+  );
+  assert.ok(
+    labelled(stage, 'Extension catalogue · Discover'),
+    'inspection recovery retains its catalogue location while the mode controls are unavailable',
+  );
   assert.deepEqual(taggedProperty(stage, 'Couldn’t inspect extension', 'CardHeader', 'Detail'), {
     Text: 'Image inspection',
   });

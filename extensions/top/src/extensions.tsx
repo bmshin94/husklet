@@ -1346,9 +1346,9 @@ export function Extensions({
         gap={3}
         width={PAGE_WIDTH}
       >
+        <Heading label="Extensions" scale="display" />
         {!acquisition ? (
           <>
-            <Heading label="Extensions" scale="display" />
             <Text
               label="Discover tools, review their access, and manage what runs in this workspace."
               color="text-dim"
@@ -1369,7 +1369,9 @@ export function Extensions({
               />
             </ToggleButtonGroup>
           </>
-        ) : null}
+        ) : (
+          <Text label="Extension catalogue · Discover" color="text-dim" />
+        )}
         {error && <RecoveryState operation="Extension change" error={error} />}
         {notice && (
           <InlineMessage label={notice.label} tone={notice.uncertain ? 'warning' : 'positive'} />
