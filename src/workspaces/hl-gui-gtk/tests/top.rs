@@ -413,7 +413,11 @@ mod unix {
                 assert!(start.has_css_class("tone-accent"));
                 assert!(start.grab_focus(), "container Start remains keyboard reachable");
                 assert!(!find_button(&card, "Details").has_css_class("tone-accent"));
-                let secondary = find_expander(&card, "More actions");
+                let secondary = find_expander(&card, "Lifecycle…");
+                assert!(
+                    !has_label(&card, "More actions"),
+                    "container disclosure names its lifecycle action category"
+                );
                 assert!(secondary.has_css_class("variant-outline"));
                 assert_eq!(
                     secondary.height(),
@@ -430,7 +434,10 @@ mod unix {
                     secondary.tooltip_text().as_deref(),
                     Some("Rename, restart, pause, stop, or remove this container")
                 );
-                assert!(secondary.grab_focus(), "More actions remains keyboard reachable");
+                assert!(
+                    secondary.grab_focus(),
+                    "Lifecycle disclosure remains keyboard reachable"
+                );
                 let create = find_button(&root, "Create a container");
                 assert!(create.has_css_class("variant-outline"));
                 assert!(create.has_css_class("size-small"));
@@ -1171,7 +1178,11 @@ mod unix {
                     find_button(&card, "Load output").grab_focus(),
                     "execution output action is keyboard reachable"
                 );
-                let secondary = find_expander(&card, "More actions");
+                let secondary = find_expander(&card, "Cleanup…");
+                assert!(
+                    !has_label(&card, "More actions"),
+                    "execution disclosure names its cleanup action category"
+                );
                 assert!(secondary.has_css_class("variant-outline"));
                 assert_eq!(
                     secondary.height(),

@@ -301,7 +301,7 @@ function ContainerActions({
   const active = running || item.state === 'paused';
   return (
     <Expander
-      label="More actions"
+      label="Lifecycle…"
       expanded={false}
       variant="outline"
       width="content"

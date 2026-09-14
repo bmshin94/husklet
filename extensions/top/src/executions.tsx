@@ -310,7 +310,7 @@ export function Executions({
               }
               overflow={
                 <Expander
-                  label="More actions"
+                  label="Cleanup…"
                   variant="outline"
                   width="content"
                   align="start"
