@@ -408,6 +408,11 @@ mod unix {
                     &find_button(&card, "Details"),
                     &format!("{width_name} container inspection"),
                 );
+                let start = find_button(&card, "Start");
+                assert!(start.has_css_class("variant-filled"));
+                assert!(start.has_css_class("tone-accent"));
+                assert!(start.grab_focus(), "container Start remains keyboard reachable");
+                assert!(!find_button(&card, "Details").has_css_class("tone-accent"));
                 let secondary = find_expander(&card, "More actions");
                 assert!(secondary.has_css_class("variant-outline"));
                 assert_eq!(

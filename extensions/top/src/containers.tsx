@@ -242,7 +242,8 @@ export function Containers({
                     {startable(item.state) ? (
                       <InlineButton
                         label="Start"
-                        variant="outline"
+                        variant="filled"
+                        tone="accent"
                         enabled={busy === ''}
                         onInvoke={() => act('start', item.id, undefined, item.generation)}
                       />
