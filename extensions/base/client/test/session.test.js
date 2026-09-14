@@ -9339,7 +9339,6 @@ test('real Unix writeAndWait subscribes and reads before bytes, then returns adv
     assert.deepEqual(calls, [
       'event_subscribe',
       'terminal_read_pane',
-      'terminal_input_open',
       'terminal_write_pane',
       'event_unsubscribe',
     ]);
@@ -9953,6 +9952,7 @@ test('real Unix projected input refuses to attribute replacement pane text to se
     assert.deepEqual(calls, [
       'event_subscribe',
       'terminal_read_pane',
+      'terminal_input_open',
       'terminal_write_pane',
       'pane_list',
       'terminal_read_pane',
