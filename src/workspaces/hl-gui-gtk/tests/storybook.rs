@@ -2280,6 +2280,16 @@ mod unix {
                 "32ch Card outer frame did not remain narrower than a fill Card"
             );
             assert!(long.wraps(), "long Card copy does not wrap");
+            let inline_label = find::<gtk::Label>(&root, |label| label.text() == "Outline · inline work");
+            let selected_label = find::<gtk::Label>(&root, |label| label.text() == "Filled · selected focus");
+            let inline_bounds = inline_label.compute_bounds(&root).expect("outline guidance belongs to Card page");
+            let selected_bounds = selected_label
+                .compute_bounds(&root)
+                .expect("filled guidance belongs to Card page");
+            assert!(
+                inline_bounds.y() <= selected_bounds.y(),
+                "Card variants lost their teaching order"
+            );
             assert_contained(&root, "Card wide");
             realized_window.set_size_request(600, 800);
             realized_window.set_default_size(600, 800);
@@ -2295,6 +2305,10 @@ mod unix {
                 inventory.width()
             );
             assert!(long.width() <= 552, "long Card copy escaped 16px narrow insets");
+            assert!(
+                inline_label.width() <= 552 && selected_label.width() <= 552,
+                "Card variant guidance escaped the narrow content lane"
+            );
             capture_story(&realized_window, "Card narrow");
             let (status, stderr) = child.stop();
             assert!(stderr.is_empty(), "{story} wrote warnings/errors: {stderr}");

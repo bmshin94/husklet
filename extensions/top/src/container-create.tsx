@@ -686,7 +686,7 @@ export function ContainerCreate({
           />
         </Row>
       ) : (
-        <Card variant="filled" width="fill">
+        <Card variant="outline" width="fill">
           <CardHeader
             label="New container"
             detail="Image and stable name are required. Creation is verified before start."

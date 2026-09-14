@@ -13,6 +13,7 @@ import {
   ApiReference,
   ComponentDocument,
   DocumentationSection,
+  FieldSpecimen,
   SpecimenGrid,
 } from './component-document.js';
 import { rows } from './editors.js';
@@ -63,8 +64,18 @@ export function CardWorkbench() {
 
       <DocumentationSection title="Variants">
         <SpecimenGrid>
-          <ProjectCard variant="outline" />
-          <ProjectCard variant="filled" />
+          <FieldSpecimen
+            label="Outline · inline work"
+            helper="Use for forms and records that belong to the current page."
+          >
+            <ProjectCard variant="outline" />
+          </FieldSpecimen>
+          <FieldSpecimen
+            label="Filled · selected focus"
+            helper="Reserve the stronger surface for the item currently selected or inspected."
+          >
+            <ProjectCard variant="filled" />
+          </FieldSpecimen>
         </SpecimenGrid>
       </DocumentationSection>
 

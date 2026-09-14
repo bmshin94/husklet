@@ -6569,6 +6569,9 @@ test('container creation groups its compact form and uses a human label editor',
     ancestorTags(stage, 'New container').includes('Card'),
     'required setup remains one grouped progressive card',
   );
+  assert.deepEqual(ancestorProperty(stage, 'New container', 'Card', 'Variant'), {
+    Variant: 'Outline',
+  });
   assert.ok(
     placeholderProperty(stage, 'Working directory (optional)', 'Width'),
     'the working-directory control has an explicit readable width',

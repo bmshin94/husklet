@@ -474,7 +474,8 @@ mod unix {
                     "expanded setup used {}px instead of the available width",
                     card.width()
                 );
-                assert!(card.has_css_class("variant-filled"));
+                assert!(card.has_css_class("variant-outline"));
+                assert!(!card.has_css_class("variant-filled"));
                 assert!(
                     card.height() <= 340,
                     "{width_name} required container setup consumed {}px before any optional section opened",

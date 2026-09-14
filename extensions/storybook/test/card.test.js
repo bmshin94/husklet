@@ -57,6 +57,12 @@ test('Card owns a dedicated single-component document with canonical anatomy', (
   const variants = cards.map((id) => props(frame, id).Variant?.Variant);
   assert(variants.includes('Outline'));
   assert(variants.includes('Filled'));
+  const labels = frame.patches
+    .filter((patch) => patch.SetProp?.prop === 'Label')
+    .map((patch) => patch.SetProp.value?.Text);
+  assert(labels.includes('Outline · inline work'));
+  assert(labels.includes('Filled · selected focus'));
+  assert(labels.some((label) => label?.includes('Reserve the stronger surface')));
   assert.equal(creations(frame, 'CardHeader').length, cards.length);
   assert.equal(creations(frame, 'CardContent').length, cards.length);
   assert.equal(creations(frame, 'CardActions').length, cards.length);
