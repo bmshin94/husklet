@@ -350,6 +350,14 @@ mod unix {
             if story == "Validated settings form" {
                 assert_form_primary(&root, "default narrow");
             }
+            if story == "Switch" {
+                let caption = find::<gtk::Label>(&root, |label| label.text() == "Restore panes on launch");
+                assert!(
+                    caption.width() >= 140,
+                    "a short Switch caption collapsed to {}px in the 600px document",
+                    caption.width()
+                );
+            }
             if matches!(story, "Splitter" | "Workspace layout control") {
                 assert_public_splitter(
                     &realized_window,
@@ -825,6 +833,11 @@ mod unix {
         if story == "Switch" {
             let focus = labelled_switch(&root, "Restore panes on launch");
             let caption = find::<gtk::Label>(&root, |label| label.text() == "Restore panes on launch");
+            assert!(
+                caption.width() >= 140,
+                "a short Switch caption collapsed to {}px in the 1200px document",
+                caption.width()
+            );
             assert_eq!(focus.accessible_role(), gtk::AccessibleRole::Switch);
             assert_eq!(
                 (focus.width(), focus.height()),

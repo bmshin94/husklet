@@ -41,6 +41,11 @@ fn caption() -> gtk::Box {
     widget.set_valign(gtk::Align::Center);
     let caption = slot::caption_label();
     caption.set_wrap(true);
+    // A wrapping label otherwise advertises its shortest word as its natural
+    // width. GtkBox then leaves even a short switch caption in a narrow text
+    // column while the rest of the row is empty. Prefer the unwrapped natural
+    // width, while retaining wrapping when the row is genuinely constrained.
+    caption.set_natural_wrap_mode(gtk::NaturalWrapMode::None);
     caption.set_xalign(0.0);
     caption.set_hexpand(true);
     widget.append(&caption);
