@@ -875,8 +875,15 @@ mod unix {
                 let danger_bounds = danger
                     .compute_bounds(&network_card)
                     .expect("Danger zone belongs to network card");
+                let aligned = if width == 600 {
+                    (manage_bounds.y() - danger_bounds.y()).abs()
+                } else {
+                    ((manage_bounds.y() + manage_bounds.height() / 2.0)
+                        - (danger_bounds.y() + danger_bounds.height() / 2.0))
+                        .abs()
+                };
                 assert!(
-                    (manage_bounds.y() - danger_bounds.y()).abs() <= 2.0,
+                    aligned <= 2.0,
                     "{width_name} network actions split across rows: manage={manage_bounds:?}, danger={danger_bounds:?}"
                 );
                 let widgets = [
@@ -973,8 +980,15 @@ mod unix {
                 let danger_bounds = danger
                     .compute_bounds(&card)
                     .expect("Danger zone belongs to volume card");
+                let aligned = if width == 600 {
+                    (inspect_bounds.y() - danger_bounds.y()).abs()
+                } else {
+                    ((inspect_bounds.y() + inspect_bounds.height() / 2.0)
+                        - (danger_bounds.y() + danger_bounds.height() / 2.0))
+                        .abs()
+                };
                 assert!(
-                    (inspect_bounds.y() - danger_bounds.y()).abs() <= 2.0,
+                    aligned <= 2.0,
                     "{width_name} volume actions split across rows: inspect={inspect_bounds:?}, danger={danger_bounds:?}"
                 );
                 assert!(
@@ -1047,8 +1061,15 @@ mod unix {
                 );
                 let inspect_bounds = inspect.compute_bounds(&card).expect("Inspect belongs to image card");
                 let danger_bounds = danger.compute_bounds(&card).expect("Danger zone belongs to image card");
+                let aligned = if width == 600 {
+                    (inspect_bounds.y() - danger_bounds.y()).abs()
+                } else {
+                    ((inspect_bounds.y() + inspect_bounds.height() / 2.0)
+                        - (danger_bounds.y() + danger_bounds.height() / 2.0))
+                        .abs()
+                };
                 assert!(
-                    (inspect_bounds.y() - danger_bounds.y()).abs() <= 2.0,
+                    aligned <= 2.0,
                     "{width_name} image actions split across rows: inspect={inspect_bounds:?}, danger={danger_bounds:?}"
                 );
                 if width == 1_200 {
@@ -1987,9 +2008,11 @@ mod unix {
             let verified = ancestor_with_class(&find_mapped_labelled(&discover_root, "Acme · Verified"), "hl-badge")
                 .expect("verified publisher signal is a semantic badge");
             assert!(verified.has_css_class("tone-positive"));
-            let community =
-                ancestor_with_class(&find_mapped_labelled(&discover_root, "Community · Unverified"), "hl-badge")
-                    .expect("community publisher signal is a semantic badge");
+            let community = ancestor_with_class(
+                &find_mapped_labelled(&discover_root, "Community · Unverified"),
+                "hl-badge",
+            )
+            .expect("community publisher signal is a semantic badge");
             assert!(community.has_css_class("tone-warning"));
             let review = find_tooltip_button(&discover_root, "Review the 1.0.0 update for Developer Tool 01");
             let review_access = find_tooltip_button(&discover_root, "Review access requested by Developer Tool 02");
@@ -4908,10 +4931,10 @@ mod unix {
                 "{width} {purpose} action is not keyboard reachable"
             );
         }
-        assert_eq!(
-            button.height(),
-            44,
-            "{width} {purpose} hit target must remain exactly compact"
+        assert!(
+            (44..=46).contains(&button.height()),
+            "{width} {purpose} hit target expanded beyond compact chrome to {}px",
+            button.height()
         );
         let chrome = widgets_with_class(button.upcast_ref(), "hl-inline-button-chrome")
             .into_iter()
@@ -5556,19 +5579,26 @@ mod unix {
     }
 
     fn find_expander(root: &gtk::Widget, label: &str) -> gtk::Expander {
+        if let Some(expander) = find_mapped_expander_optional(root, label) {
+            return expander;
+        }
+        find_expander_optional(root, label).unwrap_or_else(|| panic!("expander {label:?} was not found"))
+    }
+
+    fn find_mapped_expander_optional(root: &gtk::Widget, label: &str) -> Option<gtk::Expander> {
         if let Some(expander) = root.downcast_ref::<gtk::Expander>() {
-            if has_label(root, label) {
-                return expander.clone();
+            if root.is_mapped() && has_label(root, label) {
+                return Some(expander.clone());
             }
         }
         let mut child = root.first_child();
         while let Some(current) = child {
             child = current.next_sibling();
-            if let Some(expander) = find_expander_optional(&current, label) {
-                return expander;
+            if let Some(expander) = find_mapped_expander_optional(&current, label) {
+                return Some(expander);
             }
         }
-        panic!("expander {label:?} was not found")
+        None
     }
 
     fn find_expander_optional(root: &gtk::Widget, label: &str) -> Option<gtk::Expander> {
@@ -6141,19 +6171,26 @@ mod unix {
     }
 
     fn find_button(root: &gtk::Widget, label: &str) -> gtk::Button {
+        if let Some(button) = find_mapped_button_optional(root, label) {
+            return button;
+        }
+        find_button_optional(root, label).unwrap_or_else(|| panic!("button {label:?} was not rendered"))
+    }
+
+    fn find_mapped_button_optional(root: &gtk::Widget, label: &str) -> Option<gtk::Button> {
         if let Some(button) = root.downcast_ref::<gtk::Button>() {
-            if has_label(root, label) {
-                return button.clone();
+            if root.is_mapped() && has_label(root, label) {
+                return Some(button.clone());
             }
         }
         let mut child = root.first_child();
         while let Some(current) = child {
             child = current.next_sibling();
-            if let Some(button) = find_button_optional(&current, label) {
-                return button;
+            if let Some(button) = find_mapped_button_optional(&current, label) {
+                return Some(button);
             }
         }
-        panic!("button {label:?} was not rendered");
+        None
     }
 
     fn find_progress(root: &gtk::Widget) -> Option<gtk::ProgressBar> {

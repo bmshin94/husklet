@@ -5944,13 +5944,19 @@ test('volume and network panels render bounded real inventories and controls', (
   const volumeStage = stageFromFrame(volumeFrame);
   assert.equal(taggedProperty(volumeStage, 'cache', 'CardHeader', 'Align')?.Align, 'Start');
   assert.ok(taggedProperty(volumeStage, 'cache', 'CardHeader', 'Width'));
-  assert.deepEqual(ancestorTags(volumeStage, 'Inspect').slice(0, 3), ['Row', 'Row', 'CardContent']);
+  assert.deepEqual(ancestorTags(volumeStage, 'Inspect').slice(0, 4), [
+    'Row',
+    'Row',
+    'Responsive',
+    'CardContent',
+  ]);
   assert.deepEqual(taggedProperty(volumeStage, 'Inspect', 'InlineButton', 'Variant'), {
     Variant: 'Outline',
   });
-  assert.deepEqual(ancestorTags(volumeStage, 'Danger zone').slice(0, 3), [
+  assert.deepEqual(ancestorTags(volumeStage, 'Danger zone').slice(0, 4), [
     'Row',
     'Row',
+    'Responsive',
     'CardContent',
   ]);
   for (const label of ['Networks', 'private', 'Remove'])
@@ -5968,9 +5974,10 @@ test('volume and network panels render bounded real inventories and controls', (
     2,
     'custom-network danger controls share the compact summary rather than adding a footer band',
   );
-  assert.deepEqual(ancestorTags(networkInventoryStage, 'Danger zone').slice(0, 3), [
+  assert.deepEqual(ancestorTags(networkInventoryStage, 'Danger zone').slice(0, 4), [
     'Row',
     'Row',
+    'Responsive',
     'CardContent',
   ]);
   assert.ok(
@@ -5980,8 +5987,8 @@ test('volume and network panels render bounded real inventories and controls', (
   assert.ok(labels(networkFrame).includes('Built-in · protected'));
   assert.equal(
     labels(networkFrame).filter((label) => label === 'Remove').length,
-    1,
-    'only the custom network offers removal',
+    2,
+    'only the custom network offers removal in both responsive presentations',
   );
   const networkStage = stageFromFrame(networkFrame);
   assert.equal(
@@ -6010,7 +6017,7 @@ test('volume and network panels render bounded real inventories and controls', (
   assert.deepEqual(ancestorTags(networkStage, 'Manage connections').slice(0, 3), [
     'Row',
     'Row',
-    'CardContent',
+    'Responsive',
   ]);
   assert.deepEqual(
     taggedProperty(networkStage, 'Manage connections', 'InlineButton', 'Enabled')?.Flag,
@@ -7309,7 +7316,12 @@ test('container controls follow the real daemon lifecycle states', () => {
     false,
     'frequent lifecycle actions do not create a detached footer band',
   );
-  assert.deepEqual(ancestorTags(stage, 'Details').slice(0, 3), ['Row', 'Row', 'CardContent']);
+  assert.deepEqual(ancestorTags(stage, 'Details').slice(0, 4), [
+    'Row',
+    'Row',
+    'Responsive',
+    'CardContent',
+  ]);
   assert.deepEqual(ancestorProperty(stage, 'Details', 'CardContent', 'Align'), {
     Align: 'Center',
   });
@@ -8402,6 +8414,7 @@ test('successful network attachment retains its receipt and verified expanded me
     ),
     [
       'Danger zone',
+      'Danger zone',
       'Network details',
       'Container attachment',
       'Connected container-1 to private',
@@ -8516,6 +8529,7 @@ test('successful disconnect retains its receipt and verified empty membership', 
       ].includes(label),
     ),
     [
+      'Danger zone',
       'Danger zone',
       'Network details',
       'Container attachment',

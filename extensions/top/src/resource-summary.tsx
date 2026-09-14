@@ -1,5 +1,5 @@
 import React from 'react';
-import { CardContent, CardHeader, Row } from '@husklet/react';
+import { CardContent, CardHeader, Responsive, Row, Spacer } from '@husklet/react';
 
 type ResourceSummaryCommon = {
   status?: React.ReactNode;
@@ -29,16 +29,49 @@ export function ResourceSummary({
 }: ResourceSummaryProps) {
   if (!summary && !label)
     throw new TypeError('ResourceSummary needs a label or structured summary');
+  const identity = (minimum: number) =>
+    summary ?? (
+      <CardHeader
+        label={label}
+        detail={detail}
+        align="start"
+        width={{ minimum: { chars: minimum }, maximum: { chars: 32 } }}
+      />
+    );
   return (
     <CardContent gap={1} align="center" width="fill">
-      <Row gap={2} align="center" justify="start" wrap width="fill">
-        {summary ?? <CardHeader label={label} detail={detail} align="start" grow width="fill" />}
-        <Row gap={1} align="center" justify="start" wrap>
+      <Responsive alternate breakpoint={720} width="fill">
+        <Row gap={2} align="stretch" justify="center" wrap width="fill">
+          {identity(12)}
           {status}
-          {actions}
-          {overflow}
+          <Row gap={1} align="center" justify="center" wrap>
+            {centered(actions)}
+            {centered(overflow)}
+          </Row>
         </Row>
-      </Row>
+        <Row gap={2} align="stretch" justify="center" width="fill" height={{ step: 11 }}>
+          {identity(20)}
+          {status}
+          <Spacer width="fill" />
+          <Row gap={1} align="center" justify="center">
+            {centered(actions)}
+            {centered(overflow)}
+          </Row>
+        </Row>
+      </Responsive>
     </CardContent>
   );
+}
+
+/** Keep every control at its native hit target when its responsive row is taller. */
+function centered(nodes: React.ReactNode): React.ReactNode {
+  return React.Children.map(nodes, (child) => {
+    if (!React.isValidElement(child)) return child;
+    if (child.type === React.Fragment) {
+      return <React.Fragment key={child.key}>{centered(child.props.children)}</React.Fragment>;
+    }
+    return React.cloneElement(child as React.ReactElement<{ justify?: 'center' }>, {
+      justify: 'center',
+    });
+  });
 }

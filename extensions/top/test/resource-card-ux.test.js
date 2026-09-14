@@ -36,9 +36,9 @@ test('image inventory is a full-width compact summary with secondary inspection 
     'the resource card consumes the readable page width',
   );
   assert.equal(
-    frame.patches.some((patch) => patch.Create?.tag === 'CardActions'),
-    false,
-    'a lone inspection action does not create a detached footer band',
+    ancestorTags(stage, 'Inspect').includes('CardContent'),
+    true,
+    'the trailing action group stays inside the compact summary rather than becoming a footer',
   );
   const inspect = frame.patches.find(
     (patch) => patch.SetProp?.prop === 'Label' && patch.SetProp.value?.Text === 'Inspect',
@@ -57,8 +57,34 @@ test('image inventory is a full-width compact summary with secondary inspection 
     ),
     'inspection remains a secondary action rather than competing with image pull',
   );
-  assert.deepEqual(ancestorTags(stage, 'Inspect').slice(0, 3), ['Row', 'Row', 'CardContent']);
-  assert.deepEqual(ancestorTags(stage, 'Danger zone').slice(0, 3), ['Row', 'Row', 'CardContent']);
+  assert.deepEqual(ancestorTags(stage, 'Inspect').slice(0, 4), [
+    'Row',
+    'Row',
+    'Responsive',
+    'CardContent',
+  ]);
+  assert.deepEqual(ancestorTags(stage, 'Danger zone').slice(0, 4), [
+    'Row',
+    'Row',
+    'Responsive',
+    'CardContent',
+  ]);
+  assert.deepEqual(ancestorProperty(stage, 'Inspect', 0, 'Justify'), { Align: 'Center' });
+  assert.equal(
+    frame.patches.some(
+      (patch) =>
+        patch.Create?.tag === 'Spacer' &&
+        frame.patches.some(
+          (propertyPatch) =>
+            propertyPatch.SetProp?.id === patch.Create.id &&
+            propertyPatch.SetProp.prop === 'Width' &&
+            propertyPatch.SetProp.value?.Length === 'Fill',
+        ),
+    ),
+    true,
+    'a horizontal-only spacer separates identity and status from the trailing action cluster',
+  );
+  assert.deepEqual(property(stage, 'Inspect', 'Variant'), { Variant: 'Outline' });
   assert.deepEqual(property(stage, 'Danger zone', 'Variant'), { Variant: 'Outline' });
   assert.deepEqual(property(stage, 'Danger zone', 'Width'), { Length: 'Content' });
   assert.deepEqual(property(stage, 'Danger zone', 'Tooltip'), {
@@ -95,13 +121,19 @@ test('network inventory keeps management and destructive disclosure in one compa
     }),
   );
 
-  assert.deepEqual(ancestorTags(stage, 'Manage connections').slice(0, 3), [
+  assert.deepEqual(ancestorTags(stage, 'Manage connections').slice(0, 4), [
     'Row',
     'Row',
+    'Responsive',
     'CardContent',
   ]);
   assert.equal(tag(stage, 'Manage connections'), 'InlineButton');
-  assert.deepEqual(ancestorTags(stage, 'Danger zone').slice(0, 3), ['Row', 'Row', 'CardContent']);
+  assert.deepEqual(ancestorTags(stage, 'Danger zone').slice(0, 4), [
+    'Row',
+    'Row',
+    'Responsive',
+    'CardContent',
+  ]);
   assert.deepEqual(property(stage, 'Danger zone', 'Tooltip'), {
     Text: 'Remove this network from the workspace',
   });
@@ -155,8 +187,18 @@ test('volume inventory keeps inspection and destructive disclosure in one compac
 
   assert.equal(tag(stage, 'Inspect'), 'InlineButton');
   assert.deepEqual(property(stage, 'Inspect', 'Variant'), { Variant: 'Outline' });
-  assert.deepEqual(ancestorTags(stage, 'Inspect').slice(0, 3), ['Row', 'Row', 'CardContent']);
-  assert.deepEqual(ancestorTags(stage, 'Danger zone').slice(0, 3), ['Row', 'Row', 'CardContent']);
+  assert.deepEqual(ancestorTags(stage, 'Inspect').slice(0, 4), [
+    'Row',
+    'Row',
+    'Responsive',
+    'CardContent',
+  ]);
+  assert.deepEqual(ancestorTags(stage, 'Danger zone').slice(0, 4), [
+    'Row',
+    'Row',
+    'Responsive',
+    'CardContent',
+  ]);
   assert.deepEqual(property(stage, 'Danger zone', 'Tooltip'), {
     Text: 'Remove this volume and permanently delete its stored data',
   });
@@ -387,7 +429,12 @@ test('execution summaries keep exact commands and container authority selectable
   assert.deepEqual(propertyForValue(stage, compactContainerId, 'Tooltip'), { Text: containerId });
   assert.deepEqual(propertyForValue(stage, command, 'Ellipsize'), { Flag: true });
   assert.deepEqual(propertyForValue(stage, compactContainerId, 'Ellipsize'), { Flag: true });
-  assert.deepEqual(ancestorTagsForValue(stage, command).slice(0, 3), ['Row', 'Row', 'CardContent']);
+  assert.deepEqual(ancestorTagsForValue(stage, command).slice(0, 4), [
+    'Row',
+    'Row',
+    'Responsive',
+    'CardContent',
+  ]);
   assert.ok(
     ancestorTagsForValue(stage, compactContainerId).includes('Card'),
     'the exact container identity stays inside its execution card',
@@ -450,6 +497,21 @@ function ancestorTags(stage, label) {
     ancestors.push(tags.get(node));
   }
   return ancestors;
+}
+
+function ancestorProperty(stage, label, depth, prop) {
+  const patches = stage.frames.flatMap((frame) => frame.patches);
+  const parents = new Map(
+    patches
+      .filter((patch) => patch.Insert)
+      .map((patch) => [patch.Insert.child, patch.Insert.parent]),
+  );
+  let node = patches
+    .filter((patch) => patch.SetProp?.prop === 'Label' && patch.SetProp.value?.Text === label)
+    .at(-1)?.SetProp.id;
+  for (let index = 0; index <= depth; index += 1) node = parents.get(node);
+  return patches.filter((patch) => patch.SetProp?.id === node && patch.SetProp.prop === prop).at(-1)
+    ?.SetProp.value;
 }
 
 function valueNode(stage, value) {
