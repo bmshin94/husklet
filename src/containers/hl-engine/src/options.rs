@@ -88,8 +88,18 @@ const DEFINITIONS: &[Definition] = &[
     launch!("HL_CWD", "initial guest working directory", Path),
     launch!("HL_EGRESS_SOCKS", "SOCKS5 endpoint for external TCP egress", Text),
     launch!(
+        "HL_CALL_SIM_DIAG_ONLY",
+        "maintain the call-simulation shadow table only while diagnostics can read it",
+        Flag
+    ),
+    launch!(
         "HL_EXEC_IBTC_LAZY",
         "leave the indirect-branch cache lazily cleared across guest exec",
+        Flag
+    ),
+    launch!(
+        "HL_EXEC_CENSUS_LAZY",
+        "clear only the used prefix of the persistent-cache execution census across guest exec",
         Flag
     ),
     launch!("HL_FSGEN_FILE", "shared overlay filesystem-generation file", Path),

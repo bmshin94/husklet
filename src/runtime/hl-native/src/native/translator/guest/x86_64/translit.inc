@@ -495,6 +495,27 @@ static uint64_t translit_pcache_census_count[UINT16_MAX];
 static uint64_t translit_pcache_census_order[UINT16_MAX];
 static uint64_t translit_pcache_census_sequence;
 static uint16_t translit_pcache_census_next;
+/* High-water mark over every ordinal this process has ever handed out, and it never decreases while
+   any entry can still be dirty.  Only indices below it can be non-zero: an ordinal is only ever
+   produced by translit_pcache_census_next++ (interp/execution.c), so every write -- from the C
+   observer in run_block and from the emitted atomic increment in translit_emit_pcache_census alike --
+   lands strictly below the value next had reached, hence strictly below the high-water mark.  Clearing
+   [0, high_water) therefore leaves the arrays bit-identical to clearing all 2 x 512 KiB, including
+   across generations: the mark is not reset by a generation boundary, so a block that survives a
+   rewind and increments with a stale ordinal is still covered.  See translit_pcache_census_lazy_selected(). */
+static uint32_t translit_pcache_census_high_water;
+/* The census is a launch diagnostic: ordinals are only handed out when g_pcache && g_coldprof
+   (engine/target/x86_64.c sets g_coldprof from HL_PCACHE_OBSERVE) and the only reader,
+   pcache_save(), is itself behind g_pcache_loaded && g_coldprof.  With the diagnostic off the
+   high-water mark stays 0 and the reset becomes free -- which is the whole point: the unconditional
+   pair of 512 KiB memsets ran on EVERY guest exec and re-faulted 256 pages of arrays the new image
+   had not indexed one entry of.  Measured at 255 faults/process of the post-IBTC remainder. */
+static int g_pcache_census_lazy_state = -1;
+static int translit_pcache_census_lazy_selected(void) {
+    if (g_pcache_census_lazy_state < 0)
+        g_pcache_census_lazy_state = hl_option_flag_value("HL_EXEC_CENSUS_LAZY", 0);
+    return g_pcache_census_lazy_state;
+}
 /* Observation remains latched across launch-only exec so the final cache outcome is still reported.
  * Count any census site emitted after persistence authority was withdrawn: this is production-observable
  * evidence that observation did not accidentally keep its per-block instrumentation alive. */
@@ -526,8 +547,16 @@ static void translit_external_absolute_generation_reset(void) {
     translit_chain_site_overflow = 0;
     translit_pcache_census_next = 0;
     translit_pcache_census_sequence = 0;
-    memset(translit_pcache_census_count, 0, sizeof translit_pcache_census_count);
-    memset(translit_pcache_census_order, 0, sizeof translit_pcache_census_order);
+    if (translit_pcache_census_lazy_selected()) {
+        size_t dirty = (size_t)translit_pcache_census_high_water * sizeof(uint64_t);
+        if (dirty != 0) {
+            memset(translit_pcache_census_count, 0, dirty);
+            memset(translit_pcache_census_order, 0, dirty);
+        }
+    } else {
+        memset(translit_pcache_census_count, 0, sizeof translit_pcache_census_count);
+        memset(translit_pcache_census_order, 0, sizeof translit_pcache_census_order);
+    }
 #if defined(HL_NATIVE_TEST_HOOKS)
     translit_test_dropped_external_absolute = 0;
 #endif
@@ -2394,10 +2423,27 @@ static void translit_call_sim_probe(uint64_t target) {
     translit_call_sim_pending = target;
 }
 
+/* The call-simulation shadow is 12 MiB (8 MiB of entries + 4 MiB of generations) whose ONLY reader is
+   translit_call_sim_probe(), and that probe is reached from exactly one site (interp.c, the translated
+   completion seam) which sits inside `if (g_prof)`.  Nothing else in the engine loads either array --
+   they feed hl_backend_tree_call_sim_count()'s hit/miss ratio and nothing more.  So with diagnostics
+   off the publication below is a store into a table no code can observe, and it is not free: the index
+   is a hash of the guest target, so a run scatters writes across the whole 12 MiB and faults in 342
+   pages per process.  HL_CALL_SIM_DIAG_ONLY keeps the shadow only while the reader can run.  The FILL
+   counter stays unconditional -- g_backend_mixed_sse, not g_prof, decides whether it is observable. */
+static int g_call_sim_diag_only_state = -1;
+static int translit_call_sim_diag_only_selected(void) {
+    if (g_call_sim_diag_only_state < 0)
+        g_call_sim_diag_only_state = hl_option_flag_value("HL_CALL_SIM_DIAG_ONLY", 0);
+    return g_call_sim_diag_only_state;
+}
+
 static void translit_call_sim_publish(uint64_t target, void *body, int call_publication) {
-    size_t index = ibtc_index(target);
-    ibtc_publish(&translit_call_sim_ibtc[index], target, body);
-    atomic_store_explicit(&translit_call_sim_generation[index], g_cache_gen, memory_order_release);
+    if (!translit_call_sim_diag_only_selected() || g_prof) {
+        size_t index = ibtc_index(target);
+        ibtc_publish(&translit_call_sim_ibtc[index], target, body);
+        atomic_store_explicit(&translit_call_sim_generation[index], g_cache_gen, memory_order_release);
+    }
     if (call_publication) hl_backend_tree_call_sim_count(HL_BACKEND_CALL_SIM_FILL);
 }
 #endif

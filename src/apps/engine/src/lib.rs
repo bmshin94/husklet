@@ -180,6 +180,12 @@ struct LaunchArguments {
     /// Keep the indirect-branch cache lazily cleared across a guest exec instead of rewriting it (off by default).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
     exec_ibtc_lazy: Option<TranslitFeatureControl>,
+    /// Clear only the used prefix of the persistent-cache execution census across a guest exec (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, requires = "translit", hide = true)]
+    exec_census_lazy: Option<TranslitFeatureControl>,
+    /// Maintain the call-simulation shadow table only while diagnostics can read it (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, requires = "translit", hide = true)]
+    call_sim_diag_only: Option<TranslitFeatureControl>,
     /// Let a warm run re-publish the translation cache within bounded growth (off by default).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
     pcache_converge: Option<TranslitFeatureControl>,
@@ -698,6 +704,8 @@ fn rootfs_plan(
         (launch.x86_mt_ibtc, "HL_X86_MT_IBTC"),
         (launch.x86_ibtc8, "HL_X86_IBTC8"),
         (launch.exec_ibtc_lazy, "HL_EXEC_IBTC_LAZY"),
+        (launch.exec_census_lazy, "HL_EXEC_CENSUS_LAZY"),
+        (launch.call_sim_diag_only, "HL_CALL_SIM_DIAG_ONLY"),
         (launch.pcache_libs, "HL_PCACHE_LIBS"),
         (launch.pcache_link_image, "HL_PCACHE_LINK_IMAGE"),
         (launch.pcache_converge, "HL_PCACHE_CONVERGE"),
@@ -1060,6 +1068,8 @@ mod tests {
         assert_eq!(defaults.x86_rmload_fold, None);
         assert_eq!(defaults.x86_owner_index, None);
         assert_eq!(defaults.exec_ibtc_lazy, None);
+        assert_eq!(defaults.exec_census_lazy, None);
+        assert_eq!(defaults.call_sim_diag_only, None);
         assert_eq!(defaults.native_supervised, None);
 
         let selected = launch(&[
@@ -1081,6 +1091,8 @@ mod tests {
             "--x86-rmload-fold=off",
             "--x86-owner-index=on",
             "--exec-ibtc-lazy=on",
+            "--exec-census-lazy=on",
+            "--call-sim-diag-only=off",
             "--native-supervised",
             "--rootfs",
             "/image",
@@ -1116,6 +1128,11 @@ mod tests {
         assert_eq!(selected.x86_rmload_fold, Some(super::TranslitFeatureControl::Off));
         assert_eq!(selected.x86_owner_index, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.exec_ibtc_lazy, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.exec_census_lazy, Some(super::TranslitFeatureControl::On));
+        assert_eq!(
+            selected.call_sim_diag_only,
+            Some(super::TranslitFeatureControl::Off)
+        );
         assert_eq!(selected.native_supervised, Some(super::NativeSupervisedControl::On));
         assert_eq!(selected.rootfs.as_deref(), Some(std::path::Path::new("/image")));
 
@@ -1681,6 +1698,8 @@ mod tests {
         assert_eq!(defaults.options.get("HL_X86_RMLOAD_FOLD"), None);
         assert_eq!(defaults.options.get("HL_X86_OWNER_INDEX"), None);
         assert_eq!(defaults.options.get("HL_EXEC_IBTC_LAZY"), None);
+        assert_eq!(defaults.options.get("HL_EXEC_CENSUS_LAZY"), None);
+        assert_eq!(defaults.options.get("HL_CALL_SIM_DIAG_ONLY"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_FS_LOAD_BRIDGE"), None);
         assert_eq!(defaults.options.get("HL_NATIVE_SUPERVISED"), None);
 
