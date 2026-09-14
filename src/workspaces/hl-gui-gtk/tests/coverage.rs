@@ -652,16 +652,20 @@ fn unhonoured(tag: Tag) -> Vec<String> {
     ignored
 }
 
-/// The one pairing the toolkit will not let this scenario observe.
+/// Pairings the toolkit will not let this scenario observe.
 ///
 /// A popover is hidden until it is popped up, so being told to hide leaves it
 /// exactly where it was, and telling it to show pops a surface up against a
 /// window that does not exist in a test — which GTK does not survive. The
 /// adapter does apply the property; there is no reading it back here, and
-/// pretending otherwise by weakening the observation would hide real gaps in
-/// every other component.
+/// A chart's numeric series changes pixels in its drawing callback, not a
+/// readable toolkit property; `component::content` tests that path and its
+/// geometry directly. Pretending either case is observable here would weaken
+/// the readback enough to hide real gaps in every other component.
 fn unobservable(tag: Tag, prop: Prop) -> bool {
-    prop == Prop::Destructive || (prop == Prop::Visible && (tag == Tag::Popover || tag == Tag::ContextMenu))
+    prop == Prop::Destructive
+        || (tag == Tag::Chart && prop == Prop::Series)
+        || (prop == Prop::Visible && (tag == Tag::Popover || tag == Tag::ContextMenu))
 }
 
 /// One component, rendered with the property and without it, described down to
@@ -854,7 +858,9 @@ fn offers(prop: Prop) -> Vec<PropValue> {
         Prop::Icon => vec![PropValue::text(EMBLEM), PropValue::text("dialog-warning-symbolic")],
         Prop::Uri => vec![PropValue::text(REFERENCE)],
         Prop::Enabled | Prop::Visible => vec![PropValue::Flag(false)],
-        Prop::Selected | Prop::Checked | Prop::Indeterminate => vec![PropValue::Flag(true)],
+        Prop::Selected | Prop::Checked | Prop::Indeterminate | Prop::WholeRows | Prop::Alternate => {
+            vec![PropValue::Flag(true)]
+        }
         Prop::Expanded
         | Prop::Busy
         | Prop::Secret
@@ -915,6 +921,7 @@ fn numbered(prop: Prop) -> Vec<PropValue> {
             hl_gui::Column::new("state", "State"),
         ])],
         Prop::Source => vec![PropValue::Source(hl_gui::SourceId::new(1))],
+        Prop::Series => vec![PropValue::Series(vec![18.0, 42.0, 24.0])],
         // RowHeight is the one property no component declares, so no value is
         // ever asked for here.
         _ => vec![PropValue::Integer(2)],
