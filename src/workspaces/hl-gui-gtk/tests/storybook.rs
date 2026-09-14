@@ -1930,6 +1930,34 @@ mod unix {
             );
             capture_story(&realized_window, "Button navigation states");
             let body = paned.end_child().expect("Button document remains beside navigation");
+            let _ = surface.reports().drain();
+            paned.set_position(40);
+            root.allocate(1_200, 1_600, -1, None);
+            settle_toolkit();
+            let reports = surface.reports().drain();
+            assert!(
+                reports.iter().any(|event| {
+                    matches!(
+                        event,
+                        hl_gui::Event::Change {
+                            value: hl_gui::PropValue::Number(value),
+                            ..
+                        } if *value == 40.0
+                    )
+                }),
+                "native divider did not report its requested collapsed position: {reports:?}"
+            );
+            capture_story(&realized_window, "Storybook navigation requested collapsed");
+
+            paned.set_position(240);
+            root.allocate(1_200, 1_600, -1, None);
+            settle_toolkit();
+            assert_eq!(navigation.width(), 240, "controlled minimum was not host-renderable");
+            capture_story(&realized_window, "Storybook navigation clamped minimum");
+
+            paned.set_position(240);
+            root.allocate(1_200, 1_600, -1, None);
+            settle_toolkit();
             let body_before = body.width();
             paned.set_position(280);
             root.allocate(1_200, 1_600, -1, None);
@@ -1947,6 +1975,7 @@ mod unix {
             root.allocate(1_200, 1_600, -1, None);
             selected.grab_focus();
             settle_toolkit();
+            let _ = surface.reports().drain();
         }
         if story == "DataTable" {
             settle_toolkit();

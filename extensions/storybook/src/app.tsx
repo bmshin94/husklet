@@ -77,6 +77,7 @@ const { useMemo, useRef, useState } = React;
 
 const INTERACTION_HISTORY = 5;
 export const SEARCH_RESULT_LIMIT = 24;
+export const SIDEBAR_MINIMUM = 240;
 export const FLOW_STORIES = Object.freeze([
   DRAG_REORDER_STORY,
   IMAGE_PULL_STORY,
@@ -139,6 +140,7 @@ export function Playground({
 }: PlaygroundProps = {}) {
   const families = useMemo(grouped, []);
   const [selected, setSelected] = useState(initialStory);
+  const [sidebarPosition, setSidebarPosition] = useState(240);
   const hasComponentPage = componentPage(selected) !== undefined;
   const mode = modeFor(selected);
   const [activeFamily, setActiveFamily] = useState(
@@ -164,7 +166,14 @@ export function Playground({
   };
 
   return (
-    <Responsive breakpoint={1024} position={240} grow>
+    <Responsive
+      breakpoint={1024}
+      position={sidebarPosition}
+      onChange={(report) =>
+        setSidebarPosition(Math.max(SIDEBAR_MINIMUM, Number(report.value) || SIDEBAR_MINIMUM))
+      }
+      grow
+    >
       <Row width="fill" pad={2} gap={2} align="center">
         <Text label="Page" color="text-dim" />
         <Select

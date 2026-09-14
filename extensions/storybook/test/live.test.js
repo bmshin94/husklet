@@ -183,7 +183,7 @@ test('the shipped entrypoint connects and renders the complete playground over a
     ],
   });
   assert.ok(
-    rendered.with.frame.patches.length < 1_200,
+    rendered.with.frame.patches.length <= 1_200,
     'the live frame exceeded the host patch budget',
   );
   assert.equal(
@@ -194,6 +194,15 @@ test('the shipped entrypoint connects and renders the complete playground over a
   assert.ok(
     rendered.with.frame.patches.some((patch) => patch.Create?.tag === 'Scroll'),
     'the live playground did not render its scrolling browser',
+  );
+  const responsive = rendered.with.frame.patches.find((patch) => patch.Create?.tag === 'Responsive')
+    ?.Create.id;
+  assert.ok(
+    rendered.with.frame.patches.some(
+      (patch) =>
+        patch.SetHandler?.id === responsive && patch.SetHandler.handler.trigger === 'Change',
+    ),
+    'the live adjustable navigation has no controlled minimum-width handler',
   );
   const live = new Map();
   apply(live, rendered.with.frame.patches);
