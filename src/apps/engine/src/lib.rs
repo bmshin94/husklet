@@ -524,6 +524,26 @@ fn execute(guest: Guest, launch: &LaunchArguments) -> Result<hl_engine::engine::
             "--x86-owner-index is available only in the x86-64 worker".to_owned(),
         ));
     }
+    if launch.pcache_converge.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--pcache-converge is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.pcache_link_image.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--pcache-link-image is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.pcache_libs.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--pcache-libs is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.xlat_census.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--xlat-census is available only in the x86-64 worker".to_owned(),
+        ));
+    }
     if launch.translit_fs_load_bridge.is_some() && guest != Guest::X86_64 {
         return Err(Failure::Request(
             "--translit-fs-load-bridge is available only in the x86-64 worker".to_owned(),
@@ -1312,6 +1332,57 @@ mod tests {
             .translit_riprel_load_bridge,
             Some(super::TranslitFeatureControl::Off)
         );
+    }
+
+    /// Every backend flag this effort added is x86-64-only, hidden, and spelled `=on|off` with a
+    /// required `=`.  The guard matters because an accepted-but-inert flag on the aarch64 worker is
+    /// how a measurement lane attributes a number to a mechanism that never ran.
+    #[test]
+    fn integrated_backend_flags_are_x86_only_and_require_equals() {
+        for flag in [
+            "--x86-owner-index",
+            "--x86-bus-thunk",
+            "--x86-mt-chain",
+            "--x86-mt-ibtc",
+            "--pcache-converge",
+            "--pcache-link-image",
+            "--pcache-libs",
+        ] {
+            // One spelling only: `=on` / `=off`, and nothing else.
+            for invalid in ["yes", "1", "0", "enabled", ""] {
+                let option = format!("{flag}={invalid}");
+                assert!(
+                    LaunchArguments::try_parse_from(["hl-x86_64", option.as_str(), "bin/program"]).is_err(),
+                    "{flag} accepted {invalid:?}"
+                );
+            }
+            assert!(
+                LaunchArguments::try_parse_from([
+                    "hl-x86_64",
+                    &format!("{flag}=off"),
+                    "--rootfs",
+                    "/image",
+                    "bin/program"
+                ])
+                .is_ok(),
+                "{flag} rejected =off"
+            );
+            let failure = execute(
+                Guest::Aarch64,
+                &launch(&["--translit", &format!("{flag}=on"), "--rootfs", "/image", "bin/program"]),
+            )
+            .unwrap_err();
+            assert!(
+                reason(&failure).contains("available only in the x86-64 worker"),
+                "{flag} is missing its worker guard"
+            );
+        }
+        let failure = execute(
+            Guest::Aarch64,
+            &launch(&["--translit", "--xlat-census", "/tmp/census", "--rootfs", "/image", "bin/program"]),
+        )
+        .unwrap_err();
+        assert!(reason(&failure).contains("available only in the x86-64 worker"));
     }
 
     #[cfg(not(feature = "native-test-hooks"))]
