@@ -987,9 +987,9 @@ test('Top owns workspace settings and extension management in the same tab', asy
     'primary category remains visible before trust details are expanded',
   );
   assert.ok(labelled(stage, 'Trust details'));
-  assert.equal(ancestorTags(stage, 'Verified publisher').includes('Expander'), false);
-  assert.ok(labelled(stage, 'Verified publisher'));
-  assert.deepEqual(taggedProperty(stage, 'Verified publisher', 'Badge', 'Tone'), {
+  assert.equal(ancestorTags(stage, 'Husklet · Verified').includes('Expander'), false);
+  assert.ok(labelled(stage, 'Husklet · Verified'));
+  assert.deepEqual(taggedProperty(stage, 'Husklet · Verified', 'Badge', 'Tone'), {
     Tone: 'Positive',
   });
   assert.ok(labelled(stage, 'Compatibility undeclared'));
@@ -2537,7 +2537,7 @@ test('failed catalogue refresh keeps stale rows browseable but strips install an
   await settled();
 
   assert.ok(labelled(stage, 'Cached · refresh required'));
-  assert.deepEqual(taggedProperty(stage, 'Community publisher', 'Badge', 'Tone'), {
+  assert.deepEqual(taggedProperty(stage, 'Husklet · Unverified', 'Badge', 'Tone'), {
     Tone: 'Warning',
   });
   assert.ok(labelled(stage, 'catalogue refresh is offline'));

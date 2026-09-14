@@ -1984,11 +1984,11 @@ mod unix {
             assert!(has_placeholder(&discover_root, "Search extensions"));
             assert!(!has_placeholder(&discover_root, "Search installed"));
             assert!(has_label(&discover_root, "19 of 20 extensions"));
-            let verified = ancestor_with_class(&find_mapped_labelled(&discover_root, "Verified publisher"), "hl-badge")
+            let verified = ancestor_with_class(&find_mapped_labelled(&discover_root, "Acme · Verified"), "hl-badge")
                 .expect("verified publisher signal is a semantic badge");
             assert!(verified.has_css_class("tone-positive"));
             let community =
-                ancestor_with_class(&find_mapped_labelled(&discover_root, "Community publisher"), "hl-badge")
+                ancestor_with_class(&find_mapped_labelled(&discover_root, "Community · Unverified"), "hl-badge")
                     .expect("community publisher signal is a semantic badge");
             assert!(community.has_css_class("tone-warning"));
             let review = find_tooltip_button(&discover_root, "Review the 1.0.0 update for Developer Tool 01");
@@ -2137,7 +2137,7 @@ mod unix {
                     "{width_name} trust details are keyboard reachable"
                 );
                 assert!(trust.grab_focus(), "{width_name} trust details accept keyboard focus");
-                assert!(has_label(&review_card, "Community publisher"));
+                assert!(has_label(&review_card, "Community · Unverified"));
                 assert!(has_label(&review_card, "Update available"));
                 let review_bounds_in_card = review
                     .compute_bounds(&review_card)

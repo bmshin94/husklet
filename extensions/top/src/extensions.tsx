@@ -1500,7 +1500,10 @@ export function Extensions({
                                         : 'neutral'
                                   }
                                 />
-                                <Badge {...trust} />
+                                <Badge
+                                  {...trust}
+                                  label={`${entry.publisher} · ${trust.label === 'Verified publisher' ? 'Verified' : 'Unverified'}`}
+                                />
                                 {!catalogueAuthoritative ? (
                                   <Badge label="Cached · refresh required" tone="warning" />
                                 ) : null}
