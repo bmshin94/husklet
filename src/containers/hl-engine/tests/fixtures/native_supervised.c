@@ -348,7 +348,11 @@ int main(int argc, char **argv) {
         if (syscall(SYS_clone3, &clone_args, sizeof(clone_args)) != -1 || errno != ENOSYS) return 78;
 #endif
         errno = 0;
-        if (ioctl(1, 0xdeadbeefUL, 0) != -1 || errno != EPERM) return 79;
+        /* A refused ioctl answers ENOTTY, not EPERM: it is indistinguishable from an ioctl the
+         * descriptor does not implement, and ENOTTY is the errno userspace fallbacks test for.
+         * The privilege refusals asserted above (mount/unshare/ptrace/clone-namespaces) keep EPERM,
+         * which is the distinction this block is here to pin down. */
+        if (ioctl(1, 0xdeadbeefUL, 0) != -1 || errno != ENOTTY) return 79;
         fputs("secure-jail", stdout);
     }
     if (argc > 1 && !strcmp(argv[1], "root-contract")) {

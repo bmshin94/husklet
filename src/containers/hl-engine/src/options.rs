@@ -375,6 +375,11 @@ const DEFINITIONS: &[Definition] = &[
         "run a Linux x86-64 guest natively under syscall supervision",
         Flag
     ),
+    launch!(
+        "HL_NATIVE_SUPERVISED_PANE",
+        "widen the supervised terminal ioctl surface and project a devpts for pty-spawning guests",
+        Flag
+    ),
     launch!("HL_UID", "initial guest user identity", Integer),
     launch!("HL_ULIMITS", "serialized Linux resource limits", Records),
     launch!(

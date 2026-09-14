@@ -34,6 +34,23 @@ static int hl_native_supervised_selected(const hl_options *options) {
 #include <net/if.h>
 
 #define HL_NATIVE_TCGETS2 0x802c542aU
+/* Numeric forms keep this header block self-contained: the guest ABI numbers are fixed by the
+ * kernel UAPI and do not depend on which libc termios header happens to be reachable here. */
+#define HL_NATIVE_TCSETS2 0x402c542bU
+#define HL_NATIVE_TCSETSW2 0x402c542cU
+#define HL_NATIVE_TCSETSF2 0x402c542dU
+#define HL_NATIVE_FIONCLEX 0x5450U
+#define HL_NATIVE_FIOCLEX 0x5451U
+#define HL_NATIVE_FIOASYNC 0x5452U
+#define HL_NATIVE_TCFLSH 0x540bU
+#define HL_NATIVE_TIOCOUTQ 0x5411U
+#define HL_NATIVE_TIOCMGET 0x5415U
+#define HL_NATIVE_TIOCGSOFTCAR 0x5419U
+#define HL_NATIVE_TIOCGETD 0x5424U
+#define HL_NATIVE_TIOCGLCKTRMIOS 0x5456U
+#define HL_NATIVE_TIOCSCTTY 0x540eU
+#define HL_NATIVE_TIOCPKT 0x5420U
+#define HL_NATIVE_TIOCGPTPEER 0x5441U
 
 #if defined(__aarch64__)
 #define HL_NATIVE_AUDIT_ARCH AUDIT_ARCH_AARCH64
@@ -362,6 +379,39 @@ static int hl_native_supervised_volumes_mount(const char *rootfs, const hl_nativ
         close(target);
     }
     close(root);
+    return 0;
+}
+
+/* Tri-state read. An option that is registered but explicitly set to "0" must read as OFF; spelling
+ * this as `hl_options_get(...) != NULL` inverts the flag the moment it joins the tri-state table,
+ * which is exactly how a prior integration shipped an always-on "default off" switch. */
+static int hl_native_supervised_flag(const hl_options *options, const char *name) {
+    const char *value = hl_options_get(options, name);
+    return value != NULL && !(value[0] == '0' && value[1] == 0);
+}
+
+/* Project a private devpts so the guest can allocate its own ptys (tmux, script(1), openpty).
+ * The prior study proved these failures are NOT an ioctl denial -- zero ioctl denials were recorded
+ * and mounting a devpts on the host fixed the matched control -- but a missing filesystem: the bind
+ * that projects the host terminal is non-recursive, so no devpts comes with it, and the guest cannot
+ * mount one itself because SYS_mount is refused.  `newinstance` is what keeps this from widening
+ * authority: the guest gets a private pty namespace whose indices and devices are its own and which
+ * cannot name any pts belonging to the host or to another guest.  NOSUID|NOEXEC match the treatment
+ * every other projected mount gets.  Gated on HL_NATIVE_SUPERVISED_PANE, default off. */
+static int hl_native_supervised_devpts_mount(const char *rootfs) {
+    char target[PATH_MAX], ptmx[PATH_MAX];
+    if (snprintf(target, sizeof target, "%s/dev/pts", rootfs) >= (int)sizeof target ||
+        snprintf(ptmx, sizeof ptmx, "%s/dev/ptmx", rootfs) >= (int)sizeof ptmx) return -1;
+    if (mkdir(target, 0755) != 0 && errno != EEXIST) return -1;
+    if (umount2(target, MNT_DETACH) != 0 && errno != EINVAL && errno != ENOENT) return -1;
+    if (mount("devpts", target, "devpts", MS_NOSUID | MS_NOEXEC,
+              "newinstance,ptmxmode=0666,mode=0620") != 0)
+        return -1;
+    /* /dev/ptmx must resolve into *this* instance; the symlink is how the multiplexer is bound to a
+     * newinstance devpts (a stale /dev/ptmx chardev would reach the host's default instance). */
+    struct stat status;
+    if (lstat(ptmx, &status) == 0 && unlink(ptmx) != 0) return -1;
+    if (symlink("pts/ptmx", ptmx) != 0) return -1;
     return 0;
 }
 
@@ -909,6 +959,12 @@ static int hl_native_supervised_project_container(const hl_engine_config *config
         mount(projected_root, projected_root, NULL, MS_BIND, NULL) != 0) return -1;
     if (hl_native_supervised_volumes_mount(projected_root, volumes, options) != 0) return -1;
     if (hl_native_supervised_terminal_mount(projected_root) != 0) return -1;
+    if (hl_native_supervised_flag(options, "HL_NATIVE_SUPERVISED_PANE") &&
+        hl_native_supervised_devpts_mount(projected_root) != 0) {
+        if (diagnostics)
+            fprintf(stderr, "[hl-native-supervised]\tprojector_stage=devpts errno=%d\n", errno);
+        return -1;
+    }
     if ((box->flags & HL_ENGINE_BOX_NETWORK_ISOLATED) != 0 &&
         !hl_native_supervised_volumes_contains(volumes, "/etc/hosts") &&
         hl_native_supervised_project_hostname(projected_root, box->hostname,
@@ -1104,11 +1160,55 @@ static int hl_native_supervised_clone_namespaces(uint64_t flags) {
     return (flags & namespaces) != 0;
 }
 
+/* FIOCLEX/FIONCLEX are exactly fcntl(F_SETFD, FD_CLOEXEC) on the same descriptor, and fcntl is not
+ * in any of the three BPF programs above -- it falls through to SECCOMP_RET_ALLOW without even a
+ * notification. Refusing the ioctl spelling while the fcntl spelling is unfiltered grants no safety;
+ * it only breaks callers that use the ioctl form (CPython's _Py_set_inheritable is the live case).
+ * These are therefore unconditional: closing an asymmetry, not widening authority. */
 static int hl_native_supervised_ioctl_allowed(uint64_t request) {
     return request == TCGETS || request == TCSETS || request == TCSETSW || request == TCSETSF ||
            request == TIOCGWINSZ || request == TIOCSWINSZ || request == TIOCGPGRP || request == TIOCSPGRP ||
            request == TIOCGSID || request == HL_NATIVE_TCGETS2 || request == FIONREAD || request == FIONBIO ||
-           request == TIOCGPTN || request == TIOCSPTLCK;
+           request == TIOCGPTN || request == TIOCSPTLCK ||
+           request == HL_NATIVE_FIOCLEX || request == HL_NATIVE_FIONCLEX;
+}
+
+/* Opt-in (HL_NATIVE_SUPERVISED_PANE) terminal surface. Every entry below acts only on the descriptor
+ * the guest already holds; none names an object outside the guest and none can affect another
+ * session's tty.  Deliberately absent and still refused: TIOCSTI (injects bytes into a tty's input
+ * queue as if typed -- a container-escape primitive whenever the pty is shared with the host),
+ * TIOCSETD and TIOCSLCKTRMIOS (change line discipline / lock termios, reaching the host's view of
+ * the shared pts), TIOCCONS and TIOCLINUX, every VT_* and KD*, TUNSETIFF and the SIOCS* setters.
+ * TIOCEXCL/TIOCNXCL are also withheld: the guest's stdin is the *host's* pty slave, so exclusive
+ * mode would change whether the host can reopen it -- the one candidate that does reach outward. */
+static int hl_native_supervised_ioctl_pane_allowed(uint64_t request) {
+    return /* symmetric with TCGETS2, already allowed; same reach as TCSETS/W/F, already allowed */
+           request == HL_NATIVE_TCSETS2 || request == HL_NATIVE_TCSETSW2 || request == HL_NATIVE_TCSETSF2 ||
+           /* read-only scalars off the guest's own descriptor */
+           request == HL_NATIVE_TIOCOUTQ || request == HL_NATIVE_TIOCMGET ||
+           request == HL_NATIVE_TIOCGETD || request == HL_NATIVE_TIOCGSOFTCAR ||
+           request == HL_NATIVE_TIOCGLCKTRMIOS ||
+           /* discards buffered bytes on that descriptor's own queues and nothing else */
+           request == HL_NATIVE_TCFLSH ||
+           /* exactly fcntl(F_SETFL, O_ASYNC), which is unfiltered; SIGIO goes to the fd's own owner */
+           request == HL_NATIVE_FIOASYNC;
+}
+
+/* Only meaningful once the projection carries a devpts: these name a pty the guest itself created. */
+static int hl_native_supervised_ioctl_devpts_allowed(uint64_t request) {
+    return request == HL_NATIVE_TIOCGPTPEER || request == HL_NATIVE_TIOCPKT;
+}
+
+static int hl_native_supervised_ioctl_permitted(uint64_t request, uint64_t argument, int pane) {
+    if (hl_native_supervised_ioctl_allowed(request)) return 1;
+    if (!pane) return 0;
+    if (hl_native_supervised_ioctl_pane_allowed(request)) return 1;
+    if (hl_native_supervised_ioctl_devpts_allowed(request)) return 1;
+    /* TIOCSCTTY(0) can only claim a tty that currently has no session, so it can never steal one;
+     * TIOCSCTTY(1) is the steal form and stays refused. The BPF program cannot see the argument --
+     * the notify path can, which is the whole reason this split is enforced here and not there. */
+    if (request == HL_NATIVE_TIOCSCTTY && argument == 0) return 1;
+    return 0;
 }
 
 static int hl_native_supervised_single_child(pid_t parent, pid_t *child) {
@@ -1786,6 +1886,7 @@ static int hl_native_supervised_wait(int listener, int leader_pidfd, pid_t leade
     int diagnostics = hl_options_get(options, "HL_C_DIAGNOSTICS") != NULL;
     const char *notification_receipt = hl_options_get(options, "HL_NATIVE_NOTIFY_TEST_RECEIPT");
     int count_notifications = diagnostics || notification_receipt != NULL;
+    int pane_terminal = hl_native_supervised_flag(options, "HL_NATIVE_SUPERVISED_PANE");
     unsigned long idle_timeouts = 0, notifications = 0, open_notifications = 0;
     int listener_active = listener;
     volatile uint32_t *trigger = NULL;
@@ -1915,10 +2016,24 @@ static int hl_native_supervised_wait(int listener, int leader_pidfd, pid_t leade
         } else if (number == SYS_clone3) {
             response->error = -ENOSYS;
 #endif
+        } else if (number == SYS_ioctl &&
+                   !hl_native_supervised_ioctl_permitted(request->data.args[1], request->data.args[2],
+                                                         pane_terminal)) {
+            /* ENOTTY, not EPERM. A refused ioctl is indistinguishable to the caller from one the
+             * descriptor simply does not implement, and ENOTTY is both what the kernel returns for
+             * that and what every fallback path in real software is written against. EPERM asserts
+             * the opposite -- that the operation exists and was denied by policy -- which defeats
+             * those fallbacks: CPython's _Py_set_inheritable falls back to fcntl only on ENOTTY or
+             * EACCES and raises on EPERM. The errno was never the security boundary; the refusal is,
+             * and the refusal set is unchanged. */
+            response->error = -ENOTTY;
         } else if (hl_native_supervised_denied(number) ||
-                   (number == SYS_ioctl && !hl_native_supervised_ioctl_allowed(request->data.args[1])) ||
                    (number == SYS_clone && hl_native_supervised_clone_namespaces(request->data.args[0]))
                    ) {
+            /* These keep EPERM. mount/umount2/pivot_root/chroot/setns/unshare/ptrace/seccomp and
+             * namespace-creating clone are genuine privilege refusals: the operation does exist and
+             * is being denied deliberately, so EPERM is the truthful answer and the one a caller
+             * should see rather than paper over. ENOTTY would also be meaningless for all of them. */
             response->error = -EPERM;
         } else {
             response->flags = SECCOMP_USER_NOTIF_FLAG_CONTINUE;

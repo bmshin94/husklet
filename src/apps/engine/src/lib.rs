@@ -170,6 +170,9 @@ struct LaunchArguments {
     /// Control automatic same-ISA native syscall supervision.
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true)]
     native_supervised: Option<NativeSupervisedControl>,
+    /// Widen the supervised terminal ioctl surface and project a devpts for pty-spawning guests (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    native_supervised_pane: Option<TranslitFeatureControl>,
     /// Set one launch-scoped native test injection in a hooks-enabled worker.
     #[cfg(feature = "native-test-hooks")]
     #[arg(long, value_name = "KEY=VALUE", hide = true, value_parser = parse_native_test_option)]
@@ -716,6 +719,7 @@ fn rootfs_plan(
         (launch.exec_ibtc_lazy, "HL_EXEC_IBTC_LAZY"),
         (launch.exec_census_lazy, "HL_EXEC_CENSUS_LAZY"),
         (launch.call_sim_diag_only, "HL_CALL_SIM_DIAG_ONLY"),
+        (launch.native_supervised_pane, "HL_NATIVE_SUPERVISED_PANE"),
         (launch.pcache_libs, "HL_PCACHE_LIBS"),
         (launch.pcache_link_image, "HL_PCACHE_LINK_IMAGE"),
         (launch.pcache_converge, "HL_PCACHE_CONVERGE"),
