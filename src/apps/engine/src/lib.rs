@@ -181,10 +181,10 @@ struct LaunchArguments {
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
     exec_ibtc_lazy: Option<TranslitFeatureControl>,
     /// Clear only the used prefix of the persistent-cache execution census across a guest exec (off by default).
-    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, requires = "translit", hide = true)]
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
     exec_census_lazy: Option<TranslitFeatureControl>,
     /// Maintain the call-simulation shadow table only while diagnostics can read it (off by default).
-    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, requires = "translit", hide = true)]
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
     call_sim_diag_only: Option<TranslitFeatureControl>,
     /// Let a warm run re-publish the translation cache within bounded growth (off by default).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
@@ -537,6 +537,16 @@ fn execute(guest: Guest, launch: &LaunchArguments) -> Result<hl_engine::engine::
     if launch.x86_owner_index.is_some() && guest != Guest::X86_64 {
         return Err(Failure::Request(
             "--x86-owner-index is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.exec_census_lazy.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--exec-census-lazy is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.call_sim_diag_only.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--call-sim-diag-only is available only in the x86-64 worker".to_owned(),
         ));
     }
     if launch.pcache_converge.is_some() && guest != Guest::X86_64 {
@@ -1377,6 +1387,9 @@ mod tests {
             "--pcache-converge",
             "--pcache-link-image",
             "--pcache-libs",
+            "--x86-ibtc8",
+            "--exec-census-lazy",
+            "--call-sim-diag-only",
         ] {
             // One spelling only: `=on` / `=off`, and nothing else.
             for invalid in ["yes", "1", "0", "enabled", ""] {
