@@ -845,6 +845,11 @@ test('Top owns workspace settings and extension management in the same tab', asy
   assert.ok(labelled(stage, 'Terminal appearance'));
   assert.ok(labelled(stage, 'Environment variables'));
   assert.ok(labelled(stage, 'Filesystem mounts'));
+  assert.equal(
+    labelled(stage, 'PostgreSQL service'),
+    undefined,
+    'niche PostgreSQL provider configuration stays out of core workspace settings',
+  );
   assert.deepEqual(taggedProperty(stage, 'Runtime', 'Accordion', 'Width'), {
     Length: 'Fill',
   });
@@ -859,6 +864,36 @@ test('Top owns workspace settings and extension management in the same tab', asy
     { Length: 'Fill' },
     'settings groups retain one stable reading order at every width',
   );
+  assert.equal(
+    ancestorProperty(stage, 'Resources & connectivity', 'Column', 'Align'),
+    undefined,
+    'the settings stack cannot override full-width geometry with a cross-axis start alignment',
+  );
+  const accordionState = (label) =>
+    latestProperty(stage, labelled(stage, label)?.SetProp.id, 'Expanded')?.Flag;
+  assert.equal(accordionState('Runtime'), true);
+  reportExpansion(stage, 'Resources & connectivity', true);
+  await settled();
+  assert.equal(accordionState('Runtime'), false);
+  assert.equal(accordionState('Resources & connectivity'), true);
+  reportExpansion(stage, 'Runtime', false);
+  await settled();
+  assert.equal(
+    accordionState('Resources & connectivity'),
+    true,
+    'the controlled close echoed by the previous native section cannot collapse the new section',
+  );
+  for (const [previous, next] of [
+    ['Resources & connectivity', 'Terminal appearance'],
+    ['Terminal appearance', 'Environment variables'],
+    ['Environment variables', 'Filesystem mounts'],
+  ]) {
+    reportExpansion(stage, next, true);
+    await settled();
+    reportExpansion(stage, previous, false);
+    await settled();
+    assert.equal(accordionState(next), true, `${next} survives the previous section's close echo`);
+  }
   assert.ok(
     labelled(stage, 'Runtime · Image alpine:3.20 · Shell /bin/sh'),
     'accordion summaries form one natural, explicitly separated phrase',
@@ -9199,7 +9234,7 @@ function invokeInCard(stage, cardLabel, label) {
   );
 }
 
-function expand(stage, label) {
+function reportExpansion(stage, label, expanded) {
   const nodes = stage.frames
     .flatMap((frame) => frame.patches)
     .filter((patch) => patch.SetProp?.prop === 'Label' && patch.SetProp.value?.Text === label)
@@ -9207,10 +9242,14 @@ function expand(stage, label) {
     .reverse();
   assert.ok(
     nodes.some((node) =>
-      stage.surface.dispatch({ trigger: 'Expand', node, id: `${node}:Expand`, expanded: true }),
+      stage.surface.dispatch({ trigger: 'Expand', node, id: `${node}:Expand`, expanded }),
     ),
-    `${label} expands`,
+    `${label} reports ${expanded ? 'expanded' : 'collapsed'}`,
   );
+}
+
+function expand(stage, label) {
+  reportExpansion(stage, label, true);
 }
 
 function change(stage, placeholder, value) {

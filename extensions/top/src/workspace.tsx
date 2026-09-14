@@ -260,8 +260,8 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
         {saved && <InlineMessage label={saved} tone="positive" />}
       </Container>
       <Scroll grow width="fill" height="fill">
-        <Container pad={4} gap={3} width={PAGE_WIDTH}>
-          <Card grow={false} width="fill" variant="plain">
+        <Container pad={4} gap={3} width="fill">
+          <Card width="fill" variant="plain">
             <CardContent gap={2}>
               <Text
                 label="Choose a section. Only one stays open, so the setting you need remains easy to find."
@@ -269,7 +269,7 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
                 width={CONTROL_WIDTH}
                 wrap
               />
-              <Column gap={2} width="fill" align="start">
+              <Column gap={2} width="fill">
                 <SettingsGroup
                   name="runtime"
                   label="Runtime"
@@ -350,63 +350,6 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
                       />
                     )}
                   </Column>
-                </SettingsGroup>
-                <SettingsGroup
-                  name="postgres"
-                  label="PostgreSQL service"
-                  detail={configuration.postgres ? 'TLS profile configured' : 'Not configured'}
-                  expanded={expanded}
-                  onExpand={setExpanded}
-                >
-                  <Text
-                    label="Host-only connection metadata. The password remains in the named workspace credential and is never returned here."
-                    color="text-dim"
-                    width={CONTROL_WIDTH}
-                    wrap
-                  />
-                  {field(
-                    'TLS server name',
-                    configuration.postgres?.tls_server_name ?? '',
-                    'database.example.internal',
-                    (event) =>
-                      change('postgres', {
-                        tls_server_name: String(event.value ?? '').trim(),
-                        password_key: configuration.postgres?.password_key ?? '',
-                        root_certificate_key: configuration.postgres?.root_certificate_key ?? null,
-                      }),
-                  )}
-                  {field(
-                    'Password credential key',
-                    configuration.postgres?.password_key ?? '',
-                    'database.password',
-                    (event) =>
-                      change('postgres', {
-                        tls_server_name: configuration.postgres?.tls_server_name ?? '',
-                        password_key: String(event.value ?? '').trim(),
-                        root_certificate_key: configuration.postgres?.root_certificate_key ?? null,
-                      }),
-                  )}
-                  {field(
-                    'Root certificate credential key',
-                    configuration.postgres?.root_certificate_key ?? '',
-                    'database.ca (optional)',
-                    (event) => {
-                      const key = String(event.value ?? '').trim();
-                      change('postgres', {
-                        tls_server_name: configuration.postgres?.tls_server_name ?? '',
-                        password_key: configuration.postgres?.password_key ?? '',
-                        root_certificate_key: key || null,
-                      });
-                    },
-                  )}
-                  {configuration.postgres && (
-                    <Button
-                      label="Clear PostgreSQL profile"
-                      size="small"
-                      variant="outline"
-                      onInvoke={() => change('postgres', null)}
-                    />
-                  )}
                 </SettingsGroup>
                 <SettingsGroup
                   name="advanced"
@@ -570,7 +513,7 @@ function SettingsGroup({
   label: string;
   detail: string;
   expanded: string;
-  onExpand: (value: string) => void;
+  onExpand: React.Dispatch<React.SetStateAction<string>>;
   children: React.ReactNode;
 }) {
   const open = expanded === name;
@@ -579,7 +522,10 @@ function SettingsGroup({
       label={label}
       width="fill"
       expanded={open}
-      onExpand={(event: Change) => onExpand((event.expanded ?? event.value) ? name : '')}
+      onExpand={(event: Change) => {
+        const next = Boolean(event.expanded ?? event.value);
+        onExpand((current) => (next ? name : current === name ? '' : current));
+      }}
     >
       <AccordionSummary label={`${label} · ${detail}`} />
       <AccordionDetails gap={2}>{children}</AccordionDetails>

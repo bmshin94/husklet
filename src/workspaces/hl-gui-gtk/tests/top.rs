@@ -605,6 +605,7 @@ mod unix {
                 }
             }
             if fixture == "populated" && name == "settings" {
+                exercise_settings_disclosures(&mut wire, &mut tree, &mut surface, &window, &root, width, width_name);
                 let label = find_label(&root, "Execution lifetime");
                 let select = label
                     .mnemonic_widget()
@@ -667,17 +668,17 @@ mod unix {
                 }
                 let environment = find_expander(&root, "Environment variables · 1 variable");
                 let collapsed_environment_width = environment.width();
+                let _ = surface.reports().drain();
                 environment.emit_by_name::<()>("activate", &[]);
                 settle_toolkit();
                 send_report(&surface, &mut wire, 610, |event| {
                     matches!(event, hl_gui::Event::Expand { .. })
                 });
-                apply_until(
+                apply_next_render(
                     &mut wire,
                     &mut tree,
                     &mut surface,
-                    "Show environment values",
-                    |request| panic!("unexpected settings expansion call: {request:?}"),
+                    "opening the environment settings editor",
                 );
                 let settings_row = environment
                     .parent()
@@ -801,7 +802,10 @@ mod unix {
                 let add_bounds = add_variable
                     .compute_bounds(&root)
                     .expect("Add variable belongs to the Top root");
-                let content_x = if width == 600 { 27.0 } else { 203.0 };
+                let content_x = environment
+                    .compute_bounds(&root)
+                    .expect("environment settings belong to the Top root")
+                    .x();
                 assert!(
                     (name_bounds.x() - content_x).abs() <= 1.0,
                     "{width_name} environment editor is detached from its content edge: {name_bounds:?}"
@@ -814,6 +818,12 @@ mod unix {
                 assert!(
                     add_variable.has_css_class("variant-outline"),
                     "{width_name} Add variable must remain a compact secondary action"
+                );
+                assert_settings_stack(
+                    &root,
+                    width,
+                    &format!("{width_name}/credential-editor"),
+                    Some(3),
                 );
                 capture(&window, &format!("settings-credential-edit-{width_name}"), width, 800);
             }
@@ -5360,6 +5370,184 @@ mod unix {
         );
     }
 
+    fn settings_groups(root: &gtk::Widget) -> Vec<gtk::Expander> {
+        [
+            "Runtime · Image alpine:3.20 · Shell /bin/sh",
+            "Resources & connectivity · CPU 4 · Memory 4096 MB",
+            "Terminal appearance · Font host default · Size default · Cursor default",
+            "Environment variables · 1 variable",
+            "Filesystem mounts · 0 mounts",
+        ]
+        .into_iter()
+        .map(|label| find_expander(root, label))
+        .collect()
+    }
+
+    fn assert_settings_stack(root: &gtk::Widget, width: i32, case: &str, open: Option<usize>) {
+        let groups = settings_groups(root);
+        for (index, group) in groups.iter().enumerate() {
+            assert_eq!(
+                group.is_expanded(),
+                open == Some(index),
+                "{case} settings section {index} has the wrong open state"
+            );
+            assert_eq!(group.accessible_role(), gtk::AccessibleRole::Button);
+            assert!(group.is_focusable(), "{case} settings section {index} is not focusable");
+        }
+        let bounds = groups
+            .iter()
+            .map(|group| {
+                group
+                    .compute_bounds(root)
+                    .unwrap_or_else(|| panic!("{case} settings group belongs to the Top root"))
+            })
+            .collect::<Vec<_>>();
+        for pair in bounds.windows(2) {
+            assert!(
+                pair[0].y() + pair[0].height() <= pair[1].y(),
+                "{case} settings sections overlap or left vertical flow: {:?} / {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+        assert!(
+            bounds.iter().all(|held| (held.x() - bounds[0].x()).abs() <= 1.0),
+            "{case} settings section edges diverged: {bounds:?}"
+        );
+        assert!(
+            bounds
+                .iter()
+                .all(|held| (held.width() - bounds[0].width()).abs() <= 1.0),
+            "{case} settings section widths diverged: {bounds:?}"
+        );
+        let minimum = if width == 600 { 480.0 } else { 900.0 };
+        assert!(
+            bounds.iter().all(|held| held.width() >= minimum),
+            "{case} settings sections lost usable width: {bounds:?}"
+        );
+        assert!(
+            find_expander_optional(root, "PostgreSQL service · Not configured").is_none(),
+            "{case} niche PostgreSQL provider configuration leaked into core settings"
+        );
+    }
+
+    fn exercise_settings_disclosures(
+        wire: &mut Wire<UnixStream>,
+        tree: &mut Tree,
+        surface: &mut Surface,
+        window: &gtk::Window,
+        root: &gtk::Widget,
+        width: i32,
+        case: &str,
+    ) {
+        let base_channel = if width == 600 { 10_100 } else { 10_000 };
+        let groups = settings_groups(root);
+        if let Some(open) = groups.iter().position(gtk::Expander::is_expanded) {
+            let _ = surface.reports().drain();
+            groups[open].emit_by_name::<()>("activate", &[]);
+            settle_toolkit();
+            send_report(surface, wire, base_channel, |event| {
+                matches!(
+                    event,
+                    hl_gui::Event::Expand {
+                        value: hl_gui::PropValue::Flag(false),
+                        ..
+                    }
+                )
+            });
+            apply_next_render(wire, tree, surface, "closing the initial settings section");
+        }
+        settle_settings(root, width);
+        assert_settings_stack(root, width, &format!("{case}/collapsed"), None);
+        capture_stable(window, &format!("settings-disclosure-collapsed-{case}"), width, 800);
+
+        let slugs = ["runtime", "resources", "terminal", "environment", "mounts"];
+        for index in 0..groups.len() {
+            let groups = settings_groups(root);
+            let _ = surface.reports().drain();
+            groups[index].emit_by_name::<()>("activate", &[]);
+            settle_toolkit();
+            send_report(surface, wire, base_channel + 1 + index as u32 * 2, |event| {
+                matches!(
+                    event,
+                    hl_gui::Event::Expand {
+                        value: hl_gui::PropValue::Flag(true),
+                        ..
+                    }
+                )
+            });
+            apply_next_render(wire, tree, surface, "opening a settings section");
+            if index > 0 {
+                send_report(surface, wire, base_channel + 2 + index as u32 * 2, |event| {
+                    matches!(
+                        event,
+                        hl_gui::Event::Expand {
+                            value: hl_gui::PropValue::Flag(false),
+                            ..
+                        }
+                    )
+                });
+                assert_eq!(
+                    apply_available_renders(wire, tree, surface, Duration::from_millis(150)),
+                    0,
+                    "{case} previous-section close echo produced a second layout frame"
+                );
+            }
+            settle_settings(root, width);
+            assert_settings_stack(root, width, &format!("{case}/{}", slugs[index]), Some(index));
+            capture_stable(
+                window,
+                &format!("settings-disclosure-{}-{case}", slugs[index]),
+                width,
+                800,
+            );
+        }
+
+        let groups = settings_groups(root);
+        let _ = surface.reports().drain();
+        groups
+            .last()
+            .expect("settings has a final section")
+            .emit_by_name::<()>("activate", &[]);
+        settle_toolkit();
+        send_report(surface, wire, base_channel + 20, |event| {
+            matches!(
+                event,
+                hl_gui::Event::Expand {
+                    value: hl_gui::PropValue::Flag(false),
+                    ..
+                }
+            )
+        });
+        apply_next_render(wire, tree, surface, "closing the final settings section");
+        settle_settings(root, width);
+        assert_settings_stack(root, width, &format!("{case}/closed"), None);
+
+        let runtime = settings_groups(root).remove(0);
+        let _ = surface.reports().drain();
+        runtime.emit_by_name::<()>("activate", &[]);
+        settle_toolkit();
+        send_report(surface, wire, base_channel + 21, |event| {
+            matches!(
+                event,
+                hl_gui::Event::Expand {
+                    value: hl_gui::PropValue::Flag(true),
+                    ..
+                }
+            )
+        });
+        apply_next_render(wire, tree, surface, "restoring the runtime settings section");
+        settle_settings(root, width);
+        assert_settings_stack(root, width, &format!("{case}/restored"), Some(0));
+    }
+
+    fn settle_settings(root: &gtk::Widget, width: i32) {
+        root.measure(gtk::Orientation::Horizontal, -1);
+        root.measure(gtk::Orientation::Vertical, width);
+        root.allocate(width, 1_600, -1, None);
+        settle_frame();
+    }
+
     fn assert_settings_group_layout(root: &gtk::Widget, width: i32, case: &str) {
         let resources = find_expander(root, "Resources & connectivity · CPU 4 · Memory 4096 MB");
         let resources_widget = resources.clone();
@@ -5411,18 +5599,6 @@ mod unix {
         assert!(
             resources_widget.grab_focus(),
             "{case} settings summary accepts keyboard focus"
-        );
-        resources_widget.emit_by_name::<()>("activate", &[]);
-        settle_toolkit();
-        assert!(
-            resources_widget.is_expanded(),
-            "{case} keyboard activation opens settings summary"
-        );
-        resources_widget.emit_by_name::<()>("activate", &[]);
-        settle_toolkit();
-        assert!(
-            !resources_widget.is_expanded(),
-            "{case} second keyboard activation restores summary"
         );
         if width == 600 {
             for (upper, lower) in [
@@ -6003,6 +6179,57 @@ mod unix {
         wire.send(&Frame::new(ChannelId::new(channel), hl_extension::Kind::Event, payload))
             .expect("live GTK report reaches Top");
         event
+    }
+
+    fn apply_next_render(wire: &mut Wire<UnixStream>, tree: &mut Tree, surface: &mut Surface, context: &str) {
+        let deadline = Instant::now() + DEADLINE;
+        loop {
+            let frame = receive_until(wire, deadline)
+                .unwrap_or_else(|error| panic!("{context} did not produce a render: {error:?}"));
+            if frame.kind == hl_extension::Kind::Credit {
+                continue;
+            }
+            let request = codec::read_request(&frame).expect("settings interaction request decodes");
+            let (Request::InterfaceRender { frame } | Request::InterfaceRenderAt { frame, .. }) = request else {
+                panic!("unexpected call while {context}: {request:?}");
+            };
+            tree.apply(&frame, surface)
+                .unwrap_or_else(|error| panic!("{context} frame applies: {error:?}"));
+            wire.send(&codec::reply(&Reply::Done).expect("settings render reply encodes"))
+                .expect("settings render reply sends");
+            return;
+        }
+    }
+
+    fn apply_available_renders(
+        wire: &mut Wire<UnixStream>,
+        tree: &mut Tree,
+        surface: &mut Surface,
+        duration: Duration,
+    ) -> usize {
+        let deadline = Instant::now() + duration;
+        let mut renders = 0;
+        loop {
+            match receive_until(wire, deadline) {
+                Ok(frame) if frame.kind == hl_extension::Kind::Credit => {}
+                Ok(frame) => {
+                    let request = codec::read_request(&frame).expect("echo response request decodes");
+                    let (Request::InterfaceRender { frame } | Request::InterfaceRenderAt { frame, .. }) = request
+                    else {
+                        panic!("unexpected call while draining a settings echo: {request:?}");
+                    };
+                    tree.apply(&frame, surface).expect("echo response render applies");
+                    wire.send(&codec::reply(&Reply::Done).expect("echo response reply encodes"))
+                        .expect("echo response reply sends");
+                    renders += 1;
+                }
+                Err(hl_extension::Transit::Pending) => return renders,
+                Err(error) => panic!("settings echo socket failed: {error:?}"),
+            }
+            if Instant::now() >= deadline {
+                return renders;
+            }
+        }
     }
 
     fn apply_until(
