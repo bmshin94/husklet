@@ -239,7 +239,7 @@ export function Volumes({
                 overflow={
                   inspectionNeedsAccess ? null : (
                     <Expander
-                      label="Danger zone"
+                      label="Delete volume…"
                       variant="outline"
                       width="content"
                       align="start"

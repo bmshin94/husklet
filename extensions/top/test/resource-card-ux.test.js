@@ -23,7 +23,8 @@ test('image inventory is a full-width compact summary with secondary inspection 
 
   assert.ok(labelled(stage, 'Image reference'));
   assert.ok(labelled(stage, 'Image maintenance'));
-  assert.ok(labelled(stage, 'Danger zone'));
+  assert.ok(labelled(stage, 'Remove image…'));
+  assert.equal(labelled(stage, 'Danger zone'), undefined);
   const card = frame.patches.find((patch) => patch.Create?.tag === 'Card')?.Create.id;
   assert.ok(card, 'the image inventory renders a resource card');
   assert.ok(
@@ -63,7 +64,7 @@ test('image inventory is a full-width compact summary with secondary inspection 
     'Responsive',
     'CardContent',
   ]);
-  assert.deepEqual(ancestorTags(stage, 'Danger zone').slice(0, 4), [
+  assert.deepEqual(ancestorTags(stage, 'Remove image…').slice(0, 4), [
     'CardActions',
     'Row',
     'Responsive',
@@ -85,9 +86,9 @@ test('image inventory is a full-width compact summary with secondary inspection 
     'a horizontal-only spacer separates identity and status from the trailing action cluster',
   );
   assert.deepEqual(property(stage, 'Inspect', 'Variant'), { Variant: 'Outline' });
-  assert.deepEqual(property(stage, 'Danger zone', 'Variant'), { Variant: 'Outline' });
-  assert.deepEqual(property(stage, 'Danger zone', 'Width'), { Length: 'Content' });
-  assert.deepEqual(property(stage, 'Danger zone', 'Tooltip'), {
+  assert.deepEqual(property(stage, 'Remove image…', 'Variant'), { Variant: 'Outline' });
+  assert.deepEqual(property(stage, 'Remove image…', 'Width'), { Length: 'Content' });
+  assert.deepEqual(property(stage, 'Remove image…', 'Tooltip'), {
     Text: 'Remove this image from the workspace image store',
   });
   assert.deepEqual(property(stage, 'Remove', 'Size'), { ControlSize: 'Small' });
@@ -128,13 +129,13 @@ test('network inventory keeps management and destructive disclosure in one compa
     'CardContent',
   ]);
   assert.equal(tag(stage, 'Manage connections'), 'InlineButton');
-  assert.deepEqual(ancestorTags(stage, 'Danger zone').slice(0, 4), [
+  assert.deepEqual(ancestorTags(stage, 'Remove network…').slice(0, 4), [
     'CardActions',
     'Row',
     'Responsive',
     'CardContent',
   ]);
-  assert.deepEqual(property(stage, 'Danger zone', 'Tooltip'), {
+  assert.deepEqual(property(stage, 'Remove network…', 'Tooltip'), {
     Text: 'Remove this network from the workspace',
   });
   assert.deepEqual(property(stage, 'Remove', 'Size'), { ControlSize: 'Small' });
@@ -193,13 +194,13 @@ test('volume inventory keeps inspection and destructive disclosure in one compac
     'Responsive',
     'CardContent',
   ]);
-  assert.deepEqual(ancestorTags(stage, 'Danger zone').slice(0, 4), [
+  assert.deepEqual(ancestorTags(stage, 'Delete volume…').slice(0, 4), [
     'CardActions',
     'Row',
     'Responsive',
     'CardContent',
   ]);
-  assert.deepEqual(property(stage, 'Danger zone', 'Tooltip'), {
+  assert.deepEqual(property(stage, 'Delete volume…', 'Tooltip'), {
     Text: 'Remove this volume and permanently delete its stored data',
   });
   assert.deepEqual(property(stage, 'Remove', 'Size'), { ControlSize: 'Small' });

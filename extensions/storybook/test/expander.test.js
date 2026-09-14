@@ -32,11 +32,11 @@ test('Expander owns one precise component document with meaningful disclosure st
   assert.deepEqual(headings.slice(0, 7), [
     'Expander',
     'Overview',
-    'API',
     'States',
     'Action disclosure',
     'Behavior',
     'Accessibility',
+    'API',
   ]);
 
   const controlled = labelled(frame.patches, 'Expander', 'Runtime diagnostics');
@@ -57,12 +57,17 @@ test('Expander owns one precise component document with meaningful disclosure st
   assert(
     examples.some(
       (value) =>
-        value.Label?.Text === 'More actions' &&
+        value.Label?.Text === 'Remove network…' &&
         value.Variant?.Variant === 'Outline' &&
         value.Width?.Length === 'Content' &&
         value.Align?.Align === 'Start',
     ),
     'the compact action disclosure is a visibly bounded control',
+  );
+  assert.equal(
+    examples.some((value) => value.Label?.Text === 'More actions'),
+    false,
+    'the action example names the disclosed operation instead of a vague bucket',
   );
   assert(
     created(frame.patches, 'TableRow').length > 0,

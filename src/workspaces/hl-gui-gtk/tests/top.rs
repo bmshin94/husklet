@@ -852,7 +852,7 @@ mod unix {
                     "{width_name} collapsed network record stacked its summary to {}px",
                     network_card.height()
                 );
-                let danger = find_expander(&network_card, "Danger zone");
+                let danger = find_expander(&network_card, "Remove network…");
                 assert!(danger.has_css_class("variant-outline"));
                 assert_eq!(
                     danger.height(),
@@ -874,7 +874,7 @@ mod unix {
                     .expect("Manage connections belongs to network card");
                 let danger_bounds = danger
                     .compute_bounds(&network_card)
-                    .expect("Danger zone belongs to network card");
+                    .expect("Remove network disclosure belongs to network card");
                 let aligned = ((manage_bounds.y() + manage_bounds.height() / 2.0)
                     - (danger_bounds.y() + danger_bounds.height() / 2.0))
                     .abs();
@@ -963,7 +963,7 @@ mod unix {
                 assert!(inspect.has_css_class("variant-outline"));
                 assert_inline_action(&inspect, width_name, "volume inspection");
                 assert_secondary_resource_toggle(&window, &root, &inspect, &format!("{width_name} volume inspection"));
-                let danger = find_expander(&card, "Danger zone");
+                let danger = find_expander(&card, "Delete volume…");
                 assert!(danger.has_css_class("variant-outline"));
                 assert_eq!(danger.height(), 28, "{width_name} volume danger disclosure height");
                 assert_eq!(
@@ -975,7 +975,7 @@ mod unix {
                 let inspect_bounds = inspect.compute_bounds(&card).expect("Inspect belongs to volume card");
                 let danger_bounds = danger
                     .compute_bounds(&card)
-                    .expect("Danger zone belongs to volume card");
+                    .expect("Delete volume disclosure belongs to volume card");
                 let aligned = ((inspect_bounds.y() + inspect_bounds.height() / 2.0)
                     - (danger_bounds.y() + danger_bounds.height() / 2.0))
                     .abs();
@@ -1031,7 +1031,7 @@ mod unix {
                 assert!(inspect.has_css_class("variant-outline"));
                 assert_inline_action(&inspect, width_name, "image inspection");
                 assert_secondary_resource_toggle(&window, &root, &inspect, &format!("{width_name} image inspection"));
-                let danger = find_expander(&card, "Danger zone");
+                let danger = find_expander(&card, "Remove image…");
                 assert!(danger.has_css_class("variant-outline"));
                 assert_eq!(
                     danger.height(),
@@ -1052,7 +1052,9 @@ mod unix {
                     card.height()
                 );
                 let inspect_bounds = inspect.compute_bounds(&card).expect("Inspect belongs to image card");
-                let danger_bounds = danger.compute_bounds(&card).expect("Danger zone belongs to image card");
+                let danger_bounds = danger
+                    .compute_bounds(&card)
+                    .expect("Remove image disclosure belongs to image card");
                 let aligned = ((inspect_bounds.y() + inspect_bounds.height() / 2.0)
                     - (danger_bounds.y() + danger_bounds.height() / 2.0))
                     .abs();
@@ -2443,10 +2445,10 @@ mod unix {
             let hide_connections = find_button(&expanded_root, "Hide connections");
             assert!(hide_connections.has_css_class("variant-outline"));
             assert!(hide_connections.has_css_class("tone-neutral"));
-            assert!(!find_expander(&expanded_root, "Danger zone").is_expanded());
+            assert!(!find_expander(&expanded_root, "Remove network…").is_expanded());
             assert_label_order(
                 &expanded_root,
-                &["Danger zone", "Network details", "Container attachment"],
+                &["Remove network…", "Network details", "Container attachment"],
             );
 
             let selector = find_toggle(&expanded_root, "Choose…");
@@ -2576,11 +2578,11 @@ mod unix {
                 &format!("Container · {}", &container_id[..12])
             ));
             assert!(has_label(&success_root, "Technical details"));
-            assert!(!find_expander(&success_root, "Danger zone").is_expanded());
+            assert!(!find_expander(&success_root, "Remove network…").is_expanded());
             assert_label_order(
                 &success_root,
                 &[
-                    "Danger zone",
+                    "Remove network…",
                     "Network details",
                     "Container attachment",
                     &success,
@@ -2590,7 +2592,7 @@ mod unix {
             assert_focus_order(
                 &success_root,
                 &[
-                    "Danger zone",
+                    "Remove network…",
                     "api-worker · aaaaaaaaaaaa · exited",
                     "Disconnect",
                     "Technical details",

@@ -1556,7 +1556,8 @@ mod unix {
                 bounded.width(),
                 root.width()
             );
-            let action = find::<gtk::Expander>(&root, |expander| expander.label().as_deref() == Some("More actions"));
+            let action =
+                find::<gtk::Expander>(&root, |expander| expander.label().as_deref() == Some("Remove network…"));
             assert!(action.has_css_class("variant-outline"));
             assert_eq!(action.height(), 28, "action disclosure is one compact control row");
             assert!(
@@ -2547,6 +2548,19 @@ mod unix {
             }
         }
         if story == "Expander" {
+            let action =
+                find::<gtk::Expander>(&root, |expander| expander.label().as_deref() == Some("Remove network…"));
+            assert_eq!(action.accessible_role(), gtk::AccessibleRole::Button);
+            assert!(
+                action.is_focusable(),
+                "operation-specific disclosure is keyboard reachable"
+            );
+            assert!(
+                descendants::<gtk::Expander>(&root)
+                    .iter()
+                    .all(|expander| expander.label().as_deref() != Some("More actions")),
+                "Expander reference must not teach an ambiguous action label"
+            );
             let disclosure = find::<gtk::Expander>(&root, |expander| {
                 expander.label().as_deref() == Some("Runtime diagnostics")
             });

@@ -69,7 +69,7 @@ test('network scope refusal explains recovery and does not offer a futile retry'
   );
   invoke(stage, 'Review access');
   assert.equal(openedExtensions, 1, 'the recovery action invokes application navigation');
-  assert.ok(labelled(stage, 'Danger zone'));
+  assert.ok(labelled(stage, 'Remove network…'));
   assert.ok(labelled(stage, 'Remove'));
 });
 

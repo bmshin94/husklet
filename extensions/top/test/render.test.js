@@ -5988,7 +5988,7 @@ test('volume and network panels render bounded real inventories and controls', (
   assert.deepEqual(taggedProperty(volumeStage, 'Inspect', 'InlineButton', 'Variant'), {
     Variant: 'Outline',
   });
-  assert.deepEqual(ancestorTags(volumeStage, 'Danger zone').slice(0, 4), [
+  assert.deepEqual(ancestorTags(volumeStage, 'Delete volume…').slice(0, 4), [
     'CardActions',
     'Row',
     'Responsive',
@@ -6009,7 +6009,7 @@ test('volume and network panels render bounded real inventories and controls', (
     2,
     'custom-network danger controls share the compact summary rather than adding a footer band',
   );
-  assert.deepEqual(ancestorTags(networkInventoryStage, 'Danger zone').slice(0, 4), [
+  assert.deepEqual(ancestorTags(networkInventoryStage, 'Remove network…').slice(0, 4), [
     'CardActions',
     'Row',
     'Responsive',
@@ -8444,12 +8444,12 @@ test('successful network attachment retains its receipt and verified expanded me
         'Container attachment',
         'Connected container-1 to private',
         'Technical details',
-        'Danger zone',
+        'Remove network…',
       ].includes(label),
     ),
     [
-      'Danger zone',
-      'Danger zone',
+      'Remove network…',
+      'Remove network…',
       'Network details',
       'Container attachment',
       'Connected container-1 to private',
@@ -8457,7 +8457,7 @@ test('successful network attachment retains its receipt and verified expanded me
     ],
     'reinspection retains the summary action before the daily attachment workflow and its receipt',
   );
-  assert.notDeepEqual(taggedProperty(stage, 'Danger zone', 'Expander', 'Expanded'), {
+  assert.notDeepEqual(taggedProperty(stage, 'Remove network…', 'Expander', 'Expanded'), {
     Flag: true,
   });
   assert.deepEqual(
@@ -8560,12 +8560,12 @@ test('successful disconnect retains its receipt and verified empty membership', 
         'Container attachment',
         'Disconnected container-1 from private',
         'Technical details',
-        'Danger zone',
+        'Remove network…',
       ].includes(label),
     ),
     [
-      'Danger zone',
-      'Danger zone',
+      'Remove network…',
+      'Remove network…',
       'Network details',
       'Container attachment',
       'Disconnected container-1 from private',
@@ -8573,7 +8573,7 @@ test('successful disconnect retains its receipt and verified empty membership', 
     ],
     'disconnect reinspection retains the summary action and its verified receipt',
   );
-  assert.notDeepEqual(taggedProperty(stage, 'Danger zone', 'Expander', 'Expanded'), {
+  assert.notDeepEqual(taggedProperty(stage, 'Remove network…', 'Expander', 'Expanded'), {
     Flag: true,
   });
 });

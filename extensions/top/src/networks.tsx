@@ -442,7 +442,7 @@ export function Networks({
                     overflow={
                       network.kind !== 'builtin' ? (
                         <Expander
-                          label="Danger zone"
+                          label="Remove network…"
                           variant="outline"
                           width="content"
                           align="start"

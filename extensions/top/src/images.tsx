@@ -343,7 +343,7 @@ export function Images({
               }
               overflow={
                 <Expander
-                  label="Danger zone"
+                  label="Remove image…"
                   variant="outline"
                   width="content"
                   align="start"

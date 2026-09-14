@@ -50,10 +50,6 @@ export function ExpanderWorkbench() {
         />
       </DocumentationSection>
 
-      <DocumentationSection title="API">
-        <ApiReference rows={rows('Expander')} />
-      </DocumentationSection>
-
       <DocumentationSection title="States">
         <SpecimenGrid>
           <FieldSpecimen label="Collapsed" helper="Only the persistent summary is visible.">
@@ -82,7 +78,7 @@ export function ExpanderWorkbench() {
           wrap
         />
         <Expander
-          label="More actions"
+          label="Remove network…"
           expanded={false}
           variant="outline"
           width="content"
@@ -118,9 +114,13 @@ export function ExpanderWorkbench() {
 
       <DocumentationSection title="Accessibility">
         <Text
-          label="The visible summary is the disclosure's accessible name and exposes whether its body is expanded. Keep focus on the summary after toggling and do not hide a primary action inside a disclosure."
+          label="The visible summary is the disclosure's accessible name and exposes whether its body is expanded. In repeated records, name the operation and resource type—for example, Remove network…—instead of repeating More actions or Danger zone. Keep focus on the summary after toggling and do not hide a primary action inside a disclosure."
           wrap
         />
+      </DocumentationSection>
+
+      <DocumentationSection title="API">
+        <ApiReference rows={rows('Expander')} />
       </DocumentationSection>
     </ComponentDocument>
   );
