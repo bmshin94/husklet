@@ -888,8 +888,8 @@ mod tests {
 
         service.start("registry/sample:stable", false).unwrap();
         service.start("registry/sample:stable", true).unwrap();
-        assert_eq!(received.recv_timeout(Duration::from_secs(1)).unwrap(), false);
-        assert_eq!(received.recv_timeout(Duration::from_secs(1)).unwrap(), true);
+        assert!(!received.recv_timeout(Duration::from_secs(1)).unwrap());
+        assert!(received.recv_timeout(Duration::from_secs(1)).unwrap());
     }
 
     #[test]
