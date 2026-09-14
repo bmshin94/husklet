@@ -1482,6 +1482,7 @@ pub enum TerminalTabState {
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct TerminalOpenTabOnce {
+    pub token: String,
     #[serde(rename = "tabId")]
     pub tab_id: String,
     pub state: TerminalTabState,

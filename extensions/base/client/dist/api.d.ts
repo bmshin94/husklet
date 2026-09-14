@@ -622,8 +622,14 @@ export interface TerminalTopology {
     tabs: TabTopology[];
 }
 export interface TerminalOpenTabOnceResult {
+    token: string;
     tabId: string;
     state: 'open' | 'closed';
+}
+/** The host returned idempotent tab authority for another operation token. */
+export declare class TerminalOpenTabOnceProtocolError extends Error {
+    readonly expectedToken: string;
+    readonly receivedToken: string;
 }
 export interface FileEntry {
     path: string;

@@ -503,9 +503,10 @@ impl TerminalSurface for Host {
         Ok(format!("tab-{title}"))
     }
 
-    fn open_tab_once(&self, _token: &str, title: &str) -> Result<hl_extension::port::TerminalOpenTabOnce, HostError> {
+    fn open_tab_once(&self, token: &str, title: &str) -> Result<hl_extension::port::TerminalOpenTabOnce, HostError> {
         self.ledger.note("terminal.open_tab_once");
         Ok(hl_extension::port::TerminalOpenTabOnce {
+            token: token.into(),
             tab_id: format!("tab-{title}"),
             state: hl_extension::port::TerminalTabState::Open,
         })

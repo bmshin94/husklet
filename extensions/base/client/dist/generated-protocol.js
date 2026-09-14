@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:0eddf74f2b48e762
+// Protocol artifact fnv1a64:3a205fb7a596094f
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -8171,6 +8171,13 @@ const definitions = {
   },
   "TerminalOpenTabOnce": {
     "fields": [
+      {
+        "name": "token",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
       {
         "name": "tabId",
         "optional": false,

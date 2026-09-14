@@ -7803,6 +7803,13 @@
     "TerminalOpenTabOnce": {
       "fields": [
         {
+          "name": "token",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "tabId",
           "optional": false,
           "schema": {
@@ -16174,7 +16181,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:bdd510b0762e726e",
+  "source_fingerprint": "fnv1a64:ec3f54442558cc6e",
   "specification_version": 1,
   "topics": [
     {

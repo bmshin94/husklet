@@ -765,6 +765,18 @@ export class TerminalPinOperationError extends Error {
   }
 }
 
+/** The host returned idempotent tab authority for another operation token. */
+export class TerminalOpenTabOnceProtocolError extends Error {
+  readonly expectedToken;
+  readonly receivedToken;
+  constructor(expectedToken, receivedToken) {
+    super('host returned a terminal open-once receipt for another operation token');
+    this.name = 'TerminalOpenTabOnceProtocolError';
+    this.expectedToken = expectedToken;
+    this.receivedToken = receivedToken;
+  }
+}
+
 /** A revision-bound semantic action may have committed before observation failed. */
 export class SemanticActionOperationError extends Error {
   readonly before;
@@ -3570,11 +3582,15 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         exactTopology(expect(await session.call('terminal_topology'), 'topology')),
       openTab: async (title) =>
         expect(await session.call('terminal_open_tab', { title }), 'identity'),
-      openTabOnce: async (token, title): Promise<TerminalOpenTabOnceResult> =>
-        expect(
+      openTabOnce: async (token, title): Promise<TerminalOpenTabOnceResult> => {
+        const receipt = expect(
           await session.call('terminal_open_tab_once', { token, title }),
           'terminal_open_tab_once',
-        ),
+        );
+        if (receipt.token !== token)
+          throw new TerminalOpenTabOnceProtocolError(token, receipt.token);
+        return receipt;
+      },
       split: async (slot, division) =>
         expect(await session.call('terminal_split', { slot, division }), 'identity'),
       splitObserved: (slot, generation, revision, division) => {

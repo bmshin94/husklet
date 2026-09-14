@@ -25,6 +25,7 @@ import {
   Session,
   StateDecodeError,
   TerminalOperationError,
+  TerminalOpenTabOnceProtocolError,
   workspace,
 } from '../dist/index.js';
 import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
@@ -12189,7 +12190,11 @@ test('fragmented Unix terminal open-once recovers a lost reply and preserves a c
           kind: KIND.response,
           payload: {
             reply: 'terminal_open_tab_once',
-            with: { tabId: 'build-tab', state: connection === 2 ? 'open' : 'closed' },
+            with: {
+              token: connection === 4 ? '11111111111111111111111111111111' : token,
+              tabId: 'build-tab',
+              state: connection === 2 ? 'open' : 'closed',
+            },
           },
         });
         for (const byte of reply) socket.write(Uint8Array.of(byte));
@@ -12213,16 +12218,23 @@ test('fragmented Unix terminal open-once recovers a lost reply and preserves a c
     await assert.rejects(workspace(first).terminal.openTabOnce(token, 'Build output'), /closed/);
     const second = await connect({ path: socketPath });
     assert.deepEqual(await workspace(second).terminal.openTabOnce(token, 'Build output'), {
+      token,
       tabId: 'build-tab',
       state: 'open',
     });
     const third = await connect({ path: socketPath });
     assert.deepEqual(await workspace(third).terminal.openTabOnce(token, 'Build output'), {
+      token,
       tabId: 'build-tab',
       state: 'closed',
     });
     assert.equal(opens, 1);
-    await Promise.all([second.close(), third.close()]);
+    const hostile = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(hostile).terminal.openTabOnce(token, 'Build output'),
+      (error) => error instanceof TerminalOpenTabOnceProtocolError,
+    );
+    await Promise.all([second.close(), third.close(), hostile.close()]);
   } finally {
     for (const connection of connections) connection.destroy();
     await new Promise((resolve) => server.close(resolve));

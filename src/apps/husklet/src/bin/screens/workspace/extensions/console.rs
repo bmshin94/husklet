@@ -547,6 +547,7 @@ impl Console {
         match session.open_tab_replay(&origin.extension, &origin.installation, token, title) {
             Ok(Some((tab_id, open))) => {
                 return Ok(TerminalOpenTabOnce {
+                    token: token.to_owned(),
                     tab_id: tab_id.to_string(),
                     state: if open {
                         TerminalTabState::Open
@@ -579,6 +580,7 @@ impl Console {
             return Err(HostError::Failed(error.to_string()));
         }
         Ok(TerminalOpenTabOnce {
+            token: token.to_owned(),
             tab_id: tab,
             state: TerminalTabState::Open,
         })

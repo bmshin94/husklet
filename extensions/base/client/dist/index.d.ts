@@ -219,6 +219,12 @@ export declare class TerminalPinOperationError extends Error {
     readonly pinned: any;
     constructor(tab: any, pinned: any, cause: any);
 }
+/** The host returned idempotent tab authority for another operation token. */
+export declare class TerminalOpenTabOnceProtocolError extends Error {
+    readonly expectedToken: any;
+    readonly receivedToken: any;
+    constructor(expectedToken: any, receivedToken: any);
+}
 /** A revision-bound semantic action may have committed before observation failed. */
 export declare class SemanticActionOperationError extends Error {
     readonly before: any;
