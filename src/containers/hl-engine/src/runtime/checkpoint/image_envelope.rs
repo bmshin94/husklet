@@ -10,9 +10,11 @@ pub(super) const SIZE: usize = 64;
 const MAGIC: &[u8; 8] = b"HLIMAGE\0";
 const ENVELOPE_VERSION: u16 = 1;
 const TRANSLATED_KIND: u16 = 1;
-const NATIVE_X86_V1_KIND: u16 = 2;
+const NATIVE_X86_KIND: u16 = 2;
 const TRANSLATED_MANIFEST_VERSION: u32 = 8;
-const NATIVE_X86_V1_VERSION: u32 = 1;
+/// The `native-x86` payload revision.  Kept in step with
+/// `execution_native_snapshot::NATIVE_FORMAT_VERSION` by a `const` assert there.
+pub(crate) const NATIVE_X86_PAYLOAD_VERSION: u32 = 2;
 const MANIFEST: &[u8] = b"MANIFEST";
 
 /// The reader selected by a validated `IMAGE` object.
@@ -20,8 +22,10 @@ const MANIFEST: &[u8] = b"MANIFEST";
 pub(crate) enum Reader {
     /// The existing translated-engine `MANIFEST` reader.
     Translated,
-    /// The version-one native x86 image reader, recognized but not yet wired.
-    NativeX86V1,
+    /// The native x86 image reader, recognized but not yet wired.  The variant
+    /// names the reader family; the payload revision travels in
+    /// `NATIVE_X86_PAYLOAD_VERSION`, which is version-checked on decode.
+    NativeX86,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,7 +51,7 @@ impl Reader {
     pub(crate) fn encode(self) -> [u8; SIZE] {
         let (kind, payload_version) = match self {
             Self::Translated => (TRANSLATED_KIND, TRANSLATED_MANIFEST_VERSION),
-            Self::NativeX86V1 => (NATIVE_X86_V1_KIND, NATIVE_X86_V1_VERSION),
+            Self::NativeX86 => (NATIVE_X86_KIND, NATIVE_X86_PAYLOAD_VERSION),
         };
         let mut bytes = [0_u8; SIZE];
         bytes[0..8].copy_from_slice(MAGIC);
@@ -69,13 +73,13 @@ impl Reader {
         }
         let reader = match u16::from_le_bytes(bytes[10..12].try_into().expect("fixed envelope field")) {
             TRANSLATED_KIND => Self::Translated,
-            NATIVE_X86_V1_KIND => Self::NativeX86V1,
+            NATIVE_X86_KIND => Self::NativeX86,
             _ => return Err(Invalid::Kind),
         };
         let payload_version = u32::from_le_bytes(bytes[12..16].try_into().expect("fixed envelope field"));
         let expected_version = match reader {
             Self::Translated => TRANSLATED_MANIFEST_VERSION,
-            Self::NativeX86V1 => NATIVE_X86_V1_VERSION,
+            Self::NativeX86 => NATIVE_X86_PAYLOAD_VERSION,
         };
         if payload_version != expected_version {
             return Err(Invalid::PayloadVersion);
@@ -104,7 +108,7 @@ mod tests {
 
     #[test]
     fn canonical_envelopes_are_exact_and_round_trip() {
-        for reader in [Reader::Translated, Reader::NativeX86V1] {
+        for reader in [Reader::Translated, Reader::NativeX86] {
             let encoded = reader.encode();
             assert_eq!(encoded.len(), SIZE);
             assert_eq!(&encoded[0..8], b"HLIMAGE\0");

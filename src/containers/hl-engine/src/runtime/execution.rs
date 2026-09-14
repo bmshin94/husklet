@@ -609,7 +609,7 @@ fn native_eligibility_with_sentry(
     if !volume_spec_supported(box_policy.volumes.as_deref()) {
         return Err(R::Volumes);
     }
-    // NativeX86V1 currently admits one fresh coordinator. Domain members and restore need the native
+    // NativeX86 currently admits one fresh coordinator. Domain members and restore need the native
     // re-fork path; malformed service combinations must not become native merely because capture works.
     let native_lifecycle = matches!(
         checkpoint,

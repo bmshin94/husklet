@@ -1549,7 +1549,13 @@ fn checkpoint_restores_a_fresh_process_after_terminating_the_original(explicit: 
         let objects = &state.0;
         assert_eq!(
             objects.keys().cloned().collect::<Vec<_>>(),
-            ["IMAGE", "MANIFEST", "native/memory.x86-v1", "native/registers.x86-v1"]
+            [
+                "IMAGE",
+                "MANIFEST",
+                "native/memory.x86-v2",
+                "native/registers.x86-v2",
+                "native/xstate.x86-v2"
+            ]
         );
         assert_eq!(&objects["IMAGE"][..8], b"HLIMAGE\0");
     }
