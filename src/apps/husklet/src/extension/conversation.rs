@@ -13,7 +13,7 @@
 //! open, which is exactly what the tests below do.
 
 use std::hash::{Hash, Hasher};
-use std::io;
+use std::io::{self, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -429,8 +429,10 @@ impl Conversation {
     /// does not finish inside the settle window, and `Fault::Socket` or
     /// `Fault::Malformed` when the reply could not be read.
     pub fn greet(&mut self) -> Result<Hello, Fault> {
-        self.welcome()?;
-        let hello = self.hello()?;
+        let started = Instant::now();
+        self.welcome(started)?;
+        let hello = self.hello(started)?;
+        self.control.set_write_timeout(None)?;
         let outcome = Compatibility::of(hello.protocol);
         if outcome.is_compatible() {
             return Ok(hello);
@@ -801,7 +803,7 @@ impl Conversation {
     }
 
     /// Sends the opening frame.
-    fn welcome(&mut self) -> Result<(), Fault> {
+    fn welcome(&mut self, started: Instant) -> Result<(), Fault> {
         let welcome = Welcome {
             protocol: PROTOCOL,
             host: env!("CARGO_PKG_VERSION").to_owned(),
@@ -818,13 +820,27 @@ impl Conversation {
             limits: Limits::default(),
         };
         let frame = codec::welcome(&welcome).map_err(|coding| Fault::Malformed(coding.to_string()))?;
-        self.wire.send(&frame).map_err(fault)
+        let bytes = frame.encode().map_err(|coding| Fault::Malformed(coding.to_string()))?;
+        let mut written = 0;
+        while written < bytes.len() {
+            let remaining = self.settle.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(Fault::Handshake(Compatibility::Unknown));
+            }
+            self.control.set_write_timeout(Some(remaining.min(Self::IO_TURN)))?;
+            match (&self.control).write(&bytes[written..]) {
+                Ok(0) => return Err(Fault::Socket("the extension socket accepted no greeting bytes".into())),
+                Ok(count) => written += count,
+                Err(error) if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {}
+                Err(error) => return Err(Fault::from(error)),
+            }
+        }
+        Ok(())
     }
 
     /// Reads the reply under a deadline, so an unfinished handshake ends the
     /// connection instead of holding it.
-    fn hello(&mut self) -> Result<Hello, Fault> {
-        let started = Instant::now();
+    fn hello(&mut self, started: Instant) -> Result<Hello, Fault> {
         let received = loop {
             let remaining = self.settle.saturating_sub(started.elapsed());
             if remaining.is_zero() {
@@ -4684,6 +4700,55 @@ mod tests {
             "byte trickle extended the total handshake deadline to {elapsed:?}"
         );
         trickle.join().expect("trickle thread");
+    }
+
+    #[test]
+    fn a_peer_that_does_not_read_the_greeting_cannot_hold_the_conversation() {
+        let deadline = Duration::from_millis(150);
+        let (ours, theirs) = UnixStream::pair().expect("socket pair");
+        let (finished, result) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            // 128 filesystem roots are valid, and long roots make their
+            // protocol greeting exceed the Unix socket's send buffer. The
+            // hostile peer keeps its end open without reading.
+            let filesystem = hl_extension::FilesystemGrant {
+                read: (0..hl_extension::FilesystemGrant::ROOT_LIMIT)
+                    .map(|index| hl_extension::FilesystemSelector::Exact {
+                        exact: RelativePath::new(format!("{}-{index}", "a".repeat(4_000))).expect("bounded path"),
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            let outcome = Conversation::new_scoped(
+                ours,
+                authority(),
+                "dev",
+                Queue::new(),
+                hl_extension::ContainerGrant::default(),
+                hl_extension::NetworkGrant::default(),
+                hl_extension::VolumeGrant::default(),
+                filesystem,
+                hl_extension::WorkspaceEnvironmentGrant::default(),
+            )
+            .expect("conversation")
+            .settling(deadline)
+            .greet();
+            let _ = finished.send(outcome);
+        });
+
+        let started = Instant::now();
+        let fault = result
+            .recv_timeout(Duration::from_millis(500))
+            .expect("greeting write respected the handshake deadline")
+            .expect_err("silent peer dropped");
+        let elapsed = started.elapsed();
+        assert_eq!(fault, Fault::Handshake(Compatibility::Unknown));
+        assert!(elapsed >= deadline, "deadline fired early after {elapsed:?}");
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "blocked greeting lasted {elapsed:?}"
+        );
+        drop(theirs);
     }
 
     #[test]
