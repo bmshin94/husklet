@@ -1353,6 +1353,7 @@ static void ckpt_restore_proc_run(int gpid) {
     ckpt_restore_reserve_release_all();
 
     ckpt_reinstall_sigacts(&m); // restore guest signal dispositions (AFTER the fork hooks reset host state)
+    ckpt_reinstall_process_state(&m); // umask / emulated rlimits / interval timers
 
     ckpt_restore_commit_stage(CKPT_RESTORE_DESCRIPTORS);
     if (ckpt_restore_fds_dir(pd) != 0) ckpt_restore_commit_failed();
@@ -1535,6 +1536,7 @@ static int ckpt_restore_tree_body(const char *rootfs, const struct ckpt_phase_le
         return 70;
     }
     ckpt_reinstall_sigacts(&im); // restore the init's guest signal dispositions (so ^C reaches bash's handler)
+    ckpt_reinstall_process_state(&im); // umask / emulated rlimits / interval timers
     if (ckpt_restore_signal_state(ipd) != 0) {
         fprintf(stderr, "[restore] init signal-state restore failed\n");
         return 70;

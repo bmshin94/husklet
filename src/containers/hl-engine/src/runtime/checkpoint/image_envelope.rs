@@ -11,7 +11,7 @@ const MAGIC: &[u8; 8] = b"HLIMAGE\0";
 const ENVELOPE_VERSION: u16 = 1;
 const TRANSLATED_KIND: u16 = 1;
 const NATIVE_X86_KIND: u16 = 2;
-const TRANSLATED_MANIFEST_VERSION: u32 = 8;
+const TRANSLATED_MANIFEST_VERSION: u32 = 9;
 /// The `native-x86` payload revision.  Kept in step with
 /// `execution_native_snapshot::NATIVE_FORMAT_VERSION` by a `const` assert there.
 pub(crate) const NATIVE_X86_PAYLOAD_VERSION: u32 = 3;
@@ -117,7 +117,7 @@ mod tests {
         let translated = Reader::Translated.encode();
         assert_eq!(&translated[8..10], &1_u16.to_le_bytes());
         assert_eq!(&translated[10..12], &1_u16.to_le_bytes());
-        assert_eq!(&translated[12..16], &8_u32.to_le_bytes());
+        assert_eq!(&translated[12..16], &9_u32.to_le_bytes());
         assert_eq!(&translated[16..25], b"MANIFEST\0");
         assert!(translated[25..].iter().all(|byte| *byte == 0));
     }
@@ -126,7 +126,7 @@ mod tests {
     fn translated_payload_version_tracks_the_current_c_manifest_reader() {
         let capture = include_str!("../../../../../runtime/hl-native/src/native/linux_abi/checkpoint/capture.c");
         assert!(
-            capture.lines().any(|line| line.starts_with("#define CKPT_VERSION 8 ")),
+            capture.lines().any(|line| line.starts_with("#define CKPT_VERSION 9 ")),
             "update the translated IMAGE payload version with CKPT_VERSION"
         );
     }
@@ -141,7 +141,7 @@ mod tests {
             (0, b'X', Invalid::Magic),
             (8, 2, Invalid::EnvelopeVersion),
             (10, 3, Invalid::Kind),
-            (12, 9, Invalid::PayloadVersion),
+            (12, 10, Invalid::PayloadVersion),
             (16, b'X', Invalid::PayloadName),
             (25, b'X', Invalid::NonzeroTail),
             (48, 1, Invalid::NonzeroReserved),

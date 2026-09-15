@@ -467,7 +467,10 @@ static int ckpt_restore_right_prepare(const struct ckpt_fd *record) {
             return fprintf(stderr, "[restore] queued right flags failed: %s\n", strerror(errno)), -1;
         }
     }
-    if (fd < 0 || (record->kind != CKF_DEVICE && lseek(fd, (off_t)record->offset, SEEK_SET) != (off_t)record->offset)) {
+    // A CKF_DEVICE captured AT a position is seeked back like anything else; only a device whose captured
+    // position is 0 -- every unseekable one -- keeps the old exemption. See ckpt_restore_device_fd.
+    int seek_required = record->kind != CKF_DEVICE || record->offset > 0;
+    if (fd < 0 || (seek_required && lseek(fd, (off_t)record->offset, SEEK_SET) != (off_t)record->offset)) {
         if (fd >= 0) close(fd);
         return fprintf(stderr, "[restore] queued right open/seek kind=%d path=%s offset=%lld: %s\n", record->kind,
                        record->path, (long long)record->offset, strerror(errno)),

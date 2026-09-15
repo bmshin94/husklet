@@ -613,6 +613,19 @@ static int ckpt_restore_device_fd(const struct ckpt_fd *record) {
         return -1;
     }
     if (host_fd != record->gfd) close(host_fd);
+    // Reopening by path rewinds the description to 0, so the guest's file position has to be put back --
+    // the same thing ckpt_restore_file_fd does one function up, and the reason it does it. A device is not
+    // exempt from that just because MOST devices are unseekable: a block device (/dev/loopN, /dev/sdX) has
+    // a real position, the capture records it, and a guest resuming at 0 reads the wrong blocks and reports
+    // no error while doing it. Unseekable devices are the ones the exemption was protecting, and they are
+    // covered by the offset itself being 0 -- a description whose position never moves is captured at 0 and
+    // skipped here. A device that DOES carry a position and will not take it back is refused rather than
+    // resumed at the wrong one.
+    if (record->offset > 0 && lseek(record->gfd, (off_t)record->offset, SEEK_SET) != (off_t)record->offset) {
+        fprintf(stderr, "[restore] cannot restore device fd %d (%s) to offset %lld: %s\n", record->gfd, record->path,
+                (long long)record->offset, strerror(errno));
+        return -1;
+    }
     if (record->descriptor_flags & FD_CLOEXEC) fcntl(record->gfd, F_SETFD, FD_CLOEXEC);
     return proc_fdvis_publish_native_fd(record->gfd);
 }
@@ -819,6 +832,34 @@ static void ckpt_reinstall_sigacts(const struct ckpt_meta *m) {
             sigfillset(&sa.sa_mask);
             sigaction(ms, &sa, NULL);
         }
+    }
+}
+
+// Replay umask, the emulated resource limits and the interval timers a restored process was captured
+// with. Called immediately after ckpt_reinstall_sigacts, and for the same reason: all three are engine or
+// host state rather than guest memory, so a restored process would otherwise silently start on the
+// ENGINE's defaults -- umask 0022, the default emulated RLIMIT_NOFILE, and no armed timer at all -- while
+// reporting a successful restore. Measured before this existed: a guest that armed 0077 / NOFILE 64 /
+// ITIMER_VIRTUAL came back as 0022 / 20480 / disarmed on both ISAs.
+//
+// Nothing here fabricates state that was not captured: a resource the guest never set is left alone
+// rather than written as 0, and a timer whose remaining value is 0 is left disarmed rather than re-armed.
+static void ckpt_reinstall_process_state(const struct ckpt_meta *m) {
+    g_umask = (int)(m->umask & 07777);
+    for (int resource = 0; resource < HL_LIMIT_COUNT; ++resource) {
+        if (!m->rlimit_present[resource]) continue;
+        hl_limit_table_set(&g_limits, resource, m->rlimit_current[resource], m->rlimit_maximum[resource]);
+    }
+    static const int which[3] = {ITIMER_REAL, ITIMER_VIRTUAL, ITIMER_PROF};
+    for (int timer = 0; timer < 3; ++timer) {
+        if (m->itimer_value_sec[timer] == 0 && m->itimer_value_usec[timer] == 0) continue;
+        struct itimerval value;
+        memset(&value, 0, sizeof value);
+        value.it_value.tv_sec = (time_t)m->itimer_value_sec[timer];
+        value.it_value.tv_usec = (suseconds_t)m->itimer_value_usec[timer];
+        value.it_interval.tv_sec = (time_t)m->itimer_interval_sec[timer];
+        value.it_interval.tv_usec = (suseconds_t)m->itimer_interval_usec[timer];
+        (void)setitimer(which[timer], &value, NULL);
     }
 }
 

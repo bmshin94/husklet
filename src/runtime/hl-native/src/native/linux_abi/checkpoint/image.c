@@ -1889,6 +1889,7 @@ static int ckpt_dump_self_locked(struct cpu *c, const char *group) {
         m.sig_flags[s] = g_sigact[s].flags;
         m.sig_mask[s] = g_sigact[s].mask;
     }
+    ckpt_capture_process_state(&m); // umask, emulated rlimits, interval timers (restored on thaw)
 
     if (ckpt_sink_begin(sink, group, "pages", 0, &fp) != 0) CKPT_DUMP_FAIL("open the pages stream");
     if (ckpt_dump_pages(sink, fp, pagesz, &m.n_regions) != 0) CKPT_DUMP_FAIL("dump the memory pages");

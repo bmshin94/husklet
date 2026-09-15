@@ -438,6 +438,19 @@ pub fn checkpoint_pipe_capture_test(isa: u32, scenario: u32) -> Result<(), i32> 
     bindings::checkpoint_pipe_capture_test(isa, scenario)
 }
 
+/// Exercise signalfd capture's obligation to the LIVE process: a guest signalfd is the read end of a
+/// self-pipe whose open file description is shared by every alias and every forked holder, so the drain
+/// must leave its status flags exactly as the guest set them -- after a committed capture, after an
+/// abandoned one, and when there was nothing queued to drain at all.
+#[cfg(feature = "native-test-hooks")]
+#[doc(hidden)]
+pub fn checkpoint_signalfd_capture_test(isa: u32, scenario: u32) -> Result<(), i32> {
+    // The hook installs a process-wide checkpoint sink.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _serial = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    bindings::checkpoint_signalfd_capture_test(isa, scenario)
+}
+
 /// Exercise the stdio-alias decision under capture: that a guest descriptor sharing an open file
 /// description with the runtime's own stdin/stdout/stderr is captured as stdio rather than refused as a
 /// shared pipe, and that a pipe the guest created is still refused.

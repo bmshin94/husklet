@@ -68,7 +68,7 @@
 
 #define CKPT_MAGIC UINT64_C(0x373054504b434c48)          // "HLCKPT07" (LE) -- per-process meta
 #define CKPT_MANIFEST_MAGIC UINT64_C(0x3730304e414d4c48) // "HLMAN007" (LE) -- workspace manifest
-#define CKPT_VERSION 8                                   // v8 carries the child exit statuses the freeze reaped
+#define CKPT_VERSION 9                                   // v9 carries umask, the emulated rlimits and the interval timers
 #define CKPT_ARCH_X86_64 1
 #define CKPT_ARCH_AARCH64 2
 #define CKPT_CPU_MAGIC UINT64_C(0x31305550434c4848) // "HHLCPU01" (LE)
@@ -216,9 +216,51 @@ struct ckpt_meta {
     // action (terminate) and KILL the shell instead of running its interrupt handler. Carried here and
     // replayed on restore (ckpt_reinstall_sigacts) so async signals route back through the engine handler.
     uint64_t sig_handler[65], sig_flags[65], sig_mask[65];
+    // Three more pieces of per-process state that live neither in the guest's address space nor in its
+    // descriptor table, and so were stepped past by the page dump and the fd scan alike -- exactly the
+    // reason the signal-disposition table above had to be carried here.
+    //
+    //   umask       -- g_umask (container/state.c). A guest that chose 0077 and resumed at 0022 creates
+    //                  every subsequent file world-readable, and nothing reports it.
+    //   rlimits     -- g_limits, the EMULATED limit table (syscall/emulation_state.c; the host's own
+    //                  limits are hoisted and are not what the guest sees). `present` distinguishes a
+    //                  resource the guest never set from one it set to 0 -- hl_limit_table_get answers
+    //                  the same "0" for both, and zero-filling an unset resource would fabricate a limit
+    //                  the guest never asked for.
+    //   itimers     -- ITIMER_REAL/VIRTUAL/PROF. setitimer is a host pass-through (syscall/rare.c), so
+    //                  the armed timer dies with the captured host process; the REMAINING time is what
+    //                  getitimer reports and what the restore re-arms.
+    uint32_t umask;
+    uint8_t rlimit_present[HL_LIMIT_COUNT];
+    uint64_t rlimit_current[HL_LIMIT_COUNT], rlimit_maximum[HL_LIMIT_COUNT];
+    int64_t itimer_value_sec[3], itimer_value_usec[3];
+    int64_t itimer_interval_sec[3], itimer_interval_usec[3];
 };
 
 static int ckpt_rd_all(FILE *f, void *buf, size_t n);
+
+// Fill the three non-address-space, non-descriptor domains of `m`. Read through the same accessors the
+// guest's own getrlimit/getitimer go through, so what is recorded is what the guest would be told.
+static void ckpt_capture_process_state(struct ckpt_meta *m) {
+    m->umask = (uint32_t)(g_umask & 07777);
+    for (int resource = 0; resource < HL_LIMIT_COUNT; ++resource) {
+        uint64_t current = 0, maximum = 0;
+        // hl_limit_table_get answers non-zero only for a resource the guest (or the launch) actually set.
+        m->rlimit_present[resource] = hl_limit_table_get(&g_limits, resource, &current, &maximum) ? 1 : 0;
+        m->rlimit_current[resource] = current;
+        m->rlimit_maximum[resource] = maximum;
+    }
+    static const int which[3] = {ITIMER_REAL, ITIMER_VIRTUAL, ITIMER_PROF};
+    for (int timer = 0; timer < 3; ++timer) {
+        struct itimerval value;
+        memset(&value, 0, sizeof value);
+        if (getitimer(which[timer], &value) != 0) memset(&value, 0, sizeof value);
+        m->itimer_value_sec[timer] = (int64_t)value.it_value.tv_sec;
+        m->itimer_value_usec[timer] = (int64_t)value.it_value.tv_usec;
+        m->itimer_interval_sec[timer] = (int64_t)value.it_interval.tv_sec;
+        m->itimer_interval_usec[timer] = (int64_t)value.it_interval.tv_usec;
+    }
+}
 
 static int ckpt_read_region(FILE *file, struct ckpt_region *region) {
     return ckpt_rd_all(file, region, sizeof *region);
@@ -1291,7 +1333,12 @@ static int ckpt_capture_right_resource(int fd, struct ckpt_fd *record) {
     path[path_size] = '\0';
     if (S_ISCHR(status.st_mode) || S_ISBLK(status.st_mode)) {
         record->kind = CKF_DEVICE;
-        record->offset = 0;
+        // Record the position a seekable device actually has. Hard-zeroing it here made the restore's
+        // matching exemption invisible: a block device captured mid-stream came back rewound, and neither
+        // side had any way to tell that from an unseekable device that never had a position. An unseekable
+        // device answers -1 and is recorded at 0, which is what it was before.
+        off_t where = lseek(fd, 0, SEEK_CUR);
+        record->offset = where > 0 ? (int64_t)where : 0;
         if (path_copy(record->path, sizeof record->path, path) != 0) return -1;
     } else if ((record->offset = lseek(fd, 0, SEEK_CUR)) < 0) {
         return -1;
@@ -1616,6 +1663,7 @@ static int ckpt_path_is_ctty(const char *path) {
 
 #if defined(HL_NATIVE_TEST_HOOKS)
 #include "pipe_capture_test.inc"
+#include "signalfd_capture_test.inc"
 // -------------------------------------------------- half-close capture and replay: behavioral fixture
 //
 // Measured on this host before any of it was written (AF_UNIX STREAM and SEQPACKET alike): a survivor's

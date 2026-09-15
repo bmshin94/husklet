@@ -201,6 +201,8 @@ pub(crate) struct TestApi {
     pub(crate) x86_64_checkpoint_launch_identity: ScenarioTest,
     pub(crate) aarch64_checkpoint_pipe_capture: ScenarioTest,
     pub(crate) x86_64_checkpoint_pipe_capture: ScenarioTest,
+    pub(crate) aarch64_checkpoint_signalfd_capture: ScenarioTest,
+    pub(crate) x86_64_checkpoint_signalfd_capture: ScenarioTest,
     pub(crate) aarch64_checkpoint_stdio_alias_capture: ScenarioTest,
     pub(crate) x86_64_checkpoint_stdio_alias_capture: ScenarioTest,
     pub(crate) aarch64_checkpoint_fd_capacity: ScenarioTest,
@@ -614,6 +616,8 @@ impl TestApi {
             x86_64_checkpoint_launch_identity: symbol!("hl_x86_64_checkpoint_launch_identity_test", ScenarioTest),
             aarch64_checkpoint_pipe_capture: symbol!("hl_aarch64_checkpoint_pipe_capture_test", ScenarioTest),
             x86_64_checkpoint_pipe_capture: symbol!("hl_x86_64_checkpoint_pipe_capture_test", ScenarioTest),
+            aarch64_checkpoint_signalfd_capture: symbol!("hl_aarch64_checkpoint_signalfd_capture_test", ScenarioTest),
+            x86_64_checkpoint_signalfd_capture: symbol!("hl_x86_64_checkpoint_signalfd_capture_test", ScenarioTest),
             aarch64_checkpoint_stdio_alias_capture: symbol!(
                 "hl_aarch64_checkpoint_stdio_alias_capture_test",
                 ScenarioTest
