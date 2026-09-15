@@ -128,7 +128,7 @@ test(
       invoke(stage, 'Networks');
       await until(() => labelled(stage, 'Reading networks…'));
       await until(() => labelled(stage, 'stale-net'));
-      invoke(stage, 'Manage connections');
+      invoke(stage, 'Manage network');
       await until(() => labelled(stage, 'Network details'));
       choose(stage, containerId);
       await until(() => labelled(stage, 'Connect'));
@@ -151,7 +151,7 @@ test(
       );
       await until(() => labelled(stage, 'network inventory unavailable'));
       for (const stale of [
-        'Manage connections',
+        'Manage network',
         'Connect',
         'Disconnect',
         'Remove network…',
@@ -173,7 +173,7 @@ test(
       invoke(stage, 'Refresh');
       await until(() => labelled(stage, 'current-net'));
       assert.equal(attempts, 4);
-      for (const control of ['Manage connections', 'Remove network…'])
+      for (const control of ['Manage network', 'Remove network…'])
         assert.ok(labelled(stage, control));
       const currentPatches = stage.frames.slice(currentStart).flatMap((frame) => frame.patches);
       for (const endpointControl of ['Connect', 'Disconnect'])

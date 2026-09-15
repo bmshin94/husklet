@@ -1220,7 +1220,7 @@ test(
         encode({
           channel: 81,
           kind: KIND.event,
-          payload: invocation(requests, 'Manage connections'),
+          payload: invocation(requests, 'Manage network'),
         }),
       );
       await until(() => calls.includes('network_inspect'));

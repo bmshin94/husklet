@@ -49,7 +49,7 @@ test('network scope refusal explains recovery and does not offer a futile retry'
     }),
   );
 
-  invoke(stage, 'Manage connections');
+  invoke(stage, 'Manage network');
   await settled();
   await settled();
 
@@ -60,7 +60,7 @@ test('network scope refusal explains recovery and does not offer a futile retry'
     ),
   );
   assert.equal(labelled(stage, 'Access required'), undefined);
-  assert.equal(labelled(stage, 'Retry managing connections'), undefined);
+  assert.equal(labelled(stage, 'Retry network details'), undefined);
   assert.equal(
     activeLabels(stage).filter((label) => label.includes('permission to inspect this network'))
       .length,

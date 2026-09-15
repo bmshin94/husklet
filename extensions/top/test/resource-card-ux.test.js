@@ -130,13 +130,13 @@ test('network inventory keeps a compact trigger and gives confirmation the card 
     }),
   );
 
-  assert.deepEqual(ancestorTags(stage, 'Manage connections').slice(0, 4), [
+  assert.deepEqual(ancestorTags(stage, 'Manage network').slice(0, 4), [
     'CardActions',
     'Row',
     'Responsive',
     'CardContent',
   ]);
-  assert.equal(tag(stage, 'Manage connections'), 'InlineButton');
+  assert.equal(tag(stage, 'Manage network'), 'InlineButton');
   assert.deepEqual(ancestorTags(stage, 'Remove network…').slice(0, 4), [
     'CardActions',
     'Row',
@@ -320,16 +320,16 @@ test('resource inspection actions become explicit compact close actions', async 
       onOpenExtensions: () => {},
     }),
   );
-  invoke(networkStage, 'Manage connections');
+  invoke(networkStage, 'Manage network');
   await settled();
   assert.ok(labelled(networkStage, 'Network details'));
-  assert.deepEqual(property(networkStage, 'Hide connections', 'Variant'), { Variant: 'Outline' });
-  assert.deepEqual(property(networkStage, 'Hide connections', 'Tone'), { Tone: 'Neutral' });
-  assert.equal(tag(networkStage, 'Hide connections'), 'InlineButton');
-  invoke(networkStage, 'Hide connections');
+  assert.deepEqual(property(networkStage, 'Hide details', 'Variant'), { Variant: 'Outline' });
+  assert.deepEqual(property(networkStage, 'Hide details', 'Tone'), { Tone: 'Neutral' });
+  assert.equal(tag(networkStage, 'Hide details'), 'InlineButton');
+  invoke(networkStage, 'Hide details');
   await settled();
   assert.equal(currentLabels(networkStage).includes('Network details'), false);
-  assert.ok(currentLabels(networkStage).includes('Manage connections'));
+  assert.ok(currentLabels(networkStage).includes('Manage network'));
 });
 
 test('container authority refusal explains recovery and withholds detail operations', async () => {

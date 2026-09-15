@@ -619,7 +619,7 @@ test('Top network attachment selects a named container while retaining immutable
   );
   invoke(stage, 'Networks');
   await settled();
-  invoke(stage, 'Manage connections');
+  invoke(stage, 'Manage network');
   await settled();
   await settled();
   assert.equal(
@@ -6635,17 +6635,17 @@ test('volume and network panels render bounded real inventories and controls', (
     'inventory cards retain horizontal fill instead of overriding it with start alignment',
   );
   assert.ok(
-    ancestorTags(networkStage, 'Manage connections').includes('CardContent'),
+    ancestorTags(networkStage, 'Manage network').includes('CardContent'),
     'the primary connection-management action appears in the summary band',
   );
-  assert.equal(ancestorTags(networkStage, 'Manage connections').includes('CardActions'), true);
-  assert.deepEqual(ancestorTags(networkStage, 'Manage connections').slice(0, 3), [
+  assert.equal(ancestorTags(networkStage, 'Manage network').includes('CardActions'), true);
+  assert.deepEqual(ancestorTags(networkStage, 'Manage network').slice(0, 3), [
     'CardActions',
     'Row',
     'Responsive',
   ]);
   assert.deepEqual(
-    taggedProperty(networkStage, 'Manage connections', 'InlineButton', 'Enabled')?.Flag,
+    taggedProperty(networkStage, 'Manage network', 'InlineButton', 'Enabled')?.Flag,
     true,
     'connection management uses compact chrome with a full interaction target',
   );
@@ -6696,12 +6696,12 @@ test('network inspection exposes loading, retry, empty and domain-specific detai
   const stage = host();
   stage.render(h(Networks, { api: controlled, resource, containers: containerResource() }));
   assert.ok(labelled(stage, 'Connections unknown'));
-  invoke(stage, 'Manage connections');
+  invoke(stage, 'Manage network');
   await settled();
   await settled();
   assert.ok(labelled(stage, 'Reading network details…'));
-  assert.ok(labelled(stage, 'Managing connections…'));
-  const managingNode = labelled(stage, 'Managing connections…').SetProp.id;
+  assert.ok(labelled(stage, 'Loading network…'));
+  const managingNode = labelled(stage, 'Loading network…').SetProp.id;
   assert.ok(
     stage.frames
       .flatMap((frame) => frame.patches)
@@ -6714,7 +6714,7 @@ test('network inspection exposes loading, retry, empty and domain-specific detai
     'connection management cannot be invoked again while inspection is pending',
   );
   assert.ok(labelled(stage, 'network inspect unavailable'));
-  invoke(stage, 'Retry managing connections');
+  invoke(stage, 'Retry network details');
   await settled();
   await settled();
   assert.ok(labelled(stage, 'Network details'));
@@ -6755,7 +6755,7 @@ test('network inspection exposes loading, retry, empty and domain-specific detai
       containers: containerResource(),
     }),
   );
-  invoke(empty, 'Manage connections');
+  invoke(empty, 'Manage network');
   await settled();
   await settled();
   assert.ok(labelled(empty, 'No network details'));
@@ -8669,7 +8669,7 @@ test('volume and network mutations expose danger only on final confirm and cance
       containers: containerResource(containerId),
     }),
   );
-  invoke(networks, 'Manage connections');
+  invoke(networks, 'Manage network');
   await settled();
   await settled();
   chooseContainer(networks, containerId);
@@ -8849,7 +8849,7 @@ test('truncated network membership explains why inspection is required and resol
     'attachment controls stay hidden until a network is inspected',
   );
   assert.ok(labelled(stage, '0 shown · more omitted'));
-  invoke(stage, 'Manage connections');
+  invoke(stage, 'Manage network');
   await settled();
   await settled();
   chooseContainer(stage, container);
@@ -8878,7 +8878,7 @@ test('network management offers only stopped containers', async () => {
       containers,
     }),
   );
-  invoke(stage, 'Manage connections');
+  invoke(stage, 'Manage network');
   await settled();
   await settled();
   const choices = stage.frames
@@ -8929,7 +8929,7 @@ test('network connect validates aliases, exposes progress, success, bounded fail
   stage.render(
     h(Networks, { api: controlled, resource, containers: containerResource('b'.repeat(64)) }),
   );
-  invoke(stage, 'Manage connections');
+  invoke(stage, 'Manage network');
   await settled();
   await settled();
   chooseContainer(stage, 'b'.repeat(64));
@@ -9023,7 +9023,7 @@ test('successful network attachment retains its receipt and verified expanded me
   stage.render(
     h(Networks, { api: controlled, resource, containers: containerResource(container) }),
   );
-  invoke(stage, 'Manage connections');
+  invoke(stage, 'Manage network');
   await settled();
   chooseContainer(stage, container);
   await settled();
@@ -9098,7 +9098,7 @@ test('a successful attachment retains its receipt when membership reinspection i
   stage.render(
     h(Networks, { api: controlled, resource, containers: containerResource(container) }),
   );
-  invoke(stage, 'Manage connections');
+  invoke(stage, 'Manage network');
   await settled();
   chooseContainer(stage, container);
   await settled();
@@ -9140,7 +9140,7 @@ test('successful disconnect retains its receipt and verified empty membership', 
   stage.render(
     h(Networks, { api: controlled, resource, containers: containerResource(container) }),
   );
-  invoke(stage, 'Manage connections');
+  invoke(stage, 'Manage network');
   await settled();
   chooseContainer(stage, container);
   await settled();
@@ -9270,7 +9270,7 @@ test('disconnect consent snapshots immutable identities and can be cancelled wit
       containers: containerResource(first, second),
     }),
   );
-  invoke(stage, 'Manage connections');
+  invoke(stage, 'Manage network');
   await settled();
   await settled();
   chooseContainer(stage, first);

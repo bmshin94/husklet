@@ -425,12 +425,12 @@ export function Networks({
                             key={`manage-${id}`}
                             label={
                               inspection.id !== id
-                                ? 'Manage connections'
+                                ? 'Manage network'
                                 : inspection.state === 'loading'
-                                  ? 'Managing connections…'
+                                  ? 'Loading network…'
                                   : inspection.state === 'error'
-                                    ? 'Retry managing connections'
-                                    : 'Hide connections'
+                                    ? 'Retry network details'
+                                    : 'Hide details'
                             }
                             variant="outline"
                             tone="neutral"
@@ -468,7 +468,7 @@ export function Networks({
                     <CardContent>
                       {membershipUnknown ? (
                         <Text
-                          label="Attachment status unknown for this container · Manage connections to resolve"
+                          label="Attachment status unknown for this container · Manage network to resolve"
                           color="warning"
                           wrap
                         />

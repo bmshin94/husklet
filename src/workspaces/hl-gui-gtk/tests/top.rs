@@ -1113,7 +1113,7 @@ mod unix {
                 let create = find_button(&root, "Create");
                 assert_standard_action(&create, width_name, "network create", 36);
                 let refresh = find_tooltip_button(&root, "Refresh networks");
-                let manage = find_button(&root, "Manage connections");
+                let manage = find_button(&root, "Manage network");
                 assert_eq!(refresh.accessible_role(), gtk::AccessibleRole::Button);
                 assert_inline_action(&manage, width_name, "network management");
                 assert_secondary_resource_toggle(&window, &root, &manage, &format!("{width_name} network inspection"));
@@ -1142,7 +1142,7 @@ mod unix {
                 );
                 let manage_bounds = manage
                     .compute_bounds(&network_card)
-                    .expect("Manage connections belongs to network card");
+                    .expect("Manage network belongs to network card");
                 let danger_bounds = danger
                     .compute_bounds(&network_card)
                     .expect("Remove network disclosure belongs to network card");
@@ -2802,21 +2802,21 @@ mod unix {
             let network_id = "c".repeat(32);
             let container_id = "a".repeat(64);
             let mut inspections = 0;
-            find_button(&root, "Manage connections").emit_clicked();
+            find_button(&root, "Manage network").emit_clicked();
             settle_toolkit();
             let interaction = surface
                 .reports()
                 .drain()
                 .into_iter()
                 .find(|event| matches!(event, hl_gui::Event::Invoke { .. }))
-                .expect("Manage connections emits an invocation");
+                .expect("Manage network emits an invocation");
             let payload = codec::interaction(&interaction, Some(""))
-                .expect("Manage connections invocation has a wire representation");
+                .expect("Manage network invocation has a wire representation");
             wire.send(&Frame::new(ChannelId::new(97), hl_extension::Kind::Event, payload))
-                .expect("Manage connections invocation reaches Top");
+                .expect("Manage network invocation reaches Top");
             let deadline = Instant::now() + DEADLINE;
             while Instant::now() < deadline
-                && !has_label(surface.widget().upcast_ref::<gtk::Widget>(), "Hide connections")
+                && !has_label(surface.widget().upcast_ref::<gtk::Widget>(), "Hide details")
             {
                 match receive_until(&mut wire, (Instant::now() + Duration::from_millis(80)).min(deadline)) {
                     Ok(frame) if frame.kind == hl_extension::Kind::Credit => {}
@@ -2886,21 +2886,21 @@ mod unix {
                 );
                 find_labelled(&expanded_root, "No containers connected.");
                 assert_inline_action(
-                    &find_button(&expanded_root, "Hide connections"),
+                    &find_button(&expanded_root, "Hide details"),
                     width_name,
                     "hide network connections",
                 );
                 assert_secondary_resource_toggle(
                     &window,
                     &expanded_root,
-                    &find_button(&expanded_root, "Hide connections"),
+                    &find_button(&expanded_root, "Hide details"),
                     &format!("{width_name} expanded network inspection"),
                 );
                 capture(&window, &format!("expanded-networks-{width_name}"), width, 800);
             }
             assert!(has_label(&expanded_root, "Connected containers · 0"));
-            assert!(has_label(&expanded_root, "Hide connections"));
-            let hide_connections = find_button(&expanded_root, "Hide connections");
+            assert!(has_label(&expanded_root, "Hide details"));
+            let hide_connections = find_button(&expanded_root, "Hide details");
             assert!(hide_connections.has_css_class("variant-outline"));
             assert!(hide_connections.has_css_class("tone-neutral"));
             assert!(find_button(&expanded_root, "Remove network…").is_sensitive());
@@ -3066,8 +3066,8 @@ mod unix {
                 &mut tree,
                 &mut surface,
                 &success_root,
-                "Hide connections",
-                "Manage connections",
+                "Hide details",
+                "Manage network",
                 112,
             );
             let collapsed_root = surface.widget().clone().upcast::<gtk::Widget>();

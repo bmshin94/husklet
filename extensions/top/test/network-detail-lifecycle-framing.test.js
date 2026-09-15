@@ -126,7 +126,7 @@ test(
       );
       invoke(stage, 'Networks');
       await until(() => labelled(stage, 'old-net'));
-      invoke(stage, 'Manage connections');
+      invoke(stage, 'Manage network');
       await until(() => inspections === 1 && labelled(stage, 'Network details'));
       choose(stage, container);
       await until(() => labelled(stage, 'Disconnect'));
@@ -155,7 +155,7 @@ test(
           `${stale} does not remount`,
         );
       await new Promise((resolve) => setTimeout(resolve, 170));
-      invoke(stage, 'Manage connections');
+      invoke(stage, 'Manage network');
       await until(() => inspections === 2 && labelled(stage, 'Scope · new-scope'));
       assert.ok(labelled(stage, 'Scope · new-scope'));
       await until(() => labelled(stage, 'Disconnect'));

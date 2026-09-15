@@ -71,7 +71,7 @@ test('network permission recovery navigates Top to Extensions', async () => {
     }),
   );
 
-  invoke(stage, 'Manage connections');
+  invoke(stage, 'Manage network');
   await settledTwice();
   invoke(stage, 'Review access');
   await settledTwice();
