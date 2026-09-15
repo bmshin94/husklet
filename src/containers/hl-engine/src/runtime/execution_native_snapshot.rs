@@ -193,6 +193,7 @@ pub(crate) fn prepare_native_restore(
             "native restore target incarnation changed",
         ));
     }
+    refuse_unrepresentable_threads(pid)?;
     let root = PathBuf::from(format!("/proc/{pid}/root"));
     let current = parse_maps(&std::fs::read(format!("/proc/{pid}/maps"))?, &root, deadline)?;
     let mismatch = current.iter().zip(&image.mappings).position(|(current, captured)| {
@@ -1378,6 +1379,7 @@ fn capture_with_until<T>(
     ptrace(libc::PTRACE_INTERRUPT, pid, 0, 0)?;
     guard.was_group_stopped = wait_for_ptrace_stop_until(pid, deadline)?;
     guard.ptrace_stopped = true;
+    refuse_unrepresentable_threads(pid)?;
     after_stop()?;
     check_deadline(deadline)?;
 
@@ -1460,6 +1462,34 @@ fn capture_xstate(pid: libc::pid_t) -> io::Result<X86XstateRecord> {
     // must agree on validity before anything reaches a manifest.
     X86XstateRecord::decode(&record.encode())
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("invalid xstate capture: {error:?}")))
+}
+
+/// Refuses a target that carries threads the image has no slot for.
+///
+/// `native-x86-v1` holds exactly **one** `X86RegisterRecord` and **one**
+/// `X86XstateRecord`, and both are read from the pid the caller names -- the
+/// thread-group leader in every production path.  A sibling thread's register
+/// file, extended state and signal mask are not merely left un-restored: they
+/// are never captured at all, so a "restored" multi-threaded process would run
+/// one thread from the image and every other thread from whatever the fresh
+/// process happened to hold.  There is no honest zero fill for a live thread and
+/// nothing to reconstruct it from, so this is a refusal on both sides -- capture
+/// and restore -- and it is taken while the target is stopped, so the count
+/// cannot change underneath the decision.
+#[cfg(target_os = "linux")]
+fn refuse_unrepresentable_threads(pid: libc::pid_t) -> io::Result<()> {
+    let mut threads = 0_usize;
+    for entry in std::fs::read_dir(format!("/proc/{pid}/task"))? {
+        entry?;
+        threads += 1;
+    }
+    if threads != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("native-x86 image represents one thread; target carries {threads}"),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -1594,13 +1624,57 @@ mod tests {
 
     static mut FRESH_EXEC_SENTINEL: u64 = 0;
 
-    fn spawn_fresh_exec_restore_child(test: &str, rendezvous: &Path) -> (Child, u64) {
+    /// Writes `bytes` to `path` with raw syscalls only.
+    ///
+    /// Every publisher below runs in a freshly forked, single-threaded leaf of a
+    /// multi-threaded harness, where libc's allocator may be holding a lock whose
+    /// owner did not survive the fork.  Nothing here allocates or takes a lock.
+    fn fixture_publish(path: &std::ffi::CStr, bytes: &[u8]) -> bool {
+        unsafe {
+            let fd = libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_TRUNC);
+            if fd < 0 {
+                return false;
+            }
+            let mut written = 0;
+            while written < bytes.len() {
+                let count = libc::write(fd, bytes[written..].as_ptr().cast(), bytes.len() - written);
+                if count <= 0 {
+                    libc::close(fd);
+                    return false;
+                }
+                written += count as usize;
+            }
+            libc::close(fd);
+            true
+        }
+    }
+
+    /// Fixed-width hex, so two incarnations publish identically sized rendezvous
+    /// lines and allocate identically on the way there.
+    fn fixture_hex16(value: u64) -> [u8; 16] {
+        let mut out = [0; 16];
+        for (slot, byte) in out.iter_mut().enumerate() {
+            *byte = b"0123456789abcdef"[(value >> (60 - 4 * slot) & 0xf) as usize];
+        }
+        out
+    }
+
+    fn fixture_hex_pair(first: u64, second: u64) -> [u8; 34] {
+        let mut out = [b' '; 34];
+        out[..16].copy_from_slice(&fixture_hex16(first));
+        out[17..33].copy_from_slice(&fixture_hex16(second));
+        out[33] = b'\n';
+        out
+    }
+
+    fn spawn_fresh_exec_restore_child(test: &str, rendezvous: &Path) -> (Child, libc::pid_t, u64) {
         let mut command = Command::new(std::env::current_exe().expect("test executable"));
         command
             .args(["--exact", test, "--nocapture", "--test-threads=1"])
             .env("HL_ENGINE_NATIVE_RESTORE_CHILD", "1")
             .env("HL_ENGINE_NATIVE_RESTORE_RENDEZVOUS", rendezvous)
-            .stdout(Stdio::inherit())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
             .stderr(Stdio::inherit());
         unsafe {
             command.pre_exec(|| {
@@ -1614,12 +1688,15 @@ mod tests {
             });
         }
         let child = command.spawn().expect("spawn fresh-exec restore child");
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let address = loop {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (leaf, address) = loop {
             if let Ok(value) = std::fs::read_to_string(rendezvous)
-                && let Ok(address) = u64::from_str_radix(value.trim(), 16)
+                && let Some((leaf, address)) = value.trim().split_once(' ')
+                && let Ok(leaf) = i64::from_str_radix(leaf.trim(), 16)
+                && let Ok(address) = u64::from_str_radix(address.trim(), 16)
+                && leaf > 0
             {
-                break address;
+                break (leaf as libc::pid_t, address);
             }
             assert!(
                 Instant::now() < deadline,
@@ -1627,8 +1704,8 @@ mod tests {
             );
             std::thread::yield_now();
         };
-        wait_until_stopped(child.id() as libc::pid_t);
-        (child, address)
+        wait_until_stopped(leaf);
+        (child, leaf, address)
     }
 
     impl CheckpointSink for AtomicSink {
@@ -1775,34 +1852,65 @@ mod tests {
     fn native_image_restores_a_separately_execed_process_after_the_original_is_reaped() {
         const TEST: &str = "runtime::execution::native_snapshot::tests::native_image_restores_a_separately_execed_process_after_the_original_is_reaped";
         const CAPTURED: u64 = 0x5a71_cafe_9876_4321;
-        if std::env::var_os("HL_ENGINE_NATIVE_RESTORE_CHILD").is_some() {
-            unsafe {
-                std::ptr::write_volatile(&raw mut FRESH_EXEC_SENTINEL, CAPTURED);
-                std::fs::write(
-                    std::env::var_os("HL_ENGINE_NATIVE_RESTORE_RENDEZVOUS").expect("rendezvous path"),
-                    format!("{:x}\n", (&raw const FRESH_EXEC_SENTINEL) as usize),
-                )
-                .expect("publish sentinel address");
-                libc::raise(libc::SIGSTOP);
-                std::process::exit((std::ptr::read_volatile(&raw const FRESH_EXEC_SENTINEL) != CAPTURED) as i32);
+        // The parked side is a *forked leaf*, not this harness.  A `libtest`
+        // process carries two threads, and the image has a slot for exactly one:
+        // checkpointing the harness would capture the thread-group leader parked
+        // in libc's join and never see the thread that set the sentinel at all.
+        // `refuse_unrepresentable_threads` now says so out loud; before it did,
+        // this fixture quietly proved only that memory round-trips.
+        if let Some(rendezvous) = std::env::var_os("HL_ENGINE_NATIVE_RESTORE_RENDEZVOUS")
+            && std::env::var_os("HL_ENGINE_NATIVE_RESTORE_CHILD").is_some()
+        {
+            let published =
+                std::ffi::CString::new(Path::new(&rendezvous).as_os_str().as_encoded_bytes()).expect("rendezvous path");
+            let leaf = unsafe { libc::fork() };
+            assert!(leaf >= 0, "fork single-threaded leaf");
+            if leaf == 0 {
+                unsafe {
+                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                    libc::alarm(120);
+                    std::ptr::write_volatile(&raw mut FRESH_EXEC_SENTINEL, CAPTURED);
+                    let line = fixture_hex_pair(libc::getpid() as u64, (&raw const FRESH_EXEC_SENTINEL) as u64);
+                    if !fixture_publish(&published, &line) {
+                        libc::_exit(4);
+                    }
+                    libc::raise(libc::SIGSTOP);
+                    libc::_exit((std::ptr::read_volatile(&raw const FRESH_EXEC_SENTINEL) != CAPTURED) as libc::c_int);
+                }
             }
+            let mut status = 0;
+            let waited = unsafe { libc::waitpid(leaf, &mut status, 0) };
+            std::process::exit(if waited != leaf {
+                5
+            } else if libc::WIFEXITED(status) {
+                libc::WEXITSTATUS(status)
+            } else {
+                6
+            });
         }
 
         let rendezvous = tempfile::NamedTempFile::new().unwrap();
-        let (mut original, original_address) = spawn_fresh_exec_restore_child(TEST, rendezvous.path());
-        let original_pid = original.id() as libc::pid_t;
+        let (mut original, original_pid, original_address) = spawn_fresh_exec_restore_child(TEST, rendezvous.path());
         let capture_started = Instant::now();
         let image = capture_stopped_native(original_pid, Instant::now() + Duration::from_secs(10)).unwrap();
         let capture_elapsed = capture_started.elapsed();
         assert_eq!(unsafe { libc::kill(original_pid, libc::SIGKILL) }, 0);
-        assert!(
-            original.wait().unwrap().code().is_none(),
-            "original must die before restore"
+        if unsafe { libc::kill(original_pid, libc::SIGCONT) } != 0 {
+            assert_eq!(
+                io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH),
+                "SIGCONT after SIGKILL may only fail because the leaf was already reaped"
+            );
+        }
+        assert_eq!(
+            original.wait().unwrap().code(),
+            Some(6),
+            "original harness must reap a killed leaf before restore"
         );
 
         std::fs::write(rendezvous.path(), b"").unwrap();
-        let (mut replacement, replacement_address) = spawn_fresh_exec_restore_child(TEST, rendezvous.path());
-        let replacement_pid = replacement.id() as libc::pid_t;
+        let (mut replacement, replacement_pid, replacement_address) =
+            spawn_fresh_exec_restore_child(TEST, rendezvous.path());
         assert_ne!(replacement_pid, original_pid);
         assert_eq!(
             replacement_address, original_address,
@@ -1846,6 +1954,548 @@ mod tests {
             capture_elapsed.as_micros(),
             restore_elapsed.as_micros()
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // General-purpose register fidelity.
+    //
+    // The fresh-exec test above restores into a second exec of the same binary
+    // with ASLR disabled, identical argv and an identical parking point, and
+    // then asserts only a *memory* sentinel.  Every architectural register the
+    // replacement already carries is therefore coincidentally correct, and
+    // deleting the `NT_PRSTATUS` `PTRACE_SETREGSET` from `complete_native_restore`
+    // leaves that test -- and the whole native snapshot suite -- green.
+    //
+    // This fixture removes the coincidence.  Two incarnations of the same binary
+    // park with register state that is *deterministically different*:
+    //
+    //   * r12/r13/r14/r15/rbx/rbp hold values derived from the incarnation's own
+    //     pid, which the parent asserts are distinct;
+    //   * rip is inside a sixteen-slot sled of `syscall` instructions, and the
+    //     incarnation index picks the slot -- so the two stop at addresses eight
+    //     bytes apart and a fresh exec never reaches the captured one;
+    //   * rsp carries an index-derived displacement;
+    //   * fs_base is repointed by `arch_prctl(ARCH_SET_FS)` into an index-derived
+    //     offset of a fixture pad, so the TLS base genuinely differs across execs;
+    //   * the blocked signal mask is derived from the pid *and* the index.
+    //
+    // Nothing after `ARCH_SET_FS` may touch the TLS, so the whole parking and
+    // verification sequence is raw assembly ending in `exit_group`; libc is never
+    // re-entered.  `DF` is left set across the stop and cleared on resume before
+    // any string operation could observe it.
+    const REGFID_XOR: u64 = 0x5a5a_5a5a_5a5a_5a5a;
+    const REGFID_MUL: u64 = 0x9e37_79b9_7f4a_7c15;
+    const REGFID_ADD: u64 = 0x1234_5678_9abc_def0;
+    const REGFID_BP: u64 = 0xf0f0_f0f0_f0f0_f0f0;
+    const REGFID_TAG: u64 = 0x00c0_ffee;
+
+    /// `user_regs_struct` slot indices inside `X86RegisterRecord::registers`.
+    const REG_R15: usize = 0;
+    const REG_R14: usize = 1;
+    const REG_R13: usize = 2;
+    const REG_R12: usize = 3;
+    const REG_RBP: usize = 4;
+    const REG_RBX: usize = 5;
+    const REG_ORIG_RAX: usize = 15;
+    const REG_RIP: usize = 16;
+    const REG_CS: usize = 17;
+    const REG_RSP: usize = 19;
+    const REG_SS: usize = 20;
+    const REG_FS_BASE: usize = 21;
+
+    /// The record is a byte-for-byte `user_regs_struct`, and the names above are
+    /// only meaningful while that stays true.
+    const _: () = {
+        assert!(REGISTER_COUNT == 27);
+        assert!(std::mem::size_of::<libc::user_regs_struct>() == REGISTER_COUNT * 8);
+    };
+
+    /// Slots the two incarnations are *built* to disagree on.
+    const REGFID_DISCRIMINATING: [(&str, usize); 9] = [
+        ("r15", REG_R15),
+        ("r14", REG_R14),
+        ("r13", REG_R13),
+        ("r12", REG_R12),
+        ("rbp", REG_RBP),
+        ("rbx", REG_RBX),
+        ("rip", REG_RIP),
+        ("rsp", REG_RSP),
+        ("fs_base", REG_FS_BASE),
+    ];
+
+    /// Signals the fixture blocks, selected bit by bit from its pid.
+    const REGFID_MASK_SIGNALS: [libc::c_int; 6] = [
+        libc::SIGUSR1,
+        libc::SIGUSR2,
+        libc::SIGALRM,
+        libc::SIGCHLD,
+        libc::SIGURG,
+        libc::SIGWINCH,
+    ];
+
+    fn regfid_expected_signal_mask(pid: u64, index: u64) -> u64 {
+        let mut mask = 0_u64;
+        for (bit, signal) in REGFID_MASK_SIGNALS.into_iter().enumerate() {
+            if pid >> bit & 1 == 1 {
+                mask |= 1 << (signal - 1);
+            }
+        }
+        if index & 1 == 1 {
+            mask |= 1 << (libc::SIGPROF - 1);
+        }
+        mask
+    }
+
+    /// The six general-purpose sentinels, exactly as the assembly computes them.
+    fn regfid_expected_gprs(pid: u64) -> [(usize, u64); 6] {
+        [
+            (REG_R12, pid ^ REGFID_XOR),
+            (REG_R13, pid.wrapping_mul(REGFID_MUL)),
+            (REG_R14, !pid),
+            (REG_R15, pid << 32 | REGFID_TAG),
+            (REG_RBX, pid.wrapping_add(REGFID_ADD)),
+            (REG_RBP, pid ^ REGFID_BP),
+        ]
+    }
+
+    unsafe extern "C" {
+        /// Parks with the fixture register state, verifies it on resume and exits.
+        fn hl_regfidelity_park(pid: u64, index: u64, tid: u64) -> !;
+    }
+
+    core::arch::global_asm!(
+        r#"
+        .text
+        .globl hl_regfidelity_park
+        .hidden hl_regfidelity_park
+        .type hl_regfidelity_park,@function
+hl_regfidelity_park:
+        // rdi = pid, rsi = incarnation index, rdx = tid
+        mov qword ptr [rip + hl_regfidelity_parked_pid], rdi
+        mov qword ptr [rip + hl_regfidelity_parked_tid], rdx
+        // slot = index * 5 + 2, so the two incarnations never collide
+        lea rcx, [rsi + rsi*4]
+        add rcx, 2
+        and rcx, 15
+
+        // fs_base <- tls_pad + slot * 64.  Nothing below may touch the TLS.
+        mov r8, rdi
+        mov r9, rcx
+        mov rsi, rcx
+        shl rsi, 6
+        lea rdx, [rip + hl_regfidelity_tls_pad]
+        add rsi, rdx
+        mov eax, 158                    // SYS_arch_prctl
+        mov edi, 0x1002                 // ARCH_SET_FS
+        syscall
+        mov rdi, r8
+        mov rcx, r9
+
+        // rsp displacement, also slot derived
+        mov rdx, rcx
+        shl rdx, 4
+        sub rsp, rdx
+
+        // Register sentinels, derived from this incarnation's pid.
+        movabs rax, 0x5a5a5a5a5a5a5a5a
+        mov r12, rdi
+        xor r12, rax
+        movabs rax, 0x9e3779b97f4a7c15
+        mov r13, rdi
+        imul r13, rax
+        mov r14, rdi
+        not r14
+        mov r15, rdi
+        shl r15, 32
+        or r15, 0xc0ffee
+        movabs rax, 0x123456789abcdef0
+        mov rbx, rdi
+        add rbx, rax
+        movabs rax, 0xf0f0f0f0f0f0f0f0
+        mov rbp, rdi
+        xor rbp, rax
+
+        std                             // DF must survive the checkpoint
+
+        // Park inside the slot-selected `syscall` of the sled.
+        //
+        // `tgkill`, not `kill`: a *process*-directed SIGSTOP is handled by an
+        // arbitrary eligible thread, and the sending thread keeps running until
+        // it next passes through signal handling.  Measured on this box: a
+        // fixture that sent itself a process-directed SIGSTOP and then verified
+        // and `exit_group`ed never reached state `T` at all -- it exited before
+        // the group stop took hold, and the harness read a clean exit 0 from a
+        // process that was never checkpointed.  A thread-directed SIGSTOP (what
+        // `raise()` issues, and what every other fixture in this module relies
+        // on) stops *this* thread on return from the syscall, before the next
+        // instruction retires.
+        lea r10, [rip + 20f]
+        lea r10, [r10 + rcx*8]
+        mov rsi, qword ptr [rip + hl_regfidelity_parked_tid]
+        mov edx, 19                     // SIGSTOP
+        mov eax, 234                    // SYS_tgkill
+        jmp r10
+        .balign 8
+20:
+        .rept 16
+        .balign 8
+        syscall
+        jmp 30f
+        .endr
+        .balign 8
+30:
+        // Resumed.  Either the image landed or it did not; report, never guess.
+        pushfq
+        pop rax
+        cld
+        xor r11d, r11d
+        test rax, 0x400                 // DF
+        setz cl
+        or r11b, cl
+
+        mov rdi, qword ptr [rip + hl_regfidelity_parked_pid]
+        movabs rax, 0x5a5a5a5a5a5a5a5a
+        xor rax, rdi
+        cmp rax, r12
+        setne cl
+        or r11b, cl
+        movabs rax, 0x9e3779b97f4a7c15
+        imul rax, rdi
+        cmp rax, r13
+        setne cl
+        or r11b, cl
+        mov rax, rdi
+        not rax
+        cmp rax, r14
+        setne cl
+        or r11b, cl
+        mov rax, rdi
+        shl rax, 32
+        or rax, 0xc0ffee
+        cmp rax, r15
+        setne cl
+        or r11b, cl
+        movabs rax, 0x123456789abcdef0
+        add rax, rdi
+        cmp rax, rbx
+        setne cl
+        or r11b, cl
+        movabs rax, 0xf0f0f0f0f0f0f0f0
+        xor rax, rdi
+        cmp rax, rbp
+        setne cl
+        or r11b, cl
+
+        movzx edi, r11b
+        mov eax, 231                    // SYS_exit_group
+        syscall
+        ud2
+
+        .section .bss
+        .balign 64
+hl_regfidelity_parked_pid:
+        .zero 8
+hl_regfidelity_parked_tid:
+        .zero 8
+hl_regfidelity_tls_pad:
+        .zero 1024
+        .text
+        "#
+    );
+
+    const REGFID_CHILD: &str = "HL_ENGINE_NATIVE_REGFID_CHILD";
+    const REGFID_INDEX: &str = "HL_ENGINE_NATIVE_REGFID_INDEX";
+    const REGFID_RENDEZVOUS: &str = "HL_ENGINE_NATIVE_REGFID_RENDEZVOUS";
+
+    /// The harness half of the fixture: fork a **single-threaded** leaf and wait
+    /// for it.
+    ///
+    /// The leaf is what parks and what the parent checkpoints.  Capture attaches
+    /// to one pid and reads one `NT_PRSTATUS`, so checkpointing this harness
+    /// process directly would read the *thread-group leader* -- parked inside
+    /// libc's join -- and never see the fixture thread's registers at all.
+    fn regfid_child(rendezvous: &Path) -> ! {
+        let index: u64 = std::env::var(REGFID_INDEX)
+            .expect("incarnation index")
+            .parse()
+            .expect("incarnation index");
+        let published = std::ffi::CString::new(rendezvous.as_os_str().as_encoded_bytes()).expect("rendezvous path");
+        let leaf = unsafe { libc::fork() };
+        assert!(leaf >= 0, "fork single-threaded leaf");
+        if leaf == 0 {
+            let pid = unsafe { libc::getpid() } as u64;
+            let tid = unsafe { libc::syscall(libc::SYS_gettid) } as u64;
+            unsafe {
+                // Never strand a parked fixture: the parking sequence below never
+                // returns to libc, so both guards have to be armed here.
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                libc::alarm(120);
+                let mut set: libc::sigset_t = std::mem::zeroed();
+                libc::sigemptyset(&mut set);
+                for (bit, signal) in REGFID_MASK_SIGNALS.into_iter().enumerate() {
+                    if pid >> bit & 1 == 1 {
+                        libc::sigaddset(&mut set, signal);
+                    }
+                }
+                if index & 1 == 1 {
+                    libc::sigaddset(&mut set, libc::SIGPROF);
+                }
+                if libc::sigprocmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) != 0 {
+                    libc::_exit(3);
+                }
+            }
+            if !fixture_publish(&published, &fixture_hex_pair(pid, tid)) {
+                unsafe { libc::_exit(4) };
+            }
+            unsafe { hl_regfidelity_park(pid, index, tid) }
+        }
+        let mut status = 0;
+        let waited = unsafe { libc::waitpid(leaf, &mut status, 0) };
+        let code = if waited != leaf {
+            5
+        } else if libc::WIFEXITED(status) {
+            libc::WEXITSTATUS(status)
+        } else {
+            6
+        };
+        std::process::exit(code);
+    }
+
+    /// Spawns one incarnation and returns its harness plus the **leaf** pid.
+    fn spawn_regfid_child(test: &str, rendezvous: &Path, index: u64) -> (Child, libc::pid_t) {
+        std::fs::write(rendezvous, b"").expect("clear rendezvous");
+        let mut command = Command::new(std::env::current_exe().expect("test executable"));
+        command
+            .args(["--exact", test, "--nocapture", "--test-threads=1"])
+            .env(REGFID_CHILD, "1")
+            // One byte, so both incarnations get an identically sized environment
+            // and therefore an identically sized initial stack mapping.
+            .env(REGFID_INDEX, index.to_string())
+            .env(REGFID_RENDEZVOUS, rendezvous)
+            .stdin(Stdio::null())
+            // Null, never a pipe: this fixture forks a leaf that parks forever,
+            // and a leaked leaf holding a pipe's write end turns a clean failure
+            // into an unkillable wait for an EOF that cannot arrive.
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit());
+        unsafe {
+            command.pre_exec(|| {
+                let current = libc::personality(!0_u64 as libc::c_ulong);
+                if current < 0
+                    || libc::personality((current as libc::c_ulong) | libc::ADDR_NO_RANDOMIZE as libc::c_ulong) < 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                Ok(())
+            });
+        }
+        let child = command.spawn().expect("spawn register-fidelity child");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let leaf = loop {
+            if let Ok(value) = std::fs::read_to_string(rendezvous)
+                && let Some((leaf, _tid)) = value.trim().split_once(' ')
+                && let Ok(leaf) = i64::from_str_radix(leaf.trim(), 16)
+                && leaf > 0
+            {
+                break leaf as libc::pid_t;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "register-fidelity fixture did not publish its parked leaf"
+            );
+            std::thread::yield_now();
+        };
+        wait_until_stopped(leaf);
+        (child, leaf)
+    }
+
+    #[test]
+    fn native_image_restores_general_purpose_registers_a_fresh_exec_cannot_reproduce() {
+        const TEST: &str = "runtime::execution::native_snapshot::tests::native_image_restores_general_purpose_registers_a_fresh_exec_cannot_reproduce";
+        if let Some(rendezvous) = std::env::var_os(REGFID_RENDEZVOUS)
+            && std::env::var_os(REGFID_CHILD).is_some()
+        {
+            regfid_child(Path::new(&rendezvous));
+        }
+        if isolated_live_capture(TEST) {
+            return;
+        }
+
+        let rendezvous = tempfile::NamedTempFile::new().unwrap();
+        let (mut original, original_pid) = spawn_regfid_child(TEST, rendezvous.path(), 0);
+        let image = capture_stopped_native(original_pid, Instant::now() + Duration::from_secs(10)).unwrap();
+        let captured = X86RegisterRecord::decode(&image.registers).unwrap();
+
+        // The capture must hold the fixture's own state, or every later
+        // comparison is against whatever the harness happened to read.
+        for (slot, expected) in regfid_expected_gprs(original_pid as u64) {
+            assert_eq!(
+                captured.registers[slot], expected,
+                "captured slot {slot} is not the fixture sentinel"
+            );
+        }
+        assert_eq!(
+            captured.signal_mask,
+            regfid_expected_signal_mask(original_pid as u64, 0),
+            "captured signal mask is not the fixture's"
+        );
+        assert_eq!(captured.registers[REG_ORIG_RAX], 234, "fixture must park in SYS_tgkill");
+
+        assert_eq!(unsafe { libc::kill(original_pid, libc::SIGKILL) }, 0);
+        // SIGKILL already terminates a group-stopped task; this SIGCONT only
+        // nudges the harness's blocking `waitpid` along and races that reap, so
+        // ESRCH here means the kill worked.
+        if unsafe { libc::kill(original_pid, libc::SIGCONT) } != 0 {
+            assert_eq!(
+                io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH),
+                "SIGCONT after SIGKILL may only fail because the leaf was already reaped"
+            );
+        }
+        assert_eq!(
+            original.wait().unwrap().code(),
+            Some(6),
+            "original harness must reap a killed leaf"
+        );
+
+        let (mut replacement, replacement_pid) = spawn_regfid_child(TEST, rendezvous.path(), 1);
+        assert_ne!(replacement_pid, original_pid, "pid reuse would void the sentinels");
+
+        let before = capture_until(replacement_pid, Instant::now() + Duration::from_secs(10))
+            .unwrap()
+            .registers;
+        wait_until_stopped(replacement_pid);
+
+        // Non-vacuity.  A battery that answered "differs" for everything would
+        // prove nothing, so the negatives are bracketed by positives: `cs`, `ss`
+        // and `orig_rax` are the same in both incarnations and must compare equal
+        // with the very same operator, on the very same records.
+        for (name, slot) in REGFID_DISCRIMINATING {
+            assert_ne!(
+                before.registers[slot], captured.registers[slot],
+                "fresh exec reproduced the captured {name}; the fixture does not discriminate"
+            );
+        }
+        assert_eq!(before.registers[REG_CS], captured.registers[REG_CS], "cs must match");
+        assert_eq!(before.registers[REG_SS], captured.registers[REG_SS], "ss must match");
+        assert_eq!(
+            before.registers[REG_ORIG_RAX], captured.registers[REG_ORIG_RAX],
+            "both incarnations park in SYS_tgkill"
+        );
+        assert_ne!(
+            before.signal_mask, captured.signal_mask,
+            "fresh exec reproduced the captured signal mask"
+        );
+
+        let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, replacement_pid, 0) } as RawFd;
+        assert!(pidfd >= 0, "pidfd_open replacement");
+        let prepared = prepare_native_restore(
+            replacement_pid,
+            unsafe { OwnedFd::from_raw_fd(pidfd) },
+            &image.registers,
+            &image.memory,
+            &image.xstate,
+            Instant::now() + Duration::from_secs(10),
+        )
+        .unwrap();
+        complete_native_restore(prepared, Instant::now() + Duration::from_secs(10)).unwrap();
+
+        // Every one of the 27 `user_regs_struct` slots, read back from the
+        // kernel, plus the signal mask.  Slot by slot, so a failure names the
+        // register rather than printing two 27-element arrays.
+        let after = capture_until(replacement_pid, Instant::now() + Duration::from_secs(10))
+            .unwrap()
+            .registers;
+        wait_until_stopped(replacement_pid);
+        for slot in 0..REGISTER_COUNT {
+            assert_eq!(
+                after.registers[slot], captured.registers[slot],
+                "restored slot {slot} differs: {:#x} restored, {:#x} captured",
+                after.registers[slot], captured.registers[slot]
+            );
+        }
+        assert_eq!(
+            after.signal_mask, captured.signal_mask,
+            "restored signal mask differs: {:#x} restored, {:#x} captured",
+            after.signal_mask, captured.signal_mask
+        );
+
+        // And end to end: the resumed process itself re-derives the sentinels
+        // from restored memory and exits non-zero on any disagreement.
+        assert_eq!(unsafe { libc::kill(replacement_pid, libc::SIGCONT) }, 0);
+        let status = replacement.wait().unwrap();
+        assert_eq!(
+            status.code(),
+            Some(0),
+            "restored process did not resume on the captured register file: {status:?}"
+        );
+    }
+
+    #[test]
+    fn capture_and_restore_refuse_a_target_carrying_threads_the_image_cannot_represent() {
+        const TEST: &str = "runtime::execution::native_snapshot::tests::capture_and_restore_refuse_a_target_carrying_threads_the_image_cannot_represent";
+        if let Some(rendezvous) = std::env::var_os(REGFID_RENDEZVOUS)
+            && std::env::var_os(REGFID_CHILD).is_some()
+        {
+            regfid_child(Path::new(&rendezvous));
+        }
+        if isolated_live_capture(TEST) {
+            return;
+        }
+
+        let rendezvous = tempfile::NamedTempFile::new().unwrap();
+        let (mut harness, leaf) = spawn_regfid_child(TEST, rendezvous.path(), 0);
+        let harness_pid = harness.id() as libc::pid_t;
+
+        // Positive bracket: the single-threaded leaf is admitted, by the very
+        // same call, so "refused" below is a property of the target and not of
+        // the fixture, the box, or a capture path that refuses everything.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let image = capture_stopped_native(leaf, deadline).expect("single-threaded leaf must be admitted");
+        assert_eq!(count_tasks(leaf), 1, "the leaf must be single threaded");
+        wait_until_stopped(leaf);
+
+        // Negative: the harness is a `libtest` process, which carries a second
+        // thread the image has no slot for.  Before this refusal existed, capture
+        // silently took the thread-group leader's registers and dropped every
+        // sibling's register file, FP/vector state and signal mask.
+        let threads = count_tasks(harness_pid);
+        assert!(threads > 1, "the harness must carry more than one thread");
+        let expected = format!("native-x86 image represents one thread; target carries {threads}");
+        let refused = capture_until(harness_pid, Instant::now() + Duration::from_secs(10))
+            .err()
+            .expect("a multi-threaded target must be refused, not partially captured");
+        assert_eq!(refused.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(refused.to_string(), expected);
+
+        // And on the restore side, before anything is written back.
+        let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, harness_pid, 0) } as RawFd;
+        assert!(pidfd >= 0, "pidfd_open harness");
+        let refused = prepare_native_restore(
+            harness_pid,
+            unsafe { OwnedFd::from_raw_fd(pidfd) },
+            &image.registers,
+            &image.memory,
+            &image.xstate,
+            Instant::now() + Duration::from_secs(10),
+        )
+        .err()
+        .expect("a multi-threaded restore target must be refused before mutation");
+        assert_eq!(refused.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(refused.to_string(), expected);
+
+        assert_eq!(unsafe { libc::kill(leaf, libc::SIGKILL) }, 0);
+        if unsafe { libc::kill(leaf, libc::SIGCONT) } != 0 {
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+        }
+        assert_eq!(harness.wait().unwrap().code(), Some(6), "harness must reap its leaf");
+    }
+
+    fn count_tasks(pid: libc::pid_t) -> usize {
+        std::fs::read_dir(format!("/proc/{pid}/task"))
+            .expect("task directory")
+            .count()
     }
 
     // ---------------------------------------------------------------------
