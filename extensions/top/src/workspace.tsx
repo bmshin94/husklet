@@ -602,12 +602,12 @@ function Environment({
             />
           </FormControl>
           <Column gap={1}>
-            <Text label="Remove" />
-            <IconButton
+            <Text label="Action" />
+            <Button
               icon="user-trash-symbolic"
-              label={`Remove ${row[0] || `variable ${index + 1}`}`}
+              label="Remove"
               tooltip={`Remove ${row[0] || `variable ${index + 1}`}`}
-              justify="start"
+              size="small"
               variant="ghost"
               tone="danger"
               onInvoke={() => onChange(values.filter((_, at) => at !== index))}

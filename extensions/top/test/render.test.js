@@ -1060,21 +1060,22 @@ test('Top owns workspace settings and extension management in the same tab', asy
   assert.equal(formControlField(stage, 'Value', 'Entry'), placeholderNode(stage, 'value'));
   assert.equal(placeholderProperty(stage, 'value', 'Secret')?.Flag, true);
   assert.deepEqual(
-    taggedProperty(stage, 'Remove TOKEN', 'IconButton', 'Icon'),
+    taggedProperty(stage, 'Remove', 'Button', 'Icon'),
     { Text: 'user-trash-symbolic' },
-    'row removal is a compact secondary action instead of a full text button',
+    'row removal keeps a compact icon beside its visible action label',
   );
-  assert.ok(labelled(stage, 'Remove'), 'the destructive row action has a visible column heading');
-  assert.deepEqual(ancestorTags(stage, 'Remove TOKEN').slice(0, 2), ['Column', 'Row']);
-  assert.deepEqual(taggedProperty(stage, 'Remove TOKEN', 'IconButton', 'Justify'), {
-    Align: 'Start',
+  assert.deepEqual(taggedProperty(stage, 'Remove', 'Button', 'Size'), {
+    ControlSize: 'Small',
   });
+  assert.deepEqual(taggedProperty(stage, 'Remove', 'Button', 'Tooltip'), { Text: 'Remove TOKEN' });
+  assert.ok(labelled(stage, 'Action'), 'the destructive control has a concise column label');
+  assert.deepEqual(ancestorTags(stage, 'Remove').slice(0, 2), ['Column', 'Row']);
   assert.equal(
-    ancestorProperty(stage, 'Remove TOKEN', 'Row', 'Wrap')?.Flag,
+    ancestorProperty(stage, 'Remove', 'Row', 'Wrap')?.Flag,
     true,
     'environment controls reflow instead of colliding at narrow widths',
   );
-  assert.deepEqual(ancestorProperty(stage, 'Remove TOKEN', 'Row', 'Width'), {
+  assert.deepEqual(ancestorProperty(stage, 'Remove', 'Row', 'Width'), {
     Length: 'Fill',
   });
   assert.deepEqual(taggedProperty(stage, 'Add variable', 'Button', 'Variant'), {

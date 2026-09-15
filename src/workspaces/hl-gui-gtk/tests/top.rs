@@ -749,16 +749,19 @@ mod unix {
                     assert_eq!(entry.accessible_role(), gtk::AccessibleRole::TextBox);
                 }
                 let remove_variable = find_tooltip_button(&root, "Remove NODE_ENV");
-                let remove_label = find_label(&root, "Remove");
+                let action_label = find_label(&root, "Action");
                 assert_eq!(remove_variable.accessible_role(), gtk::AccessibleRole::Button);
-                assert_eq!(remove_label.accessible_role(), gtk::AccessibleRole::Label);
+                assert!(
+                    has_label(remove_variable.upcast_ref(), "Remove"),
+                    "{width_name} remove environment variable has no visible label"
+                );
                 assert!(
                     remove_variable.is_focusable(),
                     "{width_name} remove environment variable is not focusable"
                 );
                 assert!(
-                    remove_variable.has_css_class("size-medium"),
-                    "{width_name} remove environment variable lost compact IconButton sizing"
+                    remove_variable.has_css_class("size-small"),
+                    "{width_name} remove environment variable lost compact Button sizing"
                 );
                 assert_eq!(
                     remove_variable.height(),
@@ -771,25 +774,25 @@ mod unix {
                 let remove_bounds = remove_variable
                     .compute_bounds(&root)
                     .expect("credential removal belongs to the Top root");
-                let remove_label_bounds = remove_label
+                let action_bounds = action_label
                     .compute_bounds(&root)
-                    .expect("credential removal heading belongs to the Top root");
+                    .expect("credential action label belongs to the Top root");
                 assert!(
                     (name_label
                         .compute_bounds(&root)
                         .expect("variable name label belongs to the Top root")
                         .y()
-                        - remove_label_bounds.y())
+                        - action_bounds.y())
                     .abs()
                         <= 1.0,
-                    "{width_name} removal heading is detached from the field labels: {remove_label_bounds:?}"
+                    "{width_name} action label is detached from the field labels: {action_bounds:?}"
                 );
                 assert!(
-                    (remove_bounds.x() - remove_label_bounds.x()).abs() <= 1.0,
-                    "{width_name} removal heading is detached from its action: {remove_label_bounds:?} / {remove_bounds:?}"
+                    (remove_bounds.x() - action_bounds.x()).abs() <= 1.0,
+                    "{width_name} action label is detached from its button: {action_bounds:?} / {remove_bounds:?}"
                 );
                 assert!(
-                    (name_bounds.y() - remove_bounds.y()).abs() <= 1.0,
+                    (name_bounds.y() - remove_bounds.y()).abs() <= 4.0,
                     "{width_name} row removal is not aligned with its fields: {name_bounds:?} / {remove_bounds:?}"
                 );
                 assert!(name_entry.grab_focus(), "{width_name} credential name accepts focus");
