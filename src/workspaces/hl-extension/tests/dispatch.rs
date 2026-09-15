@@ -1653,6 +1653,7 @@ fn services_with_state<'a>(host: &'a Host, state: &'a dyn ExtensionStateStore) -
 struct PostgresProbe {
     reached: AtomicUsize,
     statements: std::sync::Mutex<Vec<String>>,
+    succeed_close: bool,
 }
 
 impl PostgresProbe {
@@ -1720,7 +1721,10 @@ impl hl_extension::PostgresBroker for PostgresProbe {
         _lease: &hl_extension::PostgresLeaseId,
         _query: &hl_extension::PostgresQueryId,
     ) -> Result<(), HostError> {
-        self.called()
+        self.reached.fetch_add(1, Ordering::Relaxed);
+        self.succeed_close
+            .then_some(())
+            .ok_or_else(|| HostError::Failed("postgres probe reached".into()))
     }
 
     fn close_lease(
@@ -1728,7 +1732,10 @@ impl hl_extension::PostgresBroker for PostgresProbe {
         _installation: &hl_rpc::InstallationIdentity,
         _lease: &hl_extension::PostgresLeaseId,
     ) -> Result<(), HostError> {
-        self.called()
+        self.reached.fetch_add(1, Ordering::Relaxed);
+        self.succeed_close
+            .then_some(())
+            .ok_or_else(|| HostError::Failed("postgres probe reached".into()))
     }
 }
 
@@ -1907,6 +1914,55 @@ fn postgres_read_can_start_only_a_host_generated_bounded_catalogue_query() {
         Failure::Denied { capability, .. } if capability == "postgres:read"
     ));
     assert_eq!(postgres.reached(), 1, "denial must happen before the broker");
+}
+
+#[test]
+fn postgres_cleanup_receipts_survive_reconnect_without_closing_twice() {
+    let host = Host::new();
+    let postgres = PostgresProbe {
+        succeed_close: true,
+        ..PostgresProbe::default()
+    };
+    let ownership = hl_extension::ExecutionOwnership::default();
+    let operation = hl_extension::QueryOperationToken::new("a".repeat(32)).unwrap();
+    let lease = hl_extension::PostgresLeaseId::new("lease").unwrap();
+    let query = hl_extension::PostgresQueryId::new("query").unwrap();
+    let close_query = Request::PostgresQueryCloseOnce {
+        operation: operation.clone(),
+        lease: lease.clone(),
+        query: query.clone(),
+    };
+    for _ in 0..2 {
+        session(&[Capability::PostgresRead], &[])
+            .with_execution_ownership(ownership.clone())
+            .dispatch(&close_query, &services_with_postgres(&host, &postgres))
+            .expect("query close receipt survives reconnect");
+    }
+    assert_eq!(postgres.reached(), 1);
+
+    let collision = Request::PostgresLeaseCloseOnce {
+        operation,
+        lease: lease.clone(),
+    };
+    assert!(matches!(
+        session(&[Capability::PostgresRead], &[])
+            .with_execution_ownership(ownership.clone())
+            .dispatch(&collision, &services_with_postgres(&host, &postgres)),
+        Err(Failure::Conflict { .. })
+    ));
+    assert_eq!(postgres.reached(), 1, "token substitution is rejected before cleanup");
+
+    let close_lease = Request::PostgresLeaseCloseOnce {
+        operation: hl_extension::QueryOperationToken::new("b".repeat(32)).unwrap(),
+        lease,
+    };
+    for _ in 0..2 {
+        session(&[Capability::PostgresRead], &[])
+            .with_execution_ownership(ownership.clone())
+            .dispatch(&close_lease, &services_with_postgres(&host, &postgres))
+            .expect("lease close receipt survives reconnect");
+    }
+    assert_eq!(postgres.reached(), 2);
 }
 
 #[test]
@@ -2823,7 +2879,22 @@ fn all_calls() -> Vec<(Request, Capability)> {
             Capability::PostgresRead,
         ),
         (
+            Request::PostgresQueryCloseOnce {
+                operation: hl_extension::QueryOperationToken::new("close-query").unwrap(),
+                lease: hl_extension::PostgresLeaseId::new("lease").unwrap(),
+                query: hl_extension::PostgresQueryId::new("query").unwrap(),
+            },
+            Capability::PostgresRead,
+        ),
+        (
             Request::PostgresLeaseClose {
+                lease: hl_extension::PostgresLeaseId::new("lease").unwrap(),
+            },
+            Capability::PostgresRead,
+        ),
+        (
+            Request::PostgresLeaseCloseOnce {
+                operation: hl_extension::QueryOperationToken::new("close-lease").unwrap(),
                 lease: hl_extension::PostgresLeaseId::new("lease").unwrap(),
             },
             Capability::PostgresRead,

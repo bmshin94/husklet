@@ -183,7 +183,9 @@ const REQUEST_TO_REPLY: &[(&str, &str)] = &[
     ("postgres_query_page", "postgres_page"),
     ("postgres_query_cancel", "postgres_state"),
     ("postgres_query_close", "done"),
+    ("postgres_query_close_once", "done"),
     ("postgres_lease_close", "done"),
+    ("postgres_lease_close_once", "done"),
     ("interface_open_tab", "identity"),
     ("interface_split", "identity"),
     ("interface_withdraw", "done"),
@@ -302,7 +304,9 @@ fn request_capability(request: &str) -> Capability {
         | "postgres_query_page"
         | "postgres_query_cancel"
         | "postgres_query_close"
-        | "postgres_lease_close" => Capability::PostgresRead,
+        | "postgres_query_close_once"
+        | "postgres_lease_close"
+        | "postgres_lease_close_once" => Capability::PostgresRead,
         "postgres_query_start_once" => Capability::PostgresWrite,
         "interface_open_tab"
         | "interface_split"

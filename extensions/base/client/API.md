@@ -269,7 +269,9 @@ order; the JavaScript client's checks are never treated as a security boundary.
 - `host.postgres.page(...)` — `postgres_query_page`, requires `postgres:read`.
 - `host.postgres.cancel(...)` — `postgres_query_cancel`, requires `postgres:read`.
 - `host.postgres.closeQuery(...)` — `postgres_query_close`, requires `postgres:read`.
+- `host.postgres.closeQueryOnce(...)` — `postgres_query_close_once`, requires `postgres:read`.
 - `host.postgres.closeLease(...)` — `postgres_lease_close`, requires `postgres:read`.
+- `host.postgres.closeLeaseOnce(...)` — `postgres_lease_close_once`, requires `postgres:read`.
 - `host.postgres.catalogueStartOnce(...)` selects schemas, relations, columns, or indexes from a closed enum under `postgres:read`. The Rust host emits fixed `pg_catalog` SQL and encodes requested identifiers as data; no caller SQL crosses this surface. Caller-authored SQL, including `SELECT`, remains exclusively `postgres:write`.
 - Open and query-start outcomes echo the exact operation token; query-start also echoes its lease. `PostgresOperationProtocolError` rejects stale or hostile authority before a caller can use a lease or query ID. Retrying the same bounded request after reconnect reconciles to the existing lease/query instead of creating another.
 - Status and cancellation replies echo the exact lease and query. `PostgresStateProtocolError` rejects stale or misrouted state before it can be attributed to the current database operation.

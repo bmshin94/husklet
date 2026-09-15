@@ -21,8 +21,8 @@ use hl_extension::port::{
     TerminalSurface, WorkspaceFiles, WorkspaceInventory, WorkspaceState,
 };
 use hl_extension::{
-    Authority, Capability, Coding, ExtensionName, Failure, Grant, Hello, PROTOCOL, RelativePath, Reply, Request,
-    Services, Session, Transit, Welcome, WorkspaceInfo, codec,
+    codec, Authority, Capability, Coding, ExtensionName, Failure, Grant, Hello, RelativePath, Reply, Request, Services,
+    Session, Transit, Welcome, WorkspaceInfo, PROTOCOL,
 };
 use hl_gui::{
     Align, Choice, Column as TableColumn, EventId, Length, NodeId, Patch, Prop, PropValue, RowWindow, Scale, SourceId,
@@ -759,11 +759,14 @@ fn services(host: &Host) -> Services<'_> {
 }
 
 #[derive(Default)]
-struct PostgresProbe(AtomicUsize);
+struct PostgresProbe {
+    calls: AtomicUsize,
+    successful_close: bool,
+}
 
 impl PostgresProbe {
     fn called<T>(&self) -> Result<T, HostError> {
-        self.0.fetch_add(1, Ordering::Relaxed);
+        self.calls.fetch_add(1, Ordering::Relaxed);
         Err(HostError::Failed("postgres probe reached".into()))
     }
 }
@@ -816,14 +819,24 @@ impl hl_extension::PostgresBroker for PostgresProbe {
         _: &hl_extension::PostgresLeaseId,
         _: &hl_extension::PostgresQueryId,
     ) -> Result<(), HostError> {
-        self.called()
+        if self.successful_close {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        } else {
+            self.called()
+        }
     }
     fn close_lease(
         &self,
         _: &hl_rpc::InstallationIdentity,
         _: &hl_extension::PostgresLeaseId,
     ) -> Result<(), HostError> {
-        self.called()
+        if self.successful_close {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        } else {
+            self.called()
+        }
     }
 }
 
@@ -859,7 +872,57 @@ fn read_only_postgres_authority_refuses_arbitrary_sql_over_a_real_socket() {
         failure,
         Failure::Denied { capability, .. } if capability == "postgres:write"
     ));
-    assert_eq!(postgres.0.load(Ordering::Relaxed), 0, "broker must not be reached");
+    assert_eq!(postgres.calls.load(Ordering::Relaxed), 0, "broker must not be reached");
+}
+
+#[test]
+fn postgres_query_close_receipt_replays_after_a_lost_unix_reply() {
+    let ownership = hl_extension::ExecutionOwnership::default();
+    let postgres = PostgresProbe {
+        successful_close: true,
+        ..PostgresProbe::default()
+    };
+    let host = Host::new();
+    let request = Request::PostgresQueryCloseOnce {
+        operation: hl_extension::QueryOperationToken::new("close-query-after-lost-reply").unwrap(),
+        lease: hl_extension::PostgresLeaseId::new("lease-7").unwrap(),
+        query: hl_extension::PostgresQueryId::new("query-9").unwrap(),
+    };
+
+    for reconnect in 0..2 {
+        let (host_end, mut extension_end) = connected_pair();
+        let mut encoded = Vec::new();
+        hl_extension::Wire::new(&mut encoded)
+            .send(&codec::request(&request).expect("close request encodes"))
+            .expect("frame encodes");
+        for byte in encoded {
+            extension_end.write_all(&[byte]).expect("fragment crosses socket");
+        }
+        let mut receiver = hl_extension::Wire::new(host_end);
+        let decoded = codec::read_request(&receiver.receive().expect("request arrives")).expect("request decodes");
+        let mut host_services = services(&host);
+        host_services.postgres = Some(&postgres);
+        let reply = Session::new(
+            Authority::new(
+                ExtensionName::new("postgres-browser").unwrap(),
+                Grant::new([Capability::PostgresRead]),
+                Vec::new(),
+            )
+            .for_installation(hl_rpc::InstallationIdentity::new("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap()),
+        )
+        .with_execution_ownership(ownership.clone())
+        .dispatch(&decoded, &host_services)
+        .expect("close or receipt replay succeeds");
+        assert_eq!(reply, Reply::Done);
+        if reconnect == 0 {
+            drop(receiver); // The host committed the close, but its reply never reached the extension.
+        }
+    }
+    assert_eq!(
+        postgres.calls.load(Ordering::Relaxed),
+        1,
+        "reconnect must replay the receipt without closing the query twice"
+    );
 }
 
 /// Records what the adapter was told to draw, so a tree that was populated

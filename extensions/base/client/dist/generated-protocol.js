@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:099dbde182f4b1d1
+// Protocol artifact fnv1a64:c28f0e1ff1afa943
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -499,7 +499,9 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "postgres_query_page": "postgres_page",
   "postgres_query_cancel": "postgres_state",
   "postgres_query_close": "done",
+  "postgres_query_close_once": "done",
   "postgres_lease_close": "done",
+  "postgres_lease_close_once": "done",
   "interface_open_tab": "identity",
   "interface_split": "identity",
   "interface_withdraw": "done",
@@ -649,7 +651,9 @@ export const PROTOCOL_REQUEST_CAPABILITIES = Object.freeze({
   "postgres_query_page": "postgres:read",
   "postgres_query_cancel": "postgres:read",
   "postgres_query_close": "postgres:read",
+  "postgres_query_close_once": "postgres:read",
   "postgres_lease_close": "postgres:read",
+  "postgres_lease_close_once": "postgres:read",
   "interface_open_tab": "interface:render",
   "interface_split": "interface:render",
   "interface_withdraw": "interface:render",
@@ -14501,9 +14505,65 @@ const roots = {
         }
       },
       {
+        "name": "postgres_query_close_once",
+        "payload": {
+          "fields": [
+            {
+              "name": "operation",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "QueryOperationToken"
+              }
+            },
+            {
+              "name": "lease",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresLeaseId"
+              }
+            },
+            {
+              "name": "query",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresQueryId"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
         "name": "postgres_lease_close",
         "payload": {
           "fields": [
+            {
+              "name": "lease",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresLeaseId"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "postgres_lease_close_once",
+        "payload": {
+          "fields": [
+            {
+              "name": "operation",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "QueryOperationToken"
+              }
+            },
             {
               "name": "lease",
               "optional": false,

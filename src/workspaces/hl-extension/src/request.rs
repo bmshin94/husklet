@@ -663,7 +663,16 @@ pub enum Request {
         lease: crate::PostgresLeaseId,
         query: crate::PostgresQueryId,
     },
+    PostgresQueryCloseOnce {
+        operation: crate::QueryOperationToken,
+        lease: crate::PostgresLeaseId,
+        query: crate::PostgresQueryId,
+    },
     PostgresLeaseClose {
+        lease: crate::PostgresLeaseId,
+    },
+    PostgresLeaseCloseOnce {
+        operation: crate::QueryOperationToken,
         lease: crate::PostgresLeaseId,
     },
     InterfaceOpenTab {
@@ -829,7 +838,9 @@ impl Request {
             | Self::PostgresQueryPage { .. }
             | Self::PostgresQueryCancel { .. }
             | Self::PostgresQueryClose { .. }
-            | Self::PostgresLeaseClose { .. } => Capability::PostgresRead,
+            | Self::PostgresQueryCloseOnce { .. }
+            | Self::PostgresLeaseClose { .. }
+            | Self::PostgresLeaseCloseOnce { .. } => Capability::PostgresRead,
             Self::PostgresQueryStartOnce { .. } => Capability::PostgresWrite,
             Self::InterfaceOpenTab { .. }
             | Self::InterfaceSplit { .. }

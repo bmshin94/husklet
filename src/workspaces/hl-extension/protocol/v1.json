@@ -10186,7 +10186,15 @@
     },
     {
       "capability": "postgres:read",
+      "request": "postgres_query_close_once"
+    },
+    {
+      "capability": "postgres:read",
       "request": "postgres_lease_close"
+    },
+    {
+      "capability": "postgres:read",
+      "request": "postgres_lease_close_once"
     },
     {
       "capability": "interface:render",
@@ -10780,7 +10788,15 @@
     },
     {
       "reply": "done",
+      "request": "postgres_query_close_once"
+    },
+    {
+      "reply": "done",
       "request": "postgres_lease_close"
+    },
+    {
+      "reply": "done",
+      "request": "postgres_lease_close_once"
     },
     {
       "reply": "identity",
@@ -15374,9 +15390,65 @@
           }
         },
         {
+          "name": "postgres_query_close_once",
+          "payload": {
+            "fields": [
+              {
+                "name": "operation",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "QueryOperationToken"
+                }
+              },
+              {
+                "name": "lease",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "PostgresLeaseId"
+                }
+              },
+              {
+                "name": "query",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "PostgresQueryId"
+                }
+              }
+            ],
+            "kind": "struct"
+          }
+        },
+        {
           "name": "postgres_lease_close",
           "payload": {
             "fields": [
+              {
+                "name": "lease",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "PostgresLeaseId"
+                }
+              }
+            ],
+            "kind": "struct"
+          }
+        },
+        {
+          "name": "postgres_lease_close_once",
+          "payload": {
+            "fields": [
+              {
+                "name": "operation",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "QueryOperationToken"
+                }
+              },
               {
                 "name": "lease",
                 "optional": false,
@@ -16603,7 +16675,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:e49c10120d706ec6",
+  "source_fingerprint": "fnv1a64:482d549061273fe0",
   "specification_version": 1,
   "topics": [
     {

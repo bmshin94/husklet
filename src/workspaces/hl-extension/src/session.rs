@@ -70,6 +70,19 @@ pub struct OwnedOperations {
     pane_input_writers: std::collections::VecDeque<PaneInputWriterState>,
     semantic_actions: std::collections::BTreeMap<String, SemanticActionOperation>,
     semantic_action_order: std::collections::VecDeque<String>,
+    postgres_closes: std::collections::BTreeMap<crate::QueryOperationToken, PostgresCloseOperation>,
+    postgres_close_order: std::collections::VecDeque<crate::QueryOperationToken>,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+enum PostgresCloseOperation {
+    Query {
+        lease: crate::PostgresLeaseId,
+        query: crate::PostgresQueryId,
+    },
+    Lease {
+        lease: crate::PostgresLeaseId,
+    },
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -128,6 +141,7 @@ const COMMAND_START_OPERATIONS: usize = 4096;
 const PANE_INPUT_WRITERS: usize = 32;
 const PANE_INPUT_RECEIPTS: usize = 256;
 const SEMANTIC_ACTION_OPERATIONS: usize = 4096;
+const POSTGRES_CLOSE_OPERATIONS: usize = 256;
 
 fn command_input_operation(operation: &str) -> Result<(), Failure> {
     if (16..=128).contains(&operation.len())
@@ -153,6 +167,20 @@ fn semantic_action_operation(operation: &str) -> Result<(), Failure> {
     Err(Failure::Conflict {
         detail: "pane semantic action operation must be 32 lowercase hexadecimal characters".into(),
     })
+}
+
+fn record_postgres_close(
+    owned: &mut OwnedOperations,
+    operation: crate::QueryOperationToken,
+    close: PostgresCloseOperation,
+) {
+    if owned.postgres_closes.len() >= POSTGRES_CLOSE_OPERATIONS {
+        if let Some(oldest) = owned.postgres_close_order.pop_front() {
+            owned.postgres_closes.remove(&oldest);
+        }
+    }
+    owned.postgres_closes.insert(operation.clone(), close);
+    owned.postgres_close_order.push_back(operation);
 }
 
 fn command_start_operation(operation: &str) -> Result<(), Failure> {
@@ -1080,7 +1108,9 @@ impl Session {
             | Request::PostgresQueryPage { .. }
             | Request::PostgresQueryCancel { .. }
             | Request::PostgresQueryClose { .. }
-            | Request::PostgresLeaseClose { .. } => self.postgres(request, services),
+            | Request::PostgresQueryCloseOnce { .. }
+            | Request::PostgresLeaseClose { .. }
+            | Request::PostgresLeaseCloseOnce { .. } => self.postgres(request, services),
             Request::InterfaceOpenTab { title } => self.open_tab(title, services),
             Request::InterfaceSplit { slot, division } => self.open_pane(slot, *division, services),
             Request::InterfaceWithdraw { slot } => self.withdraw(slot, services),
@@ -2846,10 +2876,55 @@ impl Session {
                 .close_query(installation, lease, query)
                 .map(|()| Reply::Done)
                 .map_err(Into::into),
+            Request::PostgresQueryCloseOnce {
+                operation,
+                lease,
+                query,
+            } => {
+                let asked = PostgresCloseOperation::Query {
+                    lease: lease.clone(),
+                    query: query.clone(),
+                };
+                let mut owned = self
+                    .owned_executions
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(previous) = owned.postgres_closes.get(operation) {
+                    return if previous == &asked {
+                        Ok(Reply::Done)
+                    } else {
+                        Err(Failure::Conflict {
+                            detail: "postgres close operation was already used for another resource".into(),
+                        })
+                    };
+                }
+                broker.close_query(installation, lease, query)?;
+                record_postgres_close(&mut owned, operation.clone(), asked);
+                Ok(Reply::Done)
+            }
             Request::PostgresLeaseClose { lease } => broker
                 .close_lease(installation, lease)
                 .map(|()| Reply::Done)
                 .map_err(Into::into),
+            Request::PostgresLeaseCloseOnce { operation, lease } => {
+                let asked = PostgresCloseOperation::Lease { lease: lease.clone() };
+                let mut owned = self
+                    .owned_executions
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(previous) = owned.postgres_closes.get(operation) {
+                    return if previous == &asked {
+                        Ok(Reply::Done)
+                    } else {
+                        Err(Failure::Conflict {
+                            detail: "postgres close operation was already used for another resource".into(),
+                        })
+                    };
+                }
+                broker.close_lease(installation, lease)?;
+                record_postgres_close(&mut owned, operation.clone(), asked);
+                Ok(Reply::Done)
+            }
             _ => Err(Failure::Unsupported {
                 call: "postgres".into(),
             }),

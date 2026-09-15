@@ -244,6 +244,22 @@ export class PostgresOperationProtocolError extends Error {
   }
 }
 
+/** A tokenized PostgreSQL cleanup may have committed before its reply was lost. */
+export class PostgresCloseOperationError extends Error {
+  readonly recovery;
+  readonly cause;
+
+  constructor(recovery, cause) {
+    super(
+      `postgres ${recovery.kind} close may have committed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
+    this.name = 'PostgresCloseOperationError';
+    this.recovery = Object.freeze({ ...recovery });
+    this.cause = cause;
+  }
+}
+
 /** A credential CAS write may have committed before its revision reply was lost. */
 export class CredentialSetOperationError extends Error {
   readonly key;
@@ -6124,8 +6140,17 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       closeQuery: async (lease, query) => {
         expect(await session.call('postgres_query_close', { lease, query }), 'done');
       },
+      closeQueryOnce: async (operation, lease, query) => {
+        expect(
+          await session.call('postgres_query_close_once', { operation, lease, query }),
+          'done',
+        );
+      },
       closeLease: async (lease) => {
         expect(await session.call('postgres_lease_close', { lease }), 'done');
+      },
+      closeLeaseOnce: async (operation, lease) => {
+        expect(await session.call('postgres_lease_close_once', { operation, lease }), 'done');
       },
     },
     subscribe,
@@ -6135,6 +6160,42 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     value: (nextSignal) => workspace(hostSession, { signal: nextSignal }),
     enumerable: false,
   });
+  api.postgres.closeQueryRecoverable = async (lease, query, { operation: asked } = {}) => {
+    const operation = terminalInputOperation(asked);
+    const recovery = { version: 1, kind: 'query', operation, lease, query } as const;
+    try {
+      await api.postgres.closeQueryOnce(operation, lease, query);
+    } catch (cause) {
+      if (cause instanceof ExtensionError) throw cause;
+      throw new PostgresCloseOperationError(recovery, cause);
+    }
+    return recovery;
+  };
+  api.postgres.closeLeaseRecoverable = async (lease, { operation: asked } = {}) => {
+    const operation = terminalInputOperation(asked);
+    const recovery = { version: 1, kind: 'lease', operation, lease } as const;
+    try {
+      await api.postgres.closeLeaseOnce(operation, lease);
+    } catch (cause) {
+      if (cause instanceof ExtensionError) throw cause;
+      throw new PostgresCloseOperationError(recovery, cause);
+    }
+    return recovery;
+  };
+  api.postgres.recoverClose = async (candidate) => {
+    const recovery =
+      candidate instanceof PostgresCloseOperationError ? candidate.recovery : candidate;
+    if (recovery?.version !== 1 || (recovery.kind !== 'query' && recovery.kind !== 'lease')) {
+      throw new TypeError('postgres close recovery requires a version 1 query or lease token');
+    }
+    const operation = terminalInputOperation(recovery.operation);
+    if (recovery.kind === 'query') {
+      await api.postgres.closeQueryOnce(operation, recovery.lease, recovery.query);
+    } else {
+      await api.postgres.closeLeaseOnce(operation, recovery.lease);
+    }
+    return { ...recovery, operation, closed: true };
+  };
   const watch = async <T>(
     topic: string,
     snapshot: string,
@@ -8778,7 +8839,9 @@ const facadeOverrides = Object.freeze({
   postgres_query_page: 'postgres.page',
   postgres_query_cancel: 'postgres.cancel',
   postgres_query_close: 'postgres.closeQuery',
+  postgres_query_close_once: 'postgres.closeQueryOnce',
   postgres_lease_close: 'postgres.closeLease',
+  postgres_lease_close_once: 'postgres.closeLeaseOnce',
 });
 const internalRequests = Object.freeze({
   interface_open_tab: 'owned by the React/native renderer root lifecycle',

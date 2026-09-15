@@ -1132,6 +1132,25 @@ export declare class PostgresOperationProtocolError extends Error {
   readonly expectedLease?: PostgresLeaseId;
   readonly receivedLease?: PostgresLeaseId;
 }
+export type PostgresCloseRecoveryToken =
+  | {
+      version: 1;
+      kind: 'query';
+      operation: string;
+      lease: PostgresLeaseId;
+      query: PostgresQueryId;
+    }
+  | {
+      version: 1;
+      kind: 'lease';
+      operation: string;
+      lease: PostgresLeaseId;
+    };
+/** A tokenized PostgreSQL cleanup whose acknowledgement was lost. */
+export declare class PostgresCloseOperationError extends Error {
+  readonly recovery: Readonly<PostgresCloseRecoveryToken>;
+  readonly cause: unknown;
+}
 
 export type TerminalCommandResumeToken = {
   version: 1;
@@ -2727,7 +2746,25 @@ export interface WorkspaceApi {
     ): Promise<PostgresPage>;
     cancel(lease: PostgresLeaseId, query: PostgresQueryId): Promise<PostgresQueryState>;
     closeQuery(lease: PostgresLeaseId, query: PostgresQueryId): Promise<void>;
+    closeQueryOnce(
+      operation: QueryOperationToken,
+      lease: PostgresLeaseId,
+      query: PostgresQueryId,
+    ): Promise<void>;
     closeLease(lease: PostgresLeaseId): Promise<void>;
+    closeLeaseOnce(operation: QueryOperationToken, lease: PostgresLeaseId): Promise<void>;
+    closeQueryRecoverable(
+      lease: PostgresLeaseId,
+      query: PostgresQueryId,
+      options?: { operation?: QueryOperationToken },
+    ): Promise<PostgresCloseRecoveryToken>;
+    closeLeaseRecoverable(
+      lease: PostgresLeaseId,
+      options?: { operation?: QueryOperationToken },
+    ): Promise<PostgresCloseRecoveryToken>;
+    recoverClose(
+      recovery: PostgresCloseOperationError | PostgresCloseRecoveryToken,
+    ): Promise<PostgresCloseRecoveryToken & { closed: true }>;
   };
   subscribe(topic: Topic): Promise<void>;
   unsubscribe(topic: Topic): Promise<void>;

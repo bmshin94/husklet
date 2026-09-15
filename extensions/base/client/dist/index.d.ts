@@ -56,6 +56,12 @@ export declare class PostgresOperationProtocolError extends Error {
     readonly receivedLease: any;
     constructor(phase: any, expectedOperation: any, receivedOperation: any, expectedLease: any, receivedLease: any);
 }
+/** A tokenized PostgreSQL cleanup may have committed before its reply was lost. */
+export declare class PostgresCloseOperationError extends Error {
+    readonly recovery: any;
+    readonly cause: any;
+    constructor(recovery: any, cause: any);
+}
 /** A credential CAS write may have committed before its revision reply was lost. */
 export declare class CredentialSetOperationError extends Error {
     readonly key: any;

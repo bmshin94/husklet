@@ -1,6 +1,7 @@
 import {
   ExtensionError,
   PostgresOperationProtocolError,
+  PostgresCloseOperationError,
   PostgresPageProtocolError,
   connect,
   workspace,
@@ -61,6 +62,19 @@ async function retryAfterDisconnect<T>(operation: () => Promise<T>): Promise<T> 
   }
 }
 
+async function closeRecoverably(operation: () => Promise<unknown>): Promise<void> {
+  try {
+    await operation();
+  } catch (error) {
+    if (!(error instanceof PostgresCloseOperationError)) throw error;
+    const recovery = JSON.parse(JSON.stringify(error.recovery));
+    await session.close().catch(() => {});
+    session = await connect({ path: configuration!.path, pendingLimit: 4, timeout: 5_000 });
+    host = workspace(session);
+    await host.postgres.recoverClose(recovery);
+  }
+}
+
 const connection = {
   container_id: configuration.containerId,
   container_generation: configuration.containerGeneration,
@@ -111,7 +125,7 @@ try {
   if (cursor) await host.postgres.cancel(opened.lease, started.query);
   process.stdout.write(`${JSON.stringify({ columns, rowCount, preview })}\n`);
 } finally {
-  await host.postgres.closeQuery(opened.lease, started.query).catch(() => {});
-  await host.postgres.closeLease(opened.lease).catch(() => {});
+  await closeRecoverably(() => host.postgres.closeQueryRecoverable(opened.lease, started.query));
+  await closeRecoverably(() => host.postgres.closeLeaseRecoverable(opened.lease));
   await session.close();
 }
