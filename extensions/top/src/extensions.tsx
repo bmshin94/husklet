@@ -683,6 +683,7 @@ export function Extensions({
   const workspaceIdentityEpoch = React.useRef(0);
   const acquisitionEpoch = React.useRef(0);
   const providerEpoch = React.useRef(0);
+  const lifecycleEpoch = React.useRef(0);
   const lifecycleInFlight = React.useRef(false);
   const acquisitionInFlight = React.useRef(false);
   const openingInFlight = React.useRef('');
@@ -708,6 +709,16 @@ export function Extensions({
     setGrantedCredentials({ read: [], write: [], expose_to_execution: [] });
     setBusy('');
     setError('');
+  }, [api]);
+
+  React.useEffect(() => {
+    // Lifecycle replies and their reconciliation inventory belong to the API
+    // that issued the mutation. A retired workspace must not overwrite the
+    // replacement workspace with a later refresh or completion notice.
+    ++lifecycleEpoch.current;
+    lifecycleInFlight.current = false;
+    setPendingLifecycle(null);
+    setLifecycleFailure(null);
   }, [api]);
 
   React.useEffect(() => {
@@ -1199,6 +1210,7 @@ export function Extensions({
   const lifecycle = async (extension: ExtensionSummary, action: LifecycleAction) => {
     if (lifecycleInFlight.current) return;
     lifecycleInFlight.current = true;
+    const epoch = lifecycleEpoch.current;
     const operation = { action, name: extension.name };
     setBusy(`${action}:${extension.name}`);
     setPendingLifecycle(operation);
@@ -1210,7 +1222,9 @@ export function Extensions({
         extension.name,
         extension.image_digest,
       );
+      if (lifecycleEpoch.current !== epoch) return;
       await reload();
+      if (lifecycleEpoch.current !== epoch) return;
       setNotice(
         result.changed
           ? {
@@ -1223,9 +1237,11 @@ export function Extensions({
             },
       );
     } catch (cause) {
+      if (lifecycleEpoch.current !== epoch) return;
       try {
         const reconciliationEpoch = ++inventoryEpoch.current;
         const listing = await api.extensions.list();
+        if (lifecycleEpoch.current !== epoch) return;
         const authoritative =
           inventoryEpoch.current === reconciliationEpoch ? listing : installedSnapshot.current;
         if (inventoryEpoch.current === reconciliationEpoch) {
@@ -1244,6 +1260,7 @@ export function Extensions({
           return;
         }
       } catch (reconciliationCause) {
+        if (lifecycleEpoch.current !== epoch) return;
         setLifecycleFailure({
           ...operation,
           detail: lifecycleReconciliationFailure(message(cause), message(reconciliationCause)),
@@ -1252,9 +1269,11 @@ export function Extensions({
       }
       setLifecycleFailure({ ...operation, detail: message(cause) });
     } finally {
-      lifecycleInFlight.current = false;
-      setPendingLifecycle(null);
-      setBusy('');
+      if (lifecycleEpoch.current === epoch) {
+        lifecycleInFlight.current = false;
+        setPendingLifecycle(null);
+        setBusy('');
+      }
     }
   };
   const openProvider = async (extension: ExtensionSummary, provider: ExtensionPaneProvider) => {
