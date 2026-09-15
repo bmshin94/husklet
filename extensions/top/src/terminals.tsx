@@ -352,6 +352,24 @@ export function Terminals({
       disposed = true;
     };
   }, [api]);
+  React.useEffect(() => {
+    // Every pane cursor and pending mutation belongs to one workspace API.
+    // Invalidate continuations before the replacement can reuse the same slot
+    // name; otherwise a late split/close reply can reload the retired layout.
+    ++paneRevision.current;
+    automaticallyInspected.current = '';
+    setBusy('');
+    setError(null);
+    setSelected('');
+    setReadable(null);
+    setInput('');
+    setTitle('');
+    setCommand('');
+    setColumns('');
+    setRows('');
+    setSemanticNodeId('');
+    setSemanticValue('');
+  }, [api]);
   const mutatePane = async (operation: 'split-beside' | 'split-below' | 'retitle' | 'close') => {
     if (!cursor || !selected) return;
     const slot = selected;
