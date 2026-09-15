@@ -454,7 +454,7 @@ export function Networks({
                       network.kind !== 'builtin'
                         ? {
                             authorityKey: `network:${id}:remove`,
-                            label: 'Delete',
+                            label: 'Delete network…',
                             tooltip: 'Remove this network from the workspace',
                             question: `Removing network ${network.name} disconnects it from the workspace and cannot be undone.`,
                             confirmLabel: 'Remove network',

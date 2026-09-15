@@ -137,17 +137,17 @@ test('network inventory keeps a compact trigger and gives confirmation the card 
     'CardContent',
   ]);
   assert.equal(tag(stage, 'Manage network'), 'InlineButton');
-  assert.deepEqual(ancestorTags(stage, 'Delete').slice(0, 4), [
+  assert.deepEqual(ancestorTags(stage, 'Delete network…').slice(0, 4), [
     'CardActions',
     'Row',
     'Responsive',
     'CardContent',
   ]);
-  assert.equal(tag(stage, 'Delete'), 'InlineButton');
-  assert.deepEqual(property(stage, 'Delete', 'Tooltip'), {
+  assert.equal(tag(stage, 'Delete network…'), 'InlineButton');
+  assert.deepEqual(property(stage, 'Delete network…', 'Tooltip'), {
     Text: 'Remove this network from the workspace',
   });
-  invoke(stage, 'Delete');
+  invoke(stage, 'Delete network…');
   assert.ok(
     labelled(
       stage,

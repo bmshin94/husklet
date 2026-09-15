@@ -130,7 +130,7 @@ test(
       await until(() => inspections === 1 && labelled(stage, 'Network details'));
       choose(stage, container);
       await until(() => labelled(stage, 'Disconnect'));
-      invoke(stage, 'Delete');
+      invoke(stage, 'Delete network…');
       assert.ok(
         labelled(
           stage,

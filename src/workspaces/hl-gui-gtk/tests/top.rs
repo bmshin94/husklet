@@ -1126,7 +1126,7 @@ mod unix {
                     "{width_name} collapsed network record stacked its summary to {}px",
                     network_card.height()
                 );
-                let danger = find_button(&network_card, "Delete");
+                let danger = find_button(&network_card, "Delete network…");
                 assert!(danger.has_css_class("variant-ghost"));
                 assert!(danger.has_css_class("tone-danger"));
                 assert_eq!(danger.height(), 44, "{width_name} network danger hit target");
@@ -1189,7 +1189,7 @@ mod unix {
                         &mut tree,
                         &mut surface,
                         &root,
-                        "Delete",
+                        "Delete network…",
                         "Remove network",
                         12_753 + if width == 600 { 50 } else { 0 },
                     );
@@ -2890,8 +2890,11 @@ mod unix {
             let hide_connections = find_button(&expanded_root, "Hide details");
             assert!(hide_connections.has_css_class("variant-outline"));
             assert!(hide_connections.has_css_class("tone-neutral"));
-            assert!(find_button(&expanded_root, "Delete").is_sensitive());
-            assert_label_order(&expanded_root, &["Delete", "Network details", "Container attachment"]);
+            assert!(find_button(&expanded_root, "Delete network…").is_sensitive());
+            assert_label_order(
+                &expanded_root,
+                &["Delete network…", "Network details", "Container attachment"],
+            );
 
             let selector = find_toggle(&expanded_root, "Choose…");
             selector.set_active(true);
@@ -3020,11 +3023,11 @@ mod unix {
                 &format!("Container · {}", &container_id[..12])
             ));
             assert!(has_label(&success_root, "Technical details"));
-            assert!(find_button(&success_root, "Delete").is_sensitive());
+            assert!(find_button(&success_root, "Delete network…").is_sensitive());
             assert_label_order(
                 &success_root,
                 &[
-                    "Delete",
+                    "Delete network…",
                     "Network details",
                     "Container attachment",
                     &success,
@@ -3034,7 +3037,7 @@ mod unix {
             assert_focus_order(
                 &success_root,
                 &[
-                    "Delete",
+                    "Delete network…",
                     "api-worker · aaaaaaaaaaaa · exited",
                     "Disconnect",
                     "Technical details",

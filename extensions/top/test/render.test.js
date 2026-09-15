@@ -6768,7 +6768,7 @@ test('volume and network panels render bounded real inventories and controls', (
     'Responsive',
     'CardContent',
   ]);
-  for (const label of ['Networks', 'private', 'Delete'])
+  for (const label of ['Networks', 'private', 'Delete network…'])
     assert.ok(labels(networkFrame).includes(label), label);
   const networkInventoryStage = stageFromFrame(networkFrame);
   assert.deepEqual(taggedProperty(networkInventoryStage, 'Networks', 'Heading', 'Scale'), {
@@ -6783,7 +6783,7 @@ test('volume and network panels render bounded real inventories and controls', (
     2,
     'custom-network danger controls share the compact summary rather than adding a footer band',
   );
-  assert.deepEqual(ancestorTags(networkInventoryStage, 'Delete').slice(0, 4), [
+  assert.deepEqual(ancestorTags(networkInventoryStage, 'Delete network…').slice(0, 4), [
     'CardActions',
     'Row',
     'Responsive',
@@ -6795,7 +6795,7 @@ test('volume and network panels render bounded real inventories and controls', (
   );
   assert.ok(labels(networkFrame).includes('Built-in · protected'));
   assert.equal(
-    labels(networkFrame).filter((label) => label === 'Delete').length,
+    labels(networkFrame).filter((label) => label === 'Delete network…').length,
     2,
     'only the custom network offers removal in both responsive presentations',
   );
@@ -6847,7 +6847,7 @@ test('volume and network panels render bounded real inventories and controls', (
     );
   };
   assert.equal(destructive(volumeFrame, 'Delete volume…'), false);
-  assert.equal(destructive(networkFrame, 'Delete'), false);
+  assert.equal(destructive(networkFrame, 'Delete network…'), false);
 });
 
 test('network inspection exposes loading, retry, empty and domain-specific details', async () => {
@@ -8895,7 +8895,7 @@ test('volume and network mutations expose danger only on final confirm and cance
   invoke(networks, 'Confirm disconnect');
   await settled();
   assert.deepEqual(calls.at(-1), ['network.disconnect', networkId, containerId]);
-  invoke(networks, 'Delete');
+  invoke(networks, 'Delete network…');
   assert.ok(
     labelled(
       networks,
@@ -8928,7 +8928,7 @@ test('volume and network mutations expose danger only on final confirm and cance
     calls.some(([name]) => name === 'network.remove'),
     false,
   );
-  invoke(networks, 'Delete');
+  invoke(networks, 'Delete network…');
   invoke(networks, 'Remove network');
   await settled();
   await settled();
@@ -9253,12 +9253,12 @@ test('successful network attachment retains its receipt and verified expanded me
         'Container attachment',
         'Connected container-1 to private',
         'Technical details',
-        'Delete',
+        'Delete network…',
       ].includes(label),
     ),
     [
-      'Delete',
-      'Delete',
+      'Delete network…',
+      'Delete network…',
       'Network details',
       'Container attachment',
       'Connected container-1 to private',
@@ -9266,7 +9266,7 @@ test('successful network attachment retains its receipt and verified expanded me
     ],
     'reinspection retains the summary action before the daily attachment workflow and its receipt',
   );
-  assert.notDeepEqual(taggedProperty(stage, 'Delete', 'Expander', 'Expanded'), {
+  assert.notDeepEqual(taggedProperty(stage, 'Delete network…', 'Expander', 'Expanded'), {
     Flag: true,
   });
   assert.deepEqual(
@@ -9369,12 +9369,12 @@ test('successful disconnect retains its receipt and verified empty membership', 
         'Container attachment',
         'Disconnected container-1 from private',
         'Technical details',
-        'Delete',
+        'Delete network…',
       ].includes(label),
     ),
     [
-      'Delete',
-      'Delete',
+      'Delete network…',
+      'Delete network…',
       'Network details',
       'Container attachment',
       'Disconnected container-1 from private',
@@ -9382,7 +9382,7 @@ test('successful disconnect retains its receipt and verified empty membership', 
     ],
     'disconnect reinspection retains the summary action and its verified receipt',
   );
-  assert.notDeepEqual(taggedProperty(stage, 'Delete', 'Expander', 'Expanded'), {
+  assert.notDeepEqual(taggedProperty(stage, 'Delete network…', 'Expander', 'Expanded'), {
     Flag: true,
   });
 });
