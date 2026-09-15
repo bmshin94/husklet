@@ -3109,7 +3109,11 @@ static translit_jcc_ibtc_site_ranges translit_emit_direct_jmp_ibtc(hl_x64_asm *a
     hl_x64_movq_reg_to_xmm(a, 1, HL_X64_RAX);
     hl_x64_pandn(a, 0, 1);
     hl_x64_movq_xmm_to_reg(a, HL_X64_RAX, 0);
-    hl_x64_store_gs(a, HL_X64_RAX, OFF_JCC_IBTC_MISS);
+    /* 32-bit: jcc_ibtc_miss is a uint32_t and cpu->tpending begins in the next four bytes.  The
+       REX.W store this used to be wrote eight bytes and zeroed the low half of tpending on every
+       IBTC probe, so a blocked thread-directed signal (raise()/tgkill(self)) vanished from
+       sigpending() and was never delivered -- with or without a checkpoint. */
+    hl_x64_store_gs32(a, HL_X64_RAX, OFF_JCC_IBTC_MISS);
     hl_x64_movdqa_xmm(a, 0, 3);
     translit_helper_lea(a, HL_X64_RAX, translit_direct_jmp_ibtc_stub_entry, 1);
     hl_x64_movq_reg_to_xmm(a, 1, HL_X64_RAX);
@@ -3221,7 +3225,11 @@ static void translit_emit_ret_inline_ibtc(hl_x64_asm *a, translit_ret_sim_ranges
     hl_x64_movq_reg_to_xmm(a, 1, HL_X64_RAX);
     hl_x64_pandn(a, 0, 1);
     hl_x64_movq_xmm_to_reg(a, HL_X64_RAX, 0);
-    hl_x64_store_gs(a, HL_X64_RAX, OFF_JCC_IBTC_MISS);
+    /* 32-bit: jcc_ibtc_miss is a uint32_t and cpu->tpending begins in the next four bytes.  The
+       REX.W store this used to be wrote eight bytes and zeroed the low half of tpending on every
+       IBTC probe, so a blocked thread-directed signal (raise()/tgkill(self)) vanished from
+       sigpending() and was never delivered -- with or without a checkpoint. */
+    hl_x64_store_gs32(a, HL_X64_RAX, OFF_JCC_IBTC_MISS);
     hl_x64_movdqa_xmm(a, 0, 3);
     translit_helper_lea(a, HL_X64_RAX, translit_jcc_ibtc_stub_entry, 0);
     hl_x64_movq_reg_to_xmm(a, 1, HL_X64_RAX);
