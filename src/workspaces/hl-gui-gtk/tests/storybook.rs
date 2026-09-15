@@ -521,6 +521,14 @@ mod unix {
             let search = find::<gtk::Entry>(&root, |entry| {
                 entry.placeholder_text().as_deref() == Some("Search all pages")
             });
+            let compact_picker = find::<gtk::DropDown>(&root, |drop| {
+                drop.model().is_some_and(|model| model.n_items() >= 60)
+            });
+            assert!(search.is_mapped(), "wide Storybook retains its grouped searchable sidebar");
+            assert!(
+                !compact_picker.is_mapped(),
+                "wide Storybook rendered the compact navigator beside its sidebar"
+            );
             let width = search.width();
             search.set_text("Se");
             allocate(&root, 1_200, 800);
@@ -532,6 +540,38 @@ mod unix {
                 "a short query collapsed the Storybook search field"
             );
             let _ = surface.reports().drain();
+            realized_window.set_size_request(600, 800);
+            realized_window.set_default_size(600, 800);
+            settle_window_width(&realized_window, 600);
+            assert!(compact_picker.is_mapped(), "600px Storybook omitted compact page search");
+            assert_eq!(compact_picker.accessible_role(), gtk::AccessibleRole::ComboBox);
+            assert!(compact_picker.enables_search(), "compact page picker does not filter by typing");
+            assert_eq!(
+                compact_picker
+                    .selected_item()
+                    .and_then(|item| item.downcast::<gtk::StringObject>().ok())
+                    .map(|item| item.string().to_string())
+                    .as_deref(),
+                Some("Component · Button"),
+                "compact page picker does not visibly identify the current page"
+            );
+            let page_count = compact_picker.model().expect("compact page choices").n_items();
+            assert!(page_count >= 60, "compact page search exposed only {page_count} pages");
+            let context = find::<gtk::Label>(&root, |label| {
+                label.text() == format!("Component · Button · {page_count} pages; type to filter")
+            });
+            assert!(context.is_mapped(), "compact navigation hid the selected page");
+            assert!(
+                compact_picker.width() <= compact_picker.parent().expect("compact picker parent").width(),
+                "compact picker escaped its narrow navigation column"
+            );
+            capture_story(&realized_window, "Storybook searchable navigation narrow");
+            realized_window.set_size_request(1_200, 800);
+            realized_window.set_default_size(1_200, 800);
+            settle_window_width(&realized_window, 1_200);
+            assert!(search.is_mapped(), "wide sidebar did not return after compact navigation");
+            assert!(!compact_picker.is_mapped(), "compact navigation remained visible at 1200px");
+            capture_story(&realized_window, "Storybook searchable navigation wide");
         }
         if story == "Button" {
             let busy = find::<gtk::Button>(&root, |button| button_caption(button).as_deref() == Some("Saving…"));
@@ -1775,9 +1815,9 @@ mod unix {
                 if width == 600 {
                     assert!(!paned.is_visible(), "{story} left its desktop sidebar visible at 600px");
                     assert!(compact.is_visible(), "{story} hid its compact selector at 600px");
-                    let compact_selector = descendants::<gtk::ToggleButton>(&compact)
+                    let compact_selector = descendants::<gtk::DropDown>(&compact)
                         .into_iter()
-                        .find(|button| button.has_css_class("hl-select"))
+                        .find(|drop| drop.enables_search())
                         .expect("compact navigation keeps its page selector");
                     assert!(
                         compact_selector.width() >= 500,

@@ -715,14 +715,18 @@ test('the interaction console preserves a bounded sequence and can be cleared', 
 test('selecting a component in the sidebar renders that component', () => {
   const stage = host();
   const first = stage.render(h(Playground));
-  const selector = created(first.patches).find((entry) => entry.tag === 'Select').id;
+  const selector = created(first.patches).find((entry) => entry.tag === 'Autocomplete').id;
+  const choices = first.patches.find(
+    (patch) => patch.SetProp?.id === selector && patch.SetProp.prop === 'Choices',
+  ).SetProp.value.Choices;
+  const chip = choices.findIndex((choice) => choice.value === 'Chip');
   const before = stage.frames.length;
   assert.ok(
     stage.surface.dispatch({
-      trigger: 'Change',
+      trigger: 'Select',
       node: selector,
-      id: `${selector}:Change`,
-      value: 'Chip',
+      id: `${selector}:Select`,
+      rows: [chip],
     }),
   );
   const patches = stage.since(before);
@@ -735,17 +739,21 @@ test('selecting a component in the sidebar renders that component', () => {
 test('the component selector switches the single document preview', () => {
   const stage = host();
   const first = stage.render(h(Playground));
-  const selector = created(first.patches).find((entry) => entry.tag === 'Select').id;
+  const selector = created(first.patches).find((entry) => entry.tag === 'Autocomplete').id;
+  const choices = first.patches.find(
+    (patch) => patch.SetProp?.id === selector && patch.SetProp.prop === 'Choices',
+  ).SetProp.value.Choices;
+  const switchIndex = choices.findIndex((choice) => choice.value === 'Switch');
   const document = created(first.patches)
     .filter((entry) => entry.tag === 'Scroll')
     .at(-1).id;
   const before = stage.frames.length;
   assert.ok(
     stage.surface.dispatch({
-      trigger: 'Change',
+      trigger: 'Select',
       node: selector,
-      id: `${selector}:Change`,
-      value: 'Switch',
+      id: `${selector}:Select`,
+      rows: [switchIndex],
     }),
   );
   const patches = stage.since(before);
@@ -765,15 +773,19 @@ test('the component selector switches the single document preview', () => {
 test('global component navigation reaches every catalogue component without simultaneous materialization', () => {
   const stage = host();
   const first = stage.render(h(Playground));
-  const selector = created(first.patches).find((entry) => entry.tag === 'Select').id;
+  const selector = created(first.patches).find((entry) => entry.tag === 'Autocomplete').id;
   const seen = new Set();
   for (const tag of tags) {
+    const choices = stage.frames
+      .flatMap((frame) => frame.patches)
+      .filter((patch) => patch.SetProp?.id === selector && patch.SetProp.prop === 'Choices')
+      .at(-1).SetProp.value.Choices;
     const before = stage.frames.length;
     stage.surface.dispatch({
-      trigger: 'Change',
+      trigger: 'Select',
       node: selector,
-      id: `${selector}:Change`,
-      value: tag.name,
+      id: `${selector}:Select`,
+      rows: [choices.findIndex((choice) => choice.value === tag.name)],
     });
     const changes = stage.since(before);
     assert.ok(
@@ -785,6 +797,21 @@ test('global component navigation reaches every catalogue component without simu
     seen.add(tag.name);
   }
   assert.deepEqual([...seen].sort(), tags.map((tag) => tag.name).sort());
+});
+
+test('compact navigation is a bounded searchable page picker with persistent context', () => {
+  const frame = host().render(h(Playground, { initialStory: 'Button' }));
+  const picker = created(frame.patches).find((entry) => entry.tag === 'Autocomplete');
+  assert.ok(picker, 'compact navigation must remain a searchable choice control');
+  const pickerProps = frame.patches.filter((patch) => patch.SetProp?.id === picker.id);
+  const choices = pickerProps.find((patch) => patch.SetProp.prop === 'Choices').SetProp.value
+    .Choices;
+  assert.equal(choices.length, FLOW_STORIES.length + tags.length);
+  assert.ok(choices.every((choice) => /^(Component|Pattern) · /.test(choice.label)));
+  const labels = frame.patches
+    .filter((patch) => patch.SetProp?.prop === 'Label')
+    .map((patch) => patch.SetProp.value.Text);
+  assert.ok(labels.includes(`Component · Button · ${choices.length} pages; type to filter`));
 });
 
 test('sidebar search input is bounded and keeps the selected story visible', () => {

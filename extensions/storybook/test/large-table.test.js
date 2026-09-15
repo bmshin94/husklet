@@ -329,13 +329,16 @@ test('the high-density operations story is selectable in the shipped playground'
   const stage = host();
   const source = new LargeRecordSource();
   const first = stage.render(h(Playground, { largeSource: source }));
-  const selector = first.patches.find((patch) => patch.Create?.tag === 'Select').Create.id;
+  const selector = first.patches.find((patch) => patch.Create?.tag === 'Autocomplete').Create.id;
+  const choices = first.patches.find(
+    (patch) => patch.SetProp?.id === selector && patch.SetProp.prop === 'Choices',
+  ).SetProp.value.Choices;
   const before = stage.frames.length;
   stage.surface.dispatch({
-    trigger: 'Change',
+    trigger: 'Select',
     node: selector,
-    id: `${selector}:Change`,
-    value: 'DataTable',
+    id: `${selector}:Select`,
+    rows: [choices.findIndex((choice) => choice.value === 'DataTable')],
   });
   assert.ok(node(stage.since(before), 'Heading', '1,000,000 logical records'));
 });

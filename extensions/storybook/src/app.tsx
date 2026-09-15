@@ -7,6 +7,7 @@
 import React from 'react';
 import type { Key, ReactNode } from 'react';
 import {
+  Autocomplete,
   Button,
   Column,
   Entry,
@@ -155,6 +156,7 @@ export function Playground({
     ...FLOW_STORIES,
     ...families.flatMap((family) => family.tags.map((tag) => tag.name)),
   ];
+  const compactStories = [selected, ...allStories.filter((name) => name !== selected)];
   const selectStory = (name: string) => {
     const nextMode = modeFor(name);
     if (nextMode === 'component') {
@@ -166,18 +168,25 @@ export function Playground({
 
   return (
     <Responsive breakpoint={1024} position={SIDEBAR_MINIMUM} minimum={SIDEBAR_MINIMUM} grow>
-      <Row width="fill" pad={2} gap={2} align="center">
-        <Text label="Page" color="text-dim" />
-        <Select
-          value={selected}
+      <Column width="fill" pad={2} gap={1}>
+        <Text
+          label={`${modeLabel(mode)} · ${spaced(selected)} · ${allStories.length} pages; type to filter`}
+          color="text-dim"
+          ellipsize
+        />
+        <Autocomplete
           width="fill"
-          choices={allStories.map((name) => ({
+          choices={compactStories.map((name) => ({
             value: name,
             label: `${modeLabel(modeFor(name))} · ${spaced(name)}`,
           }))}
-          onChange={(report) => selectStory(String(report.value))}
+          onSelect={(report) => {
+            const index = Number(report.rows?.[0] ?? -1);
+            const story = compactStories[index];
+            if (story) selectStory(story);
+          }}
         />
-      </Row>
+      </Column>
       <Sidebar
         key={'sidebar'}
         families={families}
