@@ -1515,9 +1515,9 @@ mod unix {
                     find_button(&card, "Load output").grab_focus(),
                     "execution output action is keyboard reachable"
                 );
-                let secondary = find_button(&card, "More actions");
+                let secondary = find_button(&card, "Execution actions…");
                 assert!(secondary.has_css_class("variant-ghost"));
-                assert_inline_action(&secondary, width_name, "execution More actions");
+                assert_inline_action(&secondary, width_name, "execution actions");
                 assert_eq!(
                     secondary.height(),
                     44,

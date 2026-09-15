@@ -308,7 +308,7 @@ export function Executions({
                 </>
               }
               overflow={{
-                label: 'More actions',
+                label: 'Execution actions…',
                 tooltip: 'Terminate this process or remove its completed execution record',
                 content: (
                   <Column gap={1}>

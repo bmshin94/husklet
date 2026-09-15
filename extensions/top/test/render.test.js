@@ -8639,7 +8639,7 @@ test('finished execution cleanup requires explicit destructive confirmation', as
   await settled();
   await settled();
   assert.ok(labelled(stage, 'Captured output is complete (EOF).'));
-  invoke(stage, 'More actions');
+  invoke(stage, 'Execution actions…');
   await settled();
   invoke(stage, 'Remove record');
   assert.deepEqual(calls, []);
@@ -8689,7 +8689,7 @@ test('running execution termination is cursor-bound, confirmed and reports obser
   };
   const stage = host();
   stage.render(h(Executions, { api: controlled, resource }));
-  invoke(stage, 'More actions');
+  invoke(stage, 'Execution actions…');
   await settled();
   invoke(stage, 'Terminate');
   assert.deepEqual(calls, [], 'opening the prompt cannot signal the process');
@@ -8742,7 +8742,7 @@ test('execution termination distinguishes an unobserved transition from completi
       resource: { data: [item], loading: false, error: null, reload: async () => {} },
     }),
   );
-  invoke(stage, 'More actions');
+  invoke(stage, 'Execution actions…');
   await settled();
   invoke(stage, 'Terminate');
   invoke(stage, 'Confirm SIGTERM');

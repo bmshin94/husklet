@@ -131,7 +131,7 @@ test(
       for (const control of ['Load output', 'Wait up to 5s']) {
         assert.ok(labelled(stage, control), `${control} remains available`);
       }
-      invoke(stage, 'More actions');
+      invoke(stage, 'Execution actions…');
       await until(() => labelled(stage, 'Terminate'));
       for (const control of ['Terminate', 'Remove record'])
         assert.ok(labelled(stage, control), `${control} remains available`);

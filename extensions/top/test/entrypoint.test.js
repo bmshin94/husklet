@@ -1160,7 +1160,11 @@ test(
         (request) => request.call === 'interface_render_at',
       ).length;
       peer.write(
-        encode({ channel: 33, kind: KIND.event, payload: invocation(requests, 'More actions') }),
+        encode({
+          channel: 33,
+          kind: KIND.event,
+          payload: invocation(requests, 'Execution actions…'),
+        }),
       );
       await until(
         () =>
@@ -1208,7 +1212,11 @@ test(
         (request) => request.call === 'interface_render_at',
       ).length;
       peer.write(
-        encode({ channel: 48, kind: KIND.event, payload: invocation(requests, 'More actions') }),
+        encode({
+          channel: 48,
+          kind: KIND.event,
+          payload: invocation(requests, 'Execution actions…'),
+        }),
       );
       await until(
         () =>

@@ -145,7 +145,7 @@ test(
       await until(() => textValue(stage, 'generation-1'));
       invoke(stage, 'Details');
       await until(() => calls.includes('execution_inspect'));
-      invoke(stage, 'More actions');
+      invoke(stage, 'Execution actions…');
       await until(() => labelled(stage, 'Terminate'));
       invoke(stage, 'Terminate');
       assert.ok(labelled(stage, `Send SIGTERM to execution ${id}?`));

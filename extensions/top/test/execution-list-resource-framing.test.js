@@ -105,7 +105,7 @@ test(
       invoke(stage, 'Executions');
       await until(() => labelled(stage, 'Reading executions…'));
       await until(() => textValue(stage, 'stale-command'));
-      invoke(stage, 'More actions');
+      invoke(stage, 'Execution actions…');
       await until(() => labelled(stage, 'Terminate'));
       assert.ok(labelled(stage, 'Terminate'));
       assert.ok(labelled(stage, 'The host execution catalogue was truncated at its safety limit.'));
@@ -139,7 +139,7 @@ test(
       invoke(stage, 'Refresh');
       await until(() => textValue(stage, 'current-command'));
       assert.equal(attempts, 4);
-      invoke(stage, 'More actions');
+      invoke(stage, 'Execution actions…');
       await until(() => labelled(stage, 'Terminate'));
       assert.ok(
         labelled(stage, 'Terminate'),
