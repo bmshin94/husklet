@@ -1444,6 +1444,54 @@ static int hl_native_checkpoint_locks_admissible(const char *proc_root, pid_t pr
     return hl_native_checkpoint_fd_locks_admissible(proc_root, process, private_fds, private_count);
 }
 
+/* Fifth gate: a process with queued signals. The NativeX86V1 image is a register record whose only
+ * signal state is one u64 blocked mask (capture issues PTRACE_GETSIGMASK, restore PTRACE_SETSIGMASK)
+ * plus memory objects, so there is nowhere for a pending queue to live. Measured, not inferred: a
+ * fixture that blocked SIGUSR1 and SIGRTMIN and queued one SIGUSR1 (payload 0x77) and three SIGRTMIN
+ * (payloads 0x11/0x22/0x33) parked with ShdPnd=0000000200000200; the image restored SigBlk intact at
+ * 0000000200000200 but ShdPnd=0000000000000000, and unblocking in the restored process delivered none
+ * of the four. The restored process therefore waits forever on signals that silently no longer exist.
+ *
+ * Capturing them is not obtainable from outside the process. PTRACE_GETSIGINFO reports only the signal
+ * that caused the current ptrace-stop, no ptrace request enumerates a pending queue, and SigPnd/ShdPnd
+ * are bitmasks carrying neither multiplicity nor siginfo -- three queued SIGRTMIN with distinct payloads
+ * and one are the same bit. Draining the real queue requires injecting code that runs rt_sigtimedwait
+ * inside the tracee, which both this read-only preflight and the refuse-before-mutation restore path
+ * exclude by design, and which destroys the queue if capture then aborts. Restoring the bitmask alone
+ * and re-raising would resume the process with the wrong signal count, a fabricated si_code and a
+ * fabricated payload while appearing to have worked, so this refuses instead.
+ *
+ * Both fields are load-bearing: a process-directed sigqueue lands in ShdPnd, and SigPnd stayed zero
+ * throughout the measurement above. Reading only SigPnd would have missed every signal that was lost. */
+static int hl_native_checkpoint_signals_admissible(const char *proc_root, pid_t process) {
+    char path[PATH_MAX];
+    if (hl_native_checkpoint_path(path, sizeof path, proc_root, process, "status") != 0) return -1;
+    FILE *status = fopen(path, "re");
+    if (status == NULL) return -1;
+    char *line = NULL;
+    size_t capacity = 0;
+    int admissible = 1;
+    int seen = 0;
+    while (admissible && getline(&line, &capacity, status) >= 0) {
+        if (strncmp(line, "SigPnd:", 7) != 0 && strncmp(line, "ShdPnd:", 7) != 0) continue;
+        const char *field = line + 7;
+        while (*field == ' ' || *field == '\t') ++field;
+        char *end = NULL;
+        errno = 0;
+        unsigned long long pending = strtoull(field, &end, 16);
+        if (end == field || errno != 0) { admissible = 0; break; }
+        while (*end == ' ' || *end == '\t' || *end == '\r') ++end;
+        if (*end != '\n' && *end != 0) { admissible = 0; break; }
+        ++seen;
+        if (pending != 0) admissible = 0;
+    }
+    free(line);
+    /* An unreadable, truncated or duplicated status refuses: this gate must never admit by default. */
+    if (ferror(status) || seen != 2) admissible = 0;
+    fclose(status);
+    return admissible ? 0 : -1;
+}
+
 #if defined(HL_NATIVE_TEST_HOOKS)
 static _Atomic int hl_native_checkpoint_test_scan_stopped;
 static int hl_native_checkpoint_test_observe_stop;
@@ -1464,6 +1512,7 @@ static int hl_native_checkpoint_admissible_at(const char *proc_root, pid_t proce
     if (hl_native_checkpoint_fds_admissible(proc_root, process, private_fds, private_count) != 0) return -3;
     if (hl_native_checkpoint_maps_admissible(proc_root, process) != 0) return -4;
     if (hl_native_checkpoint_locks_admissible(proc_root, process, private_fds, private_count) != 0) return -5;
+    if (hl_native_checkpoint_signals_admissible(proc_root, process) != 0) return -6;
     return 0;
 }
 
