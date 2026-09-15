@@ -1193,14 +1193,19 @@ export function Extensions({
     )
       return;
     cancelling.current = true;
+    const epoch = acquisitionEpoch.current;
     cancelledJob.current = acquisition.job;
     setBusy('cancel');
     let accepted = false;
     try {
       await api.extensions.cancelAcquisition(acquisition.job, acquisition.revision);
+      if (acquisitionEpoch.current !== epoch) return;
       accepted = true;
-      setAcquisition(await api.extensions.acquisition(acquisition.job));
+      const current = await api.extensions.acquisition(acquisition.job);
+      if (acquisitionEpoch.current !== epoch) return;
+      setAcquisition(current);
     } catch (cause) {
+      if (acquisitionEpoch.current !== epoch) return;
       if (accepted) {
         setAcquisition({ ...acquisition, state: 'cancelled', progress: null, error: null });
         setError(acquisitionCancellationUnverified(message(cause)));
@@ -1209,6 +1214,7 @@ export function Extensions({
       cancelledJob.current = '';
       try {
         const current = await api.extensions.acquisition(acquisition.job);
+        if (acquisitionEpoch.current !== epoch) return;
         setAcquisition(current);
         setError(acquisitionCancellationRecovery(current.state));
       } catch {
@@ -1217,8 +1223,10 @@ export function Extensions({
         );
       }
     } finally {
-      cancelling.current = false;
-      setBusy('');
+      if (acquisitionEpoch.current === epoch) {
+        cancelling.current = false;
+        setBusy('');
+      }
     }
   };
   const lifecycle = async (extension: ExtensionSummary, action: LifecycleAction) => {
