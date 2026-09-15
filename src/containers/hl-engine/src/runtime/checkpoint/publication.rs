@@ -1,7 +1,8 @@
 use super::{
-    BTreeMap, COMMIT, CaptureFailure, CapturePhase, DIGEST, HASH_BASIS, HASH_PRIME, MEMBER_RESTORED, MEMBER_STDIO,
-    MutationAdmission, OBJECT_ABORT, OBJECT_BEGIN, OBJECT_FINISH, OBJECT_TELL, OBJECT_WRITE, OBJECT_WRITE_AT, Object,
-    Ordering, RECOVERY_COMPLETE, Request, SOURCE_LIST, SOURCE_READ, SOURCE_SIZE, Server,
+    BTreeMap, COMMIT, CaptureFailure, CapturePhase, DIGEST, GROUP_COUNT, GROUP_PRESENT, HASH_BASIS, HASH_PRIME,
+    MEMBER_RESTORED, MEMBER_STDIO, MutationAdmission, OBJECT_ABORT, OBJECT_BEGIN, OBJECT_FINISH, OBJECT_TELL,
+    OBJECT_WRITE, OBJECT_WRITE_AT, Object, Ordering, PARTICIPANT_REGISTERED, RECOVERY_COMPLETE, Request, SOURCE_LIST,
+    SOURCE_READ, SOURCE_SIZE, Server,
 };
 
 impl Server {
@@ -295,10 +296,20 @@ impl Server {
                         || request.op == MEMBER_STDIO
                         || self.recovery_object_request(connection, request, name))
             }
-            CapturePhase::Complete
-            | CapturePhase::Aborting { .. }
-            | CapturePhase::Refusing { .. }
-            | CapturePhase::RecoveryFinished { .. } => false,
+            CapturePhase::Complete | CapturePhase::Aborting { .. } | CapturePhase::RecoveryFinished { .. } => false,
+            // A refused capture is still a running generation until it is settled, and the coordinator
+            // is still in its rendezvous when a member refuses. These three queries publish nothing --
+            // they are how the coordinator reads who committed, how many, and whether a process that has
+            // since vanished was ever a member -- and refusing them blinds it at exactly the moment it
+            // needs to stop waiting. Measured: a member's lock refusal left the coordinator unable to
+            // read its own ledger, so it burned the whole peer-quiescence window and then reported
+            // `membership unknown (broker query failed)` about a process the broker knew perfectly well,
+            // instead of the file-lock domain refusal that had already been decided. Everything that
+            // could write to the image stays out of scope here, which is what makes the refusal binding.
+            CapturePhase::Refusing { id, .. } => {
+                u64::from(request.generation) == id
+                    && matches!(request.op, GROUP_PRESENT | GROUP_COUNT | PARTICIPANT_REGISTERED)
+            }
             // `SOURCE_*` resolve `self.source`, the committed generation a restore
             // reads. During a capture that is the PREVIOUS image, not the group
             // being written, and `CheckpointSink` exposes no read path, so there is

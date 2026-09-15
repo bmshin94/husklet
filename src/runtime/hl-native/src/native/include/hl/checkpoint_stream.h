@@ -137,7 +137,13 @@ typedef enum hl_ckpt_stream_op {
        [u64 host pid]. OK means the native image and manifest are durably committed. */
     HL_CKPT_OP_NATIVE_SNAPSHOT = 31,
     HL_CKPT_OP_NATIVE_RESTORE_PREPARE = 32,
-    HL_CKPT_OP_NATIVE_RESTORE_COMPLETE = 33
+    HL_CKPT_OP_NATIVE_RESTORE_COMPLETE = 33,
+    /* Has this capture generation ALREADY been refused by some other process? No payload and no name;
+       reply.value is 1 when it has and 0 when it has not. Read-only and side-effect free -- unlike
+       REFUSAL_LATCHED it does not claim the settle, because the asker is the coordinator's rendezvous
+       and it asks on every pass, long before it is ready to settle over the channel it will settle on.
+       Any status other than OK is read as 0: not knowing must never be read as "a refusal happened". */
+    HL_CKPT_OP_CAPTURE_REFUSAL_DECIDED = 34
 } hl_ckpt_stream_op;
 
 #define HL_CKPT_MEMBER_EXIT_CODE UINT32_C(1)

@@ -189,6 +189,7 @@ static void ckpt_coordinate_and_exit(struct cpu *c) {
     int quiet = 0;
     int stalled = 0;
     int churning = 0;
+    int member_refused = 0;
     /* Per known peer, the host CPU time it had consumed when it was last seen to advance. Parallel to
      * `foll`/`completed` and grown with them. */
     uint64_t *consumed = NULL;
@@ -323,6 +324,18 @@ static void ckpt_coordinate_and_exit(struct cpu *c) {
          * membership while an unfrozen guest process was still on its way to a safepoint. */
         quiet = ndone == nfoll && !discovered ? quiet + 1 : 0;
         if (quiet >= CKPT_ENUMERATION_QUIET_PASSES) break;
+        /* A MEMBER MAY HAVE ALREADY REFUSED, and if it has there is nothing left here to wait for. A
+         * member whose own dump is refused names the reason to the broker and then parks; its group is
+         * never coming. Without this the rendezvous waits for a commit that has already been decided
+         * against, burns its whole stall window, and then refuses in its OWN words -- reporting peer
+         * quiescence about a process whose real reason (a file lock, a live seccomp filter) the broker
+         * was already holding, and reaching the settle seconds after the member it is meant to release
+         * has given up waiting to be released. The query is read-only and claims nothing; the settle
+         * below is what claims, on the channel it will actually settle over. */
+        if (ckpt_stream_refusal_decided() == 1) {
+            member_refused = 1;
+            break;
+        }
         /* `discovered` and `settled` cover the coarse milestones; `settled` also carries the CPU-time
          * advance recorded above. A pass in which none of them moved is a pass in which the whole
          * outstanding set stood still. */
@@ -335,6 +348,19 @@ static void ckpt_coordinate_and_exit(struct cpu *c) {
     free(scan);
     free(consumed);
     fprintf(stderr, "[ckpt] coordinator pid=%d found %d peer(s), %d exempt\n", getpid(), nfoll, nexempt);
+    if (member_refused) {
+        /* The reason is the member's, already recorded at the broker and printed above; this names what
+         * the coordinator is doing about it and settles on the whole tree's behalf. The settle still asks
+         * g_ckpt_capture_destructive first, so a refusal that arrives after this coordinator has consumed
+         * anything terminalizes exactly as it did before. */
+        const char *reason = "a member refused its own dump; releasing the tree, which this capture never consumed";
+        if (ckpt_settle_resumable_refusal(&phases, CKPT_REFUSAL_SELF_DUMP, reason) == 0) {
+            free(foll);
+            free(completed);
+            return;
+        }
+        ckpt_phase_exit(&phases, 70);
+    }
     if (churning >= CKPT_RENDEZVOUS_CHURN_PASSES) {
         char reason[HL_CKPT_STREAM_NAME_MAX];
         snprintf(reason, sizeof reason,
@@ -406,9 +432,22 @@ static void ckpt_coordinate_and_exit(struct cpu *c) {
     // the parent of every corpse it collected -- by construction, on both ISAs.
     ckpt_reaped_drop_captured_members(sink);
     phase = ckpt_phase_begin(&phases);
-    if (ckpt_dump_self(c, "proc.1", 0) != 0)
-        ckpt_coordinator_refuse(&phases, CKPT_REFUSAL_SELF_DUMP,
-                                "the container init's own dump failed; the checkpoint would be incomplete");
+    if (ckpt_dump_self(c, "proc.1", 0) != 0) {
+        /* The init's own dump refused. This is the same class as the three pre-dump refusals above and is
+         * settled the same way: ckpt_dump_self names its reason to the broker BEFORE it withdraws the
+         * group, so the capture is refused rather than concluded, and g_ckpt_capture_destructive decides
+         * whether it may be resumed. It used to call the _Noreturn ckpt_coordinator_refuse unconditionally
+         * -- a correct refusal that then killed the container it had just declined to checkpoint. Measured
+         * on all eight translated backend columns: a guest holding an ordinary flock(2) at checkpoint time
+         * was refused, correctly, and the engine exited 3 with the guest never resuming. */
+        const char *reason = "the container init's own dump failed; the checkpoint would be incomplete";
+        if (ckpt_settle_resumable_refusal(&phases, CKPT_REFUSAL_SELF_DUMP, reason) == 0) {
+            free(foll);
+            free(completed);
+            return;
+        }
+        ckpt_phase_exit(&phases, 70);
+    }
     ckpt_phase_finish(&phases, "serialization", phase, 0);
 
     ckpt_publish_manifest(&phases, sink, nfoll, nexempt);

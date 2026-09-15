@@ -1,5 +1,5 @@
 use super::{
-    CLAIM, COMMIT, CaptureFailure, CapturePhase, DECIDES_REFUSAL, GROUP_BEGIN, GROUP_COMMIT, MARK_IRREVERSIBLE,
+    CAPTURE_REFUSAL_DECIDED, CLAIM, COMMIT, CaptureFailure, CapturePhase, DECIDES_REFUSAL, GROUP_BEGIN, GROUP_COMMIT, MARK_IRREVERSIBLE,
     MEMBER_EXITED, MEMBER_RESTORED, MEMBER_STDIO, NATIVE_RESTORE_COMPLETE, NATIVE_RESTORE_PREPARE, NATIVE_SNAPSHOT,
     OBJECT_BEGIN, OBJECT_FINISH, OBJECT_TELL, OBJECT_WRITE, OBJECT_WRITE_AT, REFUSAL_LATCHED, REGISTER_READY,
     RELEASE_EXIT, RELEASE_HOLD, RELEASE_RESUME, RELEASE_WAIT, REQUEST_BYTES, Reply, Request, SEAL_MEMBERSHIP,
@@ -203,6 +203,17 @@ impl Server {
                 let marked = self.mark_irreversible(u64::from(request.generation));
                 let reply = marked.map_or_else(|()| Reply::error(), |()| Reply::ok());
                 let _ = reply.write(&mut channel);
+                continue;
+            }
+            if request.op == CAPTURE_REFUSAL_DECIDED {
+                // Read-only, and answered ahead of the membership and scope checks for the same reason
+                // RELEASE_WAIT is: the asker is the coordinator's rendezvous, which runs before its own
+                // registration and needs to know whether it is still waiting for a group some other
+                // member has already decided against.
+                let reply = Reply::value(u64::from(self.capture_refusal_decided(u64::from(request.generation))));
+                if reply.write(&mut channel).is_err() {
+                    return;
+                }
                 continue;
             }
             if request.op == REFUSAL_LATCHED {
@@ -526,11 +537,60 @@ impl Server {
             id,
             deadline,
             coordinator: None,
+            lapsed: CaptureFailure::Deadline,
         };
         self.refusal_resumed.lock().map_err(|_| ())?.clear();
         self.record_refusal(reason);
         self.capture_changed.notify_all();
         Ok(())
+    }
+
+    /// Refuse the running capture on behalf of a process that has withdrawn its own image group.
+    ///
+    /// The backstop half of `request::abort_group`: it moves a running capture into the settle-eligible
+    /// `Refusing` phase rather than concluding it, so the refusal can still be latched and settled and
+    /// the frozen tree can still be released. A capture that is already `Refusing` keeps the typed
+    /// reason its refusing process named -- that is the ordinary ordering, and overwriting it here would
+    /// trade a named domain refusal for this generic one.
+    ///
+    /// It lapses as `Failed`, not as `Deadline`: if no one settles it, the capture failed for exactly
+    /// the reason the abort reported before this phase existed, and the recorded cause says so. And it
+    /// lapses SOON -- see `ABORT_REFUSAL_SETTLE_GRACE` -- so the rollback still happens inside the sink
+    /// transaction's lease.
+    pub(super) fn refuse_capture_for_abort(&self, reason: String) -> Result<(), ()> {
+        let mut capture = self.capture_lock().map_err(|_| ())?;
+        let (id, deadline) = match capture.phase {
+            CapturePhase::Active { id, deadline } => (id, deadline),
+            CapturePhase::Refusing { .. } => return Ok(()),
+            _ => return Err(()),
+        };
+        let deadline = deadline.min(std::time::Instant::now() + super::ABORT_REFUSAL_SETTLE_GRACE);
+        capture.phase = CapturePhase::Refusing {
+            id,
+            deadline,
+            coordinator: None,
+            lapsed: CaptureFailure::Failed,
+        };
+        self.capture_changed.notify_all();
+        drop(capture);
+        if let Ok(mut resumed) = self.refusal_resumed.lock() {
+            resumed.clear();
+        }
+        self.record_failure(id, reason.clone());
+        self.record_refusal(reason);
+        Ok(())
+    }
+
+    /// Whether this capture generation has already been refused and is waiting to be settled.
+    ///
+    /// Read-only on purpose. `refusal_latched` answers a related question and CLAIMS the settle as a side
+    /// effect, which is correct for the coordinator that is about to settle and wrong for the one that is
+    /// still deciding whether to stop waiting -- it would bind the settle to a connection that is about
+    /// to be replaced, and losing that connection reads as `the refusal coordinator disconnected before
+    /// settlement`, terminalizing the tree the question was asked to save.
+    pub(super) fn capture_refusal_decided(&self, id: u64) -> bool {
+        self.capture_lock()
+            .is_ok_and(|capture| matches!(capture.phase, CapturePhase::Refusing { id: active, .. } if active == id))
     }
 
     pub(super) fn refusal_latched(&self, id: u64, connection: u64, reason: Option<&str>) -> bool {
@@ -544,6 +604,7 @@ impl Server {
                     id,
                     deadline,
                     coordinator: Some(connection),
+                    lapsed: CaptureFailure::Deadline,
                 };
                 drop(capture);
                 if let Ok(mut resumed) = self.refusal_resumed.lock() {
@@ -575,6 +636,7 @@ impl Server {
                 id: active,
                 deadline,
                 coordinator: Some(owner),
+                ..
             } if active == id && owner == coordinator => deadline,
             _ => return Err(()),
         };

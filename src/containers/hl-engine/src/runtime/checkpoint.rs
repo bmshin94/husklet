@@ -34,7 +34,8 @@ mod test;
 mod transaction;
 use participants::ParticipantLedger;
 use protocol::{
-    CLAIM, COMMIT, DECIDES_REFUSAL, DIGEST, GROUP_ABORT, GROUP_BEGIN, GROUP_COMMIT, GROUP_COUNT, GROUP_PRESENT,
+    CAPTURE_REFUSAL_DECIDED, CLAIM, COMMIT, DECIDES_REFUSAL, DIGEST, GROUP_ABORT, GROUP_BEGIN, GROUP_COMMIT,
+    GROUP_COUNT, GROUP_PRESENT,
     MARK_IRREVERSIBLE, MEMBER_EXITED, MEMBER_RESTORED, MEMBER_STDIO, NATIVE_RESTORE_COMPLETE, NATIVE_RESTORE_PREPARE,
     NATIVE_SNAPSHOT, OBJECT_ABORT, OBJECT_BEGIN, OBJECT_FINISH, OBJECT_TELL, OBJECT_WRITE, OBJECT_WRITE_AT,
     PARTICIPANT_REGISTERED, PAYLOAD_MAX, RECOVERY_COMPLETE, REFUSAL_LATCHED, REGISTER_READY, RELEASE_EXIT,
@@ -45,6 +46,19 @@ use protocol::{
 const HASH_BASIS: u64 = 14_695_981_039_346_656_037;
 const HASH_PRIME: u64 = 1_099_511_628_211;
 const ABORT_SETTLEMENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long a capture refused by a bare `GROUP_ABORT` stays settle-eligible before it lapses.
+///
+/// Short, and deliberately much shorter than the capture's own deadline. Every process that refuses
+/// names its reason to the broker BEFORE it withdraws its group, and that path (`decide_refusal`) keeps
+/// the full deadline because a coordinator is on its way to settle it. Reaching `Refusing` from the
+/// abort alone means nobody announced anything, so nobody is likely to settle it either -- this is the
+/// grace that lets one settle if it comes, not a window to wait out.
+///
+/// It must also end well INSIDE the capture deadline, because the sink's transaction lease is that
+/// deadline: a refusal that lapsed at the deadline itself could no longer discard its own transaction,
+/// and the rollback the abort exists to perform would fail with the lease already expired.
+const ABORT_REFUSAL_SETTLE_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
 
 struct Object {
     name: String,
@@ -97,10 +111,20 @@ enum CapturePhase {
         id: u64,
         deadline: std::time::Instant,
     },
+    /// The capture has been refused and is waiting to be settled, which is the second half of what a
+    /// refusal owes: the image must not be published AND the container must be left as the capture
+    /// found it. Nothing may publish from here, but the generation is still alive -- the rendezvous
+    /// queries still answer, and the refusing tree is still released rather than terminalized.
     Refusing {
         id: u64,
         deadline: std::time::Instant,
         coordinator: Option<u64>,
+        /// What this capture failed as if the settle window closes without a settle. A refusal decided
+        /// by a coordinator that is still running lapses as `Deadline`; one entered from a group abort,
+        /// whose refusing process may already be gone, lapses as the `Failed` that abort used to report
+        /// immediately. Carried on the phase so a settle that never arrives cannot silently relabel the
+        /// failure it replaced.
+        lapsed: CaptureFailure,
     },
     Publishing {
         id: u64,
@@ -605,20 +629,21 @@ impl Server {
                     };
                 }
                 CapturePhase::Refusing {
-                    id: active, deadline, ..
+                    id: active,
+                    deadline,
+                    lapsed,
+                    ..
                 } if active == id => {
                     let now = std::time::Instant::now();
                     if now >= deadline {
                         capture.phase = CapturePhase::Finished {
                             id,
-                            result: Err(CaptureFailure::Deadline),
+                            result: Err(lapsed),
                         };
                         self.capture_changed.notify_all();
                         drop(capture);
                         self.interrupt_channels();
-                        return self
-                            .settle_failed_capture(id, CaptureFailure::Deadline)
-                            .map(|failure| Some(Err(failure)));
+                        return self.settle_failed_capture(id, lapsed).map(|failure| Some(Err(failure)));
                     }
                     if now >= wake {
                         return Ok(None);

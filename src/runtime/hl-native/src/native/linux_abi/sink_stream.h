@@ -66,6 +66,21 @@ static int ckpt_stream_refusal_latched(const char *reason) {
     return reply.value == 1 ? 1 : 0;
 }
 
+/* Has some other process already refused this capture? 1 yes, 0 no or unknown.
+ *
+ * Distinct from ckpt_stream_refusal_latched because that one CLAIMS the settle for the channel it is
+ * asked on, and the rendezvous is not settling when it asks -- it is deciding whether to stop waiting.
+ * A claim taken here would also be taken on the wrong channel: announcing a refusal poisons the
+ * announcing process's channel by design, so the coordinator settles over a connection it has not opened
+ * yet. Unknown answers as 0, which costs at worst the stall window the rendezvous already has. */
+static int ckpt_stream_refusal_decided(void) {
+    hl_ckpt_reply reply;
+    if (ckpt_stream_call(HL_CKPT_OP_CAPTURE_REFUSAL_DECIDED, NULL, 0, 0, 0, NULL, 0, &reply, NULL, 0) !=
+        HL_CKPT_STATUS_OK)
+        return 0;
+    return reply.value == 1 ? 1 : 0;
+}
+
 static int ckpt_stream_settle_refusal(void) {
     return ckpt_stream_call(HL_CKPT_OP_SETTLE_REFUSAL, NULL, 0, 0, 0, NULL, 0, NULL, NULL, 0) ==
                    HL_CKPT_STATUS_OK

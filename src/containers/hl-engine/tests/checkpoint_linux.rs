@@ -6700,6 +6700,197 @@ fn held_file_lock_plan_with_policy(
     }
 }
 
+
+fn lock_refusal_survives_fixture(isa: GuestIsa, directory: &Path) -> PathBuf {
+    shared_state_fixture(isa, directory, "lock_refusal_survives")
+}
+
+fn lock_refusal_survives_plan(executable: &Path, report: &Path, role: &str, lock: &Path, release: &Path) -> RuntimePlan {
+    let mut options = Options::default();
+    options.set("HL_CHECKPOINT", "1", true).unwrap();
+    RuntimePlan {
+        rootfs: None,
+        executable_host: Some(executable.as_os_str().as_encoded_bytes().to_vec()),
+        arguments: [
+            executable.as_os_str().as_encoded_bytes().to_vec(),
+            report.as_os_str().as_encoded_bytes().to_vec(),
+            role.as_bytes().to_vec(),
+            lock.as_os_str().as_encoded_bytes().to_vec(),
+            release.as_os_str().as_encoded_bytes().to_vec(),
+        ]
+        .into(),
+        environment: Vec::new(),
+        result_path: None,
+        options,
+        box_policy: Default::default(),
+    }
+}
+
+/// What one role's tree did with a checkpoint request, and what became of it afterwards.
+struct LockRefusalAftermath {
+    /// Whether the process that was supposed to hold the lock proved it held one before the request.
+    held_before: bool,
+    /// Whether the capture was refused. `false` means it was admitted.
+    refused: bool,
+    /// Whether the sink kept a MANIFEST -- a refused capture must publish none.
+    committed: bool,
+    /// How the whole engine ended after the request, bounded.
+    exit: Result<hl_engine::engine::EngineExit, hl_engine::engine::EngineError>,
+    /// Everything the guest tree wrote, including whatever it wrote AFTER the request.
+    report: String,
+}
+
+/// Run one role to readiness, request a checkpoint, then RELEASE THE TREE AND WATCH IT WORK.
+///
+/// The release file is created only after the checkpoint request has returned, so every line the guest
+/// appends after it is proof the guest was alive at a point strictly later than the decision.
+fn lock_refusal_aftermath(isa: GuestIsa, executable: &Path, role: &str) -> LockRefusalAftermath {
+    let directory = tempfile::tempdir().unwrap();
+    let report = directory.path().join("report");
+    let lock = directory.path().join("lockfile");
+    let release = directory.path().join("release");
+    let store = Arc::new(AtomicStore::default());
+    let capture = Arc::new(
+        Engine::with_checkpoint(
+            isa,
+            lock_refusal_survives_plan(executable, &report, role, &lock, &release),
+            streams(false),
+            store.clone(),
+            store.clone(),
+        )
+        .unwrap(),
+    );
+    capture.start().unwrap();
+    wait_for(&report, &format!("READY {role}"));
+    let announced = std::fs::read_to_string(&report).unwrap_or_default();
+    let outcome = capture.capture_checkpoint_until(checkpoint_deadline());
+    // Only now: the guest cannot have written a post-release line before this point.
+    std::fs::write(&release, []).unwrap();
+    let exit = wait_result_bounded(&capture, &format!("{isa:?}/{role} lock refusal aftermath"));
+    LockRefusalAftermath {
+        held_before: announced.contains("held=1"),
+        refused: outcome.is_err(),
+        committed: store.snapshot().contains_key("MANIFEST"),
+        exit,
+        report: std::fs::read_to_string(&report).unwrap_or_default(),
+    }
+}
+
+/// A refusal owes TWO things, and this is the second one: the container must be left as the capture
+/// found it. `a_guest_holding_a_real_file_lock_refuses_the_checkpoint_on_both_isas` covers the first --
+/// it proves the lock is genuinely held and that no manifest is published -- but it takes the
+/// container's fate with `let _ = wait_result_bounded(...)` and asserts nothing about it. That is why a
+/// correct refusal that then KILLED the container survived a full round of measurement with every
+/// checkpoint test green.
+///
+/// Both roles are covered because they are different code paths and only one of them is what a real
+/// workload hits. `init` is the container init refusing its own dump; `member` is a forked child
+/// holding the lock, which is the shape of a `Persisted` exec pane -- a tree member, not the init.
+///
+/// WHAT IT ASSERTS IS THE AFTERMATH, NOT THE DECISION. The tree is released only after the refusal has
+/// been observed, and it must then still be running, still hold the lock it was refused for, and do
+/// real work: WORK_ROUNDS of write/fsync/read-back through a file it opens after the release, summed.
+/// `work=136` is that sum, and nothing that is dead, parked, or stopped at the release can report it.
+///
+/// Non-vacuity from the other side: the `none` role is the identical two-process shape with no lock
+/// anywhere, and it must be ADMITTED and commit a manifest. A gate that refused everything, or a
+/// release mechanism that never released, fails there instead.
+///
+/// Before the broker's capture lifecycle was fixed this failed on both ISAs and both roles with the
+/// engine dead and no post-release line at all:
+///
+/// ```text
+/// X86_64/init lock refusal destroyed the container: exit=Err(NativeRunFailed(3)) report="READY init held=1\n"
+/// ```
+#[test]
+fn a_refused_file_lock_capture_leaves_the_tree_running_on_both_isas_and_roles() {
+    let compiling = fixture_compilation();
+    let fixtures = tempfile::tempdir().unwrap();
+    let executables =
+        [GuestIsa::Aarch64, GuestIsa::X86_64].map(|isa| (isa, lock_refusal_survives_fixture(isa, fixtures.path())));
+    drop(compiling);
+    let _exclusive = exclusive_checkpoint_test();
+
+    // WORK_ROUNDS * (WORK_ROUNDS + 1) / 2 for WORK_ROUNDS = 16, in lock_refusal_survives.c.
+    const WORK: &str = "work=136";
+    let mut refusals = 0;
+    let mut admissions = 0;
+
+    for (isa, executable) in executables {
+        for role in ["init", "member"] {
+            let seen = lock_refusal_aftermath(isa, &executable, role);
+            println!(
+                "lock aftermath: {isa:?}/{role:<6} held_before={} refused={} committed={} exit={:?}",
+                seen.held_before, seen.refused, seen.committed, seen.exit
+            );
+            assert!(
+                seen.held_before,
+                "{isa:?}/{role} did not actually hold the lock, so its refusal would prove nothing"
+            );
+            assert!(seen.refused, "{isa:?}/{role} capture was admitted while a lock was held");
+            assert!(
+                !seen.committed,
+                "{isa:?}/{role} committed a manifest for a refused capture"
+            );
+            refusals += 1;
+
+            // The aftermath. Every one of these is about a moment strictly after the refusal.
+            let status = seen.exit.as_ref().map(|exit| exit.guest_status);
+            assert_eq!(
+                status,
+                Ok(0),
+                "{isa:?}/{role} lock refusal destroyed the container: exit={:?} report={:?}",
+                seen.exit,
+                seen.report
+            );
+            for (who, expects_lock) in [("init", role == "init"), ("child", role == "member")] {
+                let line = seen
+                    .report
+                    .lines()
+                    .find(|line| line.starts_with(&format!("RESULT {who} ")))
+                    .unwrap_or_else(|| {
+                        panic!("{isa:?}/{role}: {who} never ran again after the refusal: {:?}", seen.report)
+                    });
+                assert!(
+                    line.contains("released=1") && line.contains(WORK),
+                    "{isa:?}/{role}: {who} did not do its post-refusal work: {line:?}"
+                );
+                assert!(
+                    line.contains(if expects_lock { "held_after=1" } else { "held_after=0" }),
+                    "{isa:?}/{role}: the refusal changed whether {who} holds the lock: {line:?}"
+                );
+            }
+            assert!(
+                seen.report.contains(&format!("REAPED {role} code=37")),
+                "{isa:?}/{role} init did not reap its own child after the refusal: {:?}",
+                seen.report
+            );
+        }
+
+        // Non-vacuity: the same two-process shape with no lock must still be ADMITTED, so neither the
+        // refusal nor the release can be an unconditional property of this fixture.
+        let seen = lock_refusal_aftermath(isa, &executable, "none");
+        println!(
+            "lock aftermath: {isa:?}/none   held_before={} refused={} committed={} exit={:?}",
+            seen.held_before, seen.refused, seen.committed, seen.exit
+        );
+        assert!(!seen.held_before, "{isa:?}/none unexpectedly held a lock");
+        assert!(
+            !seen.refused && seen.committed,
+            "{isa:?}/none was refused with no lock held: refused={} committed={} report={:?}",
+            seen.refused,
+            seen.committed,
+            seen.report
+        );
+        admissions += 1;
+    }
+
+    assert!(
+        refusals == 4 && admissions == 2,
+        "battery must contain both refusals and admissions ({refusals} refusals, {admissions} admissions)"
+    );
+}
+
 /// Runs one lock shape to readiness, asks the capture for a checkpoint, and reports
 /// `(the guest really held the lock, the capture was refused, the sink kept a MANIFEST)`.
 fn held_file_lock_verdict(isa: GuestIsa, executable: &Path, mode: &str) -> (bool, bool, bool) {
@@ -6730,7 +6921,16 @@ fn held_file_lock_verdict_under_policy(
     wait_for(&ready, &format!("READY {mode}"));
     let announced = std::fs::read_to_string(&ready).unwrap_or_default();
     let refused = capture.capture_checkpoint_until(checkpoint_deadline()).is_err();
-    let _ = wait_result_bounded(&capture, "held file lock capture");
+    // STOP IT, DO NOT WAIT FOR IT. This fixture parks forever by design, and a refusal now leaves it
+    // running -- that is the fix `a_refused_file_lock_capture_leaves_the_tree_running_on_both_isas_and_roles`
+    // pins. Waiting for a guest that was correctly left alive would hang here for the whole bound and
+    // report the survival as a failure. What this battery is about is the DECISION; the aftermath has
+    // its own test, with a fixture that can be released and asked to prove it is still working.
+    let cleanup = force_and_reap_bounded(&capture);
+    assert!(
+        !cleanup.contains("reap_timeout"),
+        "{isa:?}/{mode} did not reap after a forced stop: {cleanup}"
+    );
     let committed = store.snapshot().contains_key("MANIFEST");
     (announced.contains("held=1"), refused, committed)
 }

@@ -181,14 +181,49 @@ impl Server {
         })
     }
 
+    /// One process withdrawing its own image group, which refuses the whole capture.
+    ///
+    /// A native process emits `GROUP_ABORT` only after its process image has been refused. That is a
+    /// failure of the whole process-tree image, not recoverable cleanup of one member: a manifest
+    /// containing every other process would be authoritative but unrestorable. So this can only ever
+    /// end a capture, never publish one -- the staged group and every object under it are dropped here
+    /// and nothing may be written afterwards.
+    ///
+    /// WHAT IT MUST NOT DO IS CONCLUDE THE CAPTURE. It used to drive the phase straight to
+    /// `Finished { result: Err(Failed) }`, and that destroyed the container it had just correctly
+    /// declined to checkpoint. A refusal owes two things -- publish nothing, AND leave the container as
+    /// it found it -- and the second one is settled through `Refusing`: the refusing process latches its
+    /// typed reason, every parked member is released back into the live tree, and the coordinator
+    /// settles. Concluding here made the phase neither `Active` nor `Refusing` before any of that could
+    /// happen, so `refusal_latched` declined, the settle polled out its window, and the coordinator
+    /// terminalized a tree that had consumed nothing. Measured on all eight translated backend columns:
+    /// a guest holding an ordinary `flock(2)` at checkpoint time was refused correctly and then killed,
+    /// engine exit 3, and the typed `CaptureRefused` degraded to `WaitFailed` on the way out.
+    ///
+    /// So a group abort REFUSES the capture instead of ending it. Refusing publishes nothing --
+    /// `request_in_scope` admits only the read-only rendezvous queries and `admit_mutation` refuses
+    /// outright -- so the image is exactly as unpublishable as it was before, and the generation stays
+    /// alive just long enough to be settled. If nothing settles it, the refusal lapses at its deadline
+    /// as the `Failed` this used to report immediately (`CapturePhase::Refusing::lapsed`), so no
+    /// diagnosis is lost to the change.
+    ///
+    /// A capture that is already `Refusing` -- the ordinary case, because every refusing process names
+    /// its reason to the broker before it withdraws its group -- keeps the reason it already has. This
+    /// is the backstop for the process that cannot, or that dies between the two.
     fn abort_group(&self, id: u64, name: &str) -> Reply {
-        // A native process emits GROUP_ABORT only after its process image has
-        // been refused.  That is a failure of the whole process-tree image,
-        // not recoverable cleanup of one member: a manifest containing every
-        // other process would be authoritative but unrestorable.
+        // The mutation ticket is the barrier, and it is taken BEFORE anything else and held across the
+        // phase change. `publish_manifest_as` only leaves `Active` for `Publishing` when no mutation is
+        // outstanding, so a `COMMIT` that raced this abort waits here and then finds a capture it may not
+        // publish. Dropping the ticket would leave exactly the window this arrangement exists to close.
+        //
+        // No ticket means the capture is not `Active`, which is the ORDINARY case rather than an error
+        // path: every refusing process names its reason to the broker before it withdraws its group, so
+        // the capture is already `Refusing` by the time this arrives and the reason is already recorded.
+        // Answered as it always was -- nothing to do, and an error reply.
         let Ok(Some(admission)) = self.mutation_admission() else {
             return Reply::error();
         };
+        let refusal = format!("process {id} aborted image group {name:?} because its own process image was refused");
         {
             let mut state = match self.state.lock() {
                 Ok(state) => state,
@@ -199,28 +234,27 @@ impl Server {
                 .open
                 .retain(|_, object| object.name.split_once('/').is_none_or(|(group, _)| group != name));
         }
-        // This is the instant the capture fails, and until this line it failed ANONYMOUSLY: the phase
-        // went to `Finished { result: Err(Failed) }` with nothing recorded anywhere, so every other
-        // member's in-flight publication was refused as out of scope and each of them aborted in turn.
-        // The surviving diagnosis was then whichever symptom the cascade reached last -- observed as a
-        // `REGISTER_READY` refusal in a process forked long after the real refusal. Name the member and
-        // the group that decided it, at the decision.
+        // This is the instant the capture is refused, and until it was named it failed ANONYMOUSLY: the
+        // phase moved on with nothing recorded anywhere, so every other member's in-flight publication
+        // was refused as out of scope and each of them aborted in turn. The surviving diagnosis was then
+        // whichever symptom the cascade reached last -- observed as a `REGISTER_READY` refusal in a
+        // process forked long after the real refusal. Name the member and the group that decided it, at
+        // the decision.
         hl_log::hl_error!(
             hl_log::tag::CHECKPOINT,
-            "checkpoint capture failed: process {id} aborted image group {name:?} because its own \
+            "checkpoint capture refused: process {id} aborted image group {name:?} because its own \
              process image was refused; the whole process-tree image is unrestorable without it"
         );
-        self.record_failure(
-            admission.id,
-            format!("process {id} aborted image group {name:?} because its own process image was refused"),
-        );
-        if admission.finish(Err(super::CaptureFailure::Failed)).is_err() {
+        // The manifest may already own the irreversible publication point if it entered Publishing
+        // first. Native participants synchronously send GROUP_ABORT before exiting, and the coordinator
+        // joins them before COMMIT, so a legitimate participant refusal always wins this race; a phase
+        // this cannot refuse from is answered with an error and nothing else, exactly as before.
+        let refused = self.refuse_capture_for_abort(refusal);
+        // `Ok(())`: the ticket is released without a failure of its own, because the capture is already
+        // refused and the refusal -- not this mutation -- is what ends it.
+        if refused.is_err() || admission.finish(Ok(())).is_err() {
             self.interrupt_channels();
         }
-        // The manifest may already own the irreversible publication point if
-        // it entered Publishing first. Native participants synchronously send
-        // GROUP_ABORT before exiting, and the coordinator joins them before
-        // COMMIT, so a legitimate participant refusal always wins this race.
         Reply::error()
     }
 

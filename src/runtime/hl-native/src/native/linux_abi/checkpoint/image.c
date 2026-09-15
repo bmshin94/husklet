@@ -1691,7 +1691,15 @@ static const char *g_ckpt_member_refusal;
  * thing that changes is when the host learns, and what it is told.
  *
  * BEST EFFORT, exactly like ckpt_stream_capture_refused itself: on the paths where the channel is what
- * broke, this round trip fails too and the coordinator's own deadline still ends the capture. */
+ * broke, this round trip fails too and the coordinator's own deadline still ends the capture.
+ *
+ * THE INIT IS NOT EXEMPT, and used to be. This was gated on `park`, so every refusing path in
+ * ckpt_dump_self announced itself EXCEPT the container init's own -- the init withdrew its group with no
+ * reason attached. The broker then saw a bare GROUP_ABORT on a capture that was still `Active`, and a
+ * refusal it has no reason for is a refusal it cannot latch or settle. The init is a member of its own
+ * capture and refuses for exactly the same domains a peer does, so it names its refusal the same way.
+ * Announcing BEFORE the group is withdrawn is the part that matters: it is what puts the capture into a
+ * phase the refusal can be settled from, which is the difference between refusing and terminalizing. */
 static void ckpt_member_refuse(const char *group, const char *step) {
     char reason[HL_CKPT_STREAM_NAME_MAX];
     snprintf(reason, sizeof reason,
@@ -1709,7 +1717,7 @@ static int ckpt_dump_self(struct cpu *c, const char *procdir, int park) {
     ckpt_interrupt_threads(c);
     if (stw_checkpoint_wait(request) != 0) {
         fprintf(stderr, "[ckpt] refuse: stop-the-world barrier did not converge\n");
-        if (park) ckpt_member_refuse(procdir, "stop every one of its own threads for the capture");
+        ckpt_member_refuse(procdir, "stop every one of its own threads for the capture");
         ckpt_sink_group_abort(ckpt_sink_current(), procdir);
         stw_checkpoint_end();
         atomic_store_explicit(&g_ckpt_barrier_active, 0, memory_order_release);
@@ -1718,7 +1726,7 @@ static int ckpt_dump_self(struct cpu *c, const char *procdir, int park) {
     int count = stw_checkpoint_cpus(live, THREAD_REG_MAX);
     if (count < 1 || count > THREAD_REG_MAX) {
         fprintf(stderr, "[ckpt] refuse: invalid registered CPU count %d\n", count);
-        if (park) ckpt_member_refuse(procdir, "enumerate its own stopped executors");
+        ckpt_member_refuse(procdir, "enumerate its own stopped executors");
         ckpt_sink_group_abort(ckpt_sink_current(), procdir);
         stw_checkpoint_end();
         atomic_store_explicit(&g_ckpt_barrier_active, 0, memory_order_release);
@@ -1728,7 +1736,7 @@ static int ckpt_dump_self(struct cpu *c, const char *procdir, int park) {
        exactly the process's thread set at the instant the broker records it. */
     if (ckpt_register_ready(live, count) != 0) {
         fprintf(stderr, "[ckpt] refuse: participant REGISTER_READY was not acknowledged\n");
-        if (park) ckpt_member_refuse(procdir, "prove its membership of the capture to the broker");
+        ckpt_member_refuse(procdir, "prove its membership of the capture to the broker");
         ckpt_sink_group_abort(ckpt_sink_current(), procdir);
         stw_checkpoint_end();
         atomic_store_explicit(&g_ckpt_barrier_active, 0, memory_order_release);
@@ -1755,6 +1763,7 @@ static int ckpt_dump_self(struct cpu *c, const char *procdir, int park) {
         if (live[i]->seccomp_mode != 0 || live[i]->seccomp_filters != NULL) {
             fprintf(stderr, "[ckpt] refuse: CPU %d has unserialized seccomp state (mode=%d filters=%p)\n", i,
                     live[i]->seccomp_mode, (void *)live[i]->seccomp_filters);
+            ckpt_member_refuse(procdir, "be captured with a live seccomp filter the image cannot carry");
             ckpt_sink_group_abort(ckpt_sink_current(), procdir);
             stw_checkpoint_end();
             atomic_store_explicit(&g_ckpt_barrier_active, 0, memory_order_release);
@@ -1762,6 +1771,7 @@ static int ckpt_dump_self(struct cpu *c, const char *procdir, int park) {
         }
     struct cpu *images = forced_refusal ? NULL : malloc((size_t)count * sizeof *images);
     if (!forced_refusal && !images) {
+        ckpt_member_refuse(procdir, "allocate the images of its own stopped executors");
         ckpt_sink_group_abort(ckpt_sink_current(), procdir);
         stw_checkpoint_end();
         atomic_store_explicit(&g_ckpt_barrier_active, 0, memory_order_release);
@@ -1779,7 +1789,7 @@ static int ckpt_dump_self(struct cpu *c, const char *procdir, int park) {
     g_ckpt_cpu_count = count;
     int result = forced_refusal ? -1 : ckpt_dump_self_locked(c, procdir);
     if (result != 0 && !forced_refusal) {
-        if (park) ckpt_member_refuse(procdir, g_ckpt_member_refusal ? g_ckpt_member_refusal : "complete its dump");
+        ckpt_member_refuse(procdir, g_ckpt_member_refusal ? g_ckpt_member_refusal : "complete its dump");
         ckpt_sink_group_abort(ckpt_sink_current(), procdir);
     }
     /* Park BEFORE anything of the freeze is unwound, and park whether or not our own dump succeeded: a

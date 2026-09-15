@@ -70,6 +70,12 @@ pub(super) const NATIVE_SNAPSHOT: u32 = 31;
 /// A native supervisor asks the host to hydrate one freshly exec'd, stopped descendant.
 pub(super) const NATIVE_RESTORE_PREPARE: u32 = 32;
 pub(super) const NATIVE_RESTORE_COMPLETE: u32 = 33;
+/// Has this capture generation already been refused? No payload, no name; the reply value is 1 while the
+/// capture is `Refusing` at exactly this generation and 0 otherwise. Read-only, and deliberately NOT
+/// `REFUSAL_LATCHED`: latching CLAIMS the settle for the asking connection, which is right for the
+/// coordinator that is about to settle and wrong for the rendezvous, which asks on every pass to find
+/// out whether it is still waiting for a group some member has already decided against.
+pub(super) const CAPTURE_REFUSAL_DECIDED: u32 = 34;
 
 /// What a parked member must do next. `RELEASE_WAIT` answers with exactly one of
 /// these, and it is the only thing that ends a park.
