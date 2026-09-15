@@ -9,9 +9,9 @@ use hl_rpc::Authority;
 
 use crate::capability::Capability;
 use crate::port::{
-    ContainerControl, ContainerInventory, Division, ExtensionStateStore, ExtensionStore, GridSize, ImageStore,
-    NetworkStore, NotificationSink, PANE_GRID_EDGE, PANE_INPUT_BYTES, TerminalSurface, VolumeStore,
-    WorkspaceConfiguration, WorkspaceControl, WorkspaceFiles, WorkspaceInventory, pane_lines,
+    pane_lines, ContainerControl, ContainerInventory, Division, ExtensionStateStore, ExtensionStore, GridSize,
+    ImageStore, NetworkStore, NotificationSink, TerminalSurface, VolumeStore, WorkspaceConfiguration, WorkspaceControl,
+    WorkspaceFiles, WorkspaceInventory, PANE_GRID_EDGE, PANE_INPUT_BYTES,
 };
 use crate::request::{Failure, Reply, Request, Topic, WorkspaceInfo};
 use crate::{ContainerGrant, ContainerSelector, FilesystemGrant};
@@ -1005,6 +1005,7 @@ impl Session {
             | Request::CredentialRemove { .. } => self.state(request, services),
             Request::PostgresOpenOnce { .. }
             | Request::PostgresQueryStartOnce { .. }
+            | Request::PostgresCatalogueStartOnce { .. }
             | Request::PostgresQueryStatus { .. }
             | Request::PostgresQueryPage { .. }
             | Request::PostgresQueryCancel { .. }
@@ -2737,6 +2738,13 @@ impl Session {
                 query.validate()?;
                 broker
                     .start_once(installation, lease, query)
+                    .map(Reply::PostgresStart)
+                    .map_err(Into::into)
+            }
+            Request::PostgresCatalogueStartOnce { lease, query } => {
+                let generated = query.query()?;
+                broker
+                    .start_once(installation, lease, &generated)
                     .map(Reply::PostgresStart)
                     .map_err(Into::into)
             }

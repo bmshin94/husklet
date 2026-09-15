@@ -4958,6 +4958,127 @@
         }
       ]
     },
+    "PostgresCatalogueQuery": {
+      "fields": [
+        {
+          "name": "operation",
+          "optional": false,
+          "schema": {
+            "kind": "ref",
+            "name": "QueryOperationToken"
+          }
+        },
+        {
+          "name": "resource",
+          "optional": false,
+          "schema": {
+            "kind": "ref",
+            "name": "PostgresCatalogueResource"
+          }
+        },
+        {
+          "name": "page_rows",
+          "optional": false,
+          "schema": {
+            "bits": 32,
+            "kind": "integer",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "signed": false
+          }
+        },
+        {
+          "name": "page_bytes",
+          "optional": false,
+          "schema": {
+            "bits": 32,
+            "kind": "integer",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "signed": false
+          }
+        }
+      ],
+      "kind": "struct",
+      "serde": {
+        "deny_unknown_fields": true
+      }
+    },
+    "PostgresCatalogueResource": {
+      "kind": "enum",
+      "serde": {
+        "deny_unknown_fields": true,
+        "rename_all": "snake_case",
+        "tag": "resource"
+      },
+      "variants": [
+        {
+          "name": "schemas",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
+          "name": "relations",
+          "payload": {
+            "fields": [
+              {
+                "name": "schema",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              }
+            ],
+            "kind": "struct"
+          }
+        },
+        {
+          "name": "columns",
+          "payload": {
+            "fields": [
+              {
+                "name": "schema",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              },
+              {
+                "name": "relation",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              }
+            ],
+            "kind": "struct"
+          }
+        },
+        {
+          "name": "indexes",
+          "payload": {
+            "fields": [
+              {
+                "name": "schema",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              },
+              {
+                "name": "relation",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              }
+            ],
+            "kind": "struct"
+          }
+        }
+      ]
+    },
     "PostgresConnection": {
       "fields": [
         {
@@ -10041,6 +10162,10 @@
     },
     {
       "capability": "postgres:read",
+      "request": "postgres_catalogue_start_once"
+    },
+    {
+      "capability": "postgres:read",
       "request": "postgres_query_status"
     },
     {
@@ -10624,6 +10749,10 @@
     {
       "reply": "postgres_start",
       "request": "postgres_query_start_once"
+    },
+    {
+      "reply": "postgres_start",
+      "request": "postgres_catalogue_start_once"
     },
     {
       "reply": "postgres_state",
@@ -15076,6 +15205,30 @@
           }
         },
         {
+          "name": "postgres_catalogue_start_once",
+          "payload": {
+            "fields": [
+              {
+                "name": "lease",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "PostgresLeaseId"
+                }
+              },
+              {
+                "name": "query",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "PostgresCatalogueQuery"
+                }
+              }
+            ],
+            "kind": "struct"
+          }
+        },
+        {
           "name": "postgres_query_status",
           "payload": {
             "fields": [
@@ -16412,7 +16565,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:57a14595e8fa8c19",
+  "source_fingerprint": "fnv1a64:bf0f034666b9439c",
   "specification_version": 1,
   "topics": [
     {

@@ -678,11 +678,9 @@ fn pane_semantic_read_and_control_are_separately_granted() {
         session(&[Capability::PaneSemanticRead], &[]).dispatch(&read, &services(&host)),
         Ok(Reply::Semantics(_))
     ));
-    assert!(
-        session(&[Capability::PaneSemanticRead], &[])
-            .dispatch(&action, &services(&host))
-            .is_err()
-    );
+    assert!(session(&[Capability::PaneSemanticRead], &[])
+        .dispatch(&action, &services(&host))
+        .is_err());
     session(&[Capability::PaneSemanticControl], &[])
         .dispatch(&action, &services(&host))
         .expect("controlled");
@@ -695,11 +693,9 @@ fn pane_semantic_read_and_control_are_separately_granted() {
 #[test]
 fn pane_discovery_requires_observation_without_content_authority() {
     let host = Host::new();
-    assert!(
-        session(&[], &[])
-            .dispatch(&Request::PaneList, &services(&host))
-            .is_err()
-    );
+    assert!(session(&[], &[])
+        .dispatch(&Request::PaneList, &services(&host))
+        .is_err());
     let reply = session(&[Capability::PaneObserve], &[])
         .dispatch(&Request::PaneList, &services(&host))
         .expect("pane observation grants bounded discovery");
@@ -1607,15 +1603,18 @@ fn services_with_state<'a>(host: &'a Host, state: &'a dyn ExtensionStateStore) -
 }
 
 #[derive(Default)]
-struct PostgresProbe(AtomicUsize);
+struct PostgresProbe {
+    reached: AtomicUsize,
+    statements: std::sync::Mutex<Vec<String>>,
+}
 
 impl PostgresProbe {
     fn reached(&self) -> usize {
-        self.0.load(Ordering::Relaxed)
+        self.reached.load(Ordering::Relaxed)
     }
 
     fn called<T>(&self) -> Result<T, HostError> {
-        self.0.fetch_add(1, Ordering::Relaxed);
+        self.reached.fetch_add(1, Ordering::Relaxed);
         Err(HostError::Failed("postgres probe reached".into()))
     }
 }
@@ -1634,8 +1633,9 @@ impl hl_extension::PostgresBroker for PostgresProbe {
         &self,
         _installation: &hl_rpc::InstallationIdentity,
         _lease: &hl_extension::PostgresLeaseId,
-        _query: &hl_extension::PostgresQuery,
+        query: &hl_extension::PostgresQuery,
     ) -> Result<hl_extension::PostgresStartOutcome, HostError> {
+        self.statements.lock().unwrap().push(query.statement.clone());
         self.called()
     }
 
@@ -1701,11 +1701,14 @@ fn session(capabilities: &[Capability], roots: &[&str]) -> Session {
         .cloned()
         .map(|subtree| hl_extension::FilesystemSelector::Subtree { subtree })
         .collect();
-    Session::new(Authority::new(
-        ExtensionName::new("sample").expect("name"),
-        Grant::new(capabilities.iter().copied()),
-        roots.clone(),
-    ))
+    Session::new(
+        Authority::new(
+            ExtensionName::new("sample").expect("name"),
+            Grant::new(capabilities.iter().copied()),
+            roots.clone(),
+        )
+        .for_installation(hl_rpc::InstallationIdentity::new(COMMAND_OWNER).unwrap()),
+    )
     .with_extension_identity(COMMAND_OWNER)
     .with_containers(hl_extension::ContainerGrant {
         selectors: vec![hl_extension::ContainerSelector::All { all: true }],
@@ -1819,6 +1822,44 @@ fn postgres_sql_requires_write_and_open_requires_both_read_and_secret_use() {
         ));
         assert_eq!(postgres.reached(), 0, "SQL denial must precede the database broker");
     }
+}
+
+#[test]
+fn postgres_read_can_start_only_a_host_generated_bounded_catalogue_query() {
+    let host = Host::new();
+    let postgres = PostgresProbe::default();
+    let services = services_with_postgres(&host, &postgres);
+    let request = Request::PostgresCatalogueStartOnce {
+        lease: hl_extension::PostgresLeaseId::new("lease").unwrap(),
+        query: hl_extension::PostgresCatalogueQuery {
+            operation: hl_extension::QueryOperationToken::new("catalogue-operation").unwrap(),
+            resource: hl_extension::PostgresCatalogueResource::Columns {
+                schema: "public'; DELETE FROM customers; --".into(),
+                relation: "orders".into(),
+            },
+            page_rows: 100,
+            page_bytes: 64 * 1024,
+        },
+    };
+    let failure = session(&[Capability::PostgresRead], &[])
+        .dispatch(&request, &services)
+        .expect_err("probe deliberately rejects after observing the generated query");
+    assert!(matches!(failure, Failure::Failed { .. }));
+    let statements = postgres.statements.lock().unwrap();
+    assert_eq!(statements.len(), 1);
+    assert!(statements[0].contains("FROM pg_catalog.pg_attribute"));
+    assert!(statements[0].contains("n.nspname = pg_catalog.convert_from(pg_catalog.decode("));
+    assert!(!statements[0].contains("DELETE FROM customers"));
+    drop(statements);
+
+    let failure = session(&[Capability::PostgresWrite], &[])
+        .dispatch(&request, &services)
+        .expect_err("catalogue authority is independently read-scoped");
+    assert!(matches!(
+        failure,
+        Failure::Denied { capability, .. } if capability == "postgres:read"
+    ));
+    assert_eq!(postgres.reached(), 1, "denial must happen before the broker");
 }
 
 #[test]
@@ -2694,6 +2735,18 @@ fn all_calls() -> Vec<(Request, Capability)> {
             Capability::PostgresWrite,
         ),
         (
+            Request::PostgresCatalogueStartOnce {
+                lease: hl_extension::PostgresLeaseId::new("lease").unwrap(),
+                query: hl_extension::PostgresCatalogueQuery {
+                    operation: hl_extension::QueryOperationToken::new("catalogue-op").unwrap(),
+                    resource: hl_extension::PostgresCatalogueResource::Schemas,
+                    page_rows: 10,
+                    page_bytes: 1024,
+                },
+            },
+            Capability::PostgresRead,
+        ),
+        (
             Request::PostgresQueryStatus {
                 lease: hl_extension::PostgresLeaseId::new("lease").unwrap(),
                 query: hl_extension::PostgresQueryId::new("query").unwrap(),
@@ -3150,20 +3203,16 @@ fn workspace_mutations_require_a_complete_generation_before_host_authority() {
             ..workspace_configuration()
         },
     };
-    assert!(
-        session(&[Capability::WorkspaceConfigure], &[])
-            .dispatch(&update, &services(&host))
-            .is_err()
-    );
+    assert!(session(&[Capability::WorkspaceConfigure], &[])
+        .dispatch(&update, &services(&host))
+        .is_err());
     let delete = Request::WorkspaceDelete {
         name: "other".into(),
         generation: String::new(),
     };
-    assert!(
-        session(&[Capability::WorkspaceControl], &[])
-            .dispatch(&delete, &services(&host))
-            .is_err()
-    );
+    assert!(session(&[Capability::WorkspaceControl], &[])
+        .dispatch(&delete, &services(&host))
+        .is_err());
     assert!(host.ledger.reached().is_empty());
 }
 
@@ -3201,36 +3250,30 @@ fn workspace_settings_update_cannot_bypass_exact_environment_patch_authority() {
 fn extension_acquisition_identifiers_are_bounded_before_the_host() {
     let host = Host::new();
     let mut session = session(&[Capability::ExtensionInstall], &[]);
-    assert!(
-        session
-            .dispatch(
-                &Request::ExtensionAcquisitionStart {
-                    reference: "x".repeat(513),
-                    refresh: false,
-                },
-                &services(&host)
-            )
-            .is_err()
-    );
-    assert!(
-        session
-            .dispatch(
-                &Request::ExtensionAcquisitionStart {
-                    reference: "bad reference".into(),
-                    refresh: false,
-                },
-                &services(&host)
-            )
-            .is_err()
-    );
-    assert!(
-        session
-            .dispatch(
-                &Request::ExtensionAcquisitionStatus { job: "x".repeat(129) },
-                &services(&host)
-            )
-            .is_err()
-    );
+    assert!(session
+        .dispatch(
+            &Request::ExtensionAcquisitionStart {
+                reference: "x".repeat(513),
+                refresh: false,
+            },
+            &services(&host)
+        )
+        .is_err());
+    assert!(session
+        .dispatch(
+            &Request::ExtensionAcquisitionStart {
+                reference: "bad reference".into(),
+                refresh: false,
+            },
+            &services(&host)
+        )
+        .is_err());
+    assert!(session
+        .dispatch(
+            &Request::ExtensionAcquisitionStatus { job: "x".repeat(129) },
+            &services(&host)
+        )
+        .is_err());
     assert!(matches!(
         session.dispatch(
             &Request::ExtensionInstall {
@@ -3568,11 +3611,9 @@ fn pane_titles_are_utf8_bounded_and_refused_before_terminal_authority() {
 fn terminal_focus_grant_cannot_mutate_layout() {
     let host = Host::new();
     let mut session = session(&[Capability::TerminalFocus], &[]);
-    assert!(
-        session
-            .dispatch(&Request::TerminalFocusPane { slot: "s1".into() }, &services(&host))
-            .is_ok()
-    );
+    assert!(session
+        .dispatch(&Request::TerminalFocusPane { slot: "s1".into() }, &services(&host))
+        .is_ok());
     assert_eq!(host.ledger.reached(), ["terminal.focus"]);
     host.ledger.clear();
     assert!(matches!(
@@ -4687,56 +4728,48 @@ fn holding_read_never_permits_the_matching_write() {
     let host = Host::new();
     let mut session = session(&[Capability::FilesystemRead, Capability::ContainerRead], &["logs"]);
 
-    assert!(
-        session
-            .dispatch(
-                &Request::FilesystemWrite {
-                    path: path("logs/app.log"),
-                    contents: b"x".to_vec()
-                },
-                &services(&host)
-            )
-            .is_err()
-    );
-    assert!(
-        session
-            .dispatch(
-                &Request::ContainerStop {
-                    id: "c1".into(),
-                    generation: 4,
-                },
-                &services(&host)
-            )
-            .is_err()
-    );
-    assert!(
-        session
-            .dispatch(
-                &Request::ContainerKill {
-                    id: "c1".into(),
-                    generation: 4,
-                    signal: "SIGKILL".into(),
-                },
-                &services(&host),
-            )
-            .is_err()
-    );
-    assert!(
-        session
-            .dispatch(
-                &Request::ContainerExec {
-                    environment: Vec::new(),
-                    id: "c1".into(),
-                    generation: 4,
-                    command: vec!["sh".into()],
-                    user: None,
-                    working_directory: None,
-                    stdin: false,
-                },
-                &services(&host),
-            )
-            .is_err()
-    );
+    assert!(session
+        .dispatch(
+            &Request::FilesystemWrite {
+                path: path("logs/app.log"),
+                contents: b"x".to_vec()
+            },
+            &services(&host)
+        )
+        .is_err());
+    assert!(session
+        .dispatch(
+            &Request::ContainerStop {
+                id: "c1".into(),
+                generation: 4,
+            },
+            &services(&host)
+        )
+        .is_err());
+    assert!(session
+        .dispatch(
+            &Request::ContainerKill {
+                id: "c1".into(),
+                generation: 4,
+                signal: "SIGKILL".into(),
+            },
+            &services(&host),
+        )
+        .is_err());
+    assert!(session
+        .dispatch(
+            &Request::ContainerExec {
+                environment: Vec::new(),
+                id: "c1".into(),
+                generation: 4,
+                command: vec!["sh".into()],
+                user: None,
+                working_directory: None,
+                stdin: false,
+            },
+            &services(&host),
+        )
+        .is_err());
     assert!(host.ledger.reached().is_empty());
 }
 
@@ -4765,27 +4798,23 @@ fn filesystem_read_and_write_scopes_are_independent_and_fail_before_the_service(
     assert_eq!(host.ledger.reached(), ["files.inventory"]);
     host.ledger.clear();
 
-    assert!(
-        session
-            .dispatch(
-                &Request::FilesystemRead {
-                    path: path("src/lib.rs")
-                },
-                &services(&host)
-            )
-            .is_ok()
-    );
-    assert!(
-        session
-            .dispatch(
-                &Request::FilesystemWrite {
-                    path: path("workspace.toml"),
-                    contents: b"x".to_vec()
-                },
-                &services(&host)
-            )
-            .is_ok()
-    );
+    assert!(session
+        .dispatch(
+            &Request::FilesystemRead {
+                path: path("src/lib.rs")
+            },
+            &services(&host)
+        )
+        .is_ok());
+    assert!(session
+        .dispatch(
+            &Request::FilesystemWrite {
+                path: path("workspace.toml"),
+                contents: b"x".to_vec()
+            },
+            &services(&host)
+        )
+        .is_ok());
     host.ledger.clear();
     assert!(matches!(
         session.dispatch(
@@ -4900,17 +4929,15 @@ fn one_file_write_consent_does_not_authorize_create_delete_or_rename() {
         ..hl_extension::FilesystemGrant::default()
     });
 
-    assert!(
-        session
-            .dispatch(
-                &Request::FilesystemWrite {
-                    path: file.clone(),
-                    contents: b"{}".to_vec(),
-                },
-                &services(&host),
-            )
-            .is_ok()
-    );
+    assert!(session
+        .dispatch(
+            &Request::FilesystemWrite {
+                path: file.clone(),
+                contents: b"{}".to_vec(),
+            },
+            &services(&host),
+        )
+        .is_ok());
     host.ledger.clear();
 
     for request in [
@@ -5057,17 +5084,15 @@ fn process_paging_rejects_malformed_snapshots_and_unbounded_limits_before_the_po
 fn execution_wait_rejects_unbounded_timeout_before_calling_host() {
     let host = Host::new();
     let mut session = session(&[Capability::ContainerRead], &[]);
-    assert!(
-        session
-            .dispatch(
-                &Request::ExecutionWait {
-                    id: "e".repeat(32),
-                    timeout_ms: 30_001
-                },
-                &services(&host)
-            )
-            .is_err()
-    );
+    assert!(session
+        .dispatch(
+            &Request::ExecutionWait {
+                id: "e".repeat(32),
+                timeout_ms: 30_001
+            },
+            &services(&host)
+        )
+        .is_err());
     assert!(!host.ledger.reached().contains(&"executions.wait"));
 }
 
@@ -5117,18 +5142,16 @@ fn execution_reads_refuse_names_and_prefixes_before_inventory_authority() {
 fn execution_logs_require_a_stream_before_calling_host() {
     let host = Host::new();
     let mut session = session(&[Capability::ContainerRead], &[]);
-    assert!(
-        session
-            .dispatch(
-                &Request::ExecutionLogs {
-                    id: "e".repeat(32),
-                    stdout: false,
-                    stderr: false
-                },
-                &services(&host)
-            )
-            .is_err()
-    );
+    assert!(session
+        .dispatch(
+            &Request::ExecutionLogs {
+                id: "e".repeat(32),
+                stdout: false,
+                stderr: false
+            },
+            &services(&host)
+        )
+        .is_err());
     assert!(!host.ledger.reached().contains(&"executions.logs"));
 }
 
@@ -5779,11 +5802,9 @@ fn a_topic_cannot_be_followed_without_its_namespace_capability() {
     let host = Host::new();
     let mut session = session(&[Capability::ContainerRead], &[]);
 
-    assert!(
-        session
-            .dispatch(&Request::EventSubscribe { topic: Topic::Terminal }, &services(&host))
-            .is_err()
-    );
+    assert!(session
+        .dispatch(&Request::EventSubscribe { topic: Topic::Terminal }, &services(&host))
+        .is_err());
     assert!(!session.may_emit(Topic::Terminal));
 }
 

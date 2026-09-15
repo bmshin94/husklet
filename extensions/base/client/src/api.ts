@@ -13,6 +13,8 @@ import type {
   TerminalPaneInput,
   TerminalCommandOutput,
   PostgresConnection,
+  PostgresCatalogueQuery,
+  PostgresCatalogueResource,
   PostgresCursor,
   PostgresLeaseId,
   PostgresOpenOutcome,
@@ -35,6 +37,8 @@ export type {
   TerminalInputWriter,
   TerminalCommandOutput,
   PostgresConnection,
+  PostgresCatalogueQuery,
+  PostgresCatalogueResource,
   PostgresCursor,
   PostgresLeaseId,
   PostgresOpenOutcome,
@@ -2686,6 +2690,14 @@ export interface WorkspaceApi {
       connection: PostgresConnection,
     ): Promise<PostgresOpenOutcome>;
     startOnce(lease: PostgresLeaseId, query: PostgresQuery): Promise<PostgresStartOutcome>;
+    /**
+     * Start a bounded pg_catalog view selected from a closed host-owned set. No SQL text crosses
+     * this read-only API; use startOnce, and therefore postgres:write, for caller-authored SQL.
+     */
+    catalogueStartOnce(
+      lease: PostgresLeaseId,
+      query: PostgresCatalogueQuery,
+    ): Promise<PostgresStartOutcome>;
     status(lease: PostgresLeaseId, query: PostgresQueryId): Promise<PostgresQueryState>;
     /**
      * Read the next bounded page. The reply echoes the exact query and input cursor; retrying the

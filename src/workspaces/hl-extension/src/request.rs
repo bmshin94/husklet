@@ -636,6 +636,10 @@ pub enum Request {
         lease: crate::PostgresLeaseId,
         query: crate::PostgresQuery,
     },
+    PostgresCatalogueStartOnce {
+        lease: crate::PostgresLeaseId,
+        query: crate::PostgresCatalogueQuery,
+    },
     PostgresQueryStatus {
         lease: crate::PostgresLeaseId,
         query: crate::PostgresQueryId,
@@ -814,6 +818,7 @@ impl Request {
             Self::CredentialRead { .. } => Capability::CredentialRead,
             Self::CredentialSet { .. } | Self::CredentialRemove { .. } => Capability::CredentialWrite,
             Self::PostgresOpenOnce { .. }
+            | Self::PostgresCatalogueStartOnce { .. }
             | Self::PostgresQueryStatus { .. }
             | Self::PostgresQueryPage { .. }
             | Self::PostgresQueryCancel { .. }

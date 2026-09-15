@@ -1,5 +1,5 @@
-import type { Capability as GeneratedCapability, FilesystemSelector, ExtensionPreferences, PreferenceValue, Row as WireRow, WireCall, WireReplyFor, WireRequestFor, WireUiEvent, TerminalCommand, TerminalCommandInput, TerminalPaneInput, TerminalCommandOutput, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken, TerminalHistoryCursor, TerminalHistoryPage } from './generated-protocol.js';
-export type { ExtensionPreferences, FilesystemSelector, PreferenceValue, TerminalCommand, TerminalCommandInput, TerminalPaneInput, TerminalInputWriter, TerminalCommandOutput, PostgresConnection, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken, TerminalHistoryCursor, TerminalHistoryPage, } from './generated-protocol.js';
+import type { Capability as GeneratedCapability, FilesystemSelector, ExtensionPreferences, PreferenceValue, Row as WireRow, WireCall, WireReplyFor, WireRequestFor, WireUiEvent, TerminalCommand, TerminalCommandInput, TerminalPaneInput, TerminalCommandOutput, PostgresConnection, PostgresCatalogueQuery, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken, TerminalHistoryCursor, TerminalHistoryPage } from './generated-protocol.js';
+export type { ExtensionPreferences, FilesystemSelector, PreferenceValue, TerminalCommand, TerminalCommandInput, TerminalPaneInput, TerminalInputWriter, TerminalCommandOutput, PostgresConnection, PostgresCatalogueQuery, PostgresCatalogueResource, PostgresCursor, PostgresLeaseId, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, QueryOperationToken, TerminalHistoryCursor, TerminalHistoryPage, } from './generated-protocol.js';
 /** One row delivered to a virtualized interface data source. */
 export type DataRow = WireRow;
 /** Environment variable naming the extension's authenticated Unix socket. */
@@ -2687,6 +2687,11 @@ export interface WorkspaceApi {
     postgres: {
         openOnce(operation: QueryOperationToken, connection: PostgresConnection): Promise<PostgresOpenOutcome>;
         startOnce(lease: PostgresLeaseId, query: PostgresQuery): Promise<PostgresStartOutcome>;
+        /**
+         * Start a bounded pg_catalog view selected from a closed host-owned set. No SQL text crosses
+         * this read-only API; use startOnce, and therefore postgres:write, for caller-authored SQL.
+         */
+        catalogueStartOnce(lease: PostgresLeaseId, query: PostgresCatalogueQuery): Promise<PostgresStartOutcome>;
         status(lease: PostgresLeaseId, query: PostgresQueryId): Promise<PostgresQueryState>;
         /**
          * Read the next bounded page. The reply echoes the exact query and input cursor; retrying the

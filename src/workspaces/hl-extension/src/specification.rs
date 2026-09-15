@@ -2,10 +2,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use syn::{Attribute, Fields, GenericArgument, Item, PathArguments, Type};
 
-use crate::{Capability, Frame, Kind, PROTOCOL, Topic};
+use crate::{Capability, Frame, Kind, Topic, PROTOCOL};
 
 const SOURCES: &[(&str, &str)] = &[
     ("src/lib.rs", include_str!("lib.rs")),
@@ -177,6 +177,7 @@ const REQUEST_TO_REPLY: &[(&str, &str)] = &[
     ("credential_remove", "credential_write"),
     ("postgres_open_once", "postgres_open"),
     ("postgres_query_start_once", "postgres_start"),
+    ("postgres_catalogue_start_once", "postgres_start"),
     ("postgres_query_status", "postgres_state"),
     ("postgres_query_page", "postgres_page"),
     ("postgres_query_cancel", "postgres_state"),
@@ -295,6 +296,7 @@ fn request_capability(request: &str) -> Capability {
         "credential_read" => Capability::CredentialRead,
         "credential_set" | "credential_remove" => Capability::CredentialWrite,
         "postgres_open_once"
+        | "postgres_catalogue_start_once"
         | "postgres_query_status"
         | "postgres_query_page"
         | "postgres_query_cancel"

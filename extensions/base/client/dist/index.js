@@ -4688,6 +4688,13 @@ export function workspace(session, { signal } = {}) {
                 }
                 return outcome;
             },
+            catalogueStartOnce: async (lease, query) => {
+                const outcome = expect(await session.call('postgres_catalogue_start_once', { lease, query }), 'postgres_start');
+                if (outcome.operation !== query.operation || outcome.lease !== lease) {
+                    throw new PostgresOperationProtocolError('catalogue', query.operation, outcome.operation, lease, outcome.lease);
+                }
+                return outcome;
+            },
             status: async (lease, query) => {
                 const receipt = expect(await session.call('postgres_query_status', { lease, query }), 'postgres_state');
                 if (receipt.lease !== lease || receipt.query !== query) {

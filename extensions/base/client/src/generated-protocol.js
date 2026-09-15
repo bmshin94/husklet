@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:92d50c980d9158c1
+// Protocol artifact fnv1a64:d6a9774293ccb846
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -493,6 +493,7 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "credential_remove": "credential_write",
   "postgres_open_once": "postgres_open",
   "postgres_query_start_once": "postgres_start",
+  "postgres_catalogue_start_once": "postgres_start",
   "postgres_query_status": "postgres_state",
   "postgres_query_page": "postgres_page",
   "postgres_query_cancel": "postgres_state",
@@ -641,6 +642,7 @@ export const PROTOCOL_REQUEST_CAPABILITIES = Object.freeze({
   "credential_remove": "credentials:write",
   "postgres_open_once": "postgres:read",
   "postgres_query_start_once": "postgres:write",
+  "postgres_catalogue_start_once": "postgres:read",
   "postgres_query_status": "postgres:read",
   "postgres_query_page": "postgres:read",
   "postgres_query_cancel": "postgres:read",
@@ -5325,6 +5327,127 @@ const definitions = {
         "name": "scroll",
         "payload": {
           "kind": "unit"
+        }
+      }
+    ]
+  },
+  "PostgresCatalogueQuery": {
+    "fields": [
+      {
+        "name": "operation",
+        "optional": false,
+        "schema": {
+          "kind": "ref",
+          "name": "QueryOperationToken"
+        }
+      },
+      {
+        "name": "resource",
+        "optional": false,
+        "schema": {
+          "kind": "ref",
+          "name": "PostgresCatalogueResource"
+        }
+      },
+      {
+        "name": "page_rows",
+        "optional": false,
+        "schema": {
+          "bits": 32,
+          "kind": "integer",
+          "maximum": 4294967295,
+          "minimum": 0,
+          "signed": false
+        }
+      },
+      {
+        "name": "page_bytes",
+        "optional": false,
+        "schema": {
+          "bits": 32,
+          "kind": "integer",
+          "maximum": 4294967295,
+          "minimum": 0,
+          "signed": false
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {
+      "deny_unknown_fields": true
+    }
+  },
+  "PostgresCatalogueResource": {
+    "kind": "enum",
+    "serde": {
+      "deny_unknown_fields": true,
+      "rename_all": "snake_case",
+      "tag": "resource"
+    },
+    "variants": [
+      {
+        "name": "schemas",
+        "payload": {
+          "kind": "unit"
+        }
+      },
+      {
+        "name": "relations",
+        "payload": {
+          "fields": [
+            {
+              "name": "schema",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "columns",
+        "payload": {
+          "fields": [
+            {
+              "name": "schema",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            },
+            {
+              "name": "relation",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "indexes",
+        "payload": {
+          "fields": [
+            {
+              "name": "schema",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            },
+            {
+              "name": "relation",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            }
+          ],
+          "kind": "struct"
         }
       }
     ]
@@ -14208,6 +14331,30 @@ const roots = {
               "schema": {
                 "kind": "ref",
                 "name": "PostgresQuery"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "postgres_catalogue_start_once",
+        "payload": {
+          "fields": [
+            {
+              "name": "lease",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresLeaseId"
+              }
+            },
+            {
+              "name": "query",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PostgresCatalogueQuery"
               }
             }
           ],

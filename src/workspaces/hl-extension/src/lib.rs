@@ -36,14 +36,14 @@ mod build_support;
 pub use capability::{Capability, Grant};
 pub use codec::Coding;
 pub use database::{
-    CredentialRevision, PostgresBroker, PostgresConnection, PostgresCursor, PostgresLease, PostgresLeaseId,
-    PostgresLeaseRevocation, PostgresOpenOutcome, PostgresPage, PostgresQuery, PostgresQueryId, PostgresQueryState,
-    PostgresStartOutcome, PostgresStateReceipt,
+    CredentialRevision, PostgresBroker, PostgresCatalogueQuery, PostgresCatalogueResource, PostgresConnection,
+    PostgresCursor, PostgresLease, PostgresLeaseId, PostgresLeaseRevocation, PostgresOpenOutcome, PostgresPage,
+    PostgresQuery, PostgresQueryId, PostgresQueryState, PostgresStartOutcome, PostgresStateReceipt,
     QueryOperationToken,
 };
 pub use hl_rpc::{
     Authority, ChannelId, Channels, Compatibility, Denial, Emission, Flags, Frame, Hello, Kind, Limits, Malformed,
-    PROTOCOL, Parcel, Permission, Permit, Purpose, Reason, Refusal, RelativePath, Streams, Transit, Wire,
+    Parcel, Permission, Permit, Purpose, Reason, Refusal, RelativePath, Streams, Transit, Wire, PROTOCOL,
 };
 pub use installation::{Disposition, Installation, Objection, Record, Stage, Summary, Update, UpdateFailure};
 pub use manifest::{
@@ -63,8 +63,7 @@ pub use port::{
 };
 pub use port::{
     NetworkEndpointInventory, NetworkKind, NetworkSummary, VolumeSummary, WorkspaceConfiguration, WorkspaceMount,
-    WorkspacePostgresProfile,
-    WorkspaceTerminal,
+    WorkspacePostgresProfile, WorkspaceTerminal,
 };
 pub use port::{Notification, NotificationSink};
 pub use request::{CredentialValue, ExecEnvironmentValue, Failure, Reply, Request, Topic, WorkspaceInfo};
