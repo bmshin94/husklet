@@ -148,8 +148,38 @@ fn every_declared_trigger_and_sortable_header_report_on_one_toolkit_thread() {
     }
     every_declared_trigger_reports_when_the_component_is_worked();
     test_report_activation_reports_producer_identity();
+    authored_expansion_does_not_report_user_interaction();
     responsive_reports_gestures_but_not_its_controlled_position();
     sortable_header_reports_current_source_version_without_reordering_rows();
+}
+
+fn authored_expansion_does_not_report_user_interaction() {
+    let mut session = Session::new();
+    let node = session.producer.create(Tag::Expander);
+    session.producer.append(NodeId::ROOT, node);
+    session.producer.on(node, Trigger::Expand, EventId::new("reported"));
+    let frame = session.producer.frame();
+    session.tree.apply(&frame, &mut session.canvas).expect("disclosure renders");
+
+    session.producer.set(node, Prop::Expanded, PropValue::Flag(true));
+    let frame = session.producer.frame();
+    session
+        .tree
+        .apply(&frame, &mut session.canvas)
+        .expect("authored disclosure state applies");
+    let expander = session
+        .widgets()
+        .into_iter()
+        .find_map(|widget| widget.downcast::<gtk::Expander>().ok())
+        .expect("rendered disclosure");
+    assert!(expander.is_expanded(), "authored state still reaches GTK");
+    assert!(
+        session.canvas.reports().drain().is_empty(),
+        "applying producer state cannot echo a synthetic user interaction"
+    );
+
+    expander.set_expanded(false);
+    assert!(session.reported(), "a subsequent person-originated change still reports");
 }
 
 fn test_report_activation_reports_producer_identity() {

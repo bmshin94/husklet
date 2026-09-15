@@ -1,6 +1,6 @@
 //! Toolkit signals to typed interaction.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
@@ -158,6 +158,7 @@ fn same_observation(left: &Event, right: &Event) -> bool {
 #[derive(Clone, Debug, Default)]
 struct Slot {
     id: Rc<RefCell<Option<EventId>>>,
+    muted: Rc<Cell<u32>>,
 }
 
 impl Slot {
@@ -170,7 +171,23 @@ impl Slot {
     }
 
     fn id(&self) -> Option<EventId> {
+        if self.muted.get() > 0 {
+            return None;
+        }
         self.id.borrow().clone()
+    }
+
+    fn mute(&self) -> Mute {
+        self.muted.set(self.muted.get().saturating_add(1));
+        Mute(Rc::clone(&self.muted))
+    }
+}
+
+pub(crate) struct Mute(Rc<Cell<u32>>);
+
+impl Drop for Mute {
+    fn drop(&mut self) {
+        self.0.set(self.0.get().saturating_sub(1));
     }
 }
 
@@ -211,6 +228,12 @@ impl Bindings {
         if let Some(slot) = self.slots.get(&(node, trigger)) {
             slot.clear();
         }
+    }
+
+    /// Silences the synchronous toolkit notification produced while applying
+    /// an authored property. Only a person's subsequent change is an event.
+    pub(crate) fn mute(&self, node: NodeId, trigger: Trigger) -> Option<Mute> {
+        self.slots.get(&(node, trigger)).map(Slot::mute)
     }
 
     /// Forgets a removed node, so a later node reusing its identity connects

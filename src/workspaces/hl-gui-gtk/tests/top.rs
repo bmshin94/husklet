@@ -5689,15 +5689,16 @@ mod unix {
             });
             apply_next_render(wire, tree, surface, "opening a settings section");
             if index > 0 {
-                send_report(surface, wire, base_channel + 2 + index as u32 * 2, |event| {
-                    matches!(
+                assert!(
+                    !surface.reports().drain().into_iter().any(|event| matches!(
                         event,
                         hl_gui::Event::Expand {
                             value: hl_gui::PropValue::Flag(false),
                             ..
                         }
-                    )
-                });
+                    )),
+                    "{case} producer-authored close echoed as a user interaction"
+                );
                 assert_eq!(
                     apply_available_renders(wire, tree, surface, Duration::from_millis(150)),
                     0,

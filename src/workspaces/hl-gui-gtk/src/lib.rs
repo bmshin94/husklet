@@ -230,11 +230,17 @@ impl Renderer for Surface {
                     self.sources.retain(|_, node| *node != *id);
                     self.sources.insert(*source, *id);
                 }
+                let _mute = (*prop == Prop::Expanded)
+                    .then(|| self.bindings.mute(*id, hl_gui::Trigger::Expand))
+                    .flatten();
                 let (widget, node) = self.describe(*id, tree)?;
                 prop::apply(widget, node, *prop, value, &self.reports);
                 Ok(())
             }
             Patch::ClearProp { id, prop } => {
+                let _mute = (*prop == Prop::Expanded)
+                    .then(|| self.bindings.mute(*id, hl_gui::Trigger::Expand))
+                    .flatten();
                 let (widget, node) = self.describe(*id, tree)?;
                 prop::clear(widget, node, *prop, &self.reports);
                 Ok(())
