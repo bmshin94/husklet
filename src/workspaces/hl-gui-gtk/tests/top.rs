@@ -16,11 +16,11 @@ mod unix {
         NetworkEndpointInventory, NetworkInventory, NetworkKind, NetworkSummary, PaneText, TerminalLifecycle,
     };
     use hl_extension::{
-        Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
-        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, InspectablePane, PROTOCOL, PaneInventory,
-        PaneKind, PaneProvider, PreferenceValue, RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire,
+        codec, Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
+        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, InspectablePane, PaneInventory, PaneKind,
+        PaneProvider, PreferenceValue, RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire,
         WorkspaceConfiguration, WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo,
-        WorkspaceTerminal, codec,
+        WorkspaceTerminal, PROTOCOL,
     };
     use hl_gui::{Renderer as _, SourceMutation, Theme, Tree};
     use hl_gui_gtk::Surface;
@@ -4633,8 +4633,8 @@ mod unix {
                     .expect("decision row belongs to its fixed footer");
                 let footer_bounds = footer.compute_bounds(root).expect("fixed footer belongs to root");
                 assert!(
-                    (64.0..=80.0).contains(&footer_bounds.height()),
-                    "{width_name} {state} footer is not compact: {footer_bounds:?}"
+                    (48.0..=60.0).contains(&footer_bounds.height()),
+                    "{width_name} {state} footer does not stay within one compact row: {footer_bounds:?}"
                 );
                 assert!(
                     (footer_bounds.y() + footer_bounds.height() - 800.0).abs() <= 1.0,
@@ -4706,12 +4706,12 @@ mod unix {
                     );
                 }
                 assert!(
-                    status_bounds.y() + status_bounds.height() <= update_bounds.y(),
-                    "{width_name} decision status does not own its first row: status={status_bounds:?}, actions={update_bounds:?}"
+                    (status_bounds.y() - update_bounds.y()).abs() <= 2.0,
+                    "{width_name} decision status and action are not one row: status={status_bounds:?}, action={update_bounds:?}"
                 );
                 assert!(
-                    update_bounds.y() - status_bounds.y() <= 36.0,
-                    "{width_name} decision footer grew beyond two compact rows: status={status_bounds:?}, actions={update_bounds:?}"
+                    status_bounds.x() + status_bounds.width() + 8.0 <= update_bounds.x(),
+                    "{width_name} decision status crowds its actions: status={status_bounds:?}, action={update_bounds:?}"
                 );
             }
             if state == "update-success" {

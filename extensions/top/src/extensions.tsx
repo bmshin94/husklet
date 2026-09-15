@@ -2978,14 +2978,15 @@ export function Extensions({
     <Column grow gap={0}>
       {content}
       {acquisition?.candidate ? (
-        <Column gap={0} grow={false} height={{ step: 17 }}>
+        <Column gap={0} grow={false}>
           <Spacer height={1} />
           <Separator orientation="horizontal" />
-          <Column
-            gap={1}
+          <Row
+            gap={2}
             pad={{ top: 1, end: 2, bottom: 1, start: 2 }}
+            align="center"
             width="fill"
-            align="stretch"
+            wrap
           >
             <Text
               label={
@@ -2995,43 +2996,65 @@ export function Extensions({
               }
               color="text-dim"
               wrap={false}
-              width="fill"
+              grow
             />
-            <Row gap={1} align="center" justify="end" width="fill">
-              <Spacer />
-              <Button
-                label={
-                  busy === 'update'
-                    ? 'Updating…'
-                    : busy === 'install'
-                      ? 'Installing…'
-                      : acquisition.candidate.installed_image_digest
-                        ? 'Update with selected access'
-                        : 'Install with selected access'
-                }
-                size="small"
-                enabled={
-                  !busy &&
-                  acquisition.state === 'ready' &&
-                  missingRequiredCapabilities.length === 0 &&
-                  !catalogueMismatch
-                }
-                variant="filled"
-                tone="accent"
-                onInvoke={publish}
-              />
-              <Button
-                label="Cancel review"
-                size="small"
-                variant="ghost"
-                enabled={!busy}
-                onInvoke={dismissReview}
-              />
-            </Row>
-          </Column>
+            <ReviewActions
+              busy={busy}
+              updating={Boolean(acquisition.candidate.installed_image_digest)}
+              enabled={
+                acquisition.state === 'ready' &&
+                missingRequiredCapabilities.length === 0 &&
+                !catalogueMismatch
+              }
+              onPublish={publish}
+              onCancel={dismissReview}
+            />
+          </Row>
         </Column>
       ) : null}
     </Column>
+  );
+}
+
+function ReviewActions({
+  busy,
+  updating,
+  enabled,
+  onPublish,
+  onCancel,
+}: {
+  busy: string | null;
+  updating: boolean;
+  enabled: boolean;
+  onPublish: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Row gap={1} align="center" justify="end">
+      <Button
+        label={
+          busy === 'update'
+            ? 'Updating…'
+            : busy === 'install'
+              ? 'Installing…'
+              : updating
+                ? 'Update with selected access'
+                : 'Install with selected access'
+        }
+        size="small"
+        enabled={!busy && enabled}
+        variant="filled"
+        tone="accent"
+        onInvoke={onPublish}
+      />
+      <Button
+        label="Cancel review"
+        size="small"
+        variant="ghost"
+        enabled={!busy}
+        onInvoke={onCancel}
+      />
+    </Row>
   );
 }
 
