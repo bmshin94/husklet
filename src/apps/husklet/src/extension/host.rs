@@ -872,7 +872,13 @@ fn attendant<S: Supply>(
     let held = Arc::new(plan.clone());
     let execution_ownership = hl_extension::ExecutionOwnership::default();
     move |stream| {
-        let reason = converse(&supply, &held, &queue, &voice, execution_ownership.clone(), stream);
+        // The completion is the driver's only proof that this socket no longer
+        // has an attendant. Keep a faulty service adapter from skipping that
+        // proof and leaving a ready host in Duty forever.
+        let reason = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            converse(&supply, &held, &queue, &voice, execution_ownership.clone(), stream)
+        }))
+        .unwrap_or_else(|_| format!("{} panicked while serving its session", held.record.name));
         // A full channel means an earlier conversation's ending is still
         // waiting to be read, which is the one this would replace anyway.
         let _ = finish.try_send(reason);
@@ -1325,6 +1331,7 @@ tab_title = "Sample"
         token: Arc<()>,
         ready_timeout: Duration,
         startup_failure: Option<String>,
+        attend_panics: AtomicUsize,
         halts: AtomicUsize,
         live: Arc<Mutex<Vec<UnixStream>>>,
         events: Arc<AtomicUsize>,
@@ -1342,6 +1349,7 @@ tab_title = "Sample"
                 token: Arc::clone(token),
                 ready_timeout: READY_TIMEOUT,
                 startup_failure: None,
+                attend_panics: AtomicUsize::new(0),
                 halts: AtomicUsize::new(0),
                 live: Arc::new(Mutex::new(Vec::new())),
                 events: Arc::new(AtomicUsize::new(0)),
@@ -1355,6 +1363,11 @@ tab_title = "Sample"
 
         fn with_startup_failure(mut self, reason: &str) -> Self {
             self.startup_failure = Some(reason.to_owned());
+            self
+        }
+
+        fn with_attend_panics(self, count: usize) -> Self {
+            self.attend_panics.store(count, Ordering::Release);
             self
         }
 
@@ -1394,6 +1407,15 @@ tab_title = "Sample"
         }
 
         fn attend(&self, _plan: &Plan, conversation: &mut Conversation) -> Result<(), String> {
+            if self
+                .attend_panics
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                    remaining.checked_sub(1)
+                })
+                .is_ok()
+            {
+                panic!("injected attendant failure");
+            }
             let ports = Ports;
             let services = Services {
                 workspace: WorkspaceInfo {
@@ -1963,6 +1985,51 @@ tab_title = "Sample"
 
         host.close().expect("closed");
         assert_eq!(bench.halts(), 2, "owned shutdown retires the live replacement");
+    }
+
+    #[test]
+    fn an_attendant_panic_reaches_recovery_instead_of_stranding_duty() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let socket = temporary.path().join("run/extension.sock");
+        let token = Arc::new(());
+        let gallery = Gallery::default();
+        let bench = Arc::new(
+            Bench::new(
+                &socket,
+                &[
+                    Script {
+                        sequence: 1,
+                        draw: true,
+                        linger: true,
+                    },
+                    Script {
+                        sequence: 2,
+                        draw: true,
+                        linger: true,
+                    },
+                ],
+                &token,
+            )
+            .with_ready_timeout(Duration::from_secs(5))
+            .with_attend_panics(1),
+        );
+        let host = Host::open(Attendance(Arc::clone(&bench)), gallery.audience());
+
+        assert!(
+            until(|| gallery
+                .losses()
+                .iter()
+                .any(|loss| loss.contains("panicked while serving its session"))),
+            "the panic becomes a visible session ending"
+        );
+        assert!(
+            until(|| gallery.frames().contains(&2)),
+            "recovery starts a replacement without waiting for the readiness deadline"
+        );
+        assert_eq!(bench.ensures(), 2, "one failed attendant creates one replacement");
+        assert_eq!(bench.halts(), 1, "the failed generation is retired before recovery");
+
+        host.close().expect("closed");
     }
 
     #[test]
