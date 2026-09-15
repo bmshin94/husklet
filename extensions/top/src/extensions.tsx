@@ -533,6 +533,61 @@ function RequestedPermissionSummary({ groups }: { groups: { label: string; count
   );
 }
 
+function AcquisitionIdentity({
+  acquisition,
+  catalogueEntry,
+  expanded,
+  onExpandedChange,
+}: {
+  acquisition: ExtensionAcquisitionStatus & {
+    candidate: NonNullable<ExtensionAcquisitionStatus['candidate']>;
+  };
+  catalogueEntry: ExtensionCatalogueEntry | null;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+}) {
+  return (
+    <Column gap={1} width="fill">
+      {catalogueEntry ? (
+        <Row gap={1} width="fill" align="center" justify="start" wrap>
+          <Text label={catalogueEntry.publisher} grow />
+          <Badge
+            {...catalogueTrust(catalogueEntry)}
+            label={
+              catalogueEntry.publisher_verified ? 'Verified publisher' : 'Unverified publisher'
+            }
+          />
+        </Row>
+      ) : (
+        <Badge label="Direct OCI image" tone="warning" />
+      )}
+      <Expander
+        label="Package identity"
+        expanded={expanded}
+        onExpand={(event: Change) => onExpandedChange(Boolean(event.value))}
+      >
+        <Column gap={1} pad={{ bottom: 1 }} width="fill">
+          <Text
+            label={`Package · ${compactImageReference(acquisition.reference)}`}
+            color="text-dim"
+            tooltip={acquisition.reference}
+            wrap
+          />
+          <Text
+            label={`Verified digest · ${compactDigest(acquisition.candidate.image_digest)}`}
+            color="text-dim"
+            tooltip={acquisition.candidate.image_digest}
+            wrap
+          />
+          {catalogueEntry ? (
+            <Text label={`Catalogue source · ${catalogueEntry.source}`} color="text-dim" wrap />
+          ) : null}
+        </Column>
+      </Expander>
+    </Column>
+  );
+}
+
 export function Extensions({
   api,
   initialReference = '',
@@ -618,6 +673,7 @@ export function Extensions({
   const [installedLimit, setInstalledLimit] = React.useState(INSTALLED_PAGE_SIZE);
   const [removalMenu, setRemovalMenu] = React.useState('');
   const [permissionDetailsExpanded, setPermissionDetailsExpanded] = React.useState(false);
+  const [identityDetailsExpanded, setIdentityDetailsExpanded] = React.useState(false);
   const cancelling = React.useRef(false);
   const cancelledJob = React.useRef('');
   const candidateKey = React.useRef('');
@@ -757,6 +813,7 @@ export function Extensions({
     setError('');
     setNotice(null);
     setPermissionDetailsExpanded(false);
+    setIdentityDetailsExpanded(false);
     setAcquisition(null);
     candidateKey.current = '';
     try {
@@ -786,6 +843,7 @@ export function Extensions({
             // one required permission into a viewport-filling wall of optional
             // switches.
             setPermissionDetailsExpanded(false);
+            setIdentityDetailsExpanded(false);
           }
         }
         if (
@@ -1023,6 +1081,8 @@ export function Extensions({
   const dismissReview = () => {
     setAcquisition(null);
     setCatalogueExpectation(null);
+    setPermissionDetailsExpanded(false);
+    setIdentityDetailsExpanded(false);
     setGranted([]);
     setGrantedContainers({ selectors: [], create: false });
     setGrantedImages({ read: [], use: [], pull: [], remove: [], prune_all_unused: false });
@@ -1901,30 +1961,12 @@ export function Extensions({
                   ) : null}
                   {acquisition?.candidate && (
                     <CardContent gap={1}>
-                      <Column gap={0} width="fill" align="start">
-                        <Text
-                          label={`Package · ${compactImageReference(acquisition.reference)}`}
-                          color="text-dim"
-                          tooltip={acquisition.reference}
-                          wrap
-                        />
-                        <Text
-                          label={`Verified digest · ${compactDigest(acquisition.candidate.image_digest)}`}
-                          color="text-dim"
-                          tooltip={acquisition.candidate.image_digest}
-                          wrap
-                        />
-                      </Column>
-                      {catalogueExpectation ? (
-                        <Column gap={1}>
-                          <Badge {...catalogueTrust(catalogueExpectation)} />
-                          <Text
-                            label={`Catalogue source · ${catalogueExpectation.source}`}
-                            color="text-dim"
-                            wrap
-                          />
-                        </Column>
-                      ) : null}
+                      <AcquisitionIdentity
+                        acquisition={{ ...acquisition, candidate: acquisition.candidate }}
+                        catalogueEntry={catalogueExpectation}
+                        expanded={identityDetailsExpanded}
+                        onExpandedChange={setIdentityDetailsExpanded}
+                      />
                       {identityReviewWarning ? (
                         <InlineMessage label={identityReviewWarning} tone="warning" />
                       ) : null}

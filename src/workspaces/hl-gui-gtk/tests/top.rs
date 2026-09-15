@@ -3950,7 +3950,19 @@ mod unix {
 
         let review_root = surface.widget().clone().upcast::<gtk::Widget>();
         assert!(has_label(&review_root, "No access selected · 19 requested"));
-        assert!(has_label(&review_root, "Community publisher"));
+        assert!(has_label(&review_root, "Unverified publisher"));
+        assert!(has_label(&review_root, "Community"));
+        let identity = find_expander(&review_root, "Package identity");
+        assert!(
+            !identity.is_expanded(),
+            "registry paths and digests stay collapsed until the developer asks"
+        );
+        assert!(!has_label(
+            &review_root,
+            "Catalogue source · community/developer-tool-01"
+        ));
+        identity.set_expanded(true);
+        settle_toolkit();
         assert!(has_label(
             &review_root,
             "Catalogue source · community/developer-tool-01"
@@ -3976,6 +3988,8 @@ mod unix {
             &review_root,
             "Verified digest · sha256:cccccccccccc…cccccccc"
         ));
+        identity.set_expanded(false);
+        settle_toolkit();
         assert!(has_label(&review_root, "Update extension · version 1.0.0"));
         assert!(has_label(
             &review_root,

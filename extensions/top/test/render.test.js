@@ -3403,6 +3403,18 @@ for (const updating of [false, true]) {
     await settled();
 
     assert.ok(labelled(stage, 'Review scoped'));
+    assert.ok(labelled(stage, 'Direct OCI image'));
+    assert.equal(
+      ancestorTags(stage, 'Direct OCI image').includes('Expander'),
+      false,
+      'the source warning remains visible while technical identity is collapsed',
+    );
+    assert.ok(labelled(stage, 'Package identity'));
+    assert.equal(
+      ancestorTags(stage, 'Package · local/scoped:2').includes('Expander'),
+      true,
+      'long package references stay behind a dedicated identity disclosure',
+    );
     assert.ok(labelled(stage, 'Package · local/scoped:2'));
     assert.ok(labelled(stage, `Verified digest · ${compactDigest(candidate.image_digest)}`));
     assert.ok(
