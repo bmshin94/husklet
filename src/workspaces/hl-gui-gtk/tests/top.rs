@@ -1125,13 +1125,20 @@ mod unix {
                     "{width_name} collapsed network record stacked its summary to {}px",
                     network_card.height()
                 );
-                let danger = find_button(&network_card, "Remove network…");
+                let danger = find_button(&network_card, "Delete");
                 assert!(danger.has_css_class("variant-ghost"));
                 assert!(danger.has_css_class("tone-danger"));
                 assert_eq!(danger.height(), 44, "{width_name} network danger hit target");
                 assert_eq!(
                     danger.tooltip_text().as_deref(),
                     Some("Remove this network from the workspace")
+                );
+                let danger_label =
+                    find_label_widget(danger.upcast_ref()).expect("network danger action retains its visible label");
+                assert!(
+                    !danger_label.layout().is_ellipsized(),
+                    "{width_name} network danger label was ellipsized at {}px",
+                    danger_label.width()
                 );
                 assert!(danger.grab_focus(), "network danger action is keyboard reachable");
                 assert!(
@@ -1181,7 +1188,7 @@ mod unix {
                         &mut tree,
                         &mut surface,
                         &root,
-                        "Remove network…",
+                        "Delete",
                         "Remove network",
                         12_753 + if width == 600 { 50 } else { 0 },
                     );
@@ -1211,7 +1218,7 @@ mod unix {
                         &mut surface,
                         &root,
                         "Cancel",
-                        "Remove network…",
+                        "Remove network",
                         12_754 + if width == 600 { 50 } else { 0 },
                     );
                     if width == 1_200 {
@@ -2882,11 +2889,8 @@ mod unix {
             let hide_connections = find_button(&expanded_root, "Hide details");
             assert!(hide_connections.has_css_class("variant-outline"));
             assert!(hide_connections.has_css_class("tone-neutral"));
-            assert!(find_button(&expanded_root, "Remove network…").is_sensitive());
-            assert_label_order(
-                &expanded_root,
-                &["Remove network…", "Network details", "Container attachment"],
-            );
+            assert!(find_button(&expanded_root, "Delete").is_sensitive());
+            assert_label_order(&expanded_root, &["Delete", "Network details", "Container attachment"]);
 
             let selector = find_toggle(&expanded_root, "Choose…");
             selector.set_active(true);
@@ -3015,11 +3019,11 @@ mod unix {
                 &format!("Container · {}", &container_id[..12])
             ));
             assert!(has_label(&success_root, "Technical details"));
-            assert!(find_button(&success_root, "Remove network…").is_sensitive());
+            assert!(find_button(&success_root, "Delete").is_sensitive());
             assert_label_order(
                 &success_root,
                 &[
-                    "Remove network…",
+                    "Delete",
                     "Network details",
                     "Container attachment",
                     &success,
@@ -3029,7 +3033,7 @@ mod unix {
             assert_focus_order(
                 &success_root,
                 &[
-                    "Remove network…",
+                    "Delete",
                     "api-worker · aaaaaaaaaaaa · exited",
                     "Disconnect",
                     "Technical details",
@@ -7019,6 +7023,20 @@ mod unix {
             return button;
         }
         find_button_optional(root, label).unwrap_or_else(|| panic!("button {label:?} was not rendered"))
+    }
+
+    fn find_label_widget(root: &gtk::Widget) -> Option<gtk::Label> {
+        if let Some(label) = root.downcast_ref::<gtk::Label>() {
+            return Some(label.clone());
+        }
+        let mut child = root.first_child();
+        while let Some(current) = child {
+            child = current.next_sibling();
+            if let Some(label) = find_label_widget(&current) {
+                return Some(label);
+            }
+        }
+        None
     }
 
     fn find_mapped_button_optional(root: &gtk::Widget, label: &str) -> Option<gtk::Button> {

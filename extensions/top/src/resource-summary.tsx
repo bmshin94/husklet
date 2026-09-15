@@ -110,12 +110,11 @@ export function ResourceSummary({
     }
   };
   const dangerTrigger = danger ? (
-    <Button
+    <InlineButton
       label={danger.label}
       tooltip={danger.tooltip}
       tone="danger"
       variant="ghost"
-      size="small"
       enabled={danger.enabled !== false && !confirmation.pending}
       onInvoke={openDanger}
     />
@@ -142,7 +141,7 @@ export function ResourceSummary({
             </CardActions>
           </Row>
           <Row gap={2} align="stretch" justify="center" width="fill" height={{ step: 11 }}>
-            {identity(20)}
+            {identity(16)}
             {status}
             <Spacer width="fill" />
             <CardActions gap={1} align="center" justify="center">

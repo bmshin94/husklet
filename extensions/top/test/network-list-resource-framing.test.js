@@ -133,7 +133,7 @@ test(
       choose(stage, containerId);
       await until(() => labelled(stage, 'Connect'));
       assert.equal(labelled(stage, 'Disconnect'), undefined);
-      invoke(stage, 'Remove network…');
+      invoke(stage, 'Delete');
       assert.ok(
         labelled(
           stage,
@@ -154,7 +154,7 @@ test(
         'Manage network',
         'Connect',
         'Disconnect',
-        'Remove network…',
+        'Delete',
         'Remove network',
         'Confirm disconnect',
       ]) {
@@ -173,8 +173,7 @@ test(
       invoke(stage, 'Refresh');
       await until(() => labelled(stage, 'current-net'));
       assert.equal(attempts, 4);
-      for (const control of ['Manage network', 'Remove network…'])
-        assert.ok(labelled(stage, control));
+      for (const control of ['Manage network', 'Delete']) assert.ok(labelled(stage, control));
       const currentPatches = stage.frames.slice(currentStart).flatMap((frame) => frame.patches);
       for (const endpointControl of ['Connect', 'Disconnect'])
         assert.equal(
