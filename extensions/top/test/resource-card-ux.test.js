@@ -421,10 +421,15 @@ test('execution output has an observable loading state and explicit empty result
   await until(() => textProperty(stage, 'No stdout captured (EOF).'));
   assert.ok(textProperty(stage, 'No stdout captured (EOF).'));
   assert.ok(textProperty(stage, 'No stderr captured (EOF).'));
-  assert.ok(labelled(stage, 'Cleanup…'));
-  assert.equal(labelled(stage, 'More actions'), undefined);
-  assert.deepEqual(property(stage, 'Cleanup…', 'Variant'), { Variant: 'Outline' });
-  assert.deepEqual(property(stage, 'Cleanup…', 'Width'), { Length: 'Content' });
+  assert.ok(labelled(stage, 'More actions'));
+  assert.deepEqual(property(stage, 'More actions', 'Variant'), { Variant: 'Ghost' });
+  assert.ok(
+    ancestorTags(stage, 'Remove record').includes('CardContent'),
+    'secondary actions live in the card-width panel rather than the summary row',
+  );
+  invoke(stage, 'More actions');
+  await settled();
+  assert.ok(labelled(stage, 'Close actions'));
 });
 
 test('execution summaries keep exact commands and container authority selectable', async () => {

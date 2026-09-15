@@ -6,7 +6,6 @@ import {
   Column,
   ConfirmAction,
   Entry,
-  Expander,
   FormControl,
   FormHelperText,
   FormLabel,
@@ -34,6 +33,7 @@ import {
 } from '@husklet/react';
 import { bounded, boundedMessage } from './model.js';
 import type { Resource } from './overview.js';
+import { DisclosureSection } from './disclosure-section.js';
 import { CreationPanel } from './creation-panel.js';
 
 type TerminalCursor = { generation: number; revision: number };
@@ -588,7 +588,10 @@ export function Terminals({
                       wrap
                     />
                   )}
-                  <Expander label="Input" expanded={false}>
+                  <DisclosureSection
+                    label="Terminal input"
+                    tooltip="Send text or start a separate command in this pane"
+                  >
                     <Column gap={1}>
                       {readable.kind === 'terminal' && !cursor ? (
                         <Text
@@ -663,8 +666,11 @@ export function Terminals({
                         </Column>
                       ) : null}
                     </Column>
-                  </Expander>
-                  <Expander label="Layout" expanded={false}>
+                  </DisclosureSection>
+                  <DisclosureSection
+                    label="Pane layout"
+                    tooltip="Split or resize the selected pane"
+                  >
                     <Column gap={1}>
                       <Row gap={1} wrap>
                         <Button
@@ -698,8 +704,11 @@ export function Terminals({
                         />
                       </Row>
                     </Column>
-                  </Expander>
-                  <Expander label="Advanced" expanded={false}>
+                  </DisclosureSection>
+                  <DisclosureSection
+                    label="Automation and diagnostics"
+                    tooltip="Inspect interface semantics and advanced pane controls"
+                  >
                     <Column gap={1}>
                       {readable.kind === 'ui' ? (
                         <Column gap={1}>
@@ -834,7 +843,7 @@ export function Terminals({
                         onConfirm={() => mutatePane('close')}
                       />
                     </Column>
-                  </Expander>
+                  </DisclosureSection>
                 </Column>
               ) : null}
             </CardContent>

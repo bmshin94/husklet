@@ -5,7 +5,6 @@ import {
   Card,
   Column,
   ConfirmAction,
-  Expander,
   Heading,
   InlineButton,
   ResourceState,
@@ -249,16 +248,20 @@ export function Containers({
                     ) : null}
                   </>
                 }
-                overflow={
-                  <ContainerActions
-                    api={api}
-                    item={item}
-                    busy={busy}
-                    act={act}
-                    remove={remove}
-                    reload={resource.reload}
-                  />
-                }
+                overflow={{
+                  label: 'More actions',
+                  tooltip: 'Rename, restart, pause, stop, or remove this container',
+                  content: (
+                    <ContainerActions
+                      api={api}
+                      item={item}
+                      busy={busy}
+                      act={act}
+                      remove={remove}
+                      reload={resource.reload}
+                    />
+                  ),
+                }}
               />
               {selected === item.id ? (
                 <ContainerDetail
@@ -299,70 +302,61 @@ function ContainerActions({
   const running = item.state === 'running';
   const active = running || item.state === 'paused';
   return (
-    <Expander
-      label="Lifecycle…"
-      expanded={false}
-      variant="outline"
-      width="content"
-      align="start"
-      justify="center"
-      tooltip="Rename, restart, pause, stop, or remove this container"
-    >
-      <Column gap={1} align="start" width="fill">
-        <ContainerRename api={api} container={item} reload={reload} blocked={blocked} />
-        <Row gap={1} wrap align="center">
-          {active ? (
-            <Button
-              label="Restart"
-              variant="ghost"
-              size="small"
-              enabled={!blocked}
-              onInvoke={() => act('restart', item.id, undefined, item.generation)}
-            />
-          ) : null}
-          {active ? (
-            <Button
-              label={item.state === 'paused' ? 'Resume' : 'Pause'}
-              variant="ghost"
-              size="small"
-              enabled={!blocked}
-              onInvoke={() =>
-                act(
-                  item.state === 'paused' ? 'unpause' : 'pause',
-                  item.id,
-                  undefined,
-                  item.generation,
-                )
-              }
-            />
-          ) : null}
-          {active || item.state === 'restarting' ? (
-            <ConfirmAction
-              label="Stop"
-              confirmLabel="Confirm stop"
-              pendingLabel="Confirm stop"
-              authorityKey={`container:${item.id}:stop`}
-              question={`Stop ${item.name || shortId(item.id)} with immutable ID ${item.id}?`}
-              enabled={!blocked}
-              size="small"
-              onConfirm={() => act('stop', item.id, undefined, item.generation)}
-            />
-          ) : null}
-          {removable(item.state) ? (
-            <ConfirmAction
-              label="Remove"
-              confirmLabel="Confirm remove"
-              pendingLabel="Confirm remove"
-              authorityKey={`container:${item.id}:remove`}
-              question={`Remove inactive container ${item.name || shortId(item.id)} with immutable ID ${item.id}?`}
-              enabled={!blocked}
-              size="small"
-              onConfirm={() => remove(item)}
-            />
-          ) : null}
-        </Row>
-      </Column>
-    </Expander>
+    <Column gap={1} align="start" width="fill">
+      <Heading label="Container actions" scale="caption" />
+      <ContainerRename api={api} container={item} reload={reload} blocked={blocked} />
+      <Row gap={1} wrap align="center">
+        {active ? (
+          <Button
+            label="Restart"
+            variant="ghost"
+            size="small"
+            enabled={!blocked}
+            onInvoke={() => act('restart', item.id, undefined, item.generation)}
+          />
+        ) : null}
+        {active ? (
+          <Button
+            label={item.state === 'paused' ? 'Resume' : 'Pause'}
+            variant="ghost"
+            size="small"
+            enabled={!blocked}
+            onInvoke={() =>
+              act(
+                item.state === 'paused' ? 'unpause' : 'pause',
+                item.id,
+                undefined,
+                item.generation,
+              )
+            }
+          />
+        ) : null}
+        {active || item.state === 'restarting' ? (
+          <ConfirmAction
+            label="Stop"
+            confirmLabel="Confirm stop"
+            pendingLabel="Confirm stop"
+            authorityKey={`container:${item.id}:stop`}
+            question={`Stop ${item.name || shortId(item.id)} with immutable ID ${item.id}?`}
+            enabled={!blocked}
+            size="small"
+            onConfirm={() => act('stop', item.id, undefined, item.generation)}
+          />
+        ) : null}
+        {removable(item.state) ? (
+          <ConfirmAction
+            label="Remove"
+            confirmLabel="Confirm remove"
+            pendingLabel="Confirm remove"
+            authorityKey={`container:${item.id}:remove`}
+            question={`Remove inactive container ${item.name || shortId(item.id)} with immutable ID ${item.id}?`}
+            enabled={!blocked}
+            size="small"
+            onConfirm={() => remove(item)}
+          />
+        ) : null}
+      </Row>
+    </Column>
   );
 }
 

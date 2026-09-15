@@ -39,7 +39,11 @@ function boundedError(cause: unknown): string {
 type ResourceSummaryCommon = {
   status?: React.ReactNode;
   actions: React.ReactNode;
-  overflow?: React.ReactNode;
+  overflow?: {
+    label: string;
+    tooltip: string;
+    content: React.ReactNode;
+  };
   danger?: ResourceDanger;
 };
 
@@ -80,6 +84,7 @@ export function ResourceSummary({
     pending: false,
     error: '',
   });
+  const [overflowOpen, setOverflowOpen] = React.useState(false);
   const active = danger && confirmation.authority === danger.authorityKey;
   const openDanger = () => {
     if (!danger) return;
@@ -114,6 +119,16 @@ export function ResourceSummary({
       onInvoke={openDanger}
     />
   ) : null;
+  const overflowTrigger = overflow ? (
+    <Button
+      label={overflowOpen ? 'Close actions' : overflow.label}
+      tooltip={overflow.tooltip}
+      icon="view-more-symbolic"
+      variant="ghost"
+      size="small"
+      onInvoke={() => setOverflowOpen((open) => !open)}
+    />
+  ) : null;
   return (
     <>
       <CardContent gap={1} align="center" width="fill">
@@ -123,7 +138,7 @@ export function ResourceSummary({
             {status}
             <CardActions gap={1} align="center" justify="center">
               {centered(actions)}
-              {centered(overflow)}
+              {centered(overflowTrigger)}
               {centered(dangerTrigger)}
             </CardActions>
           </Row>
@@ -133,12 +148,19 @@ export function ResourceSummary({
             <Spacer width="fill" />
             <CardActions gap={1} align="center" justify="center">
               {centered(actions)}
-              {centered(overflow)}
+              {centered(overflowTrigger)}
               {centered(dangerTrigger)}
             </CardActions>
           </Row>
         </Responsive>
       </CardContent>
+      {overflow ? (
+        <CardContent visible={overflowOpen} width="fill" align="start" pad={2}>
+          <Column gap={1} width="fill">
+            {overflow.content}
+          </Column>
+        </CardContent>
+      ) : null}
       {active ? (
         <CardContent width="fill" align="start">
           <Column gap={1} width="fill">

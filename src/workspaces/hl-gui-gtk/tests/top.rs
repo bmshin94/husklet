@@ -16,11 +16,11 @@ mod unix {
         NetworkEndpointInventory, NetworkInventory, NetworkKind, NetworkSummary, PaneText, TerminalLifecycle,
     };
     use hl_extension::{
-        codec, Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
-        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, InspectablePane, PaneInventory, PaneKind,
-        PaneProvider, PreferenceValue, RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire,
+        Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
+        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, InspectablePane, PROTOCOL, PaneInventory,
+        PaneKind, PaneProvider, PreferenceValue, RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire,
         WorkspaceConfiguration, WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo,
-        WorkspaceTerminal, PROTOCOL,
+        WorkspaceTerminal, codec,
     };
     use hl_gui::{Renderer as _, SourceMutation, Theme, Tree};
     use hl_gui_gtk::Surface;
@@ -529,20 +529,17 @@ mod unix {
                 assert!(start.has_css_class("tone-accent"));
                 assert!(start.grab_focus(), "container Start remains keyboard reachable");
                 assert!(!find_button(&card, "Details").has_css_class("tone-accent"));
-                let secondary = find_expander(&card, "Lifecycle…");
-                assert!(
-                    !has_label(&card, "More actions"),
-                    "container disclosure names its lifecycle action category"
-                );
-                assert!(secondary.has_css_class("variant-outline"));
+                let secondary = find_button(&card, "More actions");
+                assert!(secondary.has_css_class("variant-ghost"));
+                assert!(secondary.has_css_class("size-small"));
                 assert_eq!(
                     secondary.height(),
-                    28,
-                    "{width_name} secondary disclosure must remain one compact control row"
+                    44,
+                    "{width_name} secondary action must retain its compact chrome and accessible target"
                 );
                 assert!(
                     secondary.width() < card.width() / 2,
-                    "{width_name} secondary disclosure consumed {}px of a {}px card",
+                    "{width_name} secondary action consumed {}px of a {}px card",
                     secondary.width(),
                     card.width()
                 );
@@ -550,10 +547,7 @@ mod unix {
                     secondary.tooltip_text().as_deref(),
                     Some("Rename, restart, pause, stop, or remove this container")
                 );
-                assert!(
-                    secondary.grab_focus(),
-                    "Lifecycle disclosure remains keyboard reachable"
-                );
+                assert!(secondary.grab_focus(), "More actions remains keyboard reachable");
                 let create = find_button(&root, "Create a container");
                 assert!(create.has_css_class("variant-outline"));
                 assert!(create.has_css_class("size-small"));
@@ -1205,12 +1199,7 @@ mod unix {
                         question_bounds.y() >= manage_bounds.y() + manage_bounds.height(),
                         "{width_name} network consequence remained squeezed into the action row"
                     );
-                    capture_stable(
-                        &window,
-                        &format!("network-danger-{width_name}"),
-                        width,
-                        800,
-                    );
+                    capture_stable(&window, &format!("network-danger-{width_name}"), width, 800);
                     invoke_and_apply_until_button(
                         &mut wire,
                         &mut tree,
@@ -1329,12 +1318,7 @@ mod unix {
                         question_bounds.y() >= inspect_bounds.y() + inspect_bounds.height(),
                         "{width_name} volume consequence remained squeezed into the action row"
                     );
-                    capture(
-                        &window,
-                        &format!("volume-danger-{width_name}"),
-                        width,
-                        800,
-                    );
+                    capture(&window, &format!("volume-danger-{width_name}"), width, 800);
                     invoke_and_apply_until_button(
                         &mut wire,
                         &mut tree,
@@ -1420,10 +1404,7 @@ mod unix {
                     assert!(remove.has_css_class("size-small"));
                     assert_standard_action(&remove, width_name, "image removal", 28);
                     assert!(remove.grab_focus(), "expanded image removal is keyboard reachable");
-                    let question = find_label(
-                        &card,
-                        "Removing alpine:3.20 (sha256:bbbbb) cannot be undone.",
-                    );
+                    let question = find_label(&card, "Removing alpine:3.20 (sha256:bbbbb) cannot be undone.");
                     let question_bounds = question
                         .compute_bounds(&card)
                         .expect("image consequence belongs to its card");
@@ -1431,12 +1412,7 @@ mod unix {
                         question_bounds.y() >= inspect_bounds.y() + inspect_bounds.height(),
                         "{width_name} image consequence remained squeezed into the action row"
                     );
-                    capture_stable(
-                        &window,
-                        &format!("image-danger-{width_name}"),
-                        width,
-                        800,
-                    );
+                    capture_stable(&window, &format!("image-danger-{width_name}"), width, 800);
                     invoke_and_apply_until_button(
                         &mut wire,
                         &mut tree,
@@ -1526,26 +1502,26 @@ mod unix {
                     find_button(&card, "Load output").grab_focus(),
                     "execution output action is keyboard reachable"
                 );
-                let secondary = find_expander(&card, "Cleanup…");
-                assert!(
-                    !has_label(&card, "More actions"),
-                    "execution disclosure names its cleanup action category"
-                );
-                assert!(secondary.has_css_class("variant-outline"));
+                let secondary = find_button(&card, "More actions");
+                assert!(secondary.has_css_class("variant-ghost"));
+                assert!(secondary.has_css_class("size-small"));
                 assert_eq!(
                     secondary.height(),
-                    28,
-                    "{width_name} execution disclosure must remain one compact control row"
+                    44,
+                    "{width_name} execution secondary action lost its accessible target"
                 );
                 assert!(
                     secondary.width() < card.width(),
-                    "{width_name} execution disclosure consumed the complete card width"
+                    "{width_name} execution secondary action consumed the complete card width"
                 );
                 assert_eq!(
                     secondary.tooltip_text().as_deref(),
                     Some("Terminate this process or remove its completed execution record")
                 );
-                assert!(secondary.grab_focus(), "execution disclosure is keyboard reachable");
+                assert!(
+                    secondary.grab_focus(),
+                    "execution secondary action is keyboard reachable"
+                );
             }
             if fixture != "error" && name == "processes" && width == 1_200 {
                 settle_toolkit();
@@ -2815,8 +2791,7 @@ mod unix {
             wire.send(&Frame::new(ChannelId::new(97), hl_extension::Kind::Event, payload))
                 .expect("Manage network invocation reaches Top");
             let deadline = Instant::now() + DEADLINE;
-            while Instant::now() < deadline
-                && !has_label(surface.widget().upcast_ref::<gtk::Widget>(), "Hide details")
+            while Instant::now() < deadline && !has_label(surface.widget().upcast_ref::<gtk::Widget>(), "Hide details")
             {
                 match receive_until(&mut wire, (Instant::now() + Duration::from_millis(80)).min(deadline)) {
                     Ok(frame) if frame.kind == hl_extension::Kind::Credit => {}
@@ -5893,8 +5868,30 @@ mod unix {
         assert_eq!(cards.len(), 1, "{case} terminal tab must own one bounded surface");
         let card = &cards[0];
         assert!(card.has_css_class("variant-filled"));
-        for label in ["Pane 1", "Live terminal", "Input", "Layout", "Advanced"] {
+        for label in [
+            "Pane 1",
+            "Live terminal",
+            "Terminal input",
+            "Pane layout",
+            "Automation and diagnostics",
+        ] {
             assert!(has_label(card, label), "{case} terminal card omitted {label}");
+        }
+        let mut disclosure_width = None;
+        for label in ["Terminal input", "Pane layout", "Automation and diagnostics"] {
+            let disclosure = find_expander(card, label);
+            assert!(disclosure.has_css_class("variant-outline"));
+            assert!(
+                disclosure.width() >= card.width() * 9 / 10,
+                "{case} {label} collapsed to {}px inside a {}px card",
+                disclosure.width(),
+                card.width()
+            );
+            assert_eq!(
+                disclosure_width.get_or_insert(disclosure.width()),
+                &disclosure.width(),
+                "{case} terminal disclosures no longer share one stable width"
+            );
         }
         let card_bounds = card.compute_bounds(root).expect("terminal card belongs to Top root");
         let content_start = if width == 600 { 16.0 } else { 184.0 };

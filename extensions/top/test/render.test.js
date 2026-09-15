@@ -5291,6 +5291,14 @@ test('terminal management reads every pane as text and writes against the inspec
     0,
     'the transcript keeps a compact viewport instead of consuming the full window height',
   );
+  for (const label of ['Terminal input', 'Pane layout', 'Automation and diagnostics']) {
+    assert.equal(taggedProperty(stage, label, 'Expander', 'Expanded')?.Flag, false);
+    assert.equal(taggedProperty(stage, label, 'Expander', 'Variant')?.Variant, 'Outline');
+    assert.equal(taggedProperty(stage, label, 'Expander', 'Width')?.Length, 'Fill');
+  }
+  assert.equal(labelled(stage, 'Input'), undefined, 'terminal controls avoid anonymous arrow rows');
+  assert.equal(labelled(stage, 'Layout'), undefined, 'pane controls name their actual purpose');
+  assert.equal(labelled(stage, 'Advanced'), undefined, 'automation is not hidden behind jargon');
   assert.ok(placeholderProperty(stage, 'Text to send', 'Width'));
   assert.equal(
     placeholderProperty(stage, 'Text to send', 'Grow'),
@@ -7993,7 +8001,7 @@ test('container creation validates an initial network reference and retains it u
   assert.equal(fieldValue(stage, placeholder), '');
 });
 
-test('container controls follow the real daemon lifecycle states', () => {
+test('container controls follow the real daemon lifecycle states', async () => {
   const id = 'c'.repeat(32);
   const api = { containers: {} };
   let stage = host();
@@ -8012,10 +8020,20 @@ test('container controls follow the real daemon lifecycle states', () => {
   });
   assert.equal(taggedProperty(stage, 'Refresh', 'Button', 'Size')?.ControlSize, 'Small');
   assert.equal(labelled(stage, 'Remove'), undefined, 'running cards omit an invalid remove action');
-  assert.equal(taggedProperty(stage, 'Lifecycle…', 'Expander', 'Expanded')?.Flag, false);
-  assert.equal(taggedProperty(stage, 'Lifecycle…', 'Expander', 'Variant')?.Variant, 'Outline');
-  assert.equal(taggedProperty(stage, 'Lifecycle…', 'Expander', 'Width')?.Length, 'Content');
-  assert.equal(taggedProperty(stage, 'Lifecycle…', 'Expander', 'Justify')?.Align, 'Center');
+  assert.equal(taggedProperty(stage, 'More actions', 'Button', 'Variant')?.Variant, 'Ghost');
+  assert.equal(taggedProperty(stage, 'More actions', 'Button', 'Size')?.ControlSize, 'Small');
+  assert.deepEqual(taggedProperty(stage, 'More actions', 'Button', 'Icon'), {
+    Text: 'view-more-symbolic',
+  });
+  assert.deepEqual(ancestorProperty(stage, 'Container actions', 'CardContent', 'Visible'), {
+    Flag: false,
+  });
+  invoke(stage, 'More actions');
+  await settled();
+  assert.deepEqual(ancestorProperty(stage, 'Container actions', 'CardContent', 'Visible'), {
+    Flag: true,
+  });
+  assert.ok(labelled(stage, 'Close actions'));
   assert.equal(taggedProperty(stage, 'Details', 'InlineButton', 'Variant')?.Variant, 'Outline');
   assert.equal(taggedProperty(stage, 'Details', 'InlineButton', 'Tone')?.Tone, 'Neutral');
   assert.equal(

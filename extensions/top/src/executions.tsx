@@ -307,14 +307,10 @@ export function Executions({
                   />
                 </>
               }
-              overflow={
-                <Expander
-                  label="Cleanup…"
-                  variant="outline"
-                  width="content"
-                  align="start"
-                  tooltip="Terminate this process or remove its completed execution record"
-                >
+              overflow={{
+                label: 'More actions',
+                tooltip: 'Terminate this process or remove its completed execution record',
+                content: (
                   <Column gap={1}>
                     <Text
                       label={
@@ -348,8 +344,8 @@ export function Executions({
                       />
                     </Row>
                   </Column>
-                </Expander>
-              }
+                ),
+              }}
             />
             <CardContent>
               {selected === item.id ? (
