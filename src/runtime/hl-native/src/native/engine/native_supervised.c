@@ -1351,7 +1351,76 @@ static int hl_native_checkpoint_maps_admissible(const char *proc_root, pid_t pro
     return admissible ? 0 : -1;
 }
 
-static int hl_native_checkpoint_locks_admissible(const char *proc_root, pid_t process) {
+/* Per-descriptor lock attribution.
+ *
+ * The global /proc/locks table names an owner pid, and for two of the three advisory flavours that
+ * pid is this process, so scanning the table catches them. It cannot catch the rest:
+ *
+ *   - An OFD lock (F_OFD_SETLK) belongs to the open file description, not to a process, so the
+ *     kernel prints its owner as the literal -1. No pid comparison can ever match it.
+ *   - flock() and OFD locks taken before a fork survive into the child through the shared open file
+ *     description, but the table keeps naming whichever process originally took them.
+ *
+ * Both shapes leave a restored process believing it holds a lock it does not, which is silent guest
+ * data corruption, so both must refuse. /proc/<pid>/fdinfo/<n> settles the attribution question the
+ * table cannot: the kernel emits a "lock:" line there only for locks reachable through that very
+ * descriptor, and it does so for every flavour (POSIX, FLOCK, OFDLCK, LEASE). A lock another process
+ * holds on the same file never appears, which is exactly the distinction the gate needs.
+ *
+ * Presence of the line is the whole test -- no column is parsed and no type token is matched -- so
+ * this stays correct across the kernel revisions that have reshuffled the table's columns, and a
+ * future lock flavour is refused by default rather than admitted by omission.
+ *
+ * Descriptors the supervisor declared private are skipped. Those are the supervisor's own injected
+ * descriptors, already excluded from the workload by the fd gate; the restored image never has them,
+ * so a lock reachable through one is not a lock the guest can observe. */
+static int hl_native_checkpoint_fd_locks_admissible(const char *proc_root, pid_t process,
+                                                    const int *private_fds, size_t private_count) {
+    char path[PATH_MAX], info_root[PATH_MAX];
+    /* Enumerate the authoritative descriptor list and demand attribution for each one. Walking
+     * fdinfo instead would make a descriptor whose fdinfo cannot be read simply invisible, which
+     * turns a failed read into a silent admission. */
+    if (hl_native_checkpoint_path(path, sizeof path, proc_root, process, "fd") != 0) return -1;
+    if (hl_native_checkpoint_path(info_root, sizeof info_root, proc_root, process, "fdinfo") != 0)
+        return -1;
+    DIR *entries = opendir(path);
+    if (entries == NULL) return -1;
+    int admissible = 1;
+    int scan_error = 0;
+    struct dirent *entry;
+    while (admissible) {
+        errno = 0;
+        entry = readdir(entries);
+        if (entry == NULL) { scan_error = errno; break; }
+        char *end = NULL;
+        long descriptor = strtol(entry->d_name, &end, 10);
+        if (*entry->d_name == 0 || *end != 0) continue;
+        if (descriptor < 0 || descriptor > INT_MAX) { admissible = 0; break; }
+        int private_descriptor = 0;
+        for (size_t index = 0; index < private_count; ++index)
+            if (private_fds[index] == descriptor) { private_descriptor = 1; break; }
+        if (private_descriptor) continue;
+        char info[PATH_MAX];
+        if (snprintf(info, sizeof info, "%s/%ld", info_root, descriptor) >= (int)sizeof info) {
+            admissible = 0; break;
+        }
+        FILE *stream = fopen(info, "re");
+        if (stream == NULL) { admissible = 0; break; }
+        char *line = NULL;
+        size_t capacity = 0;
+        while (getline(&line, &capacity, stream) >= 0)
+            if (strncmp(line, "lock:", 5) == 0) { admissible = 0; break; }
+        if (ferror(stream)) admissible = 0;
+        free(line);
+        fclose(stream);
+    }
+    if (scan_error != 0) admissible = 0;
+    closedir(entries);
+    return admissible ? 0 : -1;
+}
+
+static int hl_native_checkpoint_locks_admissible(const char *proc_root, pid_t process,
+                                                 const int *private_fds, size_t private_count) {
     char path[PATH_MAX];
     if (snprintf(path, sizeof path, "%s/locks", proc_root) >= (int)sizeof path) return -1;
     FILE *locks = fopen(path, "re");
@@ -1369,7 +1438,10 @@ static int hl_native_checkpoint_locks_admissible(const char *proc_root, pid_t pr
     free(line);
     if (ferror(locks)) admissible = 0;
     fclose(locks);
-    return admissible ? 0 : -1;
+    /* The table scan still runs first: it is the only view of a *blocked* lock request, which is
+     * pending rather than held and so never reaches fdinfo. */
+    if (!admissible) return -1;
+    return hl_native_checkpoint_fd_locks_admissible(proc_root, process, private_fds, private_count);
 }
 
 #if defined(HL_NATIVE_TEST_HOOKS)
@@ -1391,7 +1463,7 @@ static int hl_native_checkpoint_admissible_at(const char *proc_root, pid_t proce
     if (process <= 0 || hl_native_checkpoint_tasks_admissible(proc_root, process) != 0) return -2;
     if (hl_native_checkpoint_fds_admissible(proc_root, process, private_fds, private_count) != 0) return -3;
     if (hl_native_checkpoint_maps_admissible(proc_root, process) != 0) return -4;
-    if (hl_native_checkpoint_locks_admissible(proc_root, process) != 0) return -5;
+    if (hl_native_checkpoint_locks_admissible(proc_root, process, private_fds, private_count) != 0) return -5;
     return 0;
 }
 
