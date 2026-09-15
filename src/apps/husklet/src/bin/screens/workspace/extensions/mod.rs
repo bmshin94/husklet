@@ -104,11 +104,12 @@ impl Shelf {
         retry.set_halign(gtk::Align::Center);
 
         let name = entry.name.clone();
+        let image_digest = entry.image_digest.clone();
         let weak = Rc::downgrade(self);
         retry.connect_clicked(move |button| {
             button.set_sensitive(false);
             let Some(shelf) = weak.upgrade() else { return };
-            if let Err(refusal) = shelf.roster.borrow_mut().retry(&name) {
+            if let Err(refusal) = shelf.roster.borrow_mut().retry_if_digest(&name, &image_digest) {
                 hl_log::hl_error!(hl_log::tag::RUNTIME, "retrying extension {name}: {refusal}");
                 button.set_sensitive(true);
                 return;
@@ -279,6 +280,56 @@ mod tests {
             retry.emit_clicked();
             assert_eq!(starts.get(), 1, "retry mounts exactly one fresh host surface");
             assert_eq!(roster.borrow().stage(&manifest.name), Stage::Duty);
+        }) {
+            eprintln!("skipped: no display connection");
+        }
+    }
+
+    #[test]
+    fn a_stale_fault_page_cannot_start_a_reinstalled_generation() {
+        if !crate::test_support::on_the_toolkit_thread(|| {
+            let temporary = tempfile::tempdir().expect("temporary directory");
+            let mut workspace = WorkspaceConfig::new("demo", "alpine:3.20", hl_ws::Arch::Amd64);
+            workspace.storage = Some(temporary.path().join("workspace"));
+            let mut installed = Roster::workspace(&workspace).expect("roster");
+            let manifest = manifest();
+            installed
+                .register(&manifest, "sha256:old", &Grant::default(), 1)
+                .expect("old record");
+            installed.enable(&manifest.name).expect("old enabled");
+            installed.fault(&manifest.name, 5).expect("old faulted");
+
+            let roster = Rc::new(RefCell::new(installed));
+            let view = Rc::new(View::with_semantics([], super::super::semantic::Registry::new("workspace")));
+            let starts = Rc::new(Cell::new(0));
+            let counted = Rc::clone(&starts);
+            let surfaces: Surfaces = Rc::new(move |_| {
+                counted.set(counted.get() + 1);
+                gtk::Label::new(Some("running")).upcast()
+            });
+            let shelf = Shelf::new(&view, &workspace, &roster, surfaces);
+            shelf.install();
+            let page = view.page("top").expect("old fault page").downcast::<gtk::Box>().expect("page box");
+            let retry = page
+                .last_child()
+                .expect("retry")
+                .downcast::<gtk::Button>()
+                .expect("retry button");
+
+            roster
+                .borrow_mut()
+                .remove_if_digest(&manifest.name, "sha256:old")
+                .expect("old generation removed");
+            roster
+                .borrow_mut()
+                .register(&manifest, "sha256:new", &Grant::default(), 2)
+                .expect("replacement registered standby");
+
+            retry.emit_clicked();
+
+            assert_eq!(roster.borrow().stage(&manifest.name), Stage::Standby);
+            assert_eq!(starts.get(), 0, "the stale page cannot mount the replacement");
+            assert!(retry.is_sensitive(), "the refused action remains retryable after refresh");
         }) {
             eprintln!("skipped: no display connection");
         }
