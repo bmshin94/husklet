@@ -3059,8 +3059,7 @@ impl Session {
                 detail: format!("surface {slot} is not owned by this session"),
             });
         }
-        let previous = self.surface_sequences.get(slot).copied().unwrap_or(0);
-        let expected = previous.saturating_add(1);
+        let expected = next_surface_sequence(self.surface_sequences.get(slot).copied())?;
         if frame.sequence != expected {
             let surface = if slot.is_empty() {
                 "the primary surface".to_owned()
@@ -3172,6 +3171,12 @@ impl Session {
         self.mutations.retain(|mutation| mutation.slot != slot);
         Ok(Reply::Done)
     }
+}
+
+fn next_surface_sequence(previous: Option<u64>) -> Result<u64, Failure> {
+    previous.unwrap_or(0).checked_add(1).ok_or_else(|| Failure::Conflict {
+        detail: "interface frame sequence is exhausted; reconnect to begin a new interface generation".into(),
+    })
 }
 
 fn validate_notification(notification: &crate::port::Notification) -> Result<(), Failure> {
@@ -3532,7 +3537,8 @@ fn acquisition_job(job: &str) -> Result<(), Failure> {
 
 #[cfg(test)]
 mod immutable_identity_tests {
-    use super::immutable_identity;
+    use super::{immutable_identity, next_surface_sequence};
+    use crate::Failure;
 
     #[test]
     fn container_execution_refuses_names_prefixes_and_malformed_ids() {
@@ -3544,5 +3550,15 @@ mod immutable_identity_tests {
         }
         assert!(immutable_identity(&"a".repeat(32), &[32, 64], "container").is_ok());
         assert!(immutable_identity(&"b".repeat(64), &[32, 64], "container").is_ok());
+    }
+
+    #[test]
+    fn interface_sequence_exhaustion_fails_closed_instead_of_reusing_the_last_identity() {
+        assert_eq!(next_surface_sequence(None), Ok(1));
+        assert_eq!(next_surface_sequence(Some(41)), Ok(42));
+        assert!(matches!(
+            next_surface_sequence(Some(u64::MAX)),
+            Err(Failure::Conflict { ref detail }) if detail.contains("sequence is exhausted")
+        ));
     }
 }
