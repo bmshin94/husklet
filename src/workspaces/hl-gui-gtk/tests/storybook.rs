@@ -2098,6 +2098,7 @@ mod unix {
             let _ = surface.reports().drain();
             realized_window.set_size_request(600, 800);
             realized_window.set_default_size(600, 800);
+            settle_window_width(&realized_window, 600);
             root.measure(gtk::Orientation::Horizontal, -1);
             root.measure(gtk::Orientation::Vertical, 600);
             root.allocate(600, 800, -1, None);
@@ -2179,6 +2180,7 @@ mod unix {
             capture_story(&realized_window, "DataTable narrow");
             realized_window.set_size_request(1_200, 800);
             realized_window.set_default_size(1_200, 800);
+            settle_window_width(&realized_window, 1_200);
             root.measure(gtk::Orientation::Horizontal, -1);
             root.measure(gtk::Orientation::Vertical, 1_200);
             root.allocate(1_200, 800, -1, None);
