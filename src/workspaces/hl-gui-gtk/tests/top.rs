@@ -4734,7 +4734,7 @@ mod unix {
                     .filter(|message| message.has_css_class("tone-warning"))
                     .count();
                 assert_eq!(warnings, 2, "{width_name} review repeats risk chrome");
-                let product = find_label(root, "Product access · 5/6");
+                let product = find_label(root, "Product access · 5/8");
                 let clear = find_button(root, "Clear product access");
                 let product_bounds = product
                     .compute_bounds(root)
