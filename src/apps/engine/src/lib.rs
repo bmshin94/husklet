@@ -1488,6 +1488,109 @@ mod tests {
         );
     }
 
+    /// Every integrated default-off flag must reach the worker through its own
+    /// row in the plan's option mapping. A missing row is invisible to argument
+    /// parsing -- the CLI still accepts the flag, the struct field is still set,
+    /// and the worker simply never sees it -- so the per-flag assertions below are
+    /// the only thing standing between a dropped row and a silently dead switch.
+    ///
+    /// `absent` is asserted as None rather than Some("0"): these flags must be
+    /// absent by default, not merely off, so that the worker's
+    /// hl_option_flag_value(name, 0) default is what decides.
+    #[test]
+    fn every_integrated_flag_maps_to_its_worker_option() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let root = tempfile::tempdir().unwrap();
+        let program = root.path().join("bin/program");
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        std::fs::write(&program, b"\x7fELF").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = root.path().to_str().unwrap();
+
+        // `off_is_absent` marks the one flag that is emitted by the on-only boolean
+        // table rather than the tri-state table, so `=off` leaves the option absent
+        // instead of storing "0". That is a difference in SHAPE, not in behaviour:
+        // the worker reads every one of these through
+        // hl_option_flag_value(name, 0), for which absent and "0" are the same
+        // answer. It is asserted rather than normalised so that a future change to
+        // either table has to come here and say which one it meant.
+        for (flag, option, off_is_absent) in [
+            ("--translit-jcc-self-link", "HL_TRANSLIT_JCC_SELF_LINK", true),
+            ("--x86-exit-thunk", "HL_X86_EXIT_THUNK", false),
+            ("--x86-prologue-thunk", "HL_X86_PROLOGUE_THUNK", false),
+            ("--x86-bus-thunk", "HL_X86_BUS_THUNK", false),
+            ("--x86-mt-chain", "HL_X86_MT_CHAIN", false),
+            ("--x86-mt-ibtc", "HL_X86_MT_IBTC", false),
+            ("--x86-ibtc8", "HL_X86_IBTC8", false),
+            ("--x86-ea-record-elide", "HL_X86_EA_RECORD_ELIDE", false),
+            ("--x86-rmload-fold", "HL_X86_RMLOAD_FOLD", false),
+            ("--x86-owner-index", "HL_X86_OWNER_INDEX", false),
+            ("--x86-gna-page-cache", "HL_X86_GNA_PAGE_CACHE", false),
+            ("--x86-bus-range-coalesce", "HL_X86_BUS_RANGE_COALESCE", false),
+            ("--x86-decode-thread-authority", "HL_X86_DECODE_THREAD_AUTHORITY", false),
+            ("--native-supervised-pane", "HL_NATIVE_SUPERVISED_PANE", false),
+            ("--exec-ibtc-lazy", "HL_EXEC_IBTC_LAZY", false),
+            ("--exec-census-lazy", "HL_EXEC_CENSUS_LAZY", false),
+            ("--call-sim-diag-only", "HL_CALL_SIM_DIAG_ONLY", false),
+            ("--pcache-converge", "HL_PCACHE_CONVERGE", false),
+            ("--pcache-link-image", "HL_PCACHE_LINK_IMAGE", false),
+            ("--pcache-libs", "HL_PCACHE_LIBS", false),
+        ] {
+            let absent = rootfs_plan(
+                root.path(),
+                &launch(&["--translit", "--rootfs", path, "bin/program"]),
+            )
+            .unwrap();
+            assert_eq!(
+                absent.options.get(option),
+                None,
+                "{flag} must be absent by default, not merely off"
+            );
+
+            let on = rootfs_plan(
+                root.path(),
+                &launch(&[
+                    "--translit",
+                    &format!("{flag}=on"),
+                    "--rootfs",
+                    path,
+                    "bin/program",
+                ]),
+            )
+            .unwrap();
+            assert_eq!(
+                on.options.get(option),
+                Some("1"),
+                "{flag}=on did not reach the worker as {option}=1; the mapping row is missing"
+            );
+
+            let off = rootfs_plan(
+                root.path(),
+                &launch(&[
+                    "--translit",
+                    &format!("{flag}=off"),
+                    "--rootfs",
+                    path,
+                    "bin/program",
+                ]),
+            )
+            .unwrap();
+            assert_eq!(
+                off.options.get(option),
+                if off_is_absent { None } else { Some("0") },
+                "{flag}=off stored the wrong thing; a registered-but-non-zero value reads ON in the worker"
+            );
+
+            assert!(
+                on.environment
+                    .iter()
+                    .all(|entry| !entry.starts_with(format!("{option}=").as_bytes())),
+                "{flag} leaked into the guest environment"
+            );
+        }
+    }
+
     #[test]
     fn integrated_backend_flags_are_x86_only_and_require_equals() {
         for flag in [
@@ -1504,18 +1607,33 @@ mod tests {
             "--x86-ibtc8",
             "--exec-census-lazy",
             "--call-sim-diag-only",
+            "--translit-jcc-self-link",
+            "--x86-exit-thunk",
+            "--x86-prologue-thunk",
+            "--x86-ea-record-elide",
+            "--x86-rmload-fold",
         ] {
             // One spelling only: `=on` / `=off`, and nothing else.
             for invalid in ["yes", "1", "0", "enabled", ""] {
                 let option = format!("{flag}={invalid}");
+                // `--translit` is supplied so the only thing left to reject is the
+                // VALUE: --translit-jcc-self-link carries requires = "translit", and
+                // without it this would pass for the wrong reason.
                 assert!(
-                    LaunchArguments::try_parse_from(["hl-x86_64", option.as_str(), "bin/program"]).is_err(),
+                    LaunchArguments::try_parse_from([
+                        "hl-x86_64",
+                        "--translit",
+                        option.as_str(),
+                        "bin/program"
+                    ])
+                    .is_err(),
                     "{flag} accepted {invalid:?}"
                 );
             }
             assert!(
                 LaunchArguments::try_parse_from([
                     "hl-x86_64",
+                    "--translit",
                     &format!("{flag}=off"),
                     "--rootfs",
                     "/image",
@@ -1523,6 +1641,27 @@ mod tests {
                 ])
                 .is_ok(),
                 "{flag} rejected =off"
+            );
+            // require_equals, pinned by consequence rather than by spelling.
+            // The space form does NOT error -- clap takes the flag's
+            // default_missing_value and leaves "on" to the next positional -- so the
+            // observable guarantee is that "on" lands on the EXECUTABLE and is never
+            // consumed as the flag's value. Dropping require_equals silently flips
+            // this: "on" becomes the value and "bin/program" becomes the executable.
+            let spaced = LaunchArguments::try_parse_from([
+                "hl-x86_64",
+                "--translit",
+                flag,
+                "on",
+                "--rootfs",
+                "/image",
+                "bin/program",
+            ])
+            .unwrap_or_else(|e| panic!("{flag} space form failed to parse: {e}"));
+            assert_eq!(
+                spaced.executable,
+                std::path::Path::new("on"),
+                "{flag} consumed a space-separated value; require_equals is missing"
             );
             let failure = execute(
                 Guest::Aarch64,
