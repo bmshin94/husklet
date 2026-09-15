@@ -261,13 +261,13 @@ order; the JavaScript client's checks are never treated as a security boundary.
 
 ## PostgreSQL broker
 
-- `host.postgres.openOnce(...)` — `postgres_open_once`, requires `credentials:use`.
-- `host.postgres.startOnce(...)` — `postgres_query_start_once`, requires `credentials:use`.
-- `host.postgres.status(...)` — `postgres_query_status`, requires `credentials:use`.
-- `host.postgres.page(...)` — `postgres_query_page`, requires `credentials:use`.
-- `host.postgres.cancel(...)` — `postgres_query_cancel`, requires `credentials:use`.
-- `host.postgres.closeQuery(...)` — `postgres_query_close`, requires `credentials:use`.
-- `host.postgres.closeLease(...)` — `postgres_lease_close`, requires `credentials:use`.
+- `host.postgres.openOnce(...)` — `postgres_open_once`, requires `postgres:read`.
+- `host.postgres.startOnce(...)` — `postgres_query_start_once`, requires `postgres:write`.
+- `host.postgres.status(...)` — `postgres_query_status`, requires `postgres:read`.
+- `host.postgres.page(...)` — `postgres_query_page`, requires `postgres:read`.
+- `host.postgres.cancel(...)` — `postgres_query_cancel`, requires `postgres:read`.
+- `host.postgres.closeQuery(...)` — `postgres_query_close`, requires `postgres:read`.
+- `host.postgres.closeLease(...)` — `postgres_lease_close`, requires `postgres:read`.
 - Open and query-start outcomes echo the exact operation token; query-start also echoes its lease. `PostgresOperationProtocolError` rejects stale or hostile authority before a caller can use a lease or query ID. Retrying the same bounded request after reconnect reconciles to the existing lease/query instead of creating another.
 - Status and cancellation replies echo the exact lease and query. `PostgresStateProtocolError` rejects stale or misrouted state before it can be attributed to the current database operation.
 - Every `host.postgres.page(...)` reply carries its exact lease, query, and input cursor. The host retains the immediately preceding bounded page, so retrying that cursor after a lost reply returns identical rows without advancing the database stream; the client rejects a receipt from another connection, query, or cursor before exposing rows.

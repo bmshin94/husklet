@@ -45,7 +45,7 @@ test('Postgres state receipts reject stale lease and query authority over fragme
       payload: {
         protocol: 1,
         extension: 'postgres-state-authority',
-        granted: ['credentials:use'],
+        granted: ['postgres:read'],
       },
     });
   });

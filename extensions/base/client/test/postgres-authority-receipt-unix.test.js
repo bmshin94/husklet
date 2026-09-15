@@ -94,7 +94,7 @@ test('Postgres authority receipts recover lost replies and reject a stale target
       payload: {
         protocol: 1,
         extension: 'postgres-authority-recovery',
-        granted: ['credentials:use'],
+        granted: ['credentials:use', 'postgres:read', 'postgres:write'],
       },
     });
   });

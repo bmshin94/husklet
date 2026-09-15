@@ -66,7 +66,7 @@ test('Postgres page retry preserves its query and cursor receipt over fragmented
         payload: {
           protocol: 1,
           extension: 'postgres-page-recovery',
-          granted: ['credentials:use'],
+          granted: ['postgres:read'],
         },
       }),
     );

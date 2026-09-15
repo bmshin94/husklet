@@ -3323,6 +3323,8 @@ export function capabilityLabel(capability: ExtensionCapability): string {
     'credentials:expose-to-execution': 'Expose selected credentials to launched processes',
     'credentials:use': 'Use selected credentials through trusted host services',
     'credentials:write': 'Change selected extension credentials',
+    'postgres:read': 'Inspect PostgreSQL connections and query results',
+    'postgres:write': 'Run caller-provided SQL against PostgreSQL',
     'notifications:publish': 'Show workspace notifications',
   };
   return known[capability];
