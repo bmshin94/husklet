@@ -4027,7 +4027,7 @@ mod unix {
             &review_root,
             "1 required permission is off: Render this extension interface. Optional access stays off."
         ));
-        let exact_grants = find_expander(&review_root, "Exact grants · 0/19 selected");
+        let exact_grants = find_expander(&review_root, "Exact grants · 0/21 selected");
         assert!(
             !exact_grants.is_expanded(),
             "permission matrix stays collapsed until the developer asks for exact grants"
@@ -4051,7 +4051,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 1/19 selected",
+            "Review decision · 1/21 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected extension consent call: {other:?}"),
@@ -4059,7 +4059,7 @@ mod unix {
             || None,
         );
         let review_root = surface.widget().clone().upcast::<gtk::Widget>();
-        find_expander(&review_root, "Exact grants · 1/19 selected").set_expanded(true);
+        find_expander(&review_root, "Exact grants · 1/21 selected").set_expanded(true);
         settle_toolkit();
         let volume_create = find_label(&review_root, "Create new volumes")
             .mnemonic_widget()
@@ -4076,7 +4076,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 3/19 selected",
+            "Review decision · 3/21 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected volume-create consent call: {other:?}"),
@@ -4104,7 +4104,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 5/19 selected",
+            "Review decision · 5/21 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected exact-image consent call: {other:?}"),
@@ -4127,7 +4127,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 3/19 selected",
+            "Review decision · 3/21 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected exact-image clearing call: {other:?}"),
@@ -4154,7 +4154,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 5/19 selected",
+            "Review decision · 5/21 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected exact-image reselection call: {other:?}"),
@@ -4177,7 +4177,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 7/19 selected",
+            "Review decision · 7/21 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected exact-file consent call: {other:?}"),
@@ -4200,7 +4200,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 5/19 selected",
+            "Review decision · 5/21 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected exact-file clearing call: {other:?}"),
@@ -4227,7 +4227,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 7/19 selected",
+            "Review decision · 7/21 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected exact-file reselection call: {other:?}"),
@@ -4250,7 +4250,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Review decision · 9/19 selected",
+            "Review decision · 9/21 selected",
             |request| match request {
                 Request::EventUnsubscribe { .. } => Reply::Done,
                 other => panic!("unexpected environment consent call: {other:?}"),
@@ -4667,7 +4667,7 @@ mod unix {
                     if state == "update-required" {
                         "No access selected · 21 requested"
                     } else {
-                        "Review decision · 9/19 selected"
+                        "Review decision · 9/21 selected"
                     },
                 );
                 let status_bounds = status
@@ -4867,7 +4867,7 @@ mod unix {
             }
             if state == "update-required" {
                 capture(&capture_window, &format!("extensions-{state}-{width_name}"), width, 800);
-                let details = find_expander(root, "Exact grants · 0/19 selected");
+                let details = find_expander(root, "Exact grants · 0/21 selected");
                 assert!(
                     !details.is_expanded(),
                     "{width_name} initial review opens its exact permission matrix"
