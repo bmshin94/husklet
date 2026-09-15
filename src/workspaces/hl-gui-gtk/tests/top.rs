@@ -2390,10 +2390,9 @@ mod unix {
                 .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
                 .expect("Extensions heading belongs to its mode viewport");
             let installed_adjustment = installed_scroll.vadjustment();
-            // Navigation swaps the retained page before GTK's next allocation.
-            // Measure controls only after that allocation, not in the transient
-            // zero-sized state between applying the frame and the next tick.
-            settle_toolkit();
+            // Draining the main context does not promise a layout. Require an
+            // actual painted frame before inspecting allocated dimensions.
+            await_painted_frame(&window);
             for label in ["Installed", "Discover"] {
                 let mode = find_toggle(&root, label);
                 assert!(mode.has_css_class("size-small"), "{label} mode selector is not compact");
@@ -4684,10 +4683,10 @@ mod unix {
                         let bounds = row.compute_bounds(root).expect("permission row belongs to root");
                         let natural_end = bounds.y() + row.height() as f32;
                         assert!(
-                            bounds.y() >= viewport_end || natural_end <= viewport_end,
+                            row.opacity() == 0.0 || bounds.y() >= viewport_end || natural_end <= viewport_end,
                             "{width_name} {state} paints a partial permission row: row={bounds:?}, natural_end={natural_end}, viewport={viewport:?}"
                         );
-                        if natural_end <= viewport_end {
+                        if row.opacity() > 0.0 && natural_end <= viewport_end {
                             last_whole = last_whole.max(natural_end);
                         }
                     }

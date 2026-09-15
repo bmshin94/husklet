@@ -7,6 +7,8 @@ use crate::build;
 use crate::component::{choice, feedback, field};
 use crate::text;
 
+const WHOLE_ROW_EDGE_CLEARANCE: i32 = 32;
+
 /// Applies one property to an already constructed widget.
 pub(crate) fn apply(widget: &gtk::Widget, node: &Node, prop: Prop, value: &PropValue, reports: &crate::event::Reports) {
     match prop {
@@ -87,7 +89,7 @@ fn whole_rows(widget: &gtk::Widget, value: &PropValue) {
         .as_flag()
         .unwrap_or_else(|| value.as_text().is_some_and(|identity| !identity.is_empty()));
     if !enabled {
-        scroll.set_margin_bottom(0);
+        restore_clipped_rows(scroll);
         return;
     }
     if !scroll.has_css_class("hl-whole-rows") {
@@ -97,61 +99,78 @@ fn whole_rows(widget: &gtk::Widget, value: &PropValue) {
             let Some(scroll) = weak.upgrade() else {
                 return;
             };
-            scroll.set_margin_bottom(0);
             schedule_whole_rows(&scroll);
         });
+        let weak = scroll.downgrade();
+        scroll.vadjustment().connect_value_changed(move |_| {
+            if let Some(scroll) = weak.upgrade() {
+                schedule_whole_rows(&scroll);
+            }
+        });
+        let weak = scroll.downgrade();
+        scroll.vadjustment().connect_page_size_notify(move |_| {
+            if let Some(scroll) = weak.upgrade() {
+                schedule_whole_rows(&scroll);
+            }
+        });
     }
-    scroll.set_margin_bottom(0);
     scroll.vadjustment().set_value(scroll.vadjustment().lower());
     schedule_whole_rows(scroll);
 }
 
 fn schedule_whole_rows(scroll: &gtk::ScrolledWindow) {
-    let weak = scroll.downgrade();
-    let attempts = std::rc::Rc::new(std::cell::Cell::new(0_u16));
-    let allocated = std::rc::Rc::new(std::cell::Cell::new(0_u8));
-    gtk::glib::idle_add_local(move || {
-        let Some(scroll) = weak.upgrade() else {
-            return gtk::glib::ControlFlow::Break;
-        };
-        // GTK excludes margins from the widget's allocated height.
+    // An idle callback can run hundreds of times while a newly described page
+    // is still detached, exhaust a retry budget, and disappear before GTK ever
+    // allocates the scroller. A tick belongs to the mapped widget's frame
+    // clock, so the first callback observes a real layout without polling or a
+    // guessed delay.
+    if scroll.has_css_class("hl-whole-rows-pending") {
+        return;
+    }
+    scroll.add_css_class("hl-whole-rows-pending");
+    scroll.add_tick_callback(|widget, _| {
+        let scroll = widget
+            .downcast_ref::<gtk::ScrolledWindow>()
+            .expect("whole-row callback remains attached to its scroller");
         let boundary = scroll.height();
         let mut candidate = scroll.first_child();
-        let mut saw_row = false;
         while let Some(row) = candidate {
             if row.has_css_class("hl-form-control-label") {
-                saw_row = true;
-                if let Some(bounds) = row.compute_bounds(&scroll) {
+                if let Some(bounds) = row.compute_bounds(scroll) {
                     let top = bounds.y().round() as i32;
-                    // `compute_bounds` intersects with the scroller's clip;
-                    // allocation height retains the concealed part we need to
-                    // detect before it becomes a half-row.
                     let bottom = top + row.height();
-                    if top < boundary && bottom > boundary {
-                        if allocated.get() < 3 {
-                            allocated.set(allocated.get().saturating_add(1));
-                            return gtk::glib::ControlFlow::Continue;
-                        }
-                        scroll.set_margin_bottom(scroll.margin_bottom() + boundary - top);
-                        return gtk::glib::ControlFlow::Break;
+                    // Keep one compact control row clear of the hard clip. A
+                    // switch ending geometrically above the boundary can still
+                    // paint its border or focus ring into that edge.
+                    let clipped = top < boundary && bottom + WHOLE_ROW_EDGE_CLEARANCE > boundary;
+                    if clipped {
+                        row.add_css_class("hl-whole-row-clipped");
+                        row.set_opacity(0.0);
+                    } else if row.has_css_class("hl-whole-row-clipped") {
+                        row.remove_css_class("hl-whole-row-clipped");
+                        row.set_opacity(1.0);
                     }
                 }
             }
             candidate = next_descendant(scroll.upcast_ref(), &row);
         }
-        if saw_row {
-            allocated.set(allocated.get().saturating_add(1));
-            if allocated.get() >= 3 {
-                return gtk::glib::ControlFlow::Break;
-            }
-        }
-        attempts.set(attempts.get() + 1);
-        if attempts.get() < 600 {
-            gtk::glib::ControlFlow::Continue
-        } else {
-            gtk::glib::ControlFlow::Break
-        }
+        // By the first mapped frame the retained subtree is complete. With no
+        // rows there is nothing to align; expanding the form changes the
+        // adjustment upper bound and schedules a new frame callback.
+        scroll.remove_css_class("hl-whole-rows-pending");
+        gtk::glib::ControlFlow::Break
     });
+}
+
+fn restore_clipped_rows(scroll: &gtk::ScrolledWindow) {
+    let mut candidate = scroll.first_child();
+    while let Some(row) = candidate {
+        if row.has_css_class("hl-whole-row-clipped") {
+            row.remove_css_class("hl-whole-row-clipped");
+            row.set_opacity(1.0);
+        }
+        candidate = next_descendant(scroll.upcast_ref(), &row);
+    }
 }
 
 fn next_descendant(root: &gtk::Widget, current: &gtk::Widget) -> Option<gtk::Widget> {

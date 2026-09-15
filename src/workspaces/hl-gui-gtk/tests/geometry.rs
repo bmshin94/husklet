@@ -120,8 +120,119 @@ fn geometry_is_what_the_description_asked_for() {
     a_scrolled_pane_shares_narrow_and_wide_host_width();
     a_page_container_shrinks_and_caps_its_content_width();
     a_short_page_never_underallocates_its_content_column();
+    whole_rows_waits_for_a_mapped_frame_before_aligning_the_viewport();
     a_responsive_container_presents_only_its_allocated_branch();
     a_choice_shrinks_independently_of_its_options();
+}
+
+/// Whole-row alignment is authored while an extension surface is still
+/// detached. Draining idle work at that point must not consume the correction
+/// before the page receives its first real allocation.
+fn whole_rows_waits_for_a_mapped_frame_before_aligning_the_viewport() {
+    let mut stage = Stage::new();
+    let page = stage.producer.create(Tag::Column);
+    stage.producer.set(page, Prop::Grow, PropValue::Flag(true));
+    stage.producer.set(page, Prop::Height, PropValue::Length(Length::Fill));
+    stage.producer.append(NodeId::ROOT, page);
+    let scroll = stage.producer.create(Tag::Scroll);
+    stage
+        .producer
+        .set(scroll, Prop::WholeRows, PropValue::text("permission-review"));
+    stage.producer.set(scroll, Prop::Grow, PropValue::Flag(true));
+    stage.producer.append(page, scroll);
+    let content = stage.producer.create(Tag::Column);
+    stage.producer.append(scroll, content);
+    for index in 0..12 {
+        let row = stage.producer.create(Tag::FormControlLabel);
+        stage
+            .producer
+            .set(row, Prop::Label, PropValue::text(format!("Permission {index}")));
+        let switch = stage.producer.create(Tag::Switch);
+        stage.producer.append(row, switch);
+        stage.producer.append(content, row);
+    }
+    let footer = stage.producer.create(Tag::Column);
+    stage
+        .producer
+        .set(footer, Prop::Height, PropValue::Length(Length::Step(17)));
+    stage.producer.append(page, footer);
+    stage.draw();
+
+    let context = gtk::glib::MainContext::default();
+    while context.pending() {
+        context.iteration(false);
+    }
+
+    let root = stage.surface.widget().clone().upcast::<gtk::Widget>();
+    let window = gtk::Window::new();
+    window.set_child(Some(&root));
+    window.set_default_size(600, 360);
+    window.present();
+    for _ in 0..3 {
+        let clock = window.frame_clock().expect("mapped geometry window owns a frame clock");
+        let before = clock.frame_counter();
+        window.queue_draw();
+        clock.request_phase(gtk::gdk::FrameClockPhase::PAINT);
+        while clock.frame_counter() <= before {
+            context.iteration(false);
+        }
+    }
+
+    let viewport = stage.tagged(Tag::Scroll);
+    assert!(
+        !viewport.has_css_class("hl-whole-rows-pending"),
+        "whole-row alignment converges on a mapped frame"
+    );
+    let mut descendants = vec![root];
+    let mut at = 0;
+    while at < descendants.len() {
+        descendants.extend(offspring(&descendants[at]));
+        at += 1;
+    }
+    let rows = descendants
+        .into_iter()
+        .filter(|candidate| candidate.has_css_class("hl-form-control-label"))
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 12, "the fixture retains every permission row");
+    let boundary = viewport.height();
+    let clipped = rows
+        .iter()
+        .filter(|row| {
+            let bounds = row
+                .compute_bounds(&viewport)
+                .expect("permission row belongs to viewport");
+            let top = bounds.y().round() as i32;
+            top < boundary && top + row.height() + 32 > boundary
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !clipped.is_empty(),
+        "fixture places a permission row across the viewport edge"
+    );
+    assert!(
+        clipped.iter().all(|row| row.opacity() == 0.0),
+        "every partially allocated permission row is withheld until it is whole"
+    );
+    let adjustment = viewport
+        .downcast_ref::<gtk::ScrolledWindow>()
+        .expect("Scroll uses a scrolled window")
+        .vadjustment();
+    adjustment.set_value(adjustment.upper() - adjustment.page_size());
+    for _ in 0..3 {
+        let clock = window.frame_clock().expect("mapped geometry window owns a frame clock");
+        let before = clock.frame_counter();
+        window.queue_draw();
+        clock.request_phase(gtk::gdk::FrameClockPhase::PAINT);
+        while clock.frame_counter() <= before {
+            context.iteration(false);
+        }
+    }
+    assert_eq!(
+        rows.last().expect("last permission row").opacity(),
+        1.0,
+        "scrolling restores a row once it is wholly inside the viewport"
+    );
+    window.close();
 }
 
 fn list_in_tall_page(grow: Option<f64>) -> Stage {
