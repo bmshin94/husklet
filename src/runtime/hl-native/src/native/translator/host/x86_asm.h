@@ -84,6 +84,15 @@ static inline void hl_x64_store_gs_imm32(hl_x64_asm *a, int32_t value, int32_t d
     hl_x64_u32(a, (uint32_t)value);
 }
 
+// mov %reg32, %gs:disp32 (32-bit). The register form of the rule above: a 32-bit CPU field written
+// from a register must NOT use the REX.W store, whose upper four bytes land in whatever field
+// follows. cpu.h places `volatile uint64_t tpending` -- the thread-directed pending-signal word --
+// directly after `uint32_t jcc_ibtc_miss`, so a 64-bit store of the miss kind silently zeroed the
+// low half of that word and destroyed every thread-directed pending signal the guest was holding.
+static inline void hl_x64_store_gs32(hl_x64_asm *a, int reg, int32_t disp) {
+    hl_x64_gs_op(a, 0, 0x89, reg, disp);
+}
+
 // movdqa disp32(%base), %xmm. The IBTC table and every entry are 16-byte aligned, so this is the
 // indivisible pair load matched by cache.c's movdqa publish. Never split it into target/body loads.
 static inline void hl_x64_load_xmm_aligned_disp32(hl_x64_asm *a, int xmm, int base, int32_t disp) {

@@ -1309,7 +1309,20 @@ static void ckpt_restore_proc_run(int gpid) {
     // INSIDE that inherited arena. Run after the restore, the release then punched the restored guest pages
     // back out: x86_64 checkpoint.threads died with a host SIGSEGV on the resumed peer's own stack
     // (si_addr == sp, pc at glibc's __syscall_cancel_arch_end).
+    // fork_child_hooks() ends in signal_after_fork(), which drops this CPU's thread-directed pending
+    // signals -- correct for a real fork(2), where Linux gives the child an empty pending set, and WRONG
+    // here: this is not a fork of the guest, it is the restore of a captured member, and `c` is that
+    // member's own captured CPU image. The process-directed pending words and the siginfo queue are
+    // re-published below by ckpt_restore_signal_state(); the per-thread words live ONLY in this CPU image,
+    // so without re-applying them a blocked raise()/tgkill(self) queued before the capture was silently
+    // dropped on every re-forked tree member (the init, restored in-process, never runs this hook and so
+    // always kept its own). Peer threads are unaffected: thread_restore_group() resumes them straight from
+    // the image array, which this hook never touches.
+    uint64_t captured_tpending = c.tpending;
+    uint64_t captured_tpending_hi = c.tpending_hi;
     fork_child_hooks(&c); // shared after-fork engine reset (cache re-alias, kqueue rebuild, lock/threg/Mach)
+    c.tpending = captured_tpending;
+    c.tpending_hi = captured_tpending_hi;
 
     ckpt_restore_commit_stage(CKPT_RESTORE_SESSION);
     if (ckpt_restore_session_prepare(gpid, m.sid_gpid) != 0) ckpt_restore_commit_failed();
