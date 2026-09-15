@@ -1,4 +1,5 @@
 #![cfg(all(target_os = "linux", feature = "native-test-hooks"))]
+#![allow(unsafe_code)]
 
 use std::{
     ffi::CString,
@@ -85,6 +86,11 @@ fn fixture() -> (TempDir, i32) {
             "00600000-00601000 rw-p 00000000 00:00 0 [heap]\n",
             "7fff0000-7fff1000 r-xp 00000000 00:00 0 [vdso]\n",
         ),
+    )
+    .unwrap();
+    std::fs::write(
+        process.join("status"),
+        b"Name:\tapp\nState:\tT (stopped)\nSigBlk:\t0000000000000000\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\n",
     )
     .unwrap();
     std::fs::write(work.path().join("locks"), b"").unwrap();
@@ -458,5 +464,218 @@ fn native_checkpoint_refuses_every_self_held_lock_flavour() {
     assert!(
         refusals >= 4 && admissions >= 2,
         "battery must contain both refusals and admissions ({refusals} refusals, {admissions} admissions)"
+    );
+}
+
+/// Reads the two pending-signal bitmasks out of a `/proc/<pid>/status` body.
+fn pending_signal_fields(status: &str) -> (u64, u64) {
+    let field = |name: &str| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .and_then(|value| u64::from_str_radix(value.trim(), 16).ok())
+            .unwrap_or_else(|| panic!("missing {name} in status"))
+    };
+    (field("SigPnd:"), field("ShdPnd:"))
+}
+
+/// A process with queued signals must be refused, because the NativeX86V1 image cannot hold them.
+///
+/// Measured before this gate existed: a fixture blocking SIGUSR1 and SIGRTMIN and queueing one
+/// SIGUSR1 plus three SIGRTMIN with distinct payloads parked at `ShdPnd=0000000200000200`, was
+/// captured and restored into a fresh process, and came back with `SigBlk` intact but
+/// `ShdPnd=0000000000000000`; unblocking delivered none of the four. Capture reads only
+/// `PTRACE_GETSIGMASK`, and no interface outside the process can enumerate a pending queue with its
+/// multiplicity and `siginfo`, so a refusal is the only honest outcome.
+///
+/// Non-vacuity is asserted inside the battery: every refusal below is bracketed by an admission of
+/// the same fixture with the pending fields cleared, so a gate that refused everything fails here.
+#[test]
+fn queued_signals_refuse_capture_and_a_quiescent_process_still_admits() {
+    let (work, pid) = fixture();
+    let process = work.path().join(pid.to_string());
+    let status = process.join("status");
+    let quiet = std::fs::read_to_string(&status).unwrap();
+    assert_eq!(pending_signal_fields(&quiet), (0, 0), "baseline fixture is quiescent");
+
+    // Admission half: nothing pending, and a non-zero blocked mask alone is not a refusal. The image
+    // does carry the mask, so blocking signals without queueing any stays capturable.
+    assert_eq!(classify(work.path(), pid, &[]), 0, "quiescent synthetic process");
+    std::fs::write(&status, quiet.replace("SigBlk:\t0000000000000000", "SigBlk:\t0000000200000200")).unwrap();
+    assert_eq!(classify(work.path(), pid, &[]), 0, "blocked mask without a queue is capturable");
+    std::fs::write(&status, &quiet).unwrap();
+
+    // Refusal half. Each case is followed by a restore-and-readmit, so the gate is shown to be
+    // reacting to the pending fields and not simply refusing this fixture outright.
+    for (field, value, what) in [
+        ("SigPnd:\t0000000000000000", "SigPnd:\t0000000000000200", "thread-directed SIGUSR1"),
+        ("ShdPnd:\t0000000000000000", "ShdPnd:\t0000000000000200", "process-directed SIGUSR1"),
+        ("ShdPnd:\t0000000000000000", "ShdPnd:\t0000000200000000", "process-directed SIGRTMIN"),
+        ("ShdPnd:\t0000000000000000", "ShdPnd:\t0000000200000200", "a mixed standard and RT queue"),
+        ("SigPnd:\t0000000000000000", "SigPnd:\t8000000000000000", "the highest-numbered signal"),
+    ] {
+        std::fs::write(&status, quiet.replace(field, value)).unwrap();
+        assert_ne!(classify(work.path(), pid, &[]), 0, "{what} must refuse capture");
+        std::fs::write(&status, &quiet).unwrap();
+        assert_eq!(classify(work.path(), pid, &[]), 0, "readmitted once {what} is cleared");
+    }
+
+    // The gate must never admit by default when it cannot read the evidence.
+    for malformed in [
+        quiet.replace("ShdPnd:\t0000000000000000\n", ""),
+        quiet.replace("SigPnd:\t0000000000000000\n", ""),
+        quiet.replace("SigPnd:\t0000000000000000", "SigPnd:\tnot-a-mask"),
+        quiet.replace("SigPnd:\t0000000000000000", "SigPnd:\t0000000000000000 trailing"),
+    ] {
+        std::fs::write(&status, &malformed).unwrap();
+        assert_ne!(classify(work.path(), pid, &[]), 0, "unreadable pending fields must refuse");
+    }
+    std::fs::remove_file(&status).unwrap();
+    assert_ne!(classify(work.path(), pid, &[]), 0, "absent status must refuse");
+    std::fs::write(&status, &quiet).unwrap();
+    assert_eq!(classify(work.path(), pid, &[]), 0, "battery ends on an admission");
+}
+
+/// The live half. A refusal that also refused ordinary capturable processes would be a regression
+/// dressed as a fix, so this pairs a real parked process carrying a queued signal (must refuse) with
+/// an otherwise identical parked process carrying none (must still admit), including while
+/// group-stopped, which is the state the phase-1 freeze leaves a member in before this scan runs.
+struct ReapedPids(Vec<i32>);
+
+impl Drop for ReapedPids {
+    fn drop(&mut self) {
+        for pid in self.0.drain(..) {
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+                libc::waitpid(pid, std::ptr::null_mut(), 0);
+            }
+        }
+    }
+}
+
+fn parked_fixture(work: &Path) -> std::path::PathBuf {
+    let source = work.join("parked.c");
+    let executable = work.join("parked");
+    // Leak-proof by construction: dies with the harness, inherits no descriptor above stderr, and
+    // self-terminates if it is ever orphaned past the alarm.
+    std::fs::write(
+        &source,
+        br#"#include <signal.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/prctl.h>
+int main(int argc, char **argv) {
+    prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0);
+    for (int fd = 3; fd < 1024; ++fd) close(fd);
+    alarm(120);
+    /* Both roles block SIGUSR1. SigBlk becoming non-zero is the harness's barrier that main has run
+       past the close loop above, so classification can never race the inherited descriptors. */
+    sigset_t blocked;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGUSR1);
+    sigprocmask(SIG_BLOCK, &blocked, 0);
+    if (argc > 1 && strcmp(argv[1], "pending") == 0) {
+        union sigval value;
+        value.sival_int = 0x5a;
+        sigqueue(getpid(), SIGUSR1, value);
+    }
+    for (;;) pause();
+}
+"#,
+    )
+    .unwrap();
+    #[cfg(target_arch = "x86_64")]
+    let compiler = "x86_64-linux-gnu-gcc";
+    #[cfg(target_arch = "aarch64")]
+    let compiler = "/usr/bin/cc";
+    assert!(
+        Command::new(compiler)
+            .args(["-static", "-O2", "-o"])
+            .arg(&executable)
+            .arg(source)
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o555)).unwrap();
+    executable
+}
+
+/// Waits for the fixture to reach its blocked mask (the barrier proving `main` closed the inherited
+/// descriptors) and, for the queueing role, for the signal to actually be pending.
+fn await_pending(pid: i32, want_pending: bool) -> (u64, u64) {
+    for _ in 0..5000 {
+        if let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
+            let blocked = status
+                .lines()
+                .find_map(|line| line.strip_prefix("SigBlk:"))
+                .and_then(|value| u64::from_str_radix(value.trim(), 16).ok())
+                .unwrap_or(0);
+            let fields = pending_signal_fields(&status);
+            if blocked != 0 && ((fields.0 | fields.1) != 0) == want_pending {
+                return fields;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    panic!("process {pid} never reached want_pending={want_pending}");
+}
+
+#[test]
+fn live_parked_process_refuses_with_a_queued_signal_and_admits_without_one() {
+    let work = TempDir::new().unwrap();
+    let executable = parked_fixture(work.path());
+    let mapped = executable.to_string_lossy().into_owned();
+    let mut reaped = ReapedPids(Vec::new());
+
+    let mut spawn = |role: &str| {
+        let child = Command::new(&executable)
+            .arg(role)
+            .env_clear()
+            .env("LC_ALL", "C")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = i32::try_from(child.id()).unwrap();
+        std::mem::forget(child);
+        reaped.0.push(pid);
+        wait_for_mapping(pid, &mapped);
+        pid
+    };
+
+    let quiet = spawn("quiet");
+    let (quiet_private, quiet_shared) = await_pending(quiet, false);
+    assert_eq!((quiet_private, quiet_shared), (0, 0));
+    assert_eq!(classify(Path::new("/proc"), quiet, &[]), 0, "quiescent live process admits");
+
+    // The production scan runs against a frozen member, so prove the freeze itself leaves nothing
+    // pending. If SIGSTOP left a bit set, this gate would refuse every real checkpoint.
+    assert_eq!(unsafe { libc::kill(quiet, libc::SIGSTOP) }, 0);
+    let (stopped_private, stopped_shared) = await_pending(quiet, false);
+    assert_eq!(
+        (stopped_private, stopped_shared),
+        (0, 0),
+        "group-stop must not leave a signal pending"
+    );
+    assert_eq!(
+        classify(Path::new("/proc"), quiet, &[]),
+        0,
+        "group-stopped quiescent process still admits"
+    );
+    assert_eq!(unsafe { libc::kill(quiet, libc::SIGCONT) }, 0);
+
+    let pending = spawn("pending");
+    let (pending_private, pending_shared) = await_pending(pending, true);
+    assert_eq!(
+        (pending_private, pending_shared),
+        (0, 1 << (libc::SIGUSR1 - 1)),
+        "a process-directed sigqueue lands in ShdPnd, not SigPnd"
+    );
+    assert_ne!(
+        classify(Path::new("/proc"), pending, &[]),
+        0,
+        "live process with a queued SIGUSR1 must refuse capture"
     );
 }
