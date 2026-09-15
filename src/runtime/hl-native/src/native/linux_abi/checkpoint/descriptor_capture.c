@@ -156,6 +156,25 @@ static int ckpt_pipe_capacity(int fd) {
     return cached;
 }
 
+// True when `fd` has a siginfo record ready right now. A signalfd has no FIONREAD equivalent the drain
+// can trust, so readiness is the only non-destructive way to ask "is there another record", and asking it
+// before every read is what lets the drain run on a BLOCKING descriptor without ever blocking.
+//
+// The window this leaves is empty rather than merely small: a signalfd record is removed only by a reader,
+// and every guest process that could read this description is frozen for the whole of its capture
+// (ckpt_dump_self holds the barrier and the stop-the-world across the drain), so nothing can consume the
+// record poll() just reported between the poll and the read. Signals arriving concurrently only ADD
+// records, which the loop takes on its next turn.
+static int ckpt_signalfd_record_ready(int fd) {
+    for (;;) {
+        struct pollfd readiness = {fd, POLLIN, 0};
+        int ready = poll(&readiness, 1, 0);
+        if (ready < 0 && errno == EINTR) continue;
+        if (ready < 0) return -1;
+        return ready > 0 && (readiness.revents & POLLIN) != 0;
+    }
+}
+
 static int ckpt_capture_signalfd(int fd, uint64_t identity) {
     // Draining a signalfd removes the queued siginfo records from the task, so it belongs to pass 2. The
     // arm's refusals (slot bounds, a minted identity, the descriptor flags) are all decided by the caller.
@@ -167,14 +186,26 @@ static int ckpt_capture_signalfd(int fd, uint64_t identity) {
     if (claimed != 0) return claimed > 0 ? 0 : -1;
     struct ckpt_sink_stream *output = NULL;
     if (ckpt_sink_begin(sink, NULL, name, CKPT_SINK_PUBLISH_ATOMIC, &output) != 0) return -1;
-    int flags = fcntl(fd, F_GETFL);
-    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
-        ckpt_sink_abort(sink, &output);
-        return -1;
-    }
+    // DO NOT set O_NONBLOCK here. It was how this drain avoided blocking on a blocking signalfd, and it is
+    // the one thing the drain must not do: O_NONBLOCK lives on the OPEN FILE DESCRIPTION, so setting it is
+    // visible to every process that inherited this signalfd through fork, and the flag was never put back --
+    // not on the success path, not on the abort path, and not when the capture was abandoned afterwards
+    // because a sibling member refused. A capture that is refused is required to leave the container exactly
+    // as it found it, and a capture that succeeds still must not hand the guest back a descriptor whose
+    // blocking behaviour it never chose: the guest's next read() returns EAGAIN where it used to park, and a
+    // read loop written against a blocking signalfd spins or mistakes EAGAIN for an error. The pipe drain
+    // reached the same conclusion and solved it by never mutating (see ckpt_capture_pipe_reason's
+    // "Two properties the drain must not damage in the live process"); poll(timeout 0) is this descriptor's
+    // equivalent of that pipe's buffered-byte snapshot.
     unsigned char buffer[4096];
     int failed = 0;
     for (;;) {
+        int ready = ckpt_signalfd_record_ready(fd);
+        if (ready < 0) {
+            failed = 1;
+            break;
+        }
+        if (ready == 0) break;
         ssize_t count = read(fd, buffer, sizeof buffer);
         if (count > 0) {
             if (ckpt_sink_write(sink, output, buffer, (size_t)count) != 0) failed = 1;

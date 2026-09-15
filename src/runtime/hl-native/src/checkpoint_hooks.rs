@@ -177,6 +177,18 @@ pub(crate) fn checkpoint_pipe_capture_test(isa: u32, scenario: u32) -> Result<()
 }
 
 #[cfg(feature = "native-test-hooks")]
+pub(crate) fn checkpoint_signalfd_capture_test(isa: u32, scenario: u32) -> Result<(), i32> {
+    // owns no caller memory, restores the previous sink and the admission-pass flag, closes every
+    // descriptor it opened, and returns a scalar status.
+    scenario_status(
+        isa,
+        test_api().aarch64_checkpoint_signalfd_capture,
+        test_api().x86_64_checkpoint_signalfd_capture,
+        scenario,
+    )
+}
+
+#[cfg(feature = "native-test-hooks")]
 pub(crate) fn checkpoint_stdio_alias_capture_test(isa: u32, scenario: u32) -> Result<(), i32> {
     // swaps the process-wide guest box for the duration of the call, restores it, releases everything it
     // created, borrows no caller memory, and returns a scalar status.

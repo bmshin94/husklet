@@ -6260,13 +6260,429 @@ fn a_restored_member_that_exits_cleanly_reports_its_code_on_both_isas() {
     }
 }
 
+/// A lock refusal must not be downgradable by a policy setting.
+///
+/// `HL_CHECKPOINT_POLICY` selects what a RESTORE does with parts of an image it cannot rebuild:
+/// `1` reconnect, `2` discard the optional ones, `3` refuse. It is a real launch option a container
+/// sets from `RuntimeConfig::checkpoint_policy` (`launcher/plan.rs`). Under `1` or `2` the capture-side
+/// lock gate used to print `[ckpt] degraded: file-lock domain ...` and ADMIT -- turning a correct
+/// refusal into a reported success by configuration, and dropping exactly the interlock that
+/// `a_guest_holding_a_real_file_lock_refuses_the_checkpoint_on_both_isas` exists to protect.
+///
+/// The domains the policy legitimately governs have two things this one does not: a section in the
+/// image describing the degraded object, and a `RECOVERY.jsonl` entry naming what was dropped. The
+/// connected-socket arm downgrades on exactly that basis. The lock domain has no lock section to write,
+/// nothing for a restore to reconnect, and no report -- so the "degraded" image was simply a wrong one.
+///
+/// Non-vacuity, from both sides: the `none` arm must still be ADMITTED under the same policy values, so
+/// this cannot pass by refusing everything the moment a policy is set; and it runs the policy values
+/// through the SAME option the container launch uses, so a policy that never reached the engine would
+/// leave the pre-fix `degraded` admission in place and fail here.
+#[test]
+fn no_recovery_policy_can_downgrade_a_file_lock_refusal_on_both_isas() {
+    let compiling = fixture_compilation();
+    let fixtures = tempfile::tempdir().unwrap();
+    let executables =
+        [GuestIsa::Aarch64, GuestIsa::X86_64].map(|isa| (isa, held_file_lock_fixture(isa, fixtures.path())));
+    drop(compiling);
+    let _exclusive = exclusive_checkpoint_test();
+
+    let mut downgraded = Vec::new();
+    let mut refused_while_unlocked = Vec::new();
+    let mut refusals = 0;
+    let mut admissions = 0;
+
+    // 1 = reconnect, 2 = discard-optional: the two values ckpt_recovery_permissive_requested() accepted.
+    // 3 = refuse and 0 = default are carried too, so the property is stated over the whole option domain.
+    for (isa, executable) in executables {
+        for policy in [0u8, 1, 2, 3] {
+            for mode in ["flock", "fcntl"] {
+                let (held, refused, committed) =
+                    held_file_lock_verdict_under_policy(isa, &executable, mode, Some(policy));
+                println!(
+                    "policy battery: {isa:?}/{mode:<6} policy={policy} held={held} refused={refused} committed={committed}"
+                );
+                assert!(
+                    held,
+                    "{isa:?}/{mode} policy={policy} fixture did not actually hold the lock, so its refusal would prove nothing"
+                );
+                if refused && !committed {
+                    refusals += 1;
+                } else {
+                    downgraded.push(format!("{isa:?}/{mode} policy={policy} refused={refused} committed={committed}"));
+                }
+            }
+
+            let (held, refused, committed) = held_file_lock_verdict_under_policy(isa, &executable, "none", Some(policy));
+            println!(
+                "policy battery: {isa:?}/none   policy={policy} held={held} refused={refused} committed={committed}"
+            );
+            assert!(!held, "{isa:?}/none policy={policy} fixture unexpectedly still held a lock");
+            if refused || !committed {
+                refused_while_unlocked.push(format!("{isa:?}/none policy={policy}"));
+            } else {
+                admissions += 1;
+            }
+        }
+    }
+
+    assert!(
+        downgraded.is_empty(),
+        "a recovery policy downgraded a file-lock refusal into an admitted capture: {downgraded:?}"
+    );
+    assert!(
+        refused_while_unlocked.is_empty(),
+        "setting a recovery policy refused a capture for a guest holding no lock: {refused_while_unlocked:?}"
+    );
+    assert_eq!(refusals, 16, "the lock arms did not all run");
+    assert_eq!(admissions, 8, "the unlocked control arms did not all run");
+}
+
+fn device_offset_fixture(isa: GuestIsa, directory: &Path) -> PathBuf {
+    shared_state_fixture(isa, directory, "device_offset")
+}
+
+fn device_offset_plan(executable: &Path, report: &Path, object: &Path, finish: &Path, mode: &str) -> RuntimePlan {
+    let mut options = Options::default();
+    if !mode.is_empty() {
+        options.set(mode, "1", true).unwrap();
+    }
+    RuntimePlan {
+        rootfs: None,
+        executable_host: Some(executable.as_os_str().as_encoded_bytes().to_vec()),
+        arguments: [
+            executable.as_os_str().as_encoded_bytes().to_vec(),
+            report.as_os_str().as_encoded_bytes().to_vec(),
+            object.as_os_str().as_encoded_bytes().to_vec(),
+            finish.as_os_str().as_encoded_bytes().to_vec(),
+        ]
+        .into(),
+        environment: Vec::new(),
+        result_path: None,
+        options,
+        box_policy: Default::default(),
+    }
+}
+
+/// A backing file for a loop device, and the loop device itself, released on drop. `losetup` is used
+/// because a loop device is the only seekable device this host can be asked to produce on demand -- and a
+/// SEEKABLE device is the entire point: the unseekable ones are what the old exemption was protecting.
+struct LoopDevice {
+    node: String,
+}
+
+impl LoopDevice {
+    fn attach(backing: &Path) -> Self {
+        let output = std::process::Command::new("losetup")
+            .args(["--find", "--show"])
+            .arg(backing)
+            .output()
+            .or_else(|_| {
+                std::process::Command::new("/usr/sbin/losetup")
+                    .args(["--find", "--show"])
+                    .arg(backing)
+                    .output()
+            })
+            .expect("cannot run losetup");
+        assert!(
+            output.status.success(),
+            "losetup failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let node = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        assert!(node.starts_with("/dev/loop"), "losetup named no loop device: {node:?}");
+        Self { node }
+    }
+
+    fn path(&self) -> PathBuf {
+        PathBuf::from(&self.node)
+    }
+}
+
+impl Drop for LoopDevice {
+    fn drop(&mut self) {
+        for program in ["losetup", "/usr/sbin/losetup"] {
+            if std::process::Command::new(program)
+                .args(["-d", &self.node])
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false)
+            {
+                return;
+            }
+        }
+    }
+}
+
+/// Runs the fixture against `object`, optionally through a capture/restore round trip, and returns the
+/// `RESULT` line the guest published after the round trip.
+fn device_offset_result(isa: GuestIsa, executable: &Path, object: &Path, checkpointed: bool) -> String {
+    let directory = tempfile::tempdir().unwrap();
+    let report = directory.path().join("report");
+    let finish = directory.path().join("finish");
+    let store = Arc::new(Store::default());
+
+    if !checkpointed {
+        let control = Arc::new(
+            Engine::with_checkpoint(
+                isa,
+                device_offset_plan(executable, &report, object, &finish, ""),
+                streams(false),
+                store.clone(),
+                store,
+            )
+            .unwrap(),
+        );
+        control.start().unwrap();
+        wait_for(&report, "READY offset=8208");
+        std::fs::write(&finish, []).unwrap();
+        wait_for(&report, "RESULT ");
+        let _ = wait_result_bounded(&control, "device offset control");
+        return std::fs::read_to_string(&report).unwrap_or_default().trim().to_string();
+    }
+
+    let capture = Arc::new(
+        Engine::with_checkpoint(
+            isa,
+            device_offset_plan(executable, &report, object, &finish, "HL_CHECKPOINT"),
+            streams(false),
+            store.clone(),
+            store.clone(),
+        )
+        .unwrap(),
+    );
+    capture.start().unwrap();
+    wait_for(&report, "READY offset=8208");
+    capture
+        .capture_checkpoint_until(checkpoint_deadline())
+        .unwrap_or_else(|error| panic!("{isa:?} refused to capture a guest holding {object:?}: {error:?}"));
+    assert_eq!(wait_bounded(&capture, "device offset capture").guest_status, 0);
+
+    let restore = Arc::new(
+        Engine::with_checkpoint(
+            isa,
+            device_offset_plan(executable, &report, object, &finish, "HL_RESTORE"),
+            streams(false),
+            store.clone(),
+            store,
+        )
+        .unwrap(),
+    );
+    restore.start().unwrap();
+    std::fs::write(&finish, []).unwrap();
+    wait_for(&report, "RESULT ");
+    let _ = wait_result_bounded(&restore, "device offset restore");
+    std::fs::read_to_string(&report).unwrap_or_default().trim().to_string()
+}
+
+/// A restored guest must resume a seekable DEVICE at the position it was captured at.
+///
+/// `ckpt_restore_device_fd` reopens the device by path -- which rewinds the description to 0 -- and, alone
+/// among the path-backed kinds, never seeked it back; `ckpt_restore_right_prepare` carried the same
+/// exemption (`record->kind != CKF_DEVICE && lseek(...)`), and the native capture arm zeroed the offset
+/// before it was ever written. The exemption is right for the unseekable character devices it was written
+/// for and wrong for every block device, which has a real position the image already records.
+///
+/// The bracket is three-sided and every side is measured in the same run:
+///   * the CONTROL runs the identical fixture through the identical engine with no checkpoint at all and
+///     must report the armed offset, so a fixture that had stopped reporting the truth fails here;
+///   * the FILE arm runs the identical fixture over a regular file, whose offset restore already handles,
+///     so a harness that could not observe a restored offset at all would fail there rather than pass;
+///   * the DEVICE arm is the measurement, and it asserts the BYTES as well as the number -- a rewound
+///     descriptor returns the device's first bytes, not the ones the guest was sitting on.
+#[test]
+fn a_restored_guest_resumes_a_seekable_device_at_the_offset_it_was_captured_at_on_both_isas() {
+    let compiling = fixture_compilation();
+    let fixtures = tempfile::tempdir().unwrap();
+    let executables =
+        [GuestIsa::Aarch64, GuestIsa::X86_64].map(|isa| (isa, device_offset_fixture(isa, fixtures.path())));
+    drop(compiling);
+    let _exclusive = exclusive_checkpoint_test();
+
+    let media = tempfile::tempdir().unwrap();
+    let backing = media.path().join("backing.img");
+    // Position-dependent bytes: every 16-byte window is distinct, so a rewind cannot coincidentally
+    // produce the bytes the guest was reading.
+    let image: Vec<u8> = (0..262_144u32).map(|at| (at.wrapping_mul(7).wrapping_add(3) & 0xff) as u8).collect();
+    std::fs::write(&backing, &image).unwrap();
+    let expected_bytes = image[8208..8224]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let expected = format!("RESULT offset=8208 bytes={expected_bytes}");
+
+    let device = LoopDevice::attach(&backing);
+
+    for (isa, executable) in executables {
+        let control = device_offset_result(isa, &executable, &device.path(), false);
+        println!("device offset: {isa:?} device CONTROL    {control}");
+        assert_eq!(
+            control, expected,
+            "{isa:?} the fixture does not report the armed offset even WITHOUT a checkpoint, so nothing \
+             it says about one means anything"
+        );
+
+        let file = device_offset_result(isa, &executable, &backing, true);
+        println!("device offset: {isa:?} file   CHECKPOINT {file}");
+        assert_eq!(
+            file, expected,
+            "{isa:?} a regular file lost its offset across the round trip, so this harness cannot observe \
+             a restored offset at all"
+        );
+
+        let restored = device_offset_result(isa, &executable, &device.path(), true);
+        println!("device offset: {isa:?} device CHECKPOINT {restored}");
+        assert_eq!(
+            restored, expected,
+            "{isa:?} a restored guest resumed a seekable device at the wrong position while reporting success"
+        );
+    }
+}
+
+fn process_state_fixture(isa: GuestIsa, directory: &Path) -> PathBuf {
+    shared_state_fixture(isa, directory, "process_state")
+}
+
+fn process_state_plan(executable: &Path, report: &Path, finish: &Path, mode: &str) -> RuntimePlan {
+    let mut options = Options::default();
+    if !mode.is_empty() {
+        options.set(mode, "1", true).unwrap();
+    }
+    RuntimePlan {
+        rootfs: None,
+        executable_host: Some(executable.as_os_str().as_encoded_bytes().to_vec()),
+        arguments: [
+            executable.as_os_str().as_encoded_bytes().to_vec(),
+            report.as_os_str().as_encoded_bytes().to_vec(),
+            finish.as_os_str().as_encoded_bytes().to_vec(),
+        ]
+        .into(),
+        environment: Vec::new(),
+        result_path: None,
+        options,
+        box_policy: Default::default(),
+    }
+}
+
+fn process_state_result(isa: GuestIsa, executable: &Path, checkpointed: bool) -> String {
+    let directory = tempfile::tempdir().unwrap();
+    let report = directory.path().join("report");
+    let finish = directory.path().join("finish");
+    let store = Arc::new(Store::default());
+
+    if !checkpointed {
+        let control = Arc::new(
+            Engine::with_checkpoint(
+                isa,
+                process_state_plan(executable, &report, &finish, ""),
+                streams(false),
+                store.clone(),
+                store,
+            )
+            .unwrap(),
+        );
+        control.start().unwrap();
+        wait_for(&report, "READY ");
+        std::fs::write(&finish, []).unwrap();
+        wait_for(&report, "RESULT ");
+        let _ = wait_result_bounded(&control, "process state control");
+        return std::fs::read_to_string(&report).unwrap_or_default().trim().to_string();
+    }
+
+    let capture = Arc::new(
+        Engine::with_checkpoint(
+            isa,
+            process_state_plan(executable, &report, &finish, "HL_CHECKPOINT"),
+            streams(false),
+            store.clone(),
+            store.clone(),
+        )
+        .unwrap(),
+    );
+    capture.start().unwrap();
+    wait_for(&report, "READY ");
+    capture
+        .capture_checkpoint_until(checkpoint_deadline())
+        .unwrap_or_else(|error| panic!("{isa:?} refused to capture a guest holding umask/rlimit/itimer: {error:?}"));
+    assert_eq!(wait_bounded(&capture, "process state capture").guest_status, 0);
+
+    let restore = Arc::new(
+        Engine::with_checkpoint(
+            isa,
+            process_state_plan(executable, &report, &finish, "HL_RESTORE"),
+            streams(false),
+            store.clone(),
+            store,
+        )
+        .unwrap(),
+    );
+    restore.start().unwrap();
+    std::fs::write(&finish, []).unwrap();
+    wait_for(&report, "RESULT ");
+    let _ = wait_result_bounded(&restore, "process state restore");
+    std::fs::read_to_string(&report).unwrap_or_default().trim().to_string()
+}
+
+/// A restored guest keeps the file-creation mask, the emulated `RLIMIT_NOFILE` and the armed interval
+/// timer it was captured with.
+///
+/// None of the three lives in the guest's address space or its descriptor table, so the page dump and the
+/// fd scan both step straight past them; the image carries the guest signal-disposition table for exactly
+/// that reason and carried nothing else of the kind. Losing them is silent in all three directions: files
+/// created after the restore get permissions the guest did not choose, a limit the guest narrowed reverts
+/// to the engine default, and an armed alarm simply never arrives.
+///
+/// The CONTROL arm is the bracket: the identical fixture through the identical engine with no checkpoint
+/// must report the armed values, so a fixture whose arming had stopped taking effect fails here rather
+/// than passing the measurement. The fixture also refuses to start if any of the three was ALREADY at its
+/// armed value before it armed it, so "armed" cannot mean "happened to already be".
+#[test]
+fn a_restored_guest_keeps_its_umask_rlimit_and_interval_timer_on_both_isas() {
+    let compiling = fixture_compilation();
+    let fixtures = tempfile::tempdir().unwrap();
+    let executables =
+        [GuestIsa::Aarch64, GuestIsa::X86_64].map(|isa| (isa, process_state_fixture(isa, fixtures.path())));
+    drop(compiling);
+    let _exclusive = exclusive_checkpoint_test();
+
+    let expected = "RESULT umask=0077 nofile=64 vtimer=1";
+    for (isa, executable) in executables {
+        let control = process_state_result(isa, &executable, false);
+        println!("process state: {isa:?} CONTROL    {control}");
+        assert_eq!(
+            control, expected,
+            "{isa:?} the fixture does not report its own armed state even WITHOUT a checkpoint, so nothing \
+             it says about one means anything"
+        );
+
+        let restored = process_state_result(isa, &executable, true);
+        println!("process state: {isa:?} CHECKPOINT {restored}");
+        assert_eq!(
+            restored, expected,
+            "{isa:?} a restored guest silently reverted umask/rlimit/itimer state it never asked to change"
+        );
+    }
+}
+
 fn held_file_lock_fixture(isa: GuestIsa, directory: &Path) -> PathBuf {
     shared_state_fixture(isa, directory, "held_file_lock")
 }
 
-fn held_file_lock_plan(executable: &Path, ready: &Path, mode: &str, lock: &Path) -> RuntimePlan {
+/// `policy` is the wire value of `HL_CHECKPOINT_POLICY`, i.e. what a container launch puts there from
+/// `RuntimeConfig::checkpoint_policy` (`launcher/plan.rs`, `set_number`). `None` is an unset option: the
+/// shape every other test in this file runs.
+fn held_file_lock_plan_with_policy(
+    executable: &Path,
+    ready: &Path,
+    mode: &str,
+    lock: &Path,
+    policy: Option<u8>,
+) -> RuntimePlan {
     let mut options = Options::default();
     options.set("HL_CHECKPOINT", "1", true).unwrap();
+    if let Some(policy) = policy {
+        options.set("HL_CHECKPOINT_POLICY", &policy.to_string(), true).unwrap();
+    }
     RuntimePlan {
         rootfs: None,
         executable_host: Some(executable.as_os_str().as_encoded_bytes().to_vec()),
@@ -6287,6 +6703,15 @@ fn held_file_lock_plan(executable: &Path, ready: &Path, mode: &str, lock: &Path)
 /// Runs one lock shape to readiness, asks the capture for a checkpoint, and reports
 /// `(the guest really held the lock, the capture was refused, the sink kept a MANIFEST)`.
 fn held_file_lock_verdict(isa: GuestIsa, executable: &Path, mode: &str) -> (bool, bool, bool) {
+    held_file_lock_verdict_under_policy(isa, executable, mode, None)
+}
+
+fn held_file_lock_verdict_under_policy(
+    isa: GuestIsa,
+    executable: &Path,
+    mode: &str,
+    policy: Option<u8>,
+) -> (bool, bool, bool) {
     let directory = tempfile::tempdir().unwrap();
     let ready = directory.path().join("ready");
     let lock = directory.path().join("lockfile");
@@ -6294,7 +6719,7 @@ fn held_file_lock_verdict(isa: GuestIsa, executable: &Path, mode: &str) -> (bool
     let capture = Arc::new(
         Engine::with_checkpoint(
             isa,
-            held_file_lock_plan(executable, &ready, mode, &lock),
+            held_file_lock_plan_with_policy(executable, &ready, mode, &lock, policy),
             streams(false),
             store.clone(),
             store.clone(),

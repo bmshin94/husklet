@@ -23,9 +23,11 @@
 //
 // So capture fails closed and names the domain and the offending object. This is
 // deliberately a refusal and not a capture: a refused checkpoint costs a run, a
-// silently incomplete one costs the cluster. `ckpt_recovery_permissive_requested()`
-// downgrades it to a warning for the same reason the socket path does -- an
-// operator who has asked for a degraded image gets one, loudly.
+// silently incomplete one costs the cluster. Unlike the socket path, it is NOT
+// downgradable by `ckpt_recovery_permissive_requested()` -- the socket domain writes
+// its degraded state into the image and reports it, the lock domain can do neither,
+// so a downgrade there is indistinguishable from the corruption the gate exists to
+// stop. See ckpt_refuse_uncaptured_file_locks.
 
 // Map the container's SysV control block WITHOUT creating it. hl_ipc_ctrl() has
 // O_CREAT|O_EXCL in its first attempt, so calling it here would materialise an
@@ -495,6 +497,20 @@ static int ckpt_restore_sysv_state(const char *procdir) {
 // engine on this uid -- so filter to THIS process. Each engine process dumps its
 // own image and any one refusal aborts the whole group, which gives exact
 // per-process attribution without refusing on a sibling container's locks.
+//
+// NOT DOWNGRADABLE. HL_CHECKPOINT_POLICY selects what a RESTORE does with parts of an image it
+// cannot rebuild -- reconnect, discard the optional ones, or refuse -- and every domain it governs
+// has two things this one does not: a section in the image describing the degraded object, and a
+// RECOVERY.jsonl entry naming what was dropped. The connected-socket arm downgrades on exactly that
+// basis (ckpt_socket_state_degraded records `degraded_connection` INTO the image and the restore
+// reconnects or discards it under the same policy). The lock domain has neither: there is no lock
+// section to write, nothing for the restore to reconnect, and no report -- so `permissive` here did
+// not degrade the image, it discarded the interlock and called the capture a success. That converts
+// a correct refusal into a wrong outcome by configuration, which is the one thing a policy knob must
+// never be able to do: a restored guest believing it holds a lock any other process can take is the
+// same corruption class whether the operator opted in or not, and an operator setting a RESTORE
+// policy is not asking for it. The gate still reports the policy's verdict word so an operator who
+// asked for permissive recovery can see the domain that would not give it, but it fails closed.
 static int ckpt_refuse_uncaptured_file_locks(int permissive) {
     if (g_poslk == NULL) return 0;
     int32_t self = poslk_mypid();
@@ -522,7 +538,7 @@ static int ckpt_refuse_uncaptured_file_locks(int permissive) {
         if (flock_first == NULL) flock_first = lease;
     }
     if (record_locks == 0 && flock_leases == 0) return 0;
-    const char *verdict = permissive ? "degraded" : "refuse";
+    const char *verdict = permissive ? "refuse (not downgradable)" : "refuse";
     if (record_locks)
         fprintf(stderr,
                 "[ckpt] %s: file-lock domain -- this process holds %u fcntl record lock(s) (first: dev %llu ino %llu "
@@ -537,13 +553,14 @@ static int ckpt_refuse_uncaptured_file_locks(int permissive) {
                 "mode %u); the checkpoint image carries no lock section, so a restore would drop the interlock\n",
                 verdict, flock_leases, (unsigned long long)flock_first->device, (unsigned long long)flock_first->object,
                 (unsigned)flock_first->mode);
-    return permissive ? 0 : -1;
+    return -1;
 }
 
 // The remaining admission gate. SysV is captured, so only the lock domain can
 // refuse; the gate keeps its name and its call site so the next domain to be
 // captured is removed from here rather than from ckpt_dump_self_locked.
 static int ckpt_admit_ipc_and_lock_state(void) {
+    // The flag is passed for the message only; ckpt_refuse_uncaptured_file_locks refuses either way.
     int permissive = ckpt_recovery_permissive_requested();
     return ckpt_refuse_uncaptured_file_locks(permissive) != 0 ? -1 : 0;
 }

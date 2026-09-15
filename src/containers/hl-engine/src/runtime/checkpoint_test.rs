@@ -433,7 +433,7 @@ fn malformed_envelope_fails_closed_before_restore_mutates() {
     let canonical = super::image_envelope::Reader::Translated.encode();
     let mut cases = Vec::new();
     cases.push(canonical[..63].to_vec());
-    for (at, value) in [(8, 2), (10, 3), (12, 9), (16, b'X'), (25, b'X'), (48, 1)] {
+    for (at, value) in [(8, 2), (10, 3), (12, 10), (16, b'X'), (25, b'X'), (48, 1)] {
         let mut bytes = canonical;
         bytes[at] = value;
         cases.push(bytes.to_vec());
