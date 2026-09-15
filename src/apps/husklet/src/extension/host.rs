@@ -446,6 +446,7 @@ impl std::error::Error for Overrun {}
 /// One installed extension, hosted for one workspace.
 pub struct Host {
     orders: mpsc::Sender<Order>,
+    retry_pending: Arc<AtomicBool>,
     standing: Arc<Mutex<Standing>>,
     stop: Arc<AtomicBool>,
     ended: Option<mpsc::Receiver<()>>,
@@ -467,9 +468,12 @@ impl Host {
         let (finished, ended) = mpsc::channel();
         let standing = Arc::new(Mutex::new(Standing::Search));
         let stop = Arc::new(AtomicBool::new(false));
+        let retry_pending = Arc::new(AtomicBool::new(false));
         let hall = Hall {
             audience,
             inbox,
+            pending: Mutex::default(),
+            retry_pending: Arc::clone(&retry_pending),
             standing: Arc::clone(&standing),
             stop: Arc::clone(&stop),
         };
@@ -479,6 +483,7 @@ impl Host {
         });
         Self {
             orders,
+            retry_pending,
             standing,
             stop,
             ended: Some(ended),
@@ -506,7 +511,13 @@ impl Host {
         if self.stop.load(Ordering::Acquire) {
             return;
         }
-        let _ = self.orders.send(order);
+        let retry = matches!(order, Order::Retry);
+        if retry && self.retry_pending.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        if self.orders.send(order).is_err() && retry {
+            self.retry_pending.store(false, Ordering::Release);
+        }
     }
 
     /// Invalidates this host immediately without waiting on its driver. The
@@ -582,6 +593,8 @@ impl std::fmt::Debug for Host {
 struct Hall {
     audience: Audience,
     inbox: mpsc::Receiver<Order>,
+    pending: Mutex<VecDeque<Order>>,
+    retry_pending: Arc<AtomicBool>,
     standing: Arc<Mutex<Standing>>,
     stop: Arc<AtomicBool>,
 }
@@ -659,10 +672,22 @@ impl Hall {
     /// Drains the orders waiting for a running conversation.
     ///
     /// Returns why the session should end, when one of them says so.
-    fn orders(&self, voice: &Voice) -> Option<Passage> {
-        while let Ok(order) = self.inbox.try_recv() {
+    fn orders(&self, voice: &Voice, ready: bool) -> Option<Passage> {
+        loop {
+            let order = ready
+                .then(|| self.pending.lock().unwrap_or_else(PoisonError::into_inner).pop_front())
+                .flatten()
+                .or_else(|| self.inbox.try_recv().ok());
+            let Some(order) = order else { break };
             match order {
-                Order::Retry => return Some(Passage::Renewal),
+                Order::Retry => {
+                    return Some(Passage::Renewal);
+                }
+                order if !ready => self
+                    .pending
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push_back(order),
                 Order::Interaction(event) => speak(voice, &event),
                 Order::InteractionAt(event) => speak_at(voice, &event),
                 Order::PaneProvider(selection) => voice::speak_provider(voice, &selection),
@@ -742,6 +767,7 @@ fn run<S: Supply>(supply: &Arc<S>, hall: &Hall, plan: &Plan) {
                 supply.halt(plan);
             }
         }
+        hall.retry_pending.store(false, Ordering::Release);
         if !recover(&mut installation, hall, plan) {
             break;
         }
@@ -913,8 +939,12 @@ fn pump(
     let mut health_deadline = Instant::now();
     let mut ready = false;
     loop {
-        ready |= collect(hall, queue);
-        if let Some(passage) = hall.orders(voice) {
+        let rendered = collect(hall, queue);
+        if rendered && !ready {
+            ready = true;
+            hall.retry_pending.store(false, Ordering::Release);
+        }
+        if let Some(passage) = hall.orders(voice, ready) {
             return passage;
         }
         if let Ok(reason) = ended.try_recv() {
@@ -1297,6 +1327,7 @@ tab_title = "Sample"
         startup_failure: Option<String>,
         halts: AtomicUsize,
         live: Arc<Mutex<Vec<UnixStream>>>,
+        events: Arc<AtomicUsize>,
     }
 
     impl Bench {
@@ -1313,6 +1344,7 @@ tab_title = "Sample"
                 startup_failure: None,
                 halts: AtomicUsize::new(0),
                 live: Arc::new(Mutex::new(Vec::new())),
+                events: Arc::new(AtomicUsize::new(0)),
             }
         }
 
@@ -1333,6 +1365,10 @@ tab_title = "Sample"
         fn halts(&self) -> usize {
             self.halts.load(Ordering::Acquire)
         }
+
+        fn events(&self) -> usize {
+            self.events.load(Ordering::Acquire)
+        }
     }
 
     impl Supply for Bench {
@@ -1348,8 +1384,9 @@ tab_title = "Sample"
             let socket = self.socket.clone();
             let token = Arc::clone(&self.token);
             let live = Arc::clone(&self.live);
+            let events = Arc::clone(&self.events);
             let peer = std::thread::spawn(move || {
-                play(&socket, script, &live);
+                play(&socket, script, &live, &events);
                 drop(token);
             });
             self.peers.lock().expect("peers").push(peer);
@@ -1401,7 +1438,7 @@ tab_title = "Sample"
     }
 
     /// One fake extension: connect, handshake, draw, then answer row requests.
-    fn play(socket: &Path, script: Script, live: &Mutex<Vec<UnixStream>>) {
+    fn play(socket: &Path, script: Script, live: &Mutex<Vec<UnixStream>>, events: &AtomicUsize) {
         let Some(stream) = connect(socket) else {
             return;
         };
@@ -1418,7 +1455,7 @@ tab_title = "Sample"
             return;
         }
         if script.linger {
-            answer(&mut wire);
+            answer(&mut wire, events);
         }
     }
 
@@ -1458,8 +1495,9 @@ tab_title = "Sample"
     }
 
     /// Answers row requests until the host closes the socket.
-    fn answer(wire: &mut Wire<UnixStream>) {
+    fn answer(wire: &mut Wire<UnixStream>, events: &AtomicUsize) {
         while let Ok(frame) = wire.receive() {
+            events.fetch_add(1, Ordering::Release);
             let Ok(request) = serde_json::from_slice::<hl_gui::RowRequest>(&frame.payload) else {
                 continue;
             };
@@ -1549,7 +1587,7 @@ tab_title = "Sample"
         let mut wire = Wire::new(stream);
         shake(&mut wire).expect("protocol handshake");
         describe(&mut wire, 1).expect("interface description");
-        answer(&mut wire);
+        answer(&mut wire, &AtomicUsize::new(0));
     }
 
     #[test]
@@ -1660,6 +1698,8 @@ tab_title = "Sample"
         let hall = Hall {
             audience: gallery.audience(),
             inbox,
+            pending: Mutex::default(),
+            retry_pending: Arc::new(AtomicBool::new(true)),
             standing: Arc::clone(&standing),
             stop: Arc::new(AtomicBool::new(false)),
         };
@@ -1793,6 +1833,49 @@ tab_title = "Sample"
             2,
             "owned shutdown stops the renewed generation once"
         );
+    }
+
+    #[test]
+    fn rapid_retries_replace_the_generation_once() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let socket = temporary.path().join("run/extension.sock");
+        let token = Arc::new(());
+        let gallery = Gallery::default();
+        let bench = Arc::new(Bench::new(
+            &socket,
+            &[
+                Script {
+                    sequence: 1,
+                    draw: true,
+                    linger: true,
+                },
+                Script {
+                    sequence: 2,
+                    draw: true,
+                    linger: true,
+                },
+                Script {
+                    sequence: 3,
+                    draw: true,
+                    linger: true,
+                },
+            ],
+            &token,
+        ));
+        let host = Host::open(Attendance(Arc::clone(&bench)), gallery.audience());
+        assert!(until(|| gallery.frames() == vec![1]), "the first extension speaks");
+
+        host.accept(Order::Retry);
+        host.accept(Order::Retry);
+        host.accept(Order::Interaction(rows()));
+
+        assert!(until(|| gallery.frames() == vec![1, 2]), "one replacement speaks");
+        assert!(until(|| bench.events() == 1), "interaction following retry reaches the replacement");
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(gallery.frames(), vec![1, 2], "a duplicate retry cannot retire the replacement");
+        assert_eq!(bench.ensures(), 2, "rapid retries create one replacement generation");
+        assert_eq!(bench.halts(), 1, "only the original generation is retired");
+        host.close().expect("closed");
     }
 
     #[test]
