@@ -407,6 +407,12 @@ export declare class FileWalkOperationError extends Error {
     readonly resume: any;
     constructor(resume: any, cause: any);
 }
+/** Recursive traversal reached its caller-owned work bound before yielding an unsafe entry. */
+export declare class FileWalkLimitError extends RangeError {
+    readonly kind: any;
+    readonly resume: any;
+    constructor(kind: any, resume: any);
+}
 /** A bounded text read lost transport after an exact prefix had been acknowledged. */
 export declare class FileTextOperationError extends Error {
     readonly path: any;

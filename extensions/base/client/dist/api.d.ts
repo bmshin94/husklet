@@ -684,6 +684,11 @@ export interface FileWalkResumeToken {
     readonly root: string;
     readonly pageSize: number;
     readonly stack: readonly FileWalkResumeFrame[];
+    readonly entries?: number;
+    readonly pages?: number;
+    readonly maxEntries?: number;
+    readonly maxPages?: number;
+    readonly maxDepth?: number;
 }
 export interface FileChange {
     /** Exact durable cursor immediately after this applied change. */
@@ -1267,6 +1272,11 @@ export declare class FileChunkOperationError extends Error {
 export declare class FileWalkOperationError extends Error {
     readonly resume: Readonly<FileWalkResumeToken>;
     readonly cause: unknown;
+}
+/** Recursive traversal reached its caller-owned work bound before yielding an unsafe entry. */
+export declare class FileWalkLimitError extends RangeError {
+    readonly kind: 'entries' | 'pages' | 'depth';
+    readonly resume: Readonly<FileWalkResumeToken>;
 }
 export interface FileChunkResume {
     version: 1;
@@ -2660,11 +2670,17 @@ export interface WorkspaceApi {
         /** Recursively walk with consumer-driven paging; yielded entries cannot redirect traversal. */
         walk(path: string, options?: {
             pageSize?: number;
+            maxEntries?: number;
+            maxPages?: number;
+            maxDepth?: number;
             signal?: AbortSignal;
         }): AsyncGenerator<FileEntry, void, void>;
         /** Continue an interrupted walk after reconnect without replaying entries already yielded. */
         resumeWalk(failure: FileWalkOperationError | FileWalkResumeToken, options?: {
             pageSize?: number;
+            maxEntries?: number;
+            maxPages?: number;
+            maxDepth?: number;
             signal?: AbortSignal;
         }): AsyncGenerator<FileEntry, void, void>;
         stat(path: string): Promise<FileEntry>;

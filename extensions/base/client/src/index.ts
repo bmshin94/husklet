@@ -1323,6 +1323,22 @@ export class FileWalkOperationError extends Error {
   }
 }
 
+/** Recursive traversal reached its caller-owned work bound before yielding an unsafe entry. */
+export class FileWalkLimitError extends RangeError {
+  readonly kind;
+  readonly resume;
+
+  constructor(kind, resume) {
+    super(`filesystem walk of ${resume.root} reached its ${kind} bound`);
+    this.name = 'FileWalkLimitError';
+    this.kind = kind;
+    this.resume = Object.freeze({
+      ...resume,
+      stack: Object.freeze(resume.stack.map((frame) => Object.freeze({ ...frame }))),
+    });
+  }
+}
+
 /** A bounded text read lost transport after an exact prefix had been acknowledged. */
 export class FileTextOperationError extends Error {
   readonly path;
@@ -2346,7 +2362,28 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       )
         throw new TypeError('filesystem walk resume frame carries inconsistent cursor authority');
     });
-    return token;
+    const entries = token.entries ?? 0;
+    const pages = token.pages ?? 0;
+    const maxEntries = token.maxEntries ?? 100_000;
+    const maxPages = token.maxPages ?? 4_096;
+    const maxDepth = token.maxDepth ?? 4_096;
+    for (const [name, value, maximum] of [
+      ['entries', entries, 1_000_000],
+      ['pages', pages, 65_536],
+      ['maxEntries', maxEntries, 1_000_000],
+      ['maxPages', maxPages, 65_536],
+      ['maxDepth', maxDepth, 4_096],
+    ] as const) {
+      if (
+        !Number.isSafeInteger(value) ||
+        value < (name.startsWith('max') ? 1 : 0) ||
+        value > maximum
+      )
+        throw new RangeError(`filesystem walk ${name} is outside its bound`);
+    }
+    if (entries > maxEntries || pages > maxPages || token.stack.length > maxDepth)
+      throw new RangeError('filesystem walk resume token exceeds its retained work bound');
+    return { ...token, entries, pages, maxEntries, maxPages, maxDepth };
   };
   const walkFrom = async function* (
     token: FileWalkResumeToken,
@@ -2361,18 +2398,33 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       index: 0,
       more: true,
     }));
+    let entries = token.entries ?? 0;
+    let pages = token.pages ?? 0;
+    const maxEntries = token.maxEntries ?? 100_000;
+    const maxPages = token.maxPages ?? 4_096;
+    const maxDepth = token.maxDepth ?? 4_096;
     const recovery = () => ({
       version: 1 as const,
       root: token.root,
       pageSize: token.pageSize,
       stack: stack.map(({ path, observed: identity, after }) => ({ path, identity, after })),
+      entries,
+      pages,
+      maxEntries,
+      maxPages,
+      maxDepth,
     });
     while (stack.length > 0) {
       const current = stack.at(-1)!;
       if (current.index < current.entries.length) {
-        const entry = current.entries[current.index++];
+        const entry = current.entries[current.index];
+        if (entries >= maxEntries) throw new FileWalkLimitError('entries', recovery());
+        if (entry.directory && stack.length >= maxDepth)
+          throw new FileWalkLimitError('depth', recovery());
+        current.index += 1;
         current.after = entry.path;
         const child = entry.directory ? entry.path : null;
+        entries += 1;
         yield entry;
         if (child !== null) {
           stack.push({
@@ -2391,6 +2443,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         continue;
       }
       requireFilesystemActive(walkSignal);
+      if (pages >= maxPages) throw new FileWalkLimitError('pages', recovery());
       let page;
       try {
         page = await api.files.listPage(current.path, {
@@ -2398,6 +2451,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           observed: current.observed,
           limit: pageSize,
         });
+        pages += 1;
         requireFilesystemActive(walkSignal);
       } catch (cause) {
         if (
@@ -5395,24 +5449,50 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
       },
       walk: async function* (
         path,
-        { pageSize = 256, signal }: { pageSize?: number; signal?: AbortSignal } = {},
+        {
+          pageSize = 256,
+          maxEntries = 100_000,
+          maxPages = 4_096,
+          maxDepth = 4_096,
+          signal,
+        }: {
+          pageSize?: number;
+          maxEntries?: number;
+          maxPages?: number;
+          maxDepth?: number;
+          signal?: AbortSignal;
+        } = {},
       ) {
         exactFilesystemPageSize(pageSize);
         encodeRequest('filesystem_stat', { path });
-        yield* walkFrom(
-          {
-            version: 1,
-            root: path,
-            pageSize,
-            stack: [{ path, identity: null, after: null }],
-          },
+        const token = exactWalkResume({
+          version: 1,
+          root: path,
           pageSize,
-          signal,
-        );
+          stack: [{ path, identity: null, after: null }],
+          entries: 0,
+          pages: 0,
+          maxEntries,
+          maxPages,
+          maxDepth,
+        });
+        yield* walkFrom(token, pageSize, signal);
       },
       resumeWalk: async function* (
         failure,
-        { pageSize, signal }: { pageSize?: number; signal?: AbortSignal } = {},
+        {
+          pageSize,
+          maxEntries,
+          maxPages,
+          maxDepth,
+          signal,
+        }: {
+          pageSize?: number;
+          maxEntries?: number;
+          maxPages?: number;
+          maxDepth?: number;
+          signal?: AbortSignal;
+        } = {},
       ) {
         const token = exactWalkResume(
           failure instanceof FileWalkOperationError ? failure.resume : failure,
@@ -5421,7 +5501,19 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         exactFilesystemPageSize(resumedPageSize);
         if (resumedPageSize > token.pageSize)
           throw new RangeError('filesystem walk recovery cannot widen its page bound');
-        yield* walkFrom(token, resumedPageSize, signal);
+        const tightened = exactWalkResume({
+          ...token,
+          maxEntries: maxEntries ?? token.maxEntries,
+          maxPages: maxPages ?? token.maxPages,
+          maxDepth: maxDepth ?? token.maxDepth,
+        });
+        if (
+          tightened.maxEntries! > token.maxEntries! ||
+          tightened.maxPages! > token.maxPages! ||
+          tightened.maxDepth! > token.maxDepth!
+        )
+          throw new RangeError('filesystem walk recovery cannot widen its work bounds');
+        yield* walkFrom(tightened, resumedPageSize, signal);
       },
       read: async (path) => expect(await session.call('filesystem_read', { path }), 'contents'),
       readLink: async (path) =>

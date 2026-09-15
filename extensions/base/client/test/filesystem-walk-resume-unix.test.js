@@ -8,6 +8,7 @@ import test from 'node:test';
 import {
   connect,
   DirectoryIdentityChangedError,
+  FileWalkLimitError,
   FileWalkOperationError,
   workspace,
 } from '../dist/index.js';
@@ -102,6 +103,11 @@ test('recursive walk resumes after Unix replacement without duplicates and rejec
       root: 'root',
       pageSize: 1,
       stack: [{ path: 'root', identity: 'root-v1', after: 'root/dir' }],
+      entries: 2,
+      pages: 2,
+      maxEntries: 100000,
+      maxPages: 4096,
+      maxDepth: 4096,
     });
 
     const resumed = await connect({ path: socketPath });
@@ -126,6 +132,49 @@ test('recursive walk resumes after Unix replacement without duplicates and rejec
         error.after === 'root/dir',
     );
     await replaced.close();
+    const bounded = await connect({ path: socketPath });
+    const limited = workspace(bounded).files.walk('root', {
+      pageSize: 1,
+      maxEntries: 1,
+      maxPages: 8,
+      maxDepth: 8,
+    });
+    assert.equal((await limited.next()).value.path, 'root/dir');
+    await assert.rejects(limited.next(), (error) => {
+      assert(error instanceof FileWalkLimitError);
+      assert.equal(error.kind, 'entries');
+      assert.equal(error.resume.entries, 1);
+      assert.equal(error.resume.pages, 2);
+      assert.equal(error.resume.stack.at(-1).after, null);
+      return true;
+    });
+    await assert.rejects(async () => {
+      for await (const _entry of workspace(bounded).files.resumeWalk(
+        {
+          version: 1,
+          root: 'root',
+          pageSize: 1,
+          stack: [{ path: 'root', identity: 'root-v1', after: 'root/dir' }],
+          entries: 1,
+          pages: 1,
+          maxEntries: 1,
+          maxPages: 8,
+          maxDepth: 8,
+        },
+        { maxEntries: 2 },
+      )) {
+        // Widening must fail before another directory request.
+      }
+    }, /cannot widen its work bounds/);
+    const cancellation = new AbortController();
+    const cancelled = workspace(bounded).files.walk('root', {
+      pageSize: 1,
+      signal: cancellation.signal,
+    });
+    assert.equal((await cancelled.next()).value.path, 'root/dir');
+    cancellation.abort('indexing stopped');
+    await assert.rejects(cancelled.next(), (error) => error.name === 'AbortError');
+    await bounded.close();
     assert.deepEqual(
       calls.map(({ connection, with: value }) => [
         connection,
@@ -139,6 +188,9 @@ test('recursive walk resumes after Unix replacement without duplicates and rejec
         [1, 'root', 'root/dir', 'root-v1'],
         [2, 'root', 'root/dir', 'root-v1'],
         [3, 'root', 'root/dir', 'root-v1'],
+        [4, 'root', null, null],
+        [4, 'root/dir', null, null],
+        [4, 'root', null, null],
       ],
     );
   } finally {

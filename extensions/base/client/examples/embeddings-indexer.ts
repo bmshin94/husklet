@@ -92,7 +92,13 @@ try {
     !entry.directory && suffixes.some((suffix) => entry.path.endsWith(suffix));
 
   const walkResiliently = async function* (path: string) {
-    let entries = host.files.walk(path, { signal: controller.signal });
+    let entries = host.files.walk(path, {
+      pageSize: 256,
+      maxEntries: 100_000,
+      maxPages: 4_096,
+      maxDepth: 256,
+      signal: controller.signal,
+    });
     for (;;) {
       try {
         for await (const entry of entries) yield entry;
