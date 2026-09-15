@@ -10811,10 +10811,15 @@ test('real Unix inspectAndAct validates live semantic authority before revision-
               },
             }),
           );
-        } else if (frame.payload.call === 'pane_semantic_action') {
-          assert.deepEqual(frame.payload.with, {
-            slot,
-            action: { generation: 2, revision: 4, node: 7, action: 'invoke', value: null },
+        } else if (frame.payload.call === 'pane_semantic_action_once') {
+          assert.equal(frame.payload.with.slot, slot);
+          assert.match(frame.payload.with.operation, /^[0-9a-f]{32}$/);
+          assert.deepEqual(frame.payload.with.action, {
+            generation: 2,
+            revision: 4,
+            node: 7,
+            action: 'invoke',
+            value: null,
           });
           socket.write(
             encode({
@@ -10867,7 +10872,7 @@ test('real Unix inspectAndAct validates live semantic authority before revision-
     assert.deepEqual(calls, [
       'event_subscribe',
       'pane_semantic_read',
-      'pane_semantic_action',
+      'pane_semantic_action_once',
       'pane_semantic_read',
       'event_unsubscribe',
     ]);
@@ -10937,7 +10942,7 @@ test('observed semantic action never reselects a replacement UI over one-byte Un
       for (const frame of reader.take(chunk)) {
         if (frame.channel !== 2) continue;
         calls.push(frame.payload);
-        const stale = frame.payload.call === 'pane_semantic_action';
+        const stale = frame.payload.call === 'pane_semantic_action_once';
         fragmented(
           socket,
           encode({
@@ -10986,11 +10991,16 @@ test('observed semantic action never reselects a replacement UI over one-byte Un
     );
     assert.deepEqual(
       calls.map(({ call }) => call),
-      ['event_subscribe', 'pane_semantic_action', 'event_unsubscribe'],
+      ['event_subscribe', 'pane_semantic_action_once', 'event_unsubscribe'],
     );
-    assert.deepEqual(calls[1].with, {
-      slot: 'settings',
-      action: { generation: 2, revision: 4, node: 7, action: 'invoke', value: null },
+    assert.equal(calls[1].with.slot, 'settings');
+    assert.match(calls[1].with.operation, /^[0-9a-f]{32}$/);
+    assert.deepEqual(calls[1].with.action, {
+      generation: 2,
+      revision: 4,
+      node: 7,
+      action: 'invoke',
+      value: null,
     });
     await session.close();
   } finally {
@@ -11173,7 +11183,7 @@ test('real Unix inspectAndAct rejects wrong pre-action pane identity before muta
         /pane semantics for pane pane-b, expected pane-a; no pane state was assumed/,
       );
       assert.equal(
-        calls.some(({ call }) => call === 'pane_semantic_action'),
+        calls.some(({ call }) => call === 'pane_semantic_action_once'),
         false,
         'mismatched inspected authority must never mutate the requested pane',
       );
@@ -11199,7 +11209,7 @@ test('real Unix inspectAndAct rejects a replacement generation after mutation', 
             },
           }),
         );
-      } else if (request.call === 'pane_semantic_action') {
+      } else if (request.call === 'pane_semantic_action_once') {
         socket.write(
           encode({
             channel: 91,
@@ -11226,7 +11236,7 @@ test('real Unix inspectAndAct rejects a replacement generation after mutation', 
         workspace(session).terminal.inspectAndAct('pane-a', { node: 7, action: 'invoke' }),
         /inspected semantic pane was replaced before action verification/,
       );
-      assert.equal(calls.filter(({ call }) => call === 'pane_semantic_action').length, 1);
+      assert.equal(calls.filter(({ call }) => call === 'pane_semantic_action_once').length, 1);
       assert.equal((await workspace(session).terminal.semantics('pane-a')).generation, 3);
     },
   );
@@ -11253,7 +11263,7 @@ test('fragmented Unix semantic action disconnect preserves exact no-replay autho
               payload: { reply: 'semantics', with: semanticTree('pane-a') },
             }),
           );
-        } else if (frame.payload.call === 'pane_semantic_action') {
+        } else if (frame.payload.call === 'pane_semantic_action_once') {
           const event = encode({
             channel: 92,
             kind: KIND.event,
@@ -11327,7 +11337,7 @@ test('real Unix semantic action waits cancel, release observation, and preserve 
           ? { reply: 'semantics', with: semanticTree('pane-a') }
           : { reply: 'done' };
       socket.write(encode({ channel: 2, kind: KIND.response, payload }));
-      if (request.call === 'pane_semantic_action') {
+      if (request.call === 'pane_semantic_action' || request.call === 'pane_semantic_action_once') {
         setTimeout(() => cancel.abort('agent request superseded'), 10);
       }
     },
@@ -11386,7 +11396,7 @@ test('real Unix semantic action waits cancel, release observation, and preserve 
       );
       assert.deepEqual(
         calls.map(({ call }) => call),
-        ['event_subscribe', 'pane_semantic_read', 'pane_semantic_action', 'event_unsubscribe'],
+        ['event_subscribe', 'pane_semantic_read', 'pane_semantic_action_once', 'event_unsubscribe'],
       );
 
       calls.length = 0;

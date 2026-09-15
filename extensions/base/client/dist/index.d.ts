@@ -96,6 +96,7 @@ export declare class CredentialRemoveOperationError extends Error {
 /** An extension install/update may have committed before its reply was lost. */
 export declare class ExtensionCommitOperationError extends Error {
     readonly operation: any;
+    readonly recovery: any;
     readonly job: any;
     readonly revision: any;
     readonly candidate: any;
@@ -262,7 +263,9 @@ export declare class SemanticActionOperationError extends Error {
     readonly before: any;
     readonly action: any;
     readonly observed: any;
-    constructor(before: any, action: any, observed: any, cause: any);
+    readonly operation: any;
+    readonly recovery: any;
+    constructor(before: any, action: any, operation: any, observed: any, cause: any);
 }
 /** History reply no longer belongs to the exact pane snapshot selected by the caller. */
 export declare class TerminalHistoryChangedError extends Error {

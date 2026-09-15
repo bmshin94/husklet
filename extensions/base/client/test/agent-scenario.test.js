@@ -178,10 +178,15 @@ test('packaged external agent controls terminal bytes and semantic UI over real 
               },
             }),
           );
-        } else if (call === 'pane_semantic_action') {
-          assert.deepEqual(frame.payload.with, {
-            slot: 'ui-1',
-            action: { generation: 2, revision: 4, node: 7, action: 'invoke', value: null },
+        } else if (call === 'pane_semantic_action_once') {
+          assert.equal(frame.payload.with.slot, 'ui-1');
+          assert.match(frame.payload.with.operation, /^[0-9a-f]{32}$/);
+          assert.deepEqual(frame.payload.with.action, {
+            generation: 2,
+            revision: 4,
+            node: 7,
+            action: 'invoke',
+            value: null,
           });
           socket.write(
             encode({
@@ -268,7 +273,7 @@ test('packaged external agent controls terminal bytes and semantic UI over real 
       'event_unsubscribe',
       'event_subscribe',
       'pane_semantic_read',
-      'pane_semantic_action',
+      'pane_semantic_action_once',
       'pane_semantic_read',
       'event_unsubscribe',
     ]);

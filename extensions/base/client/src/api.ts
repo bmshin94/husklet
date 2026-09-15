@@ -14,7 +14,6 @@ import type {
   TerminalCommandOutput,
   PostgresConnection,
   PostgresCatalogueQuery,
-  PostgresCatalogueResource,
   PostgresCursor,
   PostgresLeaseId,
   PostgresOpenOutcome,
@@ -1049,13 +1048,21 @@ export declare class TerminalPinOperationError extends Error {
   readonly pinned: boolean;
   readonly cause: unknown;
 }
-/** A revision-bound semantic action may have committed before observation failed. Never replay it blindly. */
+/** A revision-bound semantic action whose acknowledgement was lost; recover with its operation token. */
 export declare class SemanticActionOperationError extends Error {
   readonly before: Readonly<SemanticTextObservation>;
   readonly action: Readonly<PaneSemanticAction>;
+  readonly operation: string;
+  readonly recovery: Readonly<SemanticActionRecoveryToken>;
   /** Post-action pane cursor observed before failure, when one reached the client. */
   readonly observed?: Readonly<PaneChange>;
   readonly cause: unknown;
+}
+export interface SemanticActionRecoveryToken {
+  version: 1;
+  operation: string;
+  slot: string;
+  action: PaneSemanticAction;
 }
 /** A supervised command failed after creation; reconnect using `command` and resume output at `after`. */
 export declare class TerminalCommandOperationError extends Error {
@@ -2233,11 +2240,13 @@ export interface WorkspaceApi {
       | { changed: false; after: Pick<PaneText | PaneSemanticTree, 'generation' | 'revision'> }
     >;
     act(slot: string, action: PaneSemanticAction): Promise<void>;
+    /** Apply one revision-bound semantic action at most once across reconnects. */
+    actOnce(operation: string, slot: string, action: PaneSemanticAction): Promise<void>;
     /** Arm observation, perform one revision-bound action, and reject pane replacement during verification. */
     actAndWait(
       slot: string,
       action: PaneSemanticAction,
-      options?: { lines?: number; timeoutMs?: number; signal?: AbortSignal },
+      options?: { lines?: number; timeoutMs?: number; signal?: AbortSignal; operation?: string },
     ): Promise<
       | { changed: true; readable: ReadablePane }
       | { changed: false; after: { generation: number; revision: number } }
@@ -2264,6 +2273,14 @@ export interface WorkspaceApi {
       | { changed: true; before: SemanticTextObservation; after: ReadablePane }
       | { changed: false; before: SemanticTextObservation }
     >;
+    /** Replay an ambiguous semantic action token without invoking the UI twice. */
+    recoverSemanticAction(
+      recovery: SemanticActionOperationError | SemanticActionRecoveryToken,
+    ): Promise<{
+      committed: true;
+      operation: string;
+      slot: string;
+    }>;
     writeInput(
       slot: string,
       generation: number,

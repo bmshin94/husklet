@@ -9993,6 +9993,10 @@
       "request": "pane_semantic_action"
     },
     {
+      "capability": "panes:semantic-control",
+      "request": "pane_semantic_action_once"
+    },
+    {
       "capability": "terminals:input",
       "request": "terminal_input_open"
     },
@@ -10581,6 +10585,10 @@
     {
       "reply": "done",
       "request": "pane_semantic_action"
+    },
+    {
+      "reply": "done",
+      "request": "pane_semantic_action_once"
     },
     {
       "reply": "terminal_input_writer",
@@ -14049,6 +14057,36 @@
           }
         },
         {
+          "name": "pane_semantic_action_once",
+          "payload": {
+            "fields": [
+              {
+                "name": "operation",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              },
+              {
+                "name": "slot",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              },
+              {
+                "name": "action",
+                "optional": false,
+                "schema": {
+                  "kind": "ref",
+                  "name": "PaneSemanticAction"
+                }
+              }
+            ],
+            "kind": "struct"
+          }
+        },
+        {
           "name": "terminal_input_open",
           "payload": {
             "kind": "unit"
@@ -16565,7 +16603,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:bf0f034666b9439c",
+  "source_fingerprint": "fnv1a64:e49c10120d706ec6",
   "specification_version": 1,
   "topics": [
     {

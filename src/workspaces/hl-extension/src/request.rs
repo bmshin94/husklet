@@ -459,6 +459,12 @@ pub enum Request {
         slot: String,
         action: crate::port::PaneSemanticAction,
     },
+    /// Applies a semantic action at most once for one extension incarnation.
+    PaneSemanticActionOnce {
+        operation: String,
+        slot: String,
+        action: crate::port::PaneSemanticAction,
+    },
     TerminalInputOpen,
     TerminalWritePane {
         slot: String,
@@ -793,7 +799,7 @@ impl Request {
             | Self::TerminalCommandOutput { .. }
             | Self::TerminalCommandWait { .. } => Capability::TerminalOutput,
             Self::PaneSemanticRead { .. } => Capability::PaneSemanticRead,
-            Self::PaneSemanticAction { .. } => Capability::PaneSemanticControl,
+            Self::PaneSemanticAction { .. } | Self::PaneSemanticActionOnce { .. } => Capability::PaneSemanticControl,
             Self::FilesystemInventory
             | Self::FilesystemChanges { .. }
             | Self::FilesystemList { .. }

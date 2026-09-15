@@ -691,6 +691,53 @@ fn pane_semantic_read_and_control_are_separately_granted() {
 }
 
 #[test]
+fn semantic_action_operation_is_exactly_once_across_reconnecting_sessions() {
+    let host = Host::new();
+    let ownership = hl_extension::ExecutionOwnership::default();
+    let request = Request::PaneSemanticActionOnce {
+        operation: "a".repeat(32),
+        slot: "s1".into(),
+        action: PaneSemanticAction {
+            generation: 0,
+            revision: 4,
+            node: 2,
+            action: SemanticActionKind::Invoke,
+            value: None,
+        },
+    };
+    let mut malformed = request.clone();
+    let Request::PaneSemanticActionOnce { operation, .. } = &mut malformed else {
+        unreachable!()
+    };
+    *operation = "A".repeat(32);
+    assert!(matches!(
+        session(&[Capability::PaneSemanticControl], &[])
+            .with_execution_ownership(ownership.clone())
+            .dispatch(&malformed, &services(&host)),
+        Err(Failure::Conflict { .. })
+    ));
+    assert!(host.ledger.reached().is_empty());
+    for _ in 0..2 {
+        session(&[Capability::PaneSemanticControl], &[])
+            .with_execution_ownership(ownership.clone())
+            .dispatch(&request, &services(&host))
+            .expect("original receipt is replayable after reconnect");
+    }
+    assert_eq!(host.ledger.reached(), vec!["terminal.semantic_action"]);
+
+    let mut conflicting = request;
+    let Request::PaneSemanticActionOnce { slot, .. } = &mut conflicting else {
+        unreachable!()
+    };
+    *slot = "other".into();
+    let result = session(&[Capability::PaneSemanticControl], &[])
+        .with_execution_ownership(ownership)
+        .dispatch(&conflicting, &services(&host));
+    assert!(matches!(result, Err(Failure::Conflict { .. })));
+    assert_eq!(host.ledger.reached(), vec!["terminal.semantic_action"]);
+}
+
+#[test]
 fn pane_discovery_requires_observation_without_content_authority() {
     let host = Host::new();
     assert!(session(&[], &[])
@@ -2888,6 +2935,20 @@ fn all_calls() -> Vec<(Request, Capability)> {
         ),
         (
             Request::PaneSemanticAction {
+                slot: "s1".into(),
+                action: PaneSemanticAction {
+                    generation: 0,
+                    revision: 1,
+                    node: 1,
+                    action: SemanticActionKind::Invoke,
+                    value: None,
+                },
+            },
+            Capability::PaneSemanticControl,
+        ),
+        (
+            Request::PaneSemanticActionOnce {
+                operation: "a".repeat(32),
                 slot: "s1".into(),
                 action: PaneSemanticAction {
                     generation: 0,

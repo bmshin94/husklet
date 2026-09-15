@@ -135,6 +135,7 @@ const REQUEST_TO_REPLY: &[(&str, &str)] = &[
     ("terminal_read_history", "terminal_history"),
     ("pane_semantic_read", "semantics"),
     ("pane_semantic_action", "done"),
+    ("pane_semantic_action_once", "done"),
     ("terminal_input_open", "terminal_input_writer"),
     ("terminal_write_pane", "terminal_pane_input"),
     ("terminal_resize_grid", "done"),
@@ -250,7 +251,7 @@ fn request_capability(request: &str) -> Capability {
         | "terminal_command_output"
         | "terminal_command_wait" => Capability::TerminalOutput,
         "pane_semantic_read" => Capability::PaneSemanticRead,
-        "pane_semantic_action" => Capability::PaneSemanticControl,
+        "pane_semantic_action" | "pane_semantic_action_once" => Capability::PaneSemanticControl,
         "terminal_input_open" | "terminal_write_pane" | "terminal_command_write" | "terminal_command_close_input" => {
             Capability::TerminalInput
         }

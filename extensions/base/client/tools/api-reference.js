@@ -21,7 +21,7 @@ const execution = new Set([
   'cancelExecution',
   'removeExecution',
 ]);
-const semantic = new Set(['semantics', 'act']);
+const semantic = new Set(['semantics', 'act', 'actOnce']);
 const groups = new Map([
   ['Workspace', []],
   ['Containers', []],

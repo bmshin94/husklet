@@ -61,15 +61,8 @@ try {
           timeout: 5_000,
         });
         try {
-          const after = await workspace(resumedSession).terminal.semantics(configuration.slot);
-          actionResult = {
-            changed:
-              after.generation === cause.action.generation &&
-              after.revision > cause.action.revision,
-            before: cause.before,
-            after,
-            replayed: false,
-          };
+          const recovery = JSON.parse(JSON.stringify(cause.recovery));
+          actionResult = await workspace(resumedSession).terminal.recoverSemanticAction(recovery);
         } finally {
           await resumedSession.close();
         }

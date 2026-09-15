@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:d6a9774293ccb846
+// Protocol artifact fnv1a64:099dbde182f4b1d1
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -451,6 +451,7 @@ export const PROTOCOL_REPLIES = Object.freeze({
   "terminal_read_history": "terminal_history",
   "pane_semantic_read": "semantics",
   "pane_semantic_action": "done",
+  "pane_semantic_action_once": "done",
   "terminal_input_open": "terminal_input_writer",
   "terminal_write_pane": "terminal_pane_input",
   "terminal_resize_grid": "done",
@@ -600,6 +601,7 @@ export const PROTOCOL_REQUEST_CAPABILITIES = Object.freeze({
   "terminal_read_history": "terminals:output",
   "pane_semantic_read": "panes:semantic-read",
   "pane_semantic_action": "panes:semantic-control",
+  "pane_semantic_action_once": "panes:semantic-control",
   "terminal_input_open": "terminals:input",
   "terminal_write_pane": "terminals:input",
   "terminal_resize_grid": "terminals:layout-control",
@@ -13162,6 +13164,36 @@ const roots = {
         "name": "pane_semantic_action",
         "payload": {
           "fields": [
+            {
+              "name": "slot",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            },
+            {
+              "name": "action",
+              "optional": false,
+              "schema": {
+                "kind": "ref",
+                "name": "PaneSemanticAction"
+              }
+            }
+          ],
+          "kind": "struct"
+        }
+      },
+      {
+        "name": "pane_semantic_action_once",
+        "payload": {
+          "fields": [
+            {
+              "name": "operation",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            },
             {
               "name": "slot",
               "optional": false,

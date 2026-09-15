@@ -217,6 +217,7 @@ function immutableCopy(value) {
 /** An extension install/update may have committed before its reply was lost. */
 export class ExtensionCommitOperationError extends Error {
     operation;
+    recovery;
     job;
     revision;
     candidate;
@@ -647,11 +648,20 @@ export class SemanticActionOperationError extends Error {
     before;
     action;
     observed;
-    constructor(before, action, observed, cause) {
+    operation;
+    recovery;
+    constructor(before, action, operation, observed, cause) {
         super(`semantic action ${action.action} on node ${action.node} may have committed: ${cause instanceof Error ? cause.message : String(cause)}`);
         this.name = 'SemanticActionOperationError';
         this.before = Object.freeze({ ...before });
         this.action = Object.freeze({ ...action });
+        this.operation = operation;
+        this.recovery = Object.freeze({
+            version: 1,
+            operation,
+            slot: before.snapshot.slot,
+            action: Object.freeze({ ...action }),
+        });
         this.observed = observed === undefined ? undefined : Object.freeze({ ...observed });
         this.cause = cause;
     }
@@ -3566,6 +3576,13 @@ export function workspace(session, { signal } = {}) {
             act: (slot, action) => {
                 return done('pane_semantic_action', { slot, action: exactSemanticAction(action) });
             },
+            actOnce: (operation, slot, action) => {
+                return done('pane_semantic_action_once', {
+                    operation: terminalInputOperation(operation),
+                    slot,
+                    action: exactSemanticAction(action),
+                });
+            },
             writeInput: async (slot, generation, revision, input, { writer: askedWriter, sequence: askedSequence, } = {}) => {
                 if (!Number.isSafeInteger(generation) ||
                     generation < 0 ||
@@ -5841,7 +5858,7 @@ export function workspace(session, { signal } = {}) {
             throw new Error(`terminal tab ${failure.tab} does not match the ambiguous pin state`);
         return current;
     };
-    api.terminal.actAndWait = async (slot, action, { lines, timeoutMs = 30_000, signal } = {}) => {
+    api.terminal.actAndWait = async (slot, action, { lines, timeoutMs = 30_000, signal, operation } = {}) => {
         if (typeof slot !== 'string' || slot.length === 0)
             throw new TypeError('pane semantic action requires a nonempty slot');
         exactSemanticAction(action);
@@ -5863,7 +5880,10 @@ export function workspace(session, { signal } = {}) {
         let timer;
         let abort;
         try {
-            await scoped.terminal.act(slot, action);
+            if (operation === undefined)
+                await scoped.terminal.act(slot, action);
+            else
+                await scoped.terminal.actOnce(operation, slot, action);
             const change = await Promise.race([
                 observed,
                 new Promise((resolve) => {
@@ -5934,6 +5954,7 @@ export function workspace(session, { signal } = {}) {
         let abort;
         let before;
         let action;
+        const operation = terminalInputOperation();
         let actionAttempted = false;
         try {
             const snapshot = await scoped.terminal.semantics(slot);
@@ -5964,7 +5985,7 @@ export function workspace(session, { signal } = {}) {
                 value: proposal.value ?? null,
             };
             actionAttempted = true;
-            await scoped.terminal.act(slot, action);
+            await scoped.terminal.actOnce(operation, slot, action);
             const change = await Promise.race([
                 observed,
                 new Promise((resolve) => {
@@ -5993,7 +6014,7 @@ export function workspace(session, { signal } = {}) {
         }
         catch (cause) {
             if (actionAttempted && before && action) {
-                throw new SemanticActionOperationError(before, action, observedChange, cause);
+                throw new SemanticActionOperationError(before, action, operation, observedChange, cause);
             }
             throw cause;
         }
@@ -6051,8 +6072,13 @@ export function workspace(session, { signal } = {}) {
             action: proposal.action,
             value: proposal.value ?? null,
         };
+        const operation = terminalInputOperation();
         try {
-            const result = await api.terminal.actAndWait(snapshot.slot, action, { timeoutMs, signal });
+            const result = await api.terminal.actAndWait(snapshot.slot, action, {
+                timeoutMs,
+                signal,
+                operation,
+            });
             return result.changed
                 ? { changed: true, before, after: result.readable }
                 : { changed: false, before };
@@ -6060,8 +6086,21 @@ export function workspace(session, { signal } = {}) {
         catch (cause) {
             if (cause instanceof ExtensionError)
                 throw cause;
-            throw new SemanticActionOperationError(before, action, undefined, cause);
+            throw new SemanticActionOperationError(before, action, operation, undefined, cause);
         }
+    };
+    api.terminal.recoverSemanticAction = async (candidate) => {
+        const recovery = candidate instanceof SemanticActionOperationError ? candidate.recovery : candidate;
+        if (recovery?.version !== 1) {
+            throw new TypeError('semantic action recovery requires a version 1 recovery token');
+        }
+        const operation = terminalInputOperation(recovery.operation);
+        if (typeof recovery.slot !== 'string' || recovery.slot.length === 0) {
+            throw new TypeError('semantic action recovery requires a nonempty pane slot');
+        }
+        const action = exactSemanticAction(recovery.action);
+        await api.terminal.actOnce(operation, recovery.slot, action);
+        return { committed: true, operation, slot: recovery.slot };
     };
     api.terminal.splitAndWait = async (slot, generation, revision, division, { timeoutMs = 30_000 } = {}) => {
         if (typeof slot !== 'string' || slot.length === 0)
@@ -7117,6 +7156,7 @@ const facadeOverrides = Object.freeze({
     pane_list: 'terminal.panes',
     pane_semantic_read: 'terminal.semantics',
     pane_semantic_action: 'terminal.act',
+    pane_semantic_action_once: 'terminal.actOnce',
     terminal_read_pane: 'terminal.read',
     terminal_input_open: 'terminal.writeInput',
     terminal_write_pane: 'terminal.writeInput',

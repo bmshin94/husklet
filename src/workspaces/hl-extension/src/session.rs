@@ -68,6 +68,14 @@ pub struct OwnedOperations {
     command_starts: std::collections::BTreeMap<String, CommandStartOperation>,
     command_inputs: std::collections::BTreeMap<String, CommandInputState>,
     pane_input_writers: std::collections::VecDeque<PaneInputWriterState>,
+    semantic_actions: std::collections::BTreeMap<String, SemanticActionOperation>,
+    semantic_action_order: std::collections::VecDeque<String>,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct SemanticActionOperation {
+    slot: String,
+    action: crate::port::PaneSemanticAction,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -119,6 +127,7 @@ const COMMAND_INPUT_OPERATIONS: usize = 4096;
 const COMMAND_START_OPERATIONS: usize = 4096;
 const PANE_INPUT_WRITERS: usize = 32;
 const PANE_INPUT_RECEIPTS: usize = 256;
+const SEMANTIC_ACTION_OPERATIONS: usize = 4096;
 
 fn command_input_operation(operation: &str) -> Result<(), Failure> {
     if (16..=128).contains(&operation.len())
@@ -130,6 +139,19 @@ fn command_input_operation(operation: &str) -> Result<(), Failure> {
     }
     Err(Failure::Conflict {
         detail: "terminal input operation must be 16 through 128 lowercase hexadecimal characters".into(),
+    })
+}
+
+fn semantic_action_operation(operation: &str) -> Result<(), Failure> {
+    if operation.len() == 32
+        && operation
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Ok(());
+    }
+    Err(Failure::Conflict {
+        detail: "pane semantic action operation must be 32 lowercase hexadecimal characters".into(),
     })
 }
 
@@ -976,6 +998,54 @@ impl Session {
                 port.semantic_action(slot, action)
                     .map(|()| Reply::Done)
                     .map_err(Failure::from)
+            }
+            Request::PaneSemanticActionOnce {
+                operation,
+                slot,
+                action,
+            } => {
+                semantic_action_operation(operation)?;
+                if action
+                    .value
+                    .as_ref()
+                    .is_some_and(|value| value.len() > crate::port::SEMANTIC_ACTION_VALUE_LIMIT)
+                {
+                    return Err(Failure::Conflict {
+                        detail: "pane semantic action value exceeds 4096 bytes".into(),
+                    });
+                }
+                let port = self
+                    .peer
+                    .authority()
+                    .port(Capability::PaneSemanticControl, services.terminal)?;
+                let asked = SemanticActionOperation {
+                    slot: slot.clone(),
+                    action: action.clone(),
+                };
+                let mut owned = self
+                    .owned_executions
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(previous) = owned.semantic_actions.get(operation) {
+                    return if previous == &asked {
+                        Ok(Reply::Done)
+                    } else {
+                        Err(Failure::Conflict {
+                            detail: "semantic action operation was already used for a different action".into(),
+                        })
+                    };
+                }
+                let requirement = port.semantic_requirement(slot, action.node).map_err(Failure::from)?;
+                self.peer.authority().port(requirement, services.terminal)?;
+                port.semantic_action(slot, action).map_err(Failure::from)?;
+                if owned.semantic_actions.len() >= SEMANTIC_ACTION_OPERATIONS {
+                    if let Some(oldest) = owned.semantic_action_order.pop_front() {
+                        owned.semantic_actions.remove(&oldest);
+                    }
+                }
+                owned.semantic_actions.insert(operation.clone(), asked);
+                owned.semantic_action_order.push_back(operation.clone());
+                Ok(Reply::Done)
             }
             Request::FilesystemInventory
             | Request::FilesystemChanges { .. }
