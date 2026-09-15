@@ -57,15 +57,20 @@ impl Server {
             .source
             .get_until(crate::runtime::execution::native_snapshot::XSTATE_OBJECT, deadline)
             .map_err(Self::publication_failure)?;
+        let procstate = self
+            .source
+            .get_until(crate::runtime::execution::native_snapshot::PROCSTATE_OBJECT, deadline)
+            .map_err(Self::publication_failure)?;
         crate::runtime::execution::native_snapshot::validate_native_objects(&manifest, |name| match name {
             crate::runtime::execution::native_snapshot::REGISTER_OBJECT => Some(registers.clone()),
             crate::runtime::execution::native_snapshot::MEMORY_OBJECT => Some(memory.clone()),
             crate::runtime::execution::native_snapshot::XSTATE_OBJECT => Some(xstate.clone()),
+            crate::runtime::execution::native_snapshot::PROCSTATE_OBJECT => Some(procstate.clone()),
             _ => None,
         })
         .map_err(|_| CaptureFailure::InvalidImage)?;
         crate::runtime::execution::native_snapshot::prepare_native_restore(
-            pid, pidfd, &registers, &memory, &xstate, deadline,
+            pid, pidfd, &registers, &memory, &xstate, &procstate, deadline,
         )
         .map_err(|error| {
             hl_log::hl_error!(hl_log::tag::CHECKPOINT, "native checkpoint restore failed: {error}");
@@ -134,6 +139,14 @@ impl Server {
                 transaction,
                 crate::runtime::execution::native_snapshot::XSTATE_OBJECT,
                 &image.xstate,
+                deadline,
+            )
+            .map_err(Self::publication_failure)?;
+        self.sink
+            .put_until(
+                transaction,
+                crate::runtime::execution::native_snapshot::PROCSTATE_OBJECT,
+                &image.procstate,
                 deadline,
             )
             .map_err(Self::publication_failure)?;
