@@ -1005,6 +1005,8 @@ export declare class TerminalOperationError extends Error {
         input?: readonly number[];
         writer?: string;
         sequence?: number;
+        /** JSON-safe authority that survives extension process restart. */
+        recovery?: TerminalInputRecoveryToken;
         after?: Readonly<{
             kind: 'terminal' | 'ui';
             generation: number;
@@ -1012,6 +1014,15 @@ export declare class TerminalOperationError extends Error {
         }>;
     }>;
     readonly cause: unknown;
+}
+export interface TerminalInputRecoveryToken {
+    readonly version: 1;
+    readonly slot: string;
+    readonly generation: number;
+    readonly revision: number;
+    readonly writer: string;
+    readonly sequence: number;
+    readonly input: readonly number[];
 }
 /** An observed pane close may have committed before its reply was lost. */
 export declare class TerminalCloseOperationError extends Error {
@@ -2223,7 +2234,7 @@ export interface WorkspaceApi {
          * Retry the exact idempotent operation after its acknowledgement was lost. The host either
          * returns the original receipt without writing again or commits the bytes once.
          */
-        reconcileWriteFailure(failure: TerminalOperationError, options?: {
+        reconcileWriteFailure(failure: TerminalOperationError | TerminalInputRecoveryToken, options?: {
             lines?: number;
         }): Promise<{
             outcome: 'unchanged' | 'advanced' | 'replaced';

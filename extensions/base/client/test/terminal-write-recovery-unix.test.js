@@ -8,7 +8,7 @@ import test from 'node:test';
 import { TerminalOperationError, connect, workspace } from '../dist/index.js';
 import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
 
-test('lost raw-input reply retries one idempotent operation without typing twice', async () => {
+test('persisted raw-input recovery survives repeated reply loss without typing twice', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-terminal-recovery-'));
   const socketPath = path.join(directory, 'host.sock');
   const connections = new Set();
@@ -79,6 +79,8 @@ test('lost raw-input reply retries one idempotent operation without typing twice
           if (accepted === 0) {
             accepted += 1;
             socket.destroy(); // The PTY accepted the byte; every reply byte is lost.
+          } else if (number === 2) {
+            socket.destroy(); // The replay was recognized, but its receipt was lost again.
           } else {
             reply({
               reply: 'terminal_pane_input',
@@ -108,6 +110,19 @@ test('lost raw-input reply retries one idempotent operation without typing twice
   await new Promise((resolve) => server.listen(socketPath, resolve));
   try {
     const first = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(first).terminal.reconcileWriteFailure({
+        version: 2,
+        slot: 'agent',
+        generation: 9,
+        revision: 4,
+        writer,
+        sequence: 0,
+        input: [0x03],
+      }),
+      /recovery token/,
+    );
+    assert.equal(accepted, 0, 'an unknown token version fails before terminal authority is framed');
     let failure;
     await assert.rejects(
       workspace(first).terminal.writeObservedAndWait(screen(4, '$ '), [0x03], { timeoutMs: 1_000 }),
@@ -119,9 +134,26 @@ test('lost raw-input reply retries one idempotent operation without typing twice
       },
     );
     await first.close();
+    const recoveryToken = JSON.parse(JSON.stringify(failure.result.recovery));
+    assert.deepEqual(recoveryToken, {
+      version: 1,
+      slot: 'agent',
+      generation: 9,
+      revision: 4,
+      writer,
+      sequence: 0,
+      input: [0x03],
+    });
+
+    const interrupted = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(interrupted).terminal.reconcileWriteFailure(recoveryToken),
+      /closed|ended|reset/i,
+    );
+    await interrupted.close();
 
     const resumed = await connect({ path: socketPath });
-    const recovery = await workspace(resumed).terminal.reconcileWriteFailure(failure);
+    const recovery = await workspace(resumed).terminal.reconcileWriteFailure(recoveryToken);
     assert.equal(recovery.outcome, 'advanced');
     assert.equal(recovery.current.text, 'timer tick');
     assert.deepEqual(recovery.receipt, {

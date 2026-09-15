@@ -9684,6 +9684,15 @@ test('fragmented Unix input reply loss preserves its exact recovery operation ac
           input,
           writer,
           sequence: 0,
+          recovery: {
+            version: 1,
+            slot: 'agent-pane',
+            generation: 4,
+            revision: 7,
+            writer,
+            sequence: 0,
+            input,
+          },
         });
         return true;
       },

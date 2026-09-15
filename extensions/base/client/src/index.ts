@@ -808,6 +808,17 @@ export class TerminalOperationError extends Error {
   }
 }
 
+/** Durable authority for reconciling one terminal input whose reply was lost. */
+export interface TerminalInputRecoveryToken {
+  readonly version: 1;
+  readonly slot: string;
+  readonly generation: number;
+  readonly revision: number;
+  readonly writer: string;
+  readonly sequence: number;
+  readonly input: readonly number[];
+}
+
 /** An observed pane close may have committed before its reply was lost. */
 export class TerminalCloseOperationError extends Error {
   readonly slot;
@@ -6752,6 +6763,15 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
                 sequence: inputAuthority!.sequence,
                 written: 'unknown',
                 input: Object.freeze([...contents]),
+                recovery: Object.freeze({
+                  version: 1 as const,
+                  slot,
+                  generation,
+                  revision,
+                  writer: inputAuthority!.writer,
+                  sequence: inputAuthority!.sequence,
+                  input: Object.freeze([...contents]),
+                }),
               },
           cause,
         );
@@ -6785,30 +6805,44 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     ) as ReturnType<WorkspaceApi['terminal']['writeObservedAndWait']>;
   };
   api.terminal.reconcileWriteFailure = async (failure, { lines } = {}) => {
+    const candidate =
+      failure instanceof TerminalOperationError &&
+      failure.operation === 'write-input' &&
+      'recovery' in failure.result
+        ? failure.result.recovery
+        : failure;
     if (
-      !(failure instanceof TerminalOperationError) ||
-      failure.operation !== 'write-input' ||
-      !('written' in failure.result) ||
-      failure.result.written !== 'unknown' ||
-      typeof failure.result.writer !== 'string' ||
-      !Number.isSafeInteger(failure.result.sequence) ||
-      !failure.result.input
+      !candidate ||
+      typeof candidate !== 'object' ||
+      candidate.version !== 1 ||
+      typeof candidate.slot !== 'string' ||
+      candidate.slot.length === 0 ||
+      !Number.isSafeInteger(candidate.generation) ||
+      candidate.generation < 0 ||
+      !Number.isSafeInteger(candidate.revision) ||
+      candidate.revision < 0 ||
+      typeof candidate.writer !== 'string' ||
+      !/^[0-9a-f]{32}$/.test(candidate.writer) ||
+      !Number.isSafeInteger(candidate.sequence) ||
+      candidate.sequence < 0 ||
+      !Array.isArray(candidate.input)
     ) {
       throw new TypeError(
-        'terminal input reconciliation requires an ambiguous write-input TerminalOperationError',
+        'terminal input reconciliation requires an ambiguous write-input error or recovery token',
       );
     }
+    const input = exactPaneInput(candidate.input);
     const before = Object.freeze({
-      slot: failure.result.slot,
-      generation: failure.result.generation,
-      revision: failure.result.revision,
+      slot: candidate.slot,
+      generation: candidate.generation,
+      revision: candidate.revision,
     });
     const receipt = await api.terminal.writeInput(
       before.slot,
       before.generation,
       before.revision,
-      failure.result.input,
-      { writer: failure.result.writer, sequence: failure.result.sequence },
+      input,
+      { writer: candidate.writer, sequence: candidate.sequence },
     );
     const current = await api.terminal.toText(before.slot, { lines });
     const cursor = current.snapshot;

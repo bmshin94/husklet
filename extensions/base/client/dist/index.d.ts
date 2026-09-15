@@ -228,6 +228,16 @@ export declare class TerminalOperationError extends Error {
     readonly result: any;
     constructor(operation: any, result: any, cause: any);
 }
+/** Durable authority for reconciling one terminal input whose reply was lost. */
+export interface TerminalInputRecoveryToken {
+    readonly version: 1;
+    readonly slot: string;
+    readonly generation: number;
+    readonly revision: number;
+    readonly writer: string;
+    readonly sequence: number;
+    readonly input: readonly number[];
+}
 /** An observed pane close may have committed before its reply was lost. */
 export declare class TerminalCloseOperationError extends Error {
     readonly slot: any;

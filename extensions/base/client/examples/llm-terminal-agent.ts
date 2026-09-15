@@ -91,14 +91,16 @@ try {
         if (
           !(cause instanceof TerminalOperationError) ||
           !('written' in cause.result) ||
-          cause.result.written !== 'unknown'
+          cause.result.written !== 'unknown' ||
+          !cause.result.recovery
         ) {
           throw cause;
         }
+        const recovery = JSON.parse(JSON.stringify(cause.result.recovery));
         const resumedSession = await connect({ path: configuration.path, timeout: 5_000 });
         try {
-          inputResult = await workspace(resumedSession).terminal.reconcileWriteFailure(cause);
-          // The host reuses the frozen operation token and returns its original receipt without typing twice.
+          inputResult = await workspace(resumedSession).terminal.reconcileWriteFailure(recovery);
+          // Persist `recovery` before restarting: the host returns its receipt without typing twice.
         } finally {
           await resumedSession.close();
         }
