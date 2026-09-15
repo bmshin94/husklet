@@ -4676,6 +4676,10 @@ mod unix {
                     .compute_bounds(root)
                     .expect("decision status belongs to review footer");
                 assert!(
+                    status_bounds.x() >= 16.0 && cancel_bounds.x() + cancel_bounds.width() <= width as f32 - 16.0,
+                    "{width_name} decision footer ignores the page inset: status={status_bounds:?}, cancel={cancel_bounds:?}"
+                );
+                assert!(
                     status_bounds.y() + status_bounds.height() <= update_bounds.y(),
                     "{width_name} {state} decision summary competes with its actions: status={status_bounds:?}, update={update_bounds:?}"
                 );

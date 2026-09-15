@@ -3024,7 +3024,7 @@ export function Extensions({
         <Column gap={0} grow={false}>
           <Spacer height={1} />
           <Separator orientation="horizontal" />
-          <Column gap={0} width="fill">
+          <Column gap={0} width="fill" pad={{ end: 4, start: 4 }}>
             <Spacer height={1} />
             <Text
               label={
