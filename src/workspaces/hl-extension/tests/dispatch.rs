@@ -2679,6 +2679,7 @@ fn all_calls() -> Vec<(Request, Capability)> {
             },
             Capability::TerminalOutput,
         ),
+        (Request::TerminalInputOpen, Capability::TerminalInput),
         (
             Request::TerminalReadHistory {
                 slot: "s1".into(),
