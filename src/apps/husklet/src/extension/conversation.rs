@@ -4909,6 +4909,65 @@ mod tests {
     }
 
     #[test]
+    fn fragmented_interleaving_refuses_a_surface_gap_before_it_reaches_the_window() {
+        let queue = Queue::new();
+        let (theirs, served) = host(Duration::from_secs(5), queue.clone(), Arc::new(Ledger::default()));
+        let mut wire = Wire::new(theirs);
+        shake(&mut wire, PROTOCOL);
+
+        let request = |sequence| {
+            codec::request(&Request::InterfaceRenderAt {
+                slot: String::new(),
+                frame: hl_gui::Frame::new(sequence),
+            })
+            .expect("render request")
+            .encode()
+            .expect("render frame")
+        };
+        let ping = Frame::control(Kind::Ping, b"still-here".to_vec())
+            .encode()
+            .expect("ping frame");
+        let mut bytes = Vec::new();
+        bytes.extend(request(1));
+        bytes.extend(ping);
+        bytes.extend(request(3));
+        bytes.extend(request(2));
+
+        let mut peer = wire.into_stream();
+        for fragment in bytes.chunks(7) {
+            peer.write_all(fragment).expect("fragmented interleaved traffic");
+        }
+        let mut replies = Wire::new(peer);
+        assert_eq!(
+            codec::read_reply(&replies.receive().expect("first reply")),
+            Ok(Reply::Done)
+        );
+        assert_eq!(replies.receive().expect("interleaved pong").kind, Kind::Pong);
+        let refusal = codec::read_failure(&replies.receive().expect("gap refusal")).expect("typed refusal");
+        assert!(matches!(refusal, Failure::Conflict { ref detail }
+            if detail.contains("primary surface")
+                && detail.contains("expected frame 2, received 3")
+                && detail.contains("reconnect")));
+        assert_eq!(
+            codec::read_reply(&replies.receive().expect("recovery reply")),
+            Ok(Reply::Done)
+        );
+
+        let collected = queue.collect();
+        assert_eq!(
+            collected
+                .frames
+                .iter()
+                .map(|frame| frame.frame.sequence)
+                .collect::<Vec<_>>(),
+            vec![1, 2],
+            "the refused gap never enters the GUI queue"
+        );
+        drop(replies);
+        assert_eq!(served.join().expect("joined"), Ok(()));
+    }
+
+    #[test]
     fn a_coalesced_control_close_revokes_later_interface_frames() {
         let queue = Queue::new();
         let ledger = Arc::new(Ledger::default());

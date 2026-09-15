@@ -6010,8 +6010,8 @@ fn addressed_frames_remain_separate_across_two_owned_surfaces() {
             .dispatch(&Request::InterfaceOpenTab { title: title.into() }, &services)
             .expect("surface opened");
     }
-    let first = hl_gui::Frame::new(7);
-    let second = hl_gui::Frame::new(3);
+    let first = hl_gui::Frame::new(1);
+    let second = hl_gui::Frame::new(1);
     session
         .dispatch(
             &Request::InterfaceRenderAt {
@@ -6111,7 +6111,7 @@ fn withdrawing_one_owned_surface_preserves_its_sibling() {
         .dispatch(
             &Request::InterfaceRenderAt {
                 slot: "tab-Logs".into(),
-                frame: hl_gui::Frame::new(2),
+                frame: hl_gui::Frame::new(1),
             },
             &services,
         )

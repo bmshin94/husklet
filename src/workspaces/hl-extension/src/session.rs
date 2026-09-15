@@ -42,6 +42,8 @@ pub struct Services<'a> {
 pub struct Session {
     peer: hl_rpc::Session<Topic>,
     surfaces: std::collections::BTreeSet<String>,
+    /// Last interface frame admitted for each independently sequenced surface.
+    surface_sequences: std::collections::BTreeMap<String, u64>,
     pending: Vec<SurfaceFrame>,
     mutations: Vec<SurfaceMutation>,
     containers: ContainerGrant,
@@ -436,6 +438,7 @@ impl Session {
         Self {
             peer: hl_rpc::Session::new(authority),
             surfaces: std::collections::BTreeSet::new(),
+            surface_sequences: std::collections::BTreeMap::new(),
             pending: Vec::new(),
             mutations: Vec::new(),
             containers: ContainerGrant::default(),
@@ -3056,10 +3059,26 @@ impl Session {
                 detail: format!("surface {slot} is not owned by this session"),
             });
         }
+        let previous = self.surface_sequences.get(slot).copied().unwrap_or(0);
+        let expected = previous.saturating_add(1);
+        if frame.sequence != expected {
+            let surface = if slot.is_empty() {
+                "the primary surface".to_owned()
+            } else {
+                format!("surface {slot:?}")
+            };
+            return Err(Failure::Conflict {
+                detail: format!(
+                    "interface sequence violation on {surface}: expected frame {expected}, received {}; reconnect to begin a new interface generation",
+                    frame.sequence
+                ),
+            });
+        }
         self.pending.push(SurfaceFrame {
             slot: slot.to_owned(),
             frame: frame.clone(),
         });
+        self.surface_sequences.insert(slot.to_owned(), frame.sequence);
         Ok(Reply::Done)
     }
 
@@ -3148,6 +3167,7 @@ impl Session {
         let port = self.peer.authority().port(Capability::Interface, services.terminal)?;
         port.close(slot)?;
         self.surfaces.remove(slot);
+        self.surface_sequences.remove(slot);
         self.pending.retain(|frame| frame.slot != slot);
         self.mutations.retain(|mutation| mutation.slot != slot);
         Ok(Reply::Done)
