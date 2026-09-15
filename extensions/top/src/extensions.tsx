@@ -682,6 +682,7 @@ export function Extensions({
   const catalogueEpoch = React.useRef(0);
   const workspaceIdentityEpoch = React.useRef(0);
   const acquisitionEpoch = React.useRef(0);
+  const providerEpoch = React.useRef(0);
   const lifecycleInFlight = React.useRef(false);
   const acquisitionInFlight = React.useRef(false);
   const openingInFlight = React.useRef('');
@@ -707,6 +708,16 @@ export function Extensions({
     setGrantedCredentials({ read: [], write: [], expose_to_execution: [] });
     setBusy('');
     setError('');
+  }, [api]);
+
+  React.useEffect(() => {
+    // Opening a provider is a multi-step terminal mutation. Once the workspace
+    // API changes, a late tab-open reply from the retired connection must not
+    // authorize occupant switching or publish feedback in its replacement.
+    ++providerEpoch.current;
+    openingInFlight.current = '';
+    setOpening('');
+    setProviderFailure(null);
   }, [api]);
 
   const selectMode = (next: ExtensionMode) => {
@@ -1250,6 +1261,7 @@ export function Extensions({
     const operation = `open:${extension.name}:${provider.id}`;
     if (busy || openingInFlight.current === operation) return;
     openingInFlight.current = operation;
+    const epoch = providerEpoch.current;
     setOpening(operation);
     setProviderFailure((failure) => (failure?.key === operation ? null : failure));
     setError('');
@@ -1258,6 +1270,7 @@ export function Extensions({
     let mounted = false;
     try {
       const opened = await api.terminal.openTabAndWait(provider.title);
+      if (providerEpoch.current !== epoch) return;
       openedTab = opened.tab;
       if (!opened.changed) {
         throw new Error('the new tab did not publish an observable pane');
@@ -1268,16 +1281,19 @@ export function Extensions({
         opened.pane.revision,
         { kind: 'surface', extension: extension.name, provider: provider.id },
       );
+      if (providerEpoch.current !== epoch) return;
       if (!switched.changed) {
         throw new Error('the extension surface did not become the pane occupant');
       }
       mounted = true;
       await api.terminal.focus(switched.pane.slot);
+      if (providerEpoch.current !== epoch) return;
       setNotice({
         label: `${provider.title} opened in a new tab.`,
         uncertain: false,
       });
     } catch (cause) {
+      if (providerEpoch.current !== epoch) return;
       setProviderFailure({
         key: operation,
         retry: Boolean(openedTab),
@@ -1288,8 +1304,10 @@ export function Extensions({
             : `${provider.title} could not be opened: ${message(cause)}`,
       });
     } finally {
-      if (openingInFlight.current === operation) openingInFlight.current = '';
-      setOpening((current) => (current === operation ? '' : current));
+      if (providerEpoch.current === epoch) {
+        if (openingInFlight.current === operation) openingInFlight.current = '';
+        setOpening((current) => (current === operation ? '' : current));
+      }
     }
   };
   const providerAction = (extension: ExtensionSummary, provider: ExtensionPaneProvider) => {
