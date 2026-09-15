@@ -305,7 +305,7 @@ function ContainerActions({
     <Column gap={1} align="start" width="fill">
       <Heading label="Container actions" scale="caption" />
       <ContainerRename api={api} container={item} reload={reload} blocked={blocked} />
-      <Row gap={1} wrap align="center">
+      <Row gap={1} wrap align="center" justify="start">
         {active ? (
           <Button
             label="Restart"

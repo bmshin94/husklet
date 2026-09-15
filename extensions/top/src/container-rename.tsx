@@ -57,7 +57,7 @@ export function ContainerRename({ api, container, reload, blocked }: ContainerRe
   const changed = draft !== current;
   if (!editing) {
     return (
-      <Row gap={1} align="center" justify="start" width="fill" wrap>
+      <Row gap={1} align="center" justify="start" wrap>
         <Text
           label={`Container ID · ${shortId(container.id)}`}
           color="text-dim"
