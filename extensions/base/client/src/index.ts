@@ -912,6 +912,19 @@ export class TerminalOperationError extends Error {
   }
 }
 
+/** Reconnected input recovery observed an impossible backward cursor in the same pane generation. */
+export class TerminalInputReconciliationProtocolError extends Error {
+  readonly before;
+  readonly current;
+
+  constructor(before, current) {
+    super(`terminal input recovery for ${before.slot} received a backward screen revision`);
+    this.name = 'TerminalInputReconciliationProtocolError';
+    this.before = Object.freeze({ ...before });
+    this.current = Object.freeze(current);
+  }
+}
+
 /** Durable authority for reconciling one terminal input whose reply was lost. */
 export interface TerminalInputRecoveryToken {
   readonly version: 1;
@@ -7428,6 +7441,8 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
     );
     const current = await api.terminal.toText(before.slot, { lines });
     const cursor = current.snapshot;
+    if (cursor.generation === before.generation && cursor.revision < before.revision)
+      throw new TerminalInputReconciliationProtocolError(before, current);
     const outcome =
       cursor.generation !== before.generation
         ? 'replaced'

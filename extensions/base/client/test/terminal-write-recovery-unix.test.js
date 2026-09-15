@@ -5,7 +5,12 @@ import path from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import test from 'node:test';
 
-import { TerminalOperationError, connect, workspace } from '../dist/index.js';
+import {
+  TerminalInputReconciliationProtocolError,
+  TerminalOperationError,
+  connect,
+  workspace,
+} from '../dist/index.js';
 import { CONTROL, KIND, Reader, encode } from '../dist/wire.js';
 
 test('persisted raw-input recovery survives repeated reply loss without typing twice', async () => {
@@ -168,6 +173,103 @@ test('persisted raw-input recovery survives repeated reply loss without typing t
     await resumed.close();
   } finally {
     for (const connection of connections) connection.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('raw-input recovery rejects a backward same-generation pane cursor over fragmented Unix', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-terminal-backward-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const writer = 'fedcba9876543210fedcba9876543210';
+  const server = net.createServer((socket) => {
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.kind !== KIND.request) continue;
+        const reply = (payload) => {
+          const bytes = encode({ channel: frame.channel, kind: KIND.response, payload });
+          for (const byte of bytes) socket.write(Uint8Array.of(byte));
+        };
+        if (frame.payload.call === 'terminal_write_pane') {
+          reply({
+            reply: 'terminal_pane_input',
+            with: {
+              slot: 'agent',
+              generation: 9,
+              revision: 4,
+              writer,
+              sequence: 0,
+              committed: 1,
+            },
+          });
+        } else if (frame.payload.call === 'pane_list') {
+          reply({
+            reply: 'panes',
+            with: {
+              panes: [
+                {
+                  slot: 'agent',
+                  generation: 9,
+                  revision: 3,
+                  kind: 'terminal',
+                  provider: null,
+                  tab: null,
+                  title: 'Agent',
+                  focused: true,
+                },
+              ],
+              truncated: false,
+            },
+          });
+        } else if (frame.payload.call === 'terminal_read_pane') {
+          reply({
+            reply: 'text',
+            with: {
+              slot: 'agent',
+              generation: 9,
+              revision: 3,
+              lifecycle: 'live',
+              columns: 80,
+              rows: 24,
+              lines: ['stale'],
+              cursor_column: 0,
+              cursor_row: 0,
+              truncated: false,
+            },
+          });
+        }
+      }
+    });
+    const greeting = encode({
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: {
+        protocol: 1,
+        peer: 'terminal-backward',
+        granted: ['panes:observe', 'terminals:output', 'terminals:input'],
+      },
+    });
+    for (const byte of greeting) socket.write(Uint8Array.of(byte));
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const session = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(session).terminal.reconcileWriteFailure({
+        version: 1,
+        slot: 'agent',
+        generation: 9,
+        revision: 4,
+        writer,
+        sequence: 0,
+        input: [3],
+      }),
+      (error) =>
+        error instanceof TerminalInputReconciliationProtocolError && error.current.text === 'stale',
+    );
+    await session.close();
+  } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(directory, { recursive: true, force: true });
   }

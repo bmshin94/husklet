@@ -1037,6 +1037,15 @@ export declare class TerminalOperationError extends Error {
     }>;
     readonly cause: unknown;
 }
+/** Reconnected input recovery observed an impossible backward cursor in the same pane generation. */
+export declare class TerminalInputReconciliationProtocolError extends Error {
+    readonly before: Readonly<{
+        slot: string;
+        generation: number;
+        revision: number;
+    }>;
+    readonly current: Readonly<ReadablePane>;
+}
 export interface TerminalInputRecoveryToken {
     readonly version: 1;
     readonly slot: string;

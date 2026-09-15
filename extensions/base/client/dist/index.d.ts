@@ -253,6 +253,12 @@ export declare class TerminalOperationError extends Error {
     readonly result: any;
     constructor(operation: any, result: any, cause: any);
 }
+/** Reconnected input recovery observed an impossible backward cursor in the same pane generation. */
+export declare class TerminalInputReconciliationProtocolError extends Error {
+    readonly before: any;
+    readonly current: any;
+    constructor(before: any, current: any);
+}
 /** Durable authority for reconciling one terminal input whose reply was lost. */
 export interface TerminalInputRecoveryToken {
     readonly version: 1;
