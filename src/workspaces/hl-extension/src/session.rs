@@ -1818,9 +1818,20 @@ impl Session {
                     .map(|()| Reply::Done)
                     .map_err(Failure::from)
             }
-            Request::WorkspaceStart { name } => port.start(name).map(|()| Reply::Done).map_err(Failure::from),
-            Request::WorkspaceStop { name } => port.stop(name).map(|()| Reply::Done).map_err(Failure::from),
-            Request::WorkspaceRestart { name } => port.restart(name).map(|()| Reply::Done).map_err(Failure::from),
+            Request::WorkspaceStart { name, generation } => {
+                immutable_identity(generation, &[32], "workspace generation")?;
+                port.start(name, generation).map(|()| Reply::Done).map_err(Failure::from)
+            }
+            Request::WorkspaceStop { name, generation } => {
+                immutable_identity(generation, &[32], "workspace generation")?;
+                port.stop(name, generation).map(|()| Reply::Done).map_err(Failure::from)
+            }
+            Request::WorkspaceRestart { name, generation } => {
+                immutable_identity(generation, &[32], "workspace generation")?;
+                port.restart(name, generation)
+                    .map(|()| Reply::Done)
+                    .map_err(Failure::from)
+            }
             _ => Err(Failure::Unsupported {
                 call: "workspace control".into(),
             }),

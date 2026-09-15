@@ -708,6 +708,12 @@ test('workspace lifecycle methods use the typed control calls', async (context) 
   const next = frames(stage.host);
   await next();
   const api = workspace(stage.session);
+  assert.throws(() => api.start('other', 'stale'), /complete immutable ID returned by inspection/);
+  assert.throws(() => api.stop('other', ''), /complete immutable ID returned by inspection/);
+  assert.throws(
+    () => api.restart('other', 'a'.repeat(31)),
+    /complete immutable ID returned by inspection/,
+  );
   const configuration = {
     configuration_revision: 'fedcba9876543210fedcba9876543210',
     name: 'other',
@@ -742,9 +748,9 @@ test('workspace lifecycle methods use the typed control calls', async (context) 
       configuration,
     ),
     api.delete('other', '0123456789abcdef0123456789abcdef'),
-    api.start('other'),
-    api.stop('other'),
-    api.restart('other'),
+    api.start('other', '0123456789abcdef0123456789abcdef'),
+    api.stop('other', '0123456789abcdef0123456789abcdef'),
+    api.restart('other', '0123456789abcdef0123456789abcdef'),
   ];
   assert.equal('adopt' in api, false, 'the removed adoption facade is not advertised');
   assert.equal(
@@ -771,6 +777,12 @@ test('workspace lifecycle methods use the typed control calls', async (context) 
     [],
     'general workspace settings never retransmit inspected environment values',
   );
+  for (const call of calls.slice(4)) {
+    assert.deepEqual(call.with, {
+      name: 'other',
+      generation: '0123456789abcdef0123456789abcdef',
+    });
+  }
   assert.deepEqual(
     configuration.environment,
     [['DATABASE_PASSWORD', 'do-not-copy-into-settings-update']],

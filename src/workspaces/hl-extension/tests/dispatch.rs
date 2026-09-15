@@ -1241,6 +1241,7 @@ fn native_semantic_actions_require_the_underlying_domain_grant() {
 impl WorkspaceInventory for Host {
     fn workspaces(&self) -> Result<Vec<WorkspaceState>, HostError> {
         Ok(vec![WorkspaceState {
+            generation: "0123456789abcdef0123456789abcdef".into(),
             name: "dev".into(),
             architecture: "arm64".into(),
             image: "alpine:3.20".into(),
@@ -1287,15 +1288,18 @@ impl hl_extension::port::WorkspaceControl for Host {
         self.ledger.note("workspace.delete");
         Ok(())
     }
-    fn start(&self, _name: &str) -> Result<(), HostError> {
+    fn start(&self, _name: &str, generation: &str) -> Result<(), HostError> {
+        assert_eq!(generation, "0123456789abcdef0123456789abcdef");
         self.ledger.note("workspace.start");
         Ok(())
     }
-    fn stop(&self, _name: &str) -> Result<(), HostError> {
+    fn stop(&self, _name: &str, generation: &str) -> Result<(), HostError> {
+        assert_eq!(generation, "0123456789abcdef0123456789abcdef");
         self.ledger.note("workspace.stop");
         Ok(())
     }
-    fn restart(&self, _name: &str) -> Result<(), HostError> {
+    fn restart(&self, _name: &str, generation: &str) -> Result<(), HostError> {
+        assert_eq!(generation, "0123456789abcdef0123456789abcdef");
         self.ledger.note("workspace.restart");
         Ok(())
     }
@@ -2100,7 +2104,13 @@ fn workspace_lifecycle_never_implies_creation_or_permanent_removal() {
     let host = Host::new();
     let mut lifecycle = session(&[Capability::WorkspaceLifecycle], &[]);
     lifecycle
-        .dispatch(&Request::WorkspaceStart { name: "other".into() }, &services(&host))
+        .dispatch(
+            &Request::WorkspaceStart {
+                name: "other".into(),
+                generation: "0123456789abcdef0123456789abcdef".into(),
+            },
+            &services(&host),
+        )
         .expect("explicit lifecycle authority");
     assert!(matches!(
         lifecycle.dispatch(
@@ -2177,15 +2187,24 @@ fn calls() -> Vec<(Request, Capability)> {
             Capability::WorkspaceRemove,
         ),
         (
-            Request::WorkspaceStart { name: "other".into() },
+            Request::WorkspaceStart {
+                name: "other".into(),
+                generation: "0123456789abcdef0123456789abcdef".into(),
+            },
             Capability::WorkspaceLifecycle,
         ),
         (
-            Request::WorkspaceStop { name: "other".into() },
+            Request::WorkspaceStop {
+                name: "other".into(),
+                generation: "0123456789abcdef0123456789abcdef".into(),
+            },
             Capability::WorkspaceLifecycle,
         ),
         (
-            Request::WorkspaceRestart { name: "other".into() },
+            Request::WorkspaceRestart {
+                name: "other".into(),
+                generation: "0123456789abcdef0123456789abcdef".into(),
+            },
             Capability::WorkspaceLifecycle,
         ),
         (Request::ExtensionList, Capability::ExtensionRead),
@@ -3388,6 +3407,27 @@ fn workspace_mutations_require_a_complete_generation_before_host_authority() {
             .dispatch(&delete, &services(&host))
             .is_err()
     );
+    for request in [
+        Request::WorkspaceStart {
+            name: "other".into(),
+            generation: "stale".into(),
+        },
+        Request::WorkspaceStop {
+            name: "other".into(),
+            generation: String::new(),
+        },
+        Request::WorkspaceRestart {
+            name: "other".into(),
+            generation: "a".repeat(31),
+        },
+    ] {
+        assert!(
+            session(&[Capability::WorkspaceLifecycle], &[])
+                .dispatch(&request, &services(&host))
+                .is_err(),
+            "{request:?} must fail before lifecycle authority"
+        );
+    }
     assert!(host.ledger.reached().is_empty());
 }
 

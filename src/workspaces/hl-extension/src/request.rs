@@ -97,12 +97,15 @@ pub enum Request {
     },
     WorkspaceStart {
         name: String,
+        generation: String,
     },
     WorkspaceStop {
         name: String,
+        generation: String,
     },
     WorkspaceRestart {
         name: String,
+        generation: String,
     },
     ExtensionList,
     ExtensionCatalogue,

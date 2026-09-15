@@ -83,7 +83,7 @@ test('packaged external agent arms every workspace lifecycle mutation over Unix 
             assert.equal(frame.payload.with.configuration.name, name);
           else if (call === 'workspace_delete')
             assert.deepEqual(frame.payload.with, { name, generation });
-          else assert.deepEqual(frame.payload.with, { name });
+          else assert.deepEqual(frame.payload.with, { name, generation });
           revision += 1;
           socket.write(
             encode({

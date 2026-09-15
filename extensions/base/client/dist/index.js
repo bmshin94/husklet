@@ -2004,9 +2004,18 @@ export function workspace(session, { signal } = {}) {
             name,
             generation: immutableIdentity(generation, [32], 'workspace generation'),
         }),
-        start: (name) => done('workspace_start', { name }),
-        stop: (name) => done('workspace_stop', { name }),
-        restart: (name) => done('workspace_restart', { name }),
+        start: (name, generation) => done('workspace_start', {
+            name,
+            generation: immutableIdentity(generation, [32], 'workspace generation'),
+        }),
+        stop: (name, generation) => done('workspace_stop', {
+            name,
+            generation: immutableIdentity(generation, [32], 'workspace generation'),
+        }),
+        restart: (name, generation) => done('workspace_restart', {
+            name,
+            generation: immutableIdentity(generation, [32], 'workspace generation'),
+        }),
         notifications: {
             publish: (notification) => {
                 if (!notification || typeof notification !== 'object')

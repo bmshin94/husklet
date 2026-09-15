@@ -1339,6 +1339,7 @@ test('real Unix workspace inventory rejects duplicate identities and preserves s
   const calls = [];
   const connections = new Set();
   const workspaceState = (running, current) => ({
+    generation: '0123456789abcdef0123456789abcdef',
     name: 'test-runner',
     image: 'alpine:3.20',
     architecture: 'amd64',

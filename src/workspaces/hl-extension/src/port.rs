@@ -761,6 +761,8 @@ pub fn bounded_terminal_history(mut page: TerminalHistoryPage) -> TerminalHistor
 /// the one this extension is hosted by, through [`ContainerInventory`].
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct WorkspaceState {
+    /// Immutable identity for this configured workspace incarnation.
+    pub generation: String,
     pub name: String,
     pub architecture: String,
     pub image: String,
@@ -1776,13 +1778,13 @@ pub trait WorkspaceControl {
     fn delete(&self, _name: &str, _generation: &str) -> Result<(), HostError> {
         Err(workspace_control_unavailable())
     }
-    fn start(&self, _name: &str) -> Result<(), HostError> {
+    fn start(&self, _name: &str, _generation: &str) -> Result<(), HostError> {
         Err(workspace_control_unavailable())
     }
-    fn stop(&self, _name: &str) -> Result<(), HostError> {
+    fn stop(&self, _name: &str, _generation: &str) -> Result<(), HostError> {
         Err(workspace_control_unavailable())
     }
-    fn restart(&self, _name: &str) -> Result<(), HostError> {
+    fn restart(&self, _name: &str, _generation: &str) -> Result<(), HostError> {
         Err(workspace_control_unavailable())
     }
 }

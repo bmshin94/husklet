@@ -105,6 +105,7 @@ impl TerminalSurface for Host {
 impl WorkspaceInventory for Host {
     fn workspaces(&self) -> Result<Vec<WorkspaceState>, HostError> {
         Ok(vec![WorkspaceState {
+            generation: "0123456789abcdef0123456789abcdef".into(),
             name: "dev".into(),
             architecture: "arm64".into(),
             image: "alpine:3.20".into(),

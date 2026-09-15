@@ -9505,6 +9505,13 @@
     "WorkspaceState": {
       "fields": [
         {
+          "name": "generation",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "name",
           "optional": false,
           "schema": {
@@ -11785,6 +11792,13 @@
                 "schema": {
                   "kind": "string"
                 }
+              },
+              {
+                "name": "generation",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
               }
             ],
             "kind": "struct"
@@ -11800,6 +11814,13 @@
                 "schema": {
                   "kind": "string"
                 }
+              },
+              {
+                "name": "generation",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
               }
             ],
             "kind": "struct"
@@ -11811,6 +11832,13 @@
             "fields": [
               {
                 "name": "name",
+                "optional": false,
+                "schema": {
+                  "kind": "string"
+                }
+              },
+              {
+                "name": "generation",
                 "optional": false,
                 "schema": {
                   "kind": "string"
@@ -16718,7 +16746,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:f8dcd797611310fa",
+  "source_fingerprint": "fnv1a64:0bdc5de2da12f1ca",
   "specification_version": 1,
   "topics": [
     {

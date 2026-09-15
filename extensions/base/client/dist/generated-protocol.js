@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:c51bfa03885c3892
+// Protocol artifact fnv1a64:b71040439f5ea0d6
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -9884,6 +9884,13 @@ const definitions = {
   "WorkspaceState": {
     "fields": [
       {
+        "name": "generation",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
         "name": "name",
         "optional": false,
         "schema": {
@@ -10900,6 +10907,13 @@ const roots = {
               "schema": {
                 "kind": "string"
               }
+            },
+            {
+              "name": "generation",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
             }
           ],
           "kind": "struct"
@@ -10915,6 +10929,13 @@ const roots = {
               "schema": {
                 "kind": "string"
               }
+            },
+            {
+              "name": "generation",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
             }
           ],
           "kind": "struct"
@@ -10926,6 +10947,13 @@ const roots = {
           "fields": [
             {
               "name": "name",
+              "optional": false,
+              "schema": {
+                "kind": "string"
+              }
+            },
+            {
+              "name": "generation",
               "optional": false,
               "schema": {
                 "kind": "string"

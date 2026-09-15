@@ -789,6 +789,7 @@ impl WorkspaceInventory for Store {
             .all()
             .iter()
             .map(|workspace| WorkspaceState {
+                generation: workspace.generation.clone(),
                 name: workspace.name.clone(),
                 architecture: workspace.arch.as_str().to_owned(),
                 image: workspace.image.clone(),
@@ -951,6 +952,19 @@ impl Store {
         }
         self.find(name)
     }
+
+    fn require_lifecycle_generation(
+        workspace: &WorkspaceConfig,
+        name: &str,
+        generation: &str,
+    ) -> Result<(), HostError> {
+        if !generation.is_empty() && workspace.generation == generation {
+            return Ok(());
+        }
+        Err(HostError::Conflict(format!(
+            "workspace {name} changed; refresh before changing its lifecycle"
+        )))
+    }
 }
 
 impl WorkspaceControl for Store {
@@ -1040,24 +1054,27 @@ impl WorkspaceControl for Store {
         }
     }
 
-    fn start(&self, name: &str) -> Result<(), HostError> {
+    fn start(&self, name: &str, generation: &str) -> Result<(), HostError> {
         let workspace = self.find(name)?;
+        Self::require_lifecycle_generation(&workspace, name, generation)?;
         crate::runtime::domain::Domain::new(&workspace)
             .ensure(&workspace)
             .map(|_| ())
             .map_err(|error| HostError::Failed(error.to_string()))
     }
 
-    fn stop(&self, name: &str) -> Result<(), HostError> {
+    fn stop(&self, name: &str, generation: &str) -> Result<(), HostError> {
         let workspace = self.mutable(name)?;
+        Self::require_lifecycle_generation(&workspace, name, generation)?;
         crate::runtime::domain::Domain::new(&workspace)
             .close(crate::runtime::domain::Close::Kill)
             .map_err(|error| HostError::Failed(error.to_string()))?;
         Ok(())
     }
 
-    fn restart(&self, name: &str) -> Result<(), HostError> {
+    fn restart(&self, name: &str, generation: &str) -> Result<(), HostError> {
         let workspace = self.mutable(name)?;
+        Self::require_lifecycle_generation(&workspace, name, generation)?;
         crate::runtime::domain::Domain::new(&workspace)
             .restart(&workspace)
             .map(|_| ())
@@ -1097,6 +1114,20 @@ mod workspace_control_tests {
         let database = persisted.get("database").expect("winning workspace");
         assert_eq!(database.image, "postgres:17");
         assert_eq!(database.generation, first_generation);
+    }
+
+    #[test]
+    fn lifecycle_authority_is_bound_to_the_observed_workspace_incarnation() {
+        let original = crate::config::WorkspaceConfig::new("database", "postgres:17", hl_ws::Arch::Amd64);
+        let observed = original.generation.clone();
+        Store::require_lifecycle_generation(&original, "database", &observed).expect("current identity");
+
+        let replacement = crate::config::WorkspaceConfig::new("database", "postgres:18", hl_ws::Arch::Amd64);
+        assert!(matches!(
+            Store::require_lifecycle_generation(&replacement, "database", &observed),
+            Err(HostError::Conflict(detail)) if detail.contains("refresh")
+        ));
+        assert!(Store::require_lifecycle_generation(&replacement, "database", "").is_err());
     }
 
     #[test]

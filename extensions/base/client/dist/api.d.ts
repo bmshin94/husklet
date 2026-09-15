@@ -248,6 +248,7 @@ export interface ExtensionAcquisitionChange {
     coalesced: number;
 }
 export interface WorkspaceState extends WorkspaceInfo {
+    generation: string;
     running: boolean;
     current: boolean;
 }
@@ -1420,9 +1421,9 @@ export interface WorkspaceApi {
         changed: boolean;
     }>;
     delete(name: string, generation: string): Promise<void>;
-    start(name: string): Promise<void>;
-    stop(name: string): Promise<void>;
-    restart(name: string): Promise<void>;
+    start(name: string, generation: string): Promise<void>;
+    stop(name: string, generation: string): Promise<void>;
+    restart(name: string, generation: string): Promise<void>;
     notifications: {
         publish(notification: {
             id: string;
