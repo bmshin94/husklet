@@ -6259,3 +6259,130 @@ fn a_restored_member_that_exits_cleanly_reports_its_code_on_both_isas() {
         );
     }
 }
+
+fn held_file_lock_fixture(isa: GuestIsa, directory: &Path) -> PathBuf {
+    shared_state_fixture(isa, directory, "held_file_lock")
+}
+
+fn held_file_lock_plan(executable: &Path, ready: &Path, mode: &str, lock: &Path) -> RuntimePlan {
+    let mut options = Options::default();
+    options.set("HL_CHECKPOINT", "1", true).unwrap();
+    RuntimePlan {
+        rootfs: None,
+        executable_host: Some(executable.as_os_str().as_encoded_bytes().to_vec()),
+        arguments: [
+            executable.as_os_str().as_encoded_bytes().to_vec(),
+            ready.as_os_str().as_encoded_bytes().to_vec(),
+            mode.as_bytes().to_vec(),
+            lock.as_os_str().as_encoded_bytes().to_vec(),
+        ]
+        .into(),
+        environment: Vec::new(),
+        result_path: None,
+        options,
+        box_policy: Default::default(),
+    }
+}
+
+/// Runs one lock shape to readiness, asks the capture for a checkpoint, and reports
+/// `(the guest really held the lock, the capture was refused, the sink kept a MANIFEST)`.
+fn held_file_lock_verdict(isa: GuestIsa, executable: &Path, mode: &str) -> (bool, bool, bool) {
+    let directory = tempfile::tempdir().unwrap();
+    let ready = directory.path().join("ready");
+    let lock = directory.path().join("lockfile");
+    let store = Arc::new(AtomicStore::default());
+    let capture = Arc::new(
+        Engine::with_checkpoint(
+            isa,
+            held_file_lock_plan(executable, &ready, mode, &lock),
+            streams(false),
+            store.clone(),
+            store.clone(),
+        )
+        .unwrap(),
+    );
+    capture.start().unwrap();
+    wait_for(&ready, &format!("READY {mode}"));
+    let announced = std::fs::read_to_string(&ready).unwrap_or_default();
+    let refused = capture.capture_checkpoint_until(checkpoint_deadline()).is_err();
+    let _ = wait_result_bounded(&capture, "held file lock capture");
+    let committed = store.snapshot().contains_key("MANIFEST");
+    (announced.contains("held=1"), refused, committed)
+}
+
+/// A guest that takes a REAL `flock(2)` and is still holding it at capture time must be
+/// refused, exactly as the `fcntl` record-lock sibling already is. The checkpoint image
+/// carries no lock section and the restore reopens the file by path, so an admitted
+/// capture silently drops the interlock: the restored guest believes it holds a lock that
+/// any other process can now take. A clean refusal is the only honest answer.
+///
+/// This drives a real `flock(2)` through the guest ABI. The pre-existing hook test
+/// (`hl-native`'s `checkpoint_refuses_every_uncaptured_file_lock_object`) writes the broker
+/// table synthetically, so it stayed green while the real syscall bypassed the table
+/// entirely; that is exactly the shape of hole this test exists to close.
+///
+/// The `dup` arm pins the open-file-description scoping the refusal has to respect: the guest
+/// closes the descriptor it locked through, and the lock is still held through the surviving
+/// alias, so the capture must still be refused.
+///
+/// The battery asserts its own non-vacuity from both sides: every refusing arm first proves
+/// the guest genuinely held the lock (`held=1`, measured by a forked probe inside the guest),
+/// and the `none` / `released` arms must still be ADMITTED and commit a manifest, so a gate
+/// that refused unconditionally would fail this test too.
+#[test]
+fn a_guest_holding_a_real_file_lock_refuses_the_checkpoint_on_both_isas() {
+    let compiling = fixture_compilation();
+    let fixtures = tempfile::tempdir().unwrap();
+    let executables =
+        [GuestIsa::Aarch64, GuestIsa::X86_64].map(|isa| (isa, held_file_lock_fixture(isa, fixtures.path())));
+    drop(compiling);
+    let _exclusive = exclusive_checkpoint_test();
+
+    let mut admitted_while_locked = Vec::new();
+    let mut refused_while_unlocked = Vec::new();
+    let mut refusals = 0;
+    let mut admissions = 0;
+
+    for (isa, executable) in executables {
+        for mode in ["flock", "dup", "fcntl"] {
+            let (held, refused, committed) = held_file_lock_verdict(isa, &executable, mode);
+            println!("lock battery: {isa:?}/{mode:<8} held={held} refused={refused} committed={committed}");
+            assert!(
+                held,
+                "{isa:?}/{mode} fixture did not actually hold the lock, so its refusal would prove nothing"
+            );
+            if refused {
+                refusals += 1;
+                assert!(!committed, "{isa:?}/{mode} committed a manifest for a refused capture");
+            } else {
+                admitted_while_locked.push(format!("{isa:?}/{mode}"));
+            }
+        }
+
+        // Non-vacuity: an unlocked guest, and a guest that took a flock and gave it back,
+        // must both still be admitted. A gate that refuses everything fails here.
+        for mode in ["none", "released"] {
+            let (held, refused, committed) = held_file_lock_verdict(isa, &executable, mode);
+            println!("lock battery: {isa:?}/{mode:<8} held={held} refused={refused} committed={committed}");
+            assert!(!held, "{isa:?}/{mode} fixture unexpectedly still held a lock");
+            if refused || !committed {
+                refused_while_unlocked.push(format!("{isa:?}/{mode} refused={refused} committed={committed}"));
+            } else {
+                admissions += 1;
+            }
+        }
+    }
+
+    assert!(
+        admitted_while_locked.is_empty(),
+        "a capture was admitted while the guest held a real file lock: {admitted_while_locked:?}"
+    );
+    assert!(
+        refused_while_unlocked.is_empty(),
+        "a capture was refused for a guest holding no lock: {refused_while_unlocked:?}"
+    );
+    assert!(
+        refusals >= 6 && admissions >= 4,
+        "battery must contain both refusals and admissions ({refusals} refusals, {admissions} admissions)"
+    );
+}
