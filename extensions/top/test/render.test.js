@@ -462,10 +462,26 @@ test('Top presents workspace, extensions, and every resource navigation choice',
     'Terminals',
   ])
     assert.ok(labels.includes(label), label);
+  const compactChoices = frame.patches.find(
+    (patch) =>
+      patch.SetProp?.prop === 'Choices' &&
+      patch.SetProp.value?.Choices?.some((choice) => choice.value === 'processes'),
+  );
+  const compactChooser = compactChoices.SetProp.id;
+  const compactProperties = frame.patches.filter((patch) => patch.SetProp?.id === compactChooser);
   assert.deepEqual(
-    ancestorProperty(stage, 'Section', 'Row', 'Justify'),
-    { Align: 'Start' },
-    'the compact chooser anchors inside its viewport instead of centering beyond it',
+    compactProperties.find((patch) => patch.SetProp.prop === 'Width')?.SetProp.value,
+    { Length: 'Fill' },
+    'compact section navigation must consume its row instead of clipping long destinations',
+  );
+  assert.equal(
+    compactProperties.find((patch) => patch.SetProp.prop === 'Tooltip')?.SetProp.value.Text,
+    'Workspace section',
+    'the single compact control keeps an explicit accessible purpose',
+  );
+  assert.ok(
+    !labels.includes('Section'),
+    'compact navigation must not repeat a label it can overlap',
   );
   assert.equal(
     frame.patches.some((patch) => 'Create' in patch && patch.Create.tag === 'Card'),

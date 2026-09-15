@@ -5,7 +5,6 @@ import {
   Row,
   Responsive,
   Select,
-  Text,
   type ContainerSummary,
   type ExecutionSummary,
   type ExtensionSummary,
@@ -365,10 +364,10 @@ export function Top({
         }
       }}
     >
-      <Row width="fill" pad={1} gap={2} align="center" justify="start">
-        <Text label="Section" color="text-dim" />
+      <Row width="fill" pad={1}>
         <Select
-          width={{ minimum: { chars: 14 }, maximum: { chars: 24 } }}
+          width="fill"
+          tooltip="Workspace section"
           value={section}
           choices={compactSections.map((name) => ({ value: name, label: sectionTitle(name) }))}
           onChange={(event) => {

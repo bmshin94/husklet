@@ -400,23 +400,23 @@ mod unix {
             assert_eq!(root.width(), width, "{fixture}/{name} rejected {width}px");
             assert_contained(&root, &format!("{fixture}/{name}/{width_name}"));
             if width == 600 {
-                let section = find_label(&root, "Section");
-                let bounds = section
-                    .compute_bounds(&root)
-                    .expect("compact Section label belongs to the rendered root");
-                assert!(
-                    bounds.x() >= 0.0 && bounds.x() + bounds.width() <= width as f32,
-                    "{fixture}/{name} clipped the compact Section label at {bounds:?}"
-                );
                 let chooser = find_combobox(&root);
                 let chooser_bounds = chooser
                     .compute_bounds(&root)
                     .expect("compact section chooser belongs to the rendered root");
                 assert!(
-                    chooser_bounds.x() - (bounds.x() + bounds.width()) >= 8.0,
-                    "{fixture}/{name} compact section label and chooser overlap or lose their 8px gap: label={bounds:?} chooser={chooser_bounds:?}"
+                    chooser_bounds.width() >= width as f32 - 16.0,
+                    "{fixture}/{name} compact section chooser used only {chooser_bounds:?} of its {width}px row"
                 );
+                assert_eq!(chooser.tooltip_text().as_deref(), Some("Workspace section"));
+                assert!(!has_label(&root, "Section"), "compact navigation retained its overlapping label");
                 assert!(chooser.grab_focus(), "compact section chooser is keyboard reachable");
+                assert_compact_chooser_pixels(
+                    &window,
+                    &root,
+                    width,
+                    &format!("{fixture}/{name}/{width_name}"),
+                );
             }
             if fixture == "populated" {
                 let refresh_context = match name {
