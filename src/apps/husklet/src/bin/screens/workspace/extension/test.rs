@@ -98,7 +98,10 @@ fn sequence_fault_revokes_authority_until_a_fresh_generation() {
     post.send(Delivery::Frame(rejected)).expect("page listening");
     page.tick();
     assert_eq!(ready.get(), 0, "a rejected frame cannot publish provider authority");
-    assert_eq!(recorded.borrow().as_slice(), [Signal::Retry]);
+    assert!(
+        recorded.borrow().is_empty(),
+        "a rejected renderer frame cannot restart the extension process"
+    );
     assert!(page.banner().text().contains("expected frame 1, received 2"));
 
     let accepted = Reconciliation::new().reconcile(&Element::heading("ready"));
@@ -128,13 +131,16 @@ fn sequence_gap_freezes_stale_widgets_and_ignores_the_old_socket_generation() {
     fixture.page.tick();
     assert!(fixture.page.banner().text().contains("expected frame 2, received 3"));
     assert!(!button.is_sensitive(), "stale GTK authority is visibly frozen");
-    assert_eq!(fixture.recorded.borrow().as_slice(), [Signal::Retry]);
+    assert!(
+        fixture.recorded.borrow().is_empty(),
+        "a sequence gap freezes locally instead of restarting the process"
+    );
 
     button.emit_clicked();
     fixture.page.tick();
     assert_eq!(
         fixture.recorded.borrow().as_slice(),
-        [Signal::Retry],
+        [],
         "the frozen tree cannot emit an interaction after recovery begins"
     );
     fixture
@@ -145,6 +151,20 @@ fn sequence_gap_freezes_stale_widgets_and_ignores_the_old_socket_generation() {
     assert!(
         fixture.page.banner().is_visible(),
         "old-generation frames cannot self-heal the gap"
+    );
+
+    let retry = fixture
+        .widgets()
+        .into_iter()
+        .find(|widget| widget.has_css_class("hl-extension-retry"))
+        .expect("the frozen surface offers explicit recovery")
+        .downcast::<gtk::Button>()
+        .expect("retry button");
+    retry.emit_clicked();
+    assert_eq!(
+        fixture.recorded.borrow().as_slice(),
+        [Signal::Retry],
+        "only the explicit recovery action replaces the process"
     );
 
     fixture

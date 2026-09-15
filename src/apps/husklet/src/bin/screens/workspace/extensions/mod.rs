@@ -283,4 +283,47 @@ mod tests {
             eprintln!("skipped: no display connection");
         }
     }
+
+    #[test]
+    fn navigation_and_idle_reconciliation_keep_the_same_extension_surface() {
+        if !crate::test_support::on_the_toolkit_thread(|| {
+            let temporary = tempfile::tempdir().expect("temporary directory");
+            let mut workspace = WorkspaceConfig::new("demo", "alpine:3.20", hl_ws::Arch::Amd64);
+            workspace.storage = Some(temporary.path().join("workspace"));
+            let mut roster = Roster::workspace(&workspace).expect("roster");
+            let manifest = manifest();
+            roster
+                .register(&manifest, "sha256:top", &Grant::default(), 1)
+                .expect("record");
+            roster.enable(&manifest.name).expect("enabled");
+
+            let roster = Rc::new(RefCell::new(roster));
+            let view = Rc::new(View::with_semantics(
+                [],
+                super::super::semantic::Registry::new("workspace"),
+            ));
+            let starts = Rc::new(Cell::new(0));
+            let counted = Rc::clone(&starts);
+            let surfaces: Surfaces = Rc::new(move |_| {
+                counted.set(counted.get() + 1);
+                gtk::Label::new(Some("running")).upcast()
+            });
+            let shelf = Shelf::new(&view, &workspace, &roster, surfaces);
+            shelf.install();
+            assert_eq!(starts.get(), 1);
+
+            for _ in 0..32 {
+                view.select_name("top");
+                shelf.reconcile();
+            }
+
+            assert_eq!(
+                starts.get(),
+                1,
+                "selecting pages and idle polls must retain the live host generation"
+            );
+        }) {
+            eprintln!("skipped: no display connection");
+        }
+    }
 }

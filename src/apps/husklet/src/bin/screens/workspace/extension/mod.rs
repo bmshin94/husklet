@@ -506,10 +506,13 @@ impl Interface {
 
     fn begin_recovery(&self, fault: &str) {
         self.banner.show(fault);
-        if !self.recovery_pending.replace(true) {
-            self.banner.pending();
-            self.sink.accept(Signal::Retry);
-        }
+        // A renderer fault invalidates this surface, not the extension process.
+        // Keep the last trusted tree visible and let the person decide whether
+        // to replace the sidecar. Automatically turning one skipped or malformed
+        // frame into `Retry` made a UI protocol defect kill a healthy process and
+        // could sustain an opaque restart loop when the replacement emitted the
+        // same bad frame again.
+        self.recovery_pending.set(false);
     }
 
     /// Applies one source mutation. A mutation for a source no table is bound
