@@ -4044,6 +4044,76 @@ test('a lost install reply follows the committing job instead of replaying stale
   assert.ok(labelled(stage, 'database-tools'));
 });
 
+test('a workspace restart after extension commit reconciles the durable installed identity', async () => {
+  const digest = `sha256:${'e'.repeat(64)}`;
+  const candidate = {
+    name: 'database-tools',
+    version: '1.0.0',
+    image_digest: digest,
+    installed_image_digest: null,
+    requested: [],
+  };
+  const committed = { ...candidate, enabled: true, status: 'duty' };
+  let installed = [];
+  let reads = 0;
+  let installs = 0;
+  const stage = host();
+  stage.render(
+    h(Extensions, {
+      api: {
+        extensions: {
+          list: async () => installed,
+          startAcquisition: async () => ({ job: 'restart-after-commit' }),
+          acquisition: async () => {
+            reads += 1;
+            if (reads > 1) {
+              const failure = new Error('extension acquisition restart-after-commit is absent');
+              failure.kind = 'absent';
+              throw failure;
+            }
+            return {
+              job: 'restart-after-commit',
+              reference: 'registry.example/database-tools:1',
+              revision: 2,
+              state: 'ready',
+              progress: null,
+              candidate,
+              error: null,
+            };
+          },
+          installAndWait: async () => {
+            installs += 1;
+            installed = [committed];
+            throw new Error('connection closed while install was committing');
+          },
+        },
+        watchExtensions: async () => () => {},
+      },
+    }),
+  );
+  await settled();
+  selectExtensionMode(stage, 'Discover');
+  await settled();
+  change(stage, 'registry.example/extension:version', 'registry.example/database-tools:1');
+  invoke(stage, 'Inspect');
+  await settled();
+  await settled();
+  invoke(stage, 'Install with selected access');
+  await settled();
+  await settled();
+  await settled();
+
+  assert.equal(installs, 1, 'recovery never replays committed installation authority');
+  assert.ok(
+    labelled(
+      stage,
+      'database-tools installed, but the workspace service restarted before confirmation. Current extension state was verified by refresh.',
+    ),
+  );
+  assert.equal(fieldValue(stage, 'Search installed'), 'database-tools');
+  assert.ok(labelled(stage, 'Installed extensions'));
+});
+
 test('installed extension removal requires final consent and a failure remains retryable', async () => {
   const calls = [];
   let removes = 0;

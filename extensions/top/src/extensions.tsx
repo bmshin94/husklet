@@ -967,8 +967,54 @@ export function Extensions({
           setAcquisition(status);
           setError(message(cause));
         }
-      } catch {
-        setError(message(cause));
+      } catch (statusCause) {
+        // Acquisition jobs belong to the workspace service process, while an
+        // installed extension is durable. A restart can therefore erase the
+        // job immediately after the commit crossed the socket. Reconcile the
+        // immutable candidate digest before presenting a failure or leaving a
+        // stale consent form that can no longer be committed safely.
+        const acquisitionWasLost =
+          (statusCause &&
+            typeof statusCause === 'object' &&
+            (statusCause as { kind?: unknown }).kind === 'absent') ||
+          /extension acquisition .*(absent|not found|does not exist)/i.test(message(statusCause));
+        const interruption = acquisitionWasLost
+          ? 'the workspace service restarted'
+          : 'acquisition status became unavailable';
+        try {
+          const reconciliationEpoch = ++inventoryEpoch.current;
+          const listing = await api.extensions.list();
+          if (inventoryEpoch.current === reconciliationEpoch) {
+            installedSnapshot.current = listing;
+            setInstalled(listing);
+            setInventoryState(listing.length === 0 ? 'empty' : 'ready');
+            setInventoryError('');
+          }
+          const committed = listing.find(
+            (extension) =>
+              extension.name === reviewed.name && extension.image_digest === reviewed.image_digest,
+          );
+          if (committed) {
+            setAcquisition(null);
+            setCatalogueExpectation(null);
+            candidateKey.current = '';
+            setReference('');
+            revealInstalled(committed.name);
+            setError('');
+            setNotice({
+              label: `${reviewed.name} ${updating ? 'updated' : 'installed'}, but ${interruption} before confirmation. Current extension state was verified by refresh.`,
+              uncertain: false,
+            });
+          } else {
+            setError(
+              `${reviewed.name} could not be confirmed after ${interruption}. Refresh extensions, then inspect the image again before changing access.`,
+            );
+          }
+        } catch (verificationCause) {
+          setError(
+            `${message(cause)} Current installed state could not be verified after ${interruption}: ${message(verificationCause)}`,
+          );
+        }
       }
     } finally {
       setBusy('');
