@@ -1938,6 +1938,30 @@ static void ibtc_clear_lazy(void) {
     memset(g_ibtc, 0, sizeof g_ibtc);
 }
 
+/* Exec-boundary IBTC reset policy.  map_clear() already leaves this table all-zero -- it
+   ends in ibtc_clear_lazy() above -- and on Linux it gets there by DROPPING the pages with
+   MADV_DONTNEED rather than by writing them.  The eager `memset(g_ibtc, 0, sizeof g_ibtc)`
+   that has historically followed map_clear() on the execve path therefore re-materialises
+   all 2,048 pages of an 8 MiB table that the image being loaded has not indexed a single
+   entry of yet, and it does so while every one of those pages is guaranteed to be a fresh
+   zero-filled anonymous fault.  Measured on an x86_64 Linux host by attributing page-fault
+   addresses to BSS symbols across 60 guest fork+execs of /bin/true: g_ibtc took 127,403 of
+   the 284,677 faults, 44.75% of the total and 2,123 per guest process out of that
+   process's 4,546.  Re-running the same census with the eager write dropped, that process
+   demand-faults 183 IBTC pages: the write commits an 8 MiB table per exec so that the new
+   image can index 0.7 MiB of it.
+
+   HL_EXEC_IBTC_LAZY keeps the lazy clear map_clear() has already performed and lets the
+   new image fault in only the IBTC pages it actually indexes.  The table's CONTENTS are
+   identical under either policy -- all-zero on entry to the new image -- so this moves
+   only the moment the host commits the table's pages, never what a lookup observes.
+   Unset, the default, keeps the eager write and is byte-for-byte today's behaviour. */
+static int g_exec_ibtc_lazy_state = -1;
+static int exec_ibtc_lazy_selected(void) {
+    if (g_exec_ibtc_lazy_state < 0) g_exec_ibtc_lazy_state = hl_option_flag_value("HL_EXEC_IBTC_LAZY", 0);
+    return g_exec_ibtc_lazy_state;
+}
+
 static inline uint32_t ibtc_index(uint64_t target) {
     return (uint32_t)((target >> 2) & (IBTC_N - 1));
 }
@@ -1969,8 +1993,14 @@ static void ibtc_drop_target(uint64_t target) {
 }
 
 // ---- W5C: race-free threaded IBTC fill ----
-// g_mtibtc: enable threaded shared-hash IBTC fill (NOMTIBTC=1 disables -> revert to the
-// locked-dispatcher path where threaded indirect branches always miss to the C dispatcher).
+// g_mtibtc: enable threaded shared-hash IBTC fill. Defaults on, and is cleared at engine init
+// (engine/target/aarch64.c) when the host lacks FEAT_LSE2, because the `stp` publish below and the
+// `ldp` probes in guest/aarch64/stubs.c are only mutually atomic on an LSE2 part -- see the gate's
+// comment there for the ARM ARM citations and the stated tradeoff. Clearing it is a complete
+// mitigation: with no threaded fill there is no writer racing the emitted `ldp` readers, and every
+// other writer here runs behind the existing STW/quiescent gate.
+// (The "NOMTIBTC=1 disables" this comment used to claim was never implemented -- nothing in the
+// tree read that name -- so until the LSE2 gate there was no off switch at all.)
 // g_mtfill: PROF count of threaded shared-hash publishes.
 static int g_mtibtc = 1;
 static uint64_t g_mtfill;
@@ -2441,6 +2471,140 @@ static void jit_body_owner_highwater_publish(unsigned exclusive) {
            !atomic_compare_exchange_weak_explicit(&g_body_owner_highwater, &current, exclusive,
                                                   memory_order_release, memory_order_relaxed)) {}
 }
+
+#define JIT_BODY_OWNER_SLOTS (sizeof(g_body_owners) / sizeof(g_body_owners[0]))
+
+/* How far a slot search has to look.  INVARIANT: a slot whose `entry` is
+   non-NULL always has an index below g_body_owner_highwater.  It holds because
+   the only place that makes an `entry` non-NULL is jit_body_owner_set_for(),
+   which raises the highwater past that slot BEFORE the release store that
+   publishes the entry; because the highwater is otherwise monotonic; and
+   because the one place that lowers it, jit_body_owner_clear(), first NULLs
+   every slot below the old highwater -- hence every non-NULL slot -- and only
+   then resets it to 0.  jit_body_owner_drop_generation() only ever clears a
+   slot, which cannot violate the implication.
+
+   The search has two jobs and the bound is exact for BOTH:
+     - "which slot owns this generation?"  Such a slot has a non-NULL entry, so
+       it lies below the highwater and cannot be skipped.
+     - "which is the FIRST empty slot?"  If any slot below the highwater is
+       empty, the first one found is the same slot the full walk would return.
+       If none is, the answer is the first empty slot at or above the highwater,
+       which jit_body_owner_first_empty_from() resolves -- normally at the very
+       first index it looks at, since nothing there has ever been published.
+   So this bounds how far the search looks and never which slot it picks.
+
+   This is deliberately NOT gated on a launch option.  The unbounded walk ran
+   once per translation under jit_dispatch_lock() and was ~40% of cc1's retired
+   instruction stream, which left the default path balanced on whether the
+   compiler happened to inline it well; unrelated edits elsewhere in this unity
+   translation unit moved it by 13.6%.  Bounding it removes that cliff for
+   every build, not for opted-in ones.
+
+   All writers run under the dispatcher lock, so the load below cannot race a
+   publication in practice.  Even if it did, it is no weaker than the walk it
+   replaces: a reader that races a publisher either observes the raised
+   highwater or would equally have observed the not-yet-stored NULL entry. */
+static unsigned jit_body_owner_search_bound(void) {
+    unsigned highwater = atomic_load_explicit(&g_body_owner_highwater, memory_order_acquire);
+    return highwater > JIT_BODY_OWNER_SLOTS ? (unsigned)JIT_BODY_OWNER_SLOTS : highwater;
+}
+
+/* First slot at or above `from` with no published entry.  Above the highwater
+   this is `from` itself; the loop exists so the answer stays exactly the full
+   walk's answer even if the invariant above were ever broken by a later edit. */
+static jit_body_owner_set *jit_body_owner_first_empty_from(unsigned from) {
+    for (size_t i = from; i < JIT_BODY_OWNER_SLOTS; i++)
+        if (atomic_load_explicit(&g_body_owners[i].entry, memory_order_acquire) == NULL)
+            return &g_body_owners[i];
+    return NULL;
+}
+
+/* Occupancy index over g_body_owners (HL_X86_OWNER_INDEX, off by default).
+
+   jit_body_owner_set_for() answers "which slot owns this generation?" by
+   walking all JIT_BODY_OWNER_SLOTS entries, and a MISS costs the whole walk.
+   The shared dispatcher asks exactly that question once per translation, from
+   jit_cache_needs_rotation() -> jit_body_owner_needs_rotation(), before it
+   ever emits a byte -- so the per-translation cost of the walk is paid by
+   every guest block on every thread, under the dispatch mutex, and does not
+   depend on what is being translated.
+
+   The set of OCCUPIED slots, by contrast, is tiny: one per simultaneously
+   retained cache generation, which is one in the steady state and bounded by
+   the number of retired caches a flush may leave pinned.  Recording those slot
+   indices as they are published turns the query into a walk of the live
+   population instead of a walk of the capacity.
+
+   This is an occupancy index, not a cache: a slot is in g_body_owner_live if
+   and only if its `entry` has been published and not yet detached, so a lookup
+   that consults it sees exactly the slots the full walk would have accepted.
+   Every candidate is still re-validated against the slot's own released
+   `entry` and its `generation`, with the same acquire load the full walk uses,
+   so the index narrows WHICH slots are examined and never decides membership.
+   Maintenance happens at the three points that already mutate `entry`, under
+   the same lock/quiescence those mutations require, so the index is updated
+   in lockstep with the occupancy it describes.  It is maintained
+   unconditionally -- the launch option selects only whether lookups consult
+   it -- so arming the option cannot expose a half-built index. */
+static unsigned g_body_owner_live[STW_RETIRED_MAX + 1];
+static _Atomic unsigned g_body_owner_live_n;
+
+static int g_body_owner_index_state = -1;
+static int jit_body_owner_index_selected(void) {
+    if (g_body_owner_index_state < 0) g_body_owner_index_state = hl_option_flag_value("HL_X86_OWNER_INDEX", 0);
+    return g_body_owner_index_state;
+}
+
+/* Append a freshly published slot.  The index write precedes the release store
+   of the bound, mirroring jit_body_owner_set_for's publication of `entry`: a
+   reader that observes the new bound observes the index word behind it. */
+static void jit_body_owner_index_insert(unsigned slot) {
+    unsigned n = atomic_load_explicit(&g_body_owner_live_n, memory_order_relaxed);
+    if (n >= JIT_BODY_OWNER_SLOTS) return; /* cannot happen: one live slot per slot */
+    for (unsigned i = 0; i < n; i++)
+        if (g_body_owner_live[i] == slot) return;
+    g_body_owner_live[n] = slot;
+    atomic_store_explicit(&g_body_owner_live_n, n + 1u, memory_order_release);
+}
+
+/* Drop a detached slot.  Reached only from the quiescent writers that detach
+   `entry` itself (generation reclamation and the fork/teardown clear), so the
+   swap-with-last compaction cannot race a concurrent lookup. */
+static void jit_body_owner_index_remove(unsigned slot) {
+    unsigned n = atomic_load_explicit(&g_body_owner_live_n, memory_order_relaxed);
+    for (unsigned i = 0; i < n; i++) {
+        if (g_body_owner_live[i] != slot) continue;
+        g_body_owner_live[i] = g_body_owner_live[n - 1u];
+        atomic_store_explicit(&g_body_owner_live_n, n - 1u, memory_order_release);
+        return;
+    }
+}
+
+/* The index-narrowed form of the full walk's acceptance test. */
+static jit_body_owner_set *jit_body_owner_set_indexed(uint64_t generation) {
+    unsigned n = atomic_load_explicit(&g_body_owner_live_n, memory_order_acquire);
+    if (n > JIT_BODY_OWNER_SLOTS) n = JIT_BODY_OWNER_SLOTS;
+    for (unsigned i = 0; i < n; i++) {
+        unsigned slot = g_body_owner_live[i];
+        if (slot >= JIT_BODY_OWNER_SLOTS) continue;
+        jit_body_owner_entry *entries = atomic_load_explicit(&g_body_owners[slot].entry, memory_order_acquire);
+        if (entries != NULL && g_body_owners[slot].generation == generation) return &g_body_owners[slot];
+    }
+    return NULL;
+}
+
+/* First unpublished slot, in the same order the full walk would have chosen.
+   Allocation happens once per cache generation, never per translation, so this
+   walk is off the measured path and the index deliberately does not shortcut
+   it: keeping the identical choice keeps published slot identities stable. */
+static jit_body_owner_set *jit_body_owner_first_empty(void) {
+    unsigned bound = jit_body_owner_search_bound();
+    for (unsigned i = 0; i < bound; i++)
+        if (atomic_load_explicit(&g_body_owners[i].entry, memory_order_acquire) == NULL)
+            return &g_body_owners[i];
+    return jit_body_owner_first_empty_from(bound);
+}
 #if defined(HL_NATIVE_TEST_HOOKS)
 static _Atomic int g_body_owner_publish_pause;
 static _Atomic int g_body_owner_publish_slot;
@@ -2457,10 +2621,20 @@ static int g_perf_map_fresh_rollover_test_armed;
 
 static jit_body_owner_set *jit_body_owner_set_for(uint64_t generation, int create) {
     jit_body_owner_set *empty = NULL;
-    for (size_t i = 0; i < sizeof(g_body_owners) / sizeof(g_body_owners[0]); i++) {
-        jit_body_owner_entry *entries = atomic_load_explicit(&g_body_owners[i].entry, memory_order_acquire);
-        if (entries != NULL && g_body_owners[i].generation == generation) return &g_body_owners[i];
-        if (empty == NULL && entries == NULL) empty = &g_body_owners[i];
+    if (jit_body_owner_index_selected()) {
+        jit_body_owner_set *live = jit_body_owner_set_indexed(generation);
+        if (live != NULL) return live;
+        if (!create) return NULL;
+        empty = jit_body_owner_first_empty();
+    } else {
+        /* Bounded by the published highwater; see jit_body_owner_search_bound(). */
+        unsigned bound = jit_body_owner_search_bound();
+        for (unsigned i = 0; i < bound; i++) {
+            jit_body_owner_entry *entries = atomic_load_explicit(&g_body_owners[i].entry, memory_order_acquire);
+            if (entries != NULL && g_body_owners[i].generation == generation) return &g_body_owners[i];
+            if (empty == NULL && entries == NULL) empty = &g_body_owners[i];
+        }
+        if (empty == NULL && create) empty = jit_body_owner_first_empty_from(bound);
     }
     if (!create || empty == NULL) return NULL;
     // Keep the 16-byte search entry compact: one parallel 16-bit mask per range carries the complete
@@ -2491,6 +2665,7 @@ static jit_body_owner_set *jit_body_owner_set_for(uint64_t generation, int creat
 #endif
     jit_body_owner_highwater_publish((unsigned)(empty - g_body_owners) + 1u);
     atomic_store_explicit(&empty->entry, entries, memory_order_release);
+    jit_body_owner_index_insert((unsigned)(empty - g_body_owners));
     return empty;
 }
 
@@ -2701,6 +2876,7 @@ static void jit_body_owner_drop_generation(uint64_t generation) {
         g_body_owners[i].rw = NULL;
         g_body_owners[i].rw2rx = 0;
         atomic_store_explicit(&g_body_owners[i].count, 0, memory_order_relaxed);
+        jit_body_owner_index_remove((unsigned)i);
         return;
     }
 }
@@ -2731,6 +2907,7 @@ static void jit_body_owner_clear(void) {
         atomic_store_explicit(&g_body_owners[i].count, 0, memory_order_relaxed);
     }
     atomic_store_explicit(&g_body_owner_highwater, 0, memory_order_release);
+    atomic_store_explicit(&g_body_owner_live_n, 0, memory_order_release);
 }
 
 static void jit_body_owner_after_fork(int preserve) {
@@ -3382,6 +3559,14 @@ static int jit_flush_to_fresh(int retain_map_generations) {
     translit_external_absolute_generation_reset();
     if (!retain_generations) map_clear();
     if (!retain_generations) memset(g_ibtc, 0, sizeof g_ibtc);
+    /* The x86 backend's 2-way IBTC holds RX pointers INTO the arena we have just retired. The map and
+       the shared g_ibtc are dropped above, but this table is a frontend global the shared flush could
+       not see, so it was never cleared here -- harmless only for as long as G_IBTC_FILL refused to
+       fill under threads, which made the table provably empty for the whole threaded lifetime. Once
+       HL_X86_MT_IBTC fills it, a surviving entry would outlive reclaim_retired()'s cache_unmap() of
+       that generation and send an emitted `br` into unmapped VA. Every caller of this function has
+       peers parked at a dispatcher safepoint, so the clear is not racing a probe. No-op on aarch64. */
+    G_ACTIVATION_CLEAR_GLOBAL();
     pend_reset();
 #ifdef G_PENDING_RESET
     G_PENDING_RESET(HL_PENDING_RESET_CACHE);

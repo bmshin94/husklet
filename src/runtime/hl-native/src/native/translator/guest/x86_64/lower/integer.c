@@ -5,6 +5,7 @@
 #include "../glue.h"
 #include "../cpu.h"
 #include "../encoding.h"
+#include "../../../../engine/options.h"
 
 #include <string.h>
 
@@ -35,8 +36,74 @@ void byte_wb(struct insn *I, int regnum, int val) {
 // helpers in translate/<class>.c (#included above translate_block) can defer a rare unhandled form.
 void report_unimpl(uint64_t pc, struct insn *I);
 
+/* HL_X86_RMLOAD_FOLD: let a memory r/m operand take the same folded
+   [base+#imm] load hl_x86_address_load already uses for `mov reg,[mem]`.
+   Launch-scoped and read once; unset keeps the unconditional emit_ea form. */
+static int g_rmload_fold_cached = -1;
+
+static int rmload_fold_enabled(void) {
+    if (g_rmload_fold_cached < 0) g_rmload_fold_cached = hl_option_flag_value("HL_X86_RMLOAD_FOLD", 0);
+    return g_rmload_fold_cached;
+}
+
+#if defined(HL_NATIVE_TEST_HOOKS)
+/* The launch flag is read once per process, so an in-process fixture that has to
+   emit BOTH the folded and the unfolded shape cannot reach it through the option
+   store: by the time the fixture runs, the first lowering has already cached it.
+   Drive the cache directly instead; -1 restores the launch-scoped answer. */
+void hl_x86_rmload_fold_test_set(int enabled) {
+    g_rmload_fold_cached = enabled;
+}
+#endif
+
+/* A folded rm_load addresses [base,#imm] directly and therefore does NOT leave
+   the effective address in x17.  Most callers only consume the loaded value, but
+   the read-modify-write ones (rm_store, lock_rmw, the group-4/5 LOCK INC/DEC
+   atomic, the zero-count RCL/RCR and SHLD/SHRD stores) do address [x17]
+   afterwards.  Those call emit_rm_fold_address(), which materializes exactly the
+   sequence the unfolded path would have emitted -- the EA and its guard, minus
+   the load -- so the write half is byte-for-byte what it was before.  The fold
+   conditions (base only, no index, no segment, no rip-relative, no addr32, no
+   non-PIE bias, |disp| <= 0xFFF*width) make that emit_ea a single base+immediate
+   form, so it cannot clobber x16 and may safely run after the value is live. */
+static struct insn *g_rm_fold_insn;
+static uint64_t g_rm_fold_next;
+static int g_rm_fold_width;
+
+void emit_rm_fold_discard(void) {
+    g_rm_fold_insn = NULL;
+}
+
+void emit_rm_fold_address(void) {
+    struct insn *I = g_rm_fold_insn;
+    if (I == NULL) return;
+    g_rm_fold_insn = NULL;
+    emit_ea(I, g_rm_fold_next);
+    emit_bus_guard(17, (uint64_t)g_rm_fold_width, g_rm_fold_next - (uint64_t)I->len);
+}
+
 int rm_load(struct insn *I, uint64_t next, int w, int *mem) {
     if (I->is_mem) {
+        int fold_base, fold_offset;
+        g_x86_mech_rmload_mem++;
+        int fold = ea_imm_fold(I, w, &fold_base, &fold_offset);
+        if (fold) g_x86_mech_rmload_foldable++;
+        /* emit_soft_memory_active() is the condition the folded store path in
+           mov.c applies too: a soft mapping translates the address and the
+           executable-alias observer needs it in a register, so neither can fold.
+           ea_imm_fold itself already refuses while a BUS range is armed. */
+        if (fold && rmload_fold_enabled() && !emit_soft_memory_active()) {
+            g_x86_mech_rmload_folded++;
+            if (fold == 1)
+                e_load_uoff(w, 16, fold_base, (unsigned)fold_offset);
+            else
+                e_ldur(w, 16, fold_base, fold_offset);
+            g_rm_fold_insn = I;
+            g_rm_fold_next = next;
+            g_rm_fold_width = w;
+            *mem = 1;
+            return 16;
+        }
         emit_ea(I, next);
         emit_bus_guard(17, (uint64_t)w, next - (uint64_t)I->len);
         e_load(w, 16, 17);
@@ -63,6 +130,7 @@ void rm_store(struct insn *I, int w, int val) { // val -> r/m (EA already in x17
             e_mov_rr(19, 16, 1); /* host-call guard clobbers x16 */
             val = 19;
         }
+        emit_rm_fold_address(); /* a folded rm_load left no EA in x17 */
         if (emit_soft_memory_active())
             emit_memory_guard(17, (uint64_t)w, g_emit_gpc, X86_SOFT_WRITE);
         else
@@ -110,9 +178,10 @@ void emit_rcl_rcr(struct insn *I, uint64_t next, int w, int rcr, int cnt_raw) {
     int mem;
     int raw = rm_load(I, next, w, &mem);
     if (ec == 0) { // a 0-count rotate is a no-op and affects no flags
-        if (mem)
+        if (mem) {
+            emit_rm_fold_address(); /* a folded rm_load left no EA in x17 */
             e_store(w, raw, 17);
-        else if (w == 4)
+        } else if (w == 4)
             e_mov_rr(raw, raw, 0); // 32-bit register dest: value unchanged but bits 63:32 must be zeroed
         return;
     }
@@ -657,6 +726,7 @@ int lock_rmw(int k, int w, int rs) {
         break; // and: clear ~v
     default: return 0;
     }
+    emit_rm_fold_address();     /* a folded rm_load left no EA in x17 */
     e_lse(lse, w, rsu, 19, 17); // x19 = old; [x17] op= rsu  (acquire-release)
     do_alu(k, -1, 19, rs, w);   // x86 flags from (old OP original-operand)
     return 1;
@@ -685,6 +755,7 @@ void hl_x86_integer_prepare_flags(const struct insn *instruction, uint64_t guest
 
     g_pfaf_dead = 0;
     if (!pfaf_elim_on() || !insn_writes_pfaf(instruction)) return;
+    g_x86_mech_pfaf_attempt++;
     struct insn following;
     if (hl_x86_decode(next, &following) < 0) memset(&following, 0, sizeof following);
     g_pfaf_dead = insn_kills_pfaf(&following);
@@ -692,4 +763,5 @@ void hl_x86_integer_prepare_flags(const struct insn *instruction, uint64_t guest
         g_pfaf_dead = hl_x86_trace_pfaf_dead(trace_state, &following, next, guest_pc);
     if (!g_pfaf_dead && trace_state->flag_elision)
         g_pfaf_dead = !(hl_x86_trace_flags_livein(trace_state, next, guest_pc) & (HL_X86_FLAG_PF | HL_X86_FLAG_AF));
+    if (g_pfaf_dead) g_x86_mech_pfaf_dead++;
 }

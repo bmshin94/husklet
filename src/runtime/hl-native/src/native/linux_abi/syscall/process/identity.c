@@ -389,6 +389,11 @@ static int svc_proc_94(struct cpu *c, uint64_t nr, uint64_t a0, uint64_t a1, uin
                 (void)hl_linux_write(g_linux_box, STDERR_FILENO, boundary, bounded);
             }
         }
+#ifdef G_XLAT_CENSUS_EPOCH
+        /* One-shot exit never unwinds to the launcher, so the census epoch closes here too. Outside any
+           cache gate: a cache-OFF baseline must be measured by the same instrument as a cache-ON run. */
+        G_XLAT_CENSUS_EPOCH("exit_group");
+#endif
 #ifdef PCACHE_SAVE_HOOK
         PCACHE_SAVE_HOOK; // persist the translated arena before one-shot exit when HL_PCACHE is active
 #endif

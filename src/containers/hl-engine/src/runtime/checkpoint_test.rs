@@ -413,7 +413,7 @@ fn translated_envelope_routes_the_current_reader() {
 #[test]
 fn native_x86_v1_is_recognized_as_unsupported_before_restore_mutates() {
     let store = Arc::new(EnvelopeGeneration::new(
-        super::image_envelope::Reader::NativeX86V1.encode().to_vec(),
+        super::image_envelope::Reader::NativeX86.encode().to_vec(),
     ));
     let server = Server::new(store.clone(), store.clone());
 

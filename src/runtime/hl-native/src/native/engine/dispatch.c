@@ -238,6 +238,10 @@ static void block_return(void) {
 #define G_TRANSLATE_BLOCK(context, pc) translate_block(pc)
 #define G_RUN_BLOCK(context, cpu, code) run_block(cpu, code)
 #endif
+#ifndef G_TRANSLATE_CENSUS
+// Cross-process translation census (default: absent; guest/x86_64/cache.c defines it when built).
+#define G_TRANSLATE_CENSUS(pc) ((void)0)
+#endif
 #ifndef G_MAP_HOST_CACHE
 #define G_MAP_HOST_CACHE NULL
 #define G_MAP_HOST(cache, pc) ((void)(cache), map_host(pc))
@@ -464,6 +468,7 @@ static void run_guest(struct cpu *c) {
                 while ((uintptr_t)g_cp & 15)
                     emit32(0xD503201Fu); // nop
             g_emit_start = g_cp;
+            G_TRANSLATE_CENSUS(G_PC(c));
             code = G_TRANSLATE_BLOCK(hot_context, G_PC(c));
             hl_dispatch_profile_translation(&g_dispatch_profile);
             // new block coherent on all cores FIRST (icache is on the RX alias under dual map)

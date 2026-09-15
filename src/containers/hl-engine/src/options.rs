@@ -87,6 +87,21 @@ const DEFINITIONS: &[Definition] = &[
     launch!("HL_CPUS", "guest-visible CPU quota", Integer),
     launch!("HL_CWD", "initial guest working directory", Path),
     launch!("HL_EGRESS_SOCKS", "SOCKS5 endpoint for external TCP egress", Text),
+    launch!(
+        "HL_CALL_SIM_DIAG_ONLY",
+        "maintain the call-simulation shadow table only while diagnostics can read it",
+        Flag
+    ),
+    launch!(
+        "HL_EXEC_IBTC_LAZY",
+        "leave the indirect-branch cache lazily cleared across guest exec",
+        Flag
+    ),
+    launch!(
+        "HL_EXEC_CENSUS_LAZY",
+        "clear only the used prefix of the persistent-cache execution census across guest exec",
+        Flag
+    ),
     launch!("HL_FSGEN_FILE", "shared overlay filesystem-generation file", Path),
     launch!("HL_FILE_OWNERS", "initial guest file ownership records", Records),
     launch!("HL_FILE_NAMES", "encoded snapshot name projection records", Records),
@@ -188,6 +203,41 @@ const DEFINITIONS: &[Definition] = &[
         Flag
     ),
     launch!(
+        "HL_X86_EXIT_THUNK",
+        "route unresolved constant-rip x86 block exits through one shared per-arena thunk",
+        Flag
+    ),
+    launch!(
+        "HL_X86_PROLOGUE_THUNK",
+        "route the x86 region prologue through one shared per-arena trampoline",
+        Flag
+    ),
+    launch!(
+        "HL_X86_BUS_THUNK",
+        "route the x86 guest BUS memory-guard slow path through one shared per-arena thunk",
+        Flag
+    ),
+    launch!(
+        "HL_X86_MT_CHAIN",
+        "chain direct x86 block edges while a peer guest thread is live",
+        Flag
+    ),
+    launch!(
+        "HL_X86_MT_IBTC",
+        "fill the x86 indirect-branch target cache while a peer guest thread is live",
+        Flag
+    ),
+    launch!(
+        "HL_X86_IBTC8",
+        "fill the x86 indirect-branch target cache under threads through an 8-byte entry re-validated from a per-body header, with no FEAT_LSE2 dependency",
+        Flag
+    ),
+    launch!(
+        "HL_TRANSLIT_JCC_SELF_LINK",
+        "link a same-ISA descriptor's own backward JCC edge straight to its entry",
+        Flag
+    ),
+    launch!(
         "HL_TRANSLIT_JCC_IBTC_DISABLE",
         "disable unresolved constant-JCC late linking through the same-ISA IBTC",
         Flag
@@ -195,6 +245,36 @@ const DEFINITIONS: &[Definition] = &[
     launch!(
         "HL_A64_X86_JCC_LINK",
         "enable experimental direct conditional edges for AArch64 guests on x86-64",
+        Flag
+    ),
+    launch!(
+        "HL_X86_EA_RECORD_ELIDE",
+        "elide the x86 guest effective-address snapshot where no fault path can read it",
+        Flag
+    ),
+    launch!(
+        "HL_X86_RMLOAD_FOLD",
+        "fold [base+displacement] x86 r/m memory loads into one addressing-mode load",
+        Flag
+    ),
+    launch!(
+        "HL_X86_DECODE_THREAD_AUTHORITY",
+        "admit byte-authorized decode-memo hits on the thread-local decode path instead of re-reading and comparing the guest bytes on every hit",
+        Flag
+    ),
+    launch!(
+        "HL_X86_GNA_PAGE_CACHE",
+        "answer the guest PROT_NONE prefix query from a per-thread clean-page cache instead of walking the whole ledger",
+        Flag
+    ),
+    launch!(
+        "HL_X86_BUS_RANGE_COALESCE",
+        "merge abutting guest PROT_NONE / read-only / non-executable intervals on insert instead of keeping every mmap-sized fragment separate",
+        Flag
+    ),
+    launch!(
+        "HL_X86_OWNER_INDEX",
+        "resolve the x86 body-owner generation slot through an occupancy index instead of a full table walk",
         Flag
     ),
     launch!(
@@ -310,6 +390,11 @@ const DEFINITIONS: &[Definition] = &[
         "run a Linux x86-64 guest natively under syscall supervision",
         Flag
     ),
+    launch!(
+        "HL_NATIVE_SUPERVISED_PANE",
+        "widen the supervised terminal ioctl surface and project a devpts for pty-spawning guests",
+        Flag
+    ),
     launch!("HL_UID", "initial guest user identity", Integer),
     launch!("HL_ULIMITS", "serialized Linux resource limits", Records),
     launch!(
@@ -373,10 +458,30 @@ const DEFINITIONS: &[Definition] = &[
         "test-only occupy the reusable fixed-image address",
         Flag
     ),
+    launch!(
+        "HL_PCACHE_LIBS",
+        "persist translations of content-keyed guest library mappings",
+        Flag
+    ),
+    launch!(
+        "HL_PCACHE_LINK_IMAGE",
+        "treat a non-PIE image at its deterministic link address as cache-revivable",
+        Flag
+    ),
+    launch!(
+        "HL_PCACHE_CONVERGE",
+        "let a warm run re-publish the cache within bounded growth",
+        Flag
+    ),
     internal!(
         "HL_PCACHE_OBSERVE",
         "emit structured persistent-cache diagnostics",
         Flag
+    ),
+    internal!(
+        "HL_XLAT_CENSUS",
+        "append a cross-process translation-provenance census to a path",
+        Path
     ),
     internal!(
         "HL_PCACHE_EXEC_AUTHORITY",
@@ -401,6 +506,11 @@ const DEFINITIONS: &[Definition] = &[
     launch!(
         "HL_TRANSLIT_RIPREL_LOAD_BRIDGE",
         "control default-off natural RIP-relative register-load lowering",
+        Flag
+    ),
+    internal!(
+        "HL_HOST_ASSUME_NO_LSE2",
+        "test-only host reported as lacking single-copy-atomic 16-byte pair access",
         Flag
     ),
     debug!("HL_LOG", "debug-build logging tag selector", Text),

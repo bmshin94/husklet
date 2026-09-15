@@ -160,6 +160,11 @@ static uint64_t translit_jcc_fall_admitted;
 static uint64_t translit_jcc_fall_page_refused;
 static uint64_t translit_jcc_fall_successor_page_refused;
 static uint64_t translit_jcc_fall_decode_refused;
+/* Admitted immutable JCC links.  This lived in the hooks-only block below, so every hooks-free [prof]
+   line printed a compile-time zero for it and an operator could not tell "never eligible" from "never
+   compiled in".  One relaxed add per admitted link at translation time: production pays nothing a
+   translation-rate counter does not already pay. */
+static _Atomic uint64_t translit_jcc_link_admitted;
 /* Translation-construction receipt. Updated only when diagnostics are enabled, so ordinary launches
    pay no atomic cost. `decode_results` counts loop iterations receiving a decoded result; before the
    successor lookahead, every admitted stitch made `decode_calls - decode_results` grow by one. */
@@ -185,7 +190,6 @@ static _Thread_local uint64_t translit_test_decode_results;
 static _Thread_local uint64_t translit_test_decode_successor_probes;
 static _Thread_local uint64_t translit_test_decode_lookahead_consumed;
 static uint64_t translit_jcc_fall_executed;
-static _Atomic uint64_t translit_jcc_link_admitted;
 static _Atomic uint64_t translit_jcc_live_forward_admitted;
 static _Atomic uint64_t translit_jcc_link_taken;
 static _Atomic uint64_t translit_jcc_link_irq_fallback;
@@ -491,6 +495,27 @@ static uint64_t translit_pcache_census_count[UINT16_MAX];
 static uint64_t translit_pcache_census_order[UINT16_MAX];
 static uint64_t translit_pcache_census_sequence;
 static uint16_t translit_pcache_census_next;
+/* High-water mark over every ordinal this process has ever handed out, and it never decreases while
+   any entry can still be dirty.  Only indices below it can be non-zero: an ordinal is only ever
+   produced by translit_pcache_census_next++ (interp/execution.c), so every write -- from the C
+   observer in run_block and from the emitted atomic increment in translit_emit_pcache_census alike --
+   lands strictly below the value next had reached, hence strictly below the high-water mark.  Clearing
+   [0, high_water) therefore leaves the arrays bit-identical to clearing all 2 x 512 KiB, including
+   across generations: the mark is not reset by a generation boundary, so a block that survives a
+   rewind and increments with a stale ordinal is still covered.  See translit_pcache_census_lazy_selected(). */
+static uint32_t translit_pcache_census_high_water;
+/* The census is a launch diagnostic: ordinals are only handed out when g_pcache && g_coldprof
+   (engine/target/x86_64.c sets g_coldprof from HL_PCACHE_OBSERVE) and the only reader,
+   pcache_save(), is itself behind g_pcache_loaded && g_coldprof.  With the diagnostic off the
+   high-water mark stays 0 and the reset becomes free -- which is the whole point: the unconditional
+   pair of 512 KiB memsets ran on EVERY guest exec and re-faulted 256 pages of arrays the new image
+   had not indexed one entry of.  Measured at 255 faults/process of the post-IBTC remainder. */
+static int g_pcache_census_lazy_state = -1;
+static int translit_pcache_census_lazy_selected(void) {
+    if (g_pcache_census_lazy_state < 0)
+        g_pcache_census_lazy_state = hl_option_flag_value("HL_EXEC_CENSUS_LAZY", 0);
+    return g_pcache_census_lazy_state;
+}
 /* Observation remains latched across launch-only exec so the final cache outcome is still reported.
  * Count any census site emitted after persistence authority was withdrawn: this is production-observable
  * evidence that observation did not accidentally keep its per-block instrumentation alive. */
@@ -522,8 +547,16 @@ static void translit_external_absolute_generation_reset(void) {
     translit_chain_site_overflow = 0;
     translit_pcache_census_next = 0;
     translit_pcache_census_sequence = 0;
-    memset(translit_pcache_census_count, 0, sizeof translit_pcache_census_count);
-    memset(translit_pcache_census_order, 0, sizeof translit_pcache_census_order);
+    if (translit_pcache_census_lazy_selected()) {
+        size_t dirty = (size_t)translit_pcache_census_high_water * sizeof(uint64_t);
+        if (dirty != 0) {
+            memset(translit_pcache_census_count, 0, dirty);
+            memset(translit_pcache_census_order, 0, dirty);
+        }
+    } else {
+        memset(translit_pcache_census_count, 0, sizeof translit_pcache_census_count);
+        memset(translit_pcache_census_order, 0, sizeof translit_pcache_census_order);
+    }
 #if defined(HL_NATIVE_TEST_HOOKS)
     translit_test_dropped_external_absolute = 0;
 #endif
@@ -899,7 +932,7 @@ typedef struct translit_profile_execution_options {
 static translit_profile_execution_options translit_profile_options;
 typedef struct translit_hot_execution_options {
     uint8_t jcc_ibtc_disabled, jcc_link_disabled, direct_jmp_ibtc_disabled, mixed_sse_disabled,
-        mulss_disabled;
+        mulss_disabled, jcc_self_link_enabled;
 } translit_hot_execution_options;
 static translit_hot_execution_options translit_hot_options;
 
@@ -914,6 +947,8 @@ static void translit_profile_options_refresh(void) {
         (uint8_t)hl_option_flag_value("HL_TRANSLIT_JCC_IBTC_DISABLE", 0);
     translit_hot_options.jcc_link_disabled =
         (uint8_t)hl_option_flag_value("HL_TRANSLIT_JCC_LINK_DISABLE", 0);
+    translit_hot_options.jcc_self_link_enabled =
+        (uint8_t)hl_option_flag_value("HL_TRANSLIT_JCC_SELF_LINK", 0);
     translit_hot_options.direct_jmp_ibtc_disabled =
         (uint8_t)hl_option_flag_value("HL_TRANSLIT_DIRECT_JMP_IBTC_DISABLE", 0);
     translit_hot_options.mixed_sse_disabled =
@@ -935,6 +970,10 @@ static int translit_jcc_ibtc_disabled(void) {
 
 static int translit_jcc_link_disabled(void) {
     return translit_hot_options.jcc_link_disabled;
+}
+
+static int translit_jcc_self_link_enabled(void) {
+    return translit_hot_options.jcc_self_link_enabled;
 }
 
 static int translit_direct_jmp_ibtc_disabled(void) {
@@ -2053,6 +2092,20 @@ static struct interp_block *translit_jcc_link_target(uint64_t source, uint64_t t
     return target_block;
 }
 
+// The descriptor under construction is its own most valuable link target and the one target map_host can
+// never answer for: translate_block calls map_put only after translit_build returns, so a loop whose back
+// edge returns to its own entry is invisible to translit_jcc_link_target at the only moment the terminal
+// is emitted, and the block is never rebuilt.  Nothing else changes.  The edge stays strictly backward, so
+// it keeps the full spill/irq-poll/reload shape and remains a bounded STW/checkpoint boundary; the target's
+// guest bytes are inside this descriptor's own [gpc, guest_end) hull, so the baked host address cannot
+// outlive the invalidation that removes it; and the entry address is already known, so no back-patching,
+// no pending-edge list and no mutation of published code is involved.
+static uint8_t *translit_jcc_self_link_entry(uint64_t gpc, uint8_t *start, uint64_t source, uint64_t target) {
+    if (!translit_jcc_self_link_enabled() || target != gpc || target >= source) return NULL;
+    if ((target & ~UINT64_C(0xfff)) != (source & ~UINT64_C(0xfff))) return NULL;
+    return start;
+}
+
 /* Classify at source publication, before map_put makes this source visible.  The stored first refusal is
    immutable: run_block must never repeat map_host and accidentally credit a target published later. */
 static uint8_t translit_would_link_classify(struct interp_block *source_block, const uint8_t *source_start,
@@ -2160,7 +2213,7 @@ static void translit_jcc_link_own_page(uint64_t source, uint64_t *lo, uint64_t *
 // returns through the ordinary dispatcher boundary. The clear path reloads the exact image and jumps to
 // an already-published block; cpu->rip is deliberately NOT changed on that path, so a signal/fault uses
 // the target code's instruction provenance rather than a premature architectural store.
-static void translit_emit_jcc_link(hl_x64_asm *a, struct interp_block *target_block, uint64_t source,
+static void translit_emit_jcc_link(hl_x64_asm *a, uint8_t *target_entry, uint64_t source,
                                    uint64_t target) {
     /* x86 has no flag-neutral conditional branch and no spare register here: all sixteen GPRs, RSP and
        EFLAGS are guest state.  That makes the ordinary irq poll require the full spill/reload below.
@@ -2168,8 +2221,9 @@ static void translit_emit_jcc_link(hl_x64_asm *a, struct interp_block *target_bl
        architectural image live exactly as the aarch64 frontend does: a bare JMP preserves every guest
        register and flag, and the first backward/cross-page/dispatcher edge remains the bounded irq/STW/
        checkpoint boundary.  The target was already restricted to the source page and current immutable
-       generation by translit_jcc_link_target(); fault/signal capture reconstructs live state from the
-       host ucontext and the target body's provenance map.
+       generation by translit_jcc_link_target(), or is this descriptor's own entry admitted by
+       translit_jcc_self_link_entry(); fault/signal capture reconstructs live state from the host
+       ucontext and the target body's provenance map.
 
        Persistent-cache metadata still needs a dispatcher fallback it can select if the saved target is
        unavailable after restore.  Emit that cold stub after the non-fallthrough JMP; it costs code bytes,
@@ -2179,7 +2233,7 @@ static void translit_emit_jcc_link(hl_x64_asm *a, struct interp_block *target_bl
             HL_BACKEND_X86_JCC_ROUTE_KNOWN_TAKEN);
         if (known_taken != 0) hl_x64_atomic_inc_abs(a, known_taken);
         uint8_t *chain = a->cursor;
-        hl_x64_jmp_rel32(a, (uint8_t *)target_block + target_block->host_entry_off);
+        hl_x64_jmp_rel32(a, target_entry);
         if (__builtin_expect(g_pcache, 0)) {
             uint8_t *fallback = a->cursor;
             translit_emit_exit_const(a, target, R_BRANCH);
@@ -2203,7 +2257,7 @@ static void translit_emit_jcc_link(hl_x64_asm *a, struct interp_block *target_bl
     if (known_taken != 0) hl_x64_atomic_inc_abs(a, known_taken);
     translit_emit_reload(a);
     uint8_t *chain = a->cursor;
-    hl_x64_jmp_rel32(a, (uint8_t *)target_block + target_block->host_entry_off);
+    hl_x64_jmp_rel32(a, target_entry);
     if (__builtin_expect(g_pcache, 0)) {
         /* The direct site follows reload, while the IRQ arm still owns the
            spilled image. Give persistence a distinct live-state fallback;
@@ -2233,7 +2287,8 @@ static int translit_jcc_live_forward_shape_test(void) {
     int saved_pcache = g_pcache;
     g_pcache = 0;
     uint64_t before = __atomic_load_n(&translit_jcc_live_forward_admitted, __ATOMIC_RELAXED);
-    translit_emit_jcc_link(&output, target_block, UINT64_C(0x1100), UINT64_C(0x1200));
+    translit_emit_jcc_link(&output, (uint8_t *)target_block + target_block->host_entry_off,
+                           UINT64_C(0x1100), UINT64_C(0x1200));
     g_pcache = saved_pcache;
     if (output.overflow || output.cursor != emitted + 5 || emitted[0] != 0xe9 ||
         __atomic_load_n(&translit_jcc_live_forward_admitted, __ATOMIC_RELAXED) != before + 1)
@@ -2244,7 +2299,8 @@ static int translit_jcc_live_forward_shape_test(void) {
 
     memset(emitted, 0, 512);
     output = (hl_x64_asm){emitted, emitted + 512, 0};
-    translit_emit_jcc_link(&output, target_block, UINT64_C(0x1200), UINT64_C(0x1100));
+    translit_emit_jcc_link(&output, (uint8_t *)target_block + target_block->host_entry_off,
+                           UINT64_C(0x1200), UINT64_C(0x1100));
     return !output.overflow && output.cursor > emitted + 5 && emitted[0] != 0xe9;
 }
 #endif
@@ -2367,10 +2423,27 @@ static void translit_call_sim_probe(uint64_t target) {
     translit_call_sim_pending = target;
 }
 
+/* The call-simulation shadow is 12 MiB (8 MiB of entries + 4 MiB of generations) whose ONLY reader is
+   translit_call_sim_probe(), and that probe is reached from exactly one site (interp.c, the translated
+   completion seam) which sits inside `if (g_prof)`.  Nothing else in the engine loads either array --
+   they feed hl_backend_tree_call_sim_count()'s hit/miss ratio and nothing more.  So with diagnostics
+   off the publication below is a store into a table no code can observe, and it is not free: the index
+   is a hash of the guest target, so a run scatters writes across the whole 12 MiB and faults in 342
+   pages per process.  HL_CALL_SIM_DIAG_ONLY keeps the shadow only while the reader can run.  The FILL
+   counter stays unconditional -- g_backend_mixed_sse, not g_prof, decides whether it is observable. */
+static int g_call_sim_diag_only_state = -1;
+static int translit_call_sim_diag_only_selected(void) {
+    if (g_call_sim_diag_only_state < 0)
+        g_call_sim_diag_only_state = hl_option_flag_value("HL_CALL_SIM_DIAG_ONLY", 0);
+    return g_call_sim_diag_only_state;
+}
+
 static void translit_call_sim_publish(uint64_t target, void *body, int call_publication) {
-    size_t index = ibtc_index(target);
-    ibtc_publish(&translit_call_sim_ibtc[index], target, body);
-    atomic_store_explicit(&translit_call_sim_generation[index], g_cache_gen, memory_order_release);
+    if (!translit_call_sim_diag_only_selected() || g_prof) {
+        size_t index = ibtc_index(target);
+        ibtc_publish(&translit_call_sim_ibtc[index], target, body);
+        atomic_store_explicit(&translit_call_sim_generation[index], g_cache_gen, memory_order_release);
+    }
     if (call_publication) hl_backend_tree_call_sim_count(HL_BACKEND_CALL_SIM_FILL);
 }
 #endif
@@ -6323,14 +6396,21 @@ static void *translit_build(hl_x86_hot_context *context, struct interp_block *bl
                 } else {
                     uint64_t target = next + (uint64_t)insn.imm;
                     struct interp_block *target_block = translit_jcc_link_target(pc, target);
+                    uint8_t *link_entry =
+                        target_block != NULL
+                            ? (uint8_t *)target_block + target_block->host_entry_off
+                            : translit_jcc_self_link_entry(gpc, start, pc, target);
                     uint8_t *fall = hl_x64_jcc_rel32(a, translit_condition(&insn) ^ 1);
                     translit_mixed_profile_terminal(a, mixed_sse_transition_count, 0,
                                                      HL_BACKEND_SHAPE_T_COND_TAKEN);
                     translit_shape_exit(a, HL_BACKEND_SHAPE_T_COND_TAKEN, (unsigned)direct_jmp_stitched,
                                         (unsigned)jcc_fall_stitched, source_page_delta);
-                    if (target_block != NULL) {
-                        translit_emit_jcc_link(a, target_block, pc, target);
-                        translit_jcc_link_own_page(pc, &linked_page_lo, &linked_page_hi);
+                    if (link_entry != NULL) {
+                        translit_emit_jcc_link(a, link_entry, pc, target);
+                        // A self link's target is already inside [gpc, guest_end); only a foreign target
+                        // needs this descriptor to own the whole source page.
+                        if (target_block != NULL)
+                            translit_jcc_link_own_page(pc, &linked_page_lo, &linked_page_hi);
                         jcc_link_admitted++;
                     } else if (translit_jcc_ibtc_candidate(pc, target)) {
                         ibtc_site = translit_emit_jcc_ibtc(a, block, pc, target);
@@ -6470,6 +6550,9 @@ static void *translit_build(hl_x86_hot_context *context, struct interp_block *bl
         case TL_JCC: {
             uint64_t target = next + (uint64_t)insn.imm;
             struct interp_block *target_block = translit_jcc_link_target(pc, target);
+            uint8_t *link_entry = target_block != NULL
+                                      ? (uint8_t *)target_block + target_block->host_entry_off
+                                      : translit_jcc_self_link_entry(gpc, start, pc, target);
             uint8_t *taken = hl_x64_jcc_rel32(a, translit_condition(&insn));
             translit_mixed_profile_terminal(a, mixed_sse_transition_count, 0,
                                              HL_BACKEND_SHAPE_T_COND_NOT_TAKEN);
@@ -6481,9 +6564,12 @@ static void *translit_build(hl_x86_hot_context *context, struct interp_block *bl
                                              HL_BACKEND_SHAPE_T_COND_TAKEN);
             translit_shape_exit(a, HL_BACKEND_SHAPE_T_COND_TAKEN, (unsigned)direct_jmp_stitched,
                                 (unsigned)jcc_fall_stitched, source_page_delta);
-            if (target_block != NULL) {
-                translit_emit_jcc_link(a, target_block, pc, target);
-                translit_jcc_link_own_page(pc, &linked_page_lo, &linked_page_hi);
+            if (link_entry != NULL) {
+                translit_emit_jcc_link(a, link_entry, pc, target);
+                // A self link's target is already inside [gpc, guest_end); only a foreign target needs
+                // this descriptor to own the whole source page.
+                if (target_block != NULL)
+                    translit_jcc_link_own_page(pc, &linked_page_lo, &linked_page_hi);
                 jcc_link_admitted++;
             } else if (translit_jcc_ibtc_candidate(pc, target)) {
                 ibtc_site = translit_emit_jcc_ibtc(a, block, pc, target);
@@ -6937,7 +7023,7 @@ static void *translit_build(hl_x86_hot_context *context, struct interp_block *bl
             (void)__atomic_fetch_add(&translit_fs_fixture_admitted, 1, __ATOMIC_RELAXED);
     }
 #else
-    (void)jcc_link_admitted;
+    (void)__atomic_fetch_add(&translit_jcc_link_admitted, jcc_link_admitted, __ATOMIC_RELAXED);
 #endif
     if (fs_load_bridged)
         (void)__atomic_fetch_add(&translit_fs_load_bridge_admitted, 1, __ATOMIC_RELAXED);
@@ -11463,15 +11549,15 @@ static int translit_report(char *out, size_t size) {
         __atomic_load_n(&translit_decode_successor_probes, __ATOMIC_RELAXED);
     uint64_t decode_lookahead_consumed =
         __atomic_load_n(&translit_decode_lookahead_consumed, __ATOMIC_RELAXED);
+    uint64_t jcc_link_admitted = __atomic_load_n(&translit_jcc_link_admitted, __ATOMIC_RELAXED);
 #if defined(HL_NATIVE_TEST_HOOKS)
     uint64_t jcc_fall_executed = __atomic_load_n(&translit_jcc_fall_executed, __ATOMIC_RELAXED);
-    uint64_t jcc_link_admitted = __atomic_load_n(&translit_jcc_link_admitted, __ATOMIC_RELAXED);
     uint64_t jcc_link_taken = __atomic_load_n(&translit_jcc_link_taken, __ATOMIC_RELAXED);
     uint64_t jcc_link_irq_fallback = __atomic_load_n(&translit_jcc_link_irq_fallback, __ATOMIC_RELAXED);
     uint64_t jcc_link_dispatcher = __atomic_load_n(&translit_jcc_link_dispatcher, __ATOMIC_RELAXED);
 #else
     uint64_t jcc_fall_executed = 0;
-    uint64_t jcc_link_admitted = 0, jcc_link_taken = 0, jcc_link_irq_fallback = 0, jcc_link_dispatcher = 0;
+    uint64_t jcc_link_taken = 0, jcc_link_irq_fallback = 0, jcc_link_dispatcher = 0;
 #endif
     uint64_t rip_indirect_lowered = __atomic_load_n(&translit_rip_indirect_lowered, __ATOMIC_RELAXED);
     uint64_t provenance_fallback = __atomic_load_n(&translit_provenance_fallback, __ATOMIC_RELAXED);

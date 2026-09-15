@@ -31,6 +31,11 @@ static uint64_t scan_tail_x30_carry(uint64_t pc) {
     return 0;
 }
 
+static uint64_t g_a64_expand_regions;
+static uint64_t g_a64_expand_words;
+static uint64_t g_a64_expand_guest_insns;
+static uint64_t g_a64_expand_decoded;
+
 struct deferred_branch {
     uint32_t *patch;
     uint64_t target;
@@ -70,6 +75,14 @@ static map_put_result finish_block(uint64_t start, uint64_t guest_start, uint64_
     emit_a64_bus_stub();
     emit_a64_soft_stub();
     size_t emitted_bytes = (size_t)(g_cp - (uint8_t *)host);
+    /* Same-ISA static-expansion census: the aarch64-guest reference against which the
+       x86-guest expansion on this host is read. Region words and the block's guest source
+       hull, both translate-time. g_prof-gated; never a timing. */
+    if (g_prof) {
+        g_a64_expand_regions++;
+        g_a64_expand_words += (uint64_t)(emitted_bytes / 4u);
+        g_a64_expand_guest_insns += guest_end > guest_start ? (guest_end - guest_start) / 4u : 0u;
+    }
     if (emitted_bytes >= (1u << 20))
         HL_LOGF(&g_jit_log, HL_LOG_TAG_JIT,
                 "large block guest=%#llx source=%#llx-%#llx bytes=%zu bus_sites=%u soft_sites=%u",
@@ -715,6 +728,7 @@ static void *translate_block(uint64_t gpc) {
         }
         int fetch_ok;
         uint32_t in = a64_fetch_instruction(gpc, &fetch_ok);
+        if (g_prof && fetch_ok) g_a64_expand_decoded++; /* translate-time census only */
         if (!fetch_ok) {
             e_movconst(9, gpc);
             e_str(9, CPUREG, OFF_FAULT_ADDR);

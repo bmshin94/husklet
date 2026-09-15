@@ -67,6 +67,11 @@ HL_API __attribute__((weak)) int hl_x86_64_translit_displaced_test(uint32_t scen
     (void)scenario;
     return -1; /* the x86 same-ISA transliterator is absent on this host */
 }
+
+HL_API __attribute__((weak)) int hl_x86_64_bus_guard_cost_test(uint32_t scenario) {
+    (void)scenario;
+    return -2; /* the x86-guest emitters are absent in this target build */
+}
 #endif
 
 /* Instance-scoped host seam supplied by hl_engine. CLI launches retain their native-host path with NULL. */
@@ -267,6 +272,7 @@ static const hl_host_services *effective_host_services(void) {
 // Host-CPU fork: an AArch64 host takes the same-ISA transliterating JIT below; any other takes interp.c,
 // which supplies the same seam by decoding AArch64. Both share struct cpu: it is the checkpoint format.
 #include "../../host/cpu.h"
+#include "../../host/cpu_features.h"
 #if defined(HL_HOST_CPU_AARCH64) && !defined(HL_A64_INTERPRETER_SMOKE)
 // Keep the unity consumers' compact encoder vocabulary while the assembler itself is an independently
 // compiled, explicitly-stateful translator component.
@@ -576,7 +582,12 @@ static int translit_report(char *out, size_t size) {
                     (unsigned long long)hl_backend_tree_a64_x86_reset_fork_count(),
                     (unsigned long long)g_x86_rel32_reset_thread);
 #else
-    return snprintf(out, size, "[prof] translit: absent, aarch64 guest\n");
+    return snprintf(out, size,
+                    "[prof] translit: absent, aarch64 guest\n"
+                    "[prof] a64-a64-expand: regions=%llu region_words=%llu guest_hull_insns=%llu decoded=%llu\n",
+                    (unsigned long long)g_a64_expand_regions, (unsigned long long)g_a64_expand_words,
+                    (unsigned long long)g_a64_expand_guest_insns,
+                                    (unsigned long long)g_a64_expand_decoded);
 #endif
 }
 
@@ -960,10 +971,25 @@ static int run_loaded(int argc, char *const argv[], struct loaded *lm, uint64_t 
         (void)hl_backend_tree_finalize_from(1, HL_BACKEND_FINALIZE_RUN_EPILOGUE);
     if (g_untrusted) sentry_shutdown(); // signal quit + waitpid (reap, no orphan)
     if (g_prof && g_profile_output_owner) {
-        char profile[160];
-        int profile_size = snprintf(profile, sizeof profile, "[prof] dispatcher crossings=%llu translations=%llu\n",
+        char profile[320];
+        int profile_size = snprintf(profile, sizeof profile,
+                                    "[prof] dispatcher crossings=%llu translations=%llu\n",
                                     (unsigned long long)g_dispatch_profile.crossings,
                                     (unsigned long long)g_dispatch_profile.translations);
+        // The a64-a64 expansion census lives in the same-ISA translator, which is only textually
+        // included on an AArch64 host. Other hosts publish the dispatcher line alone rather than
+        // referencing counters absent from this translation unit. The dispatcher schema is authored
+        // exactly once above so build_support's drift assertion keeps seeing a single occurrence.
+#if defined(HL_HOST_CPU_AARCH64) && !defined(HL_A64_INTERPRETER_SMOKE)
+        if (profile_size > 0 && (size_t)profile_size < sizeof profile) {
+            int census_size = snprintf(profile + profile_size, sizeof profile - (size_t)profile_size,
+                                       "[prof] a64-a64-expand: regions=%llu region_words=%llu guest_insns=%llu\n",
+                                       (unsigned long long)g_a64_expand_regions,
+                                       (unsigned long long)g_a64_expand_words,
+                                       (unsigned long long)g_a64_expand_guest_insns);
+            if (census_size > 0) profile_size += census_size;
+        }
+#endif
         if (profile_size > 0) {
             size_t bounded = (size_t)profile_size < sizeof profile ? (size_t)profile_size : sizeof profile - 1u;
             (void)hl_linux_write(g_linux_box, STDERR_FILENO, profile, bounded);
@@ -1047,6 +1073,46 @@ int hl_run_linux_guest(const hl_host_services *host, hl_linux_abi *box, const ch
     // Persistent cross-process translated-code cache. Opt in with HL_PCACHE=1.
     g_pcache = hl_option_get("HL_PCACHE") != NULL;
     g_coldprof = 0;
+    /* FEAT_LSE2 GATE FOR THE SHIPPED THREADED IBTC FILL.  g_mtibtc defaults to 1 and, until this
+       gate, had no off switch at all -- cache.c's "NOMTIBTC=1 disables" comment describes a knob
+       that is not read anywhere in the tree.  What it turns on is the threaded shared-hash fill in
+       guest/aarch64/dispatch.h's G_IBTC_FILL, which publishes a 16-byte {target, body} pair with one
+       `stp` (cache.c ibtc_publish) while peer threads consume it with the one `ldp` every emitted
+       probe in stubs.c uses.  Mutual atomicity of that pair is FEAT_LSE2 and nothing less: ARM ARM
+       (DDI 0487) B2.2.1 makes a baseline LDP/STP of two X registers TWO 8-byte atoms regardless of
+       16-byte alignment, and only B2.2.1.1 -- "If FEAT_LSE2 is implemented, LDP, LDNP, and STP
+       instructions that load or store two 64-bit registers are single-copy atomic when ... the
+       overall memory access is aligned to 16 bytes" -- promises the whole.  FEAT_LSE2 is optional
+       from Armv8.2 and mandatory only from Armv8.4, so on an Armv8.0-8.3 part a peer can observe the
+       new `target` beside the previous occupant's `body`.  The probe compares `target` only and then
+       branches to the loaded `body`, so the torn pair PASSES and dispatches into the wrong
+       translation: a silent miscompile.
+       WHY THIS IS THE WHOLE FIX, AND WHY THE `ldp` READER ITSELF NEEDS NO CHANGE.  Tearing needs a
+       concurrent writer.  Clearing g_mtibtc makes G_IBTC_FILL's `bd` NULL whenever g_threaded, so
+       under live peers there is no writer to race; the remaining writers (ibtc_drop_target, the
+       promotion invalidate, smc_icflush's memset) all run behind the existing STW/quiescent gate,
+       and the single-threaded fill has no peer by definition.  So an `ldp` reader over a table only
+       ever written while quiesced is safe on any Armv8 part, and the emitted code stays byte-for-byte
+       what it is today.
+       THE TRADEOFF, STATED RATHER THAN BURIED.  This DOES disable a working, shipped, default-on
+       optimisation on pre-Armv8.4 silicon: a threaded guest's indirect branches will miss to the C
+       dispatcher every time, which is the 168.96x-class penalty the x86 lane measured for the same
+       mechanism.  That is a large, real regression for anyone on an Armv8.0-8.3 SMP part.  It is
+       still the right default, because the behaviour being preserved is a silent wrong-branch, not a
+       slow one, and because the population it costs is narrow and shrinking while the failure it
+       prevents is unbounded.  On any LSE2 part -- all Apple Silicon, Neoverse, Armv8.4+ generally --
+       nothing changes at all.  g_mtibtc also keys the persistent-cache identity, so a cache warmed
+       on an LSE2 host is correctly not reused on a non-LSE2 one. */
+    if (hl_option_flag_value("HL_HOST_ASSUME_NO_LSE2", 0)) hl_host_atomic_pair16_assume_absent();
+    if (!hl_host_atomic_pair16()) {
+        g_mtibtc = 0;
+        fprintf(stderr,
+                "hl-engine: threaded IBTC fill disabled: this host cannot publish a 16-byte IBTC "
+                "entry atomically (%s); threaded indirect branches will miss to the dispatcher\n",
+                hl_host_atomic_pair16_detail());
+    } else if (hl_option_flag_value("HL_C_DIAGNOSTICS", 0)) {
+        fprintf(stderr, "hl-engine: threaded IBTC fill enabled: %s\n", hl_host_atomic_pair16_detail());
+    }
     if (container_init(rootfs) != 0) return hl_vfs_cursor_state_finish(70);
     int irc = engine_global_init();
     if (irc) return hl_vfs_cursor_state_finish(irc);

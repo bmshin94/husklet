@@ -105,6 +105,7 @@ int hl_x86_hot_context_thread_test(void);
 int hl_x86_hot_context_allocation_test(void);
 int hl_x86_decode_authority_test(uint32_t scenario, uint64_t *fetches);
 int hl_x86_decode_transaction_window_test(uint64_t *fetches);
+int hl_x86_decode_thread_authority_test(uint64_t *probes);
 void hl_x86_decode_test_invalidate_direct_registry(void);
 void hl_x86_decode_test_transaction_invalidate_on_sample(unsigned sample);
 void hl_x86_decode_test_transaction_invalidate_before_commit(void);

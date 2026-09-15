@@ -65,7 +65,7 @@ pub(super) const SETTLE_REFUSAL: u32 = 29;
 /// Marks that one member irreversibly consumed live kernel state in this generation.
 pub(super) const MARK_IRREVERSIBLE: u32 = 30;
 /// A registered native supervisor asks the host to snapshot one stopped host process. Payload is
-/// `[u64 host pid]`; the reply is sent only after the NativeX86V1 generation is durably committed.
+/// `[u64 host pid]`; the reply is sent only after the NativeX86 generation is durably committed.
 pub(super) const NATIVE_SNAPSHOT: u32 = 31;
 /// A native supervisor asks the host to hydrate one freshly exec'd, stopped descendant.
 pub(super) const NATIVE_RESTORE_PREPARE: u32 = 32;

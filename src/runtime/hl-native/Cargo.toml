@@ -42,6 +42,14 @@ name = "reserved_register"
 required-features = ["native-test-hooks"]
 
 [[test]]
+name = "double_shift_memory_ea"
+required-features = ["native-test-hooks"]
+
+[[test]]
+name = "bus_guard_cost"
+required-features = ["native-test-hooks"]
+
+[[test]]
 name = "imported_path_guard"
 required-features = ["native-test-hooks"]
 

@@ -127,7 +127,7 @@ impl Server {
         }
         match self.recovery_reader(deadline)? {
             super::image_envelope::Reader::Translated if !native => {}
-            super::image_envelope::Reader::NativeX86V1 if native => {}
+            super::image_envelope::Reader::NativeX86 if native => {}
             _ => return Err(CaptureFailure::UnsupportedImage),
         }
         let mut capture = self.capture_lock()?;

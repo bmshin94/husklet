@@ -53,21 +53,28 @@ impl Server {
             .source
             .get_until(crate::runtime::execution::native_snapshot::MEMORY_OBJECT, deadline)
             .map_err(Self::publication_failure)?;
+        let xstate = self
+            .source
+            .get_until(crate::runtime::execution::native_snapshot::XSTATE_OBJECT, deadline)
+            .map_err(Self::publication_failure)?;
         crate::runtime::execution::native_snapshot::validate_native_objects(&manifest, |name| match name {
             crate::runtime::execution::native_snapshot::REGISTER_OBJECT => Some(registers.clone()),
             crate::runtime::execution::native_snapshot::MEMORY_OBJECT => Some(memory.clone()),
+            crate::runtime::execution::native_snapshot::XSTATE_OBJECT => Some(xstate.clone()),
             _ => None,
         })
         .map_err(|_| CaptureFailure::InvalidImage)?;
-        crate::runtime::execution::native_snapshot::prepare_native_restore(pid, pidfd, &registers, &memory, deadline)
-            .map_err(|error| {
-                hl_log::hl_error!(hl_log::tag::CHECKPOINT, "native checkpoint restore failed: {error}");
-                if error.kind() == std::io::ErrorKind::TimedOut {
-                    CaptureFailure::Deadline
-                } else {
-                    CaptureFailure::Failed
-                }
-            })
+        crate::runtime::execution::native_snapshot::prepare_native_restore(
+            pid, pidfd, &registers, &memory, &xstate, deadline,
+        )
+        .map_err(|error| {
+            hl_log::hl_error!(hl_log::tag::CHECKPOINT, "native checkpoint restore failed: {error}");
+            if error.kind() == std::io::ErrorKind::TimedOut {
+                CaptureFailure::Deadline
+            } else {
+                CaptureFailure::Failed
+            }
+        })
     }
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -122,7 +129,15 @@ impl Server {
                 deadline,
             )
             .map_err(Self::publication_failure)?;
-        self.publish_manifest_as(&image.manifest, super::image_envelope::Reader::NativeX86V1)
+        self.sink
+            .put_until(
+                transaction,
+                crate::runtime::execution::native_snapshot::XSTATE_OBJECT,
+                &image.xstate,
+                deadline,
+            )
+            .map_err(Self::publication_failure)?;
+        self.publish_manifest_as(&image.manifest, super::image_envelope::Reader::NativeX86)
     }
 
     pub(super) fn transaction_token(&self) -> Result<NonZeroU64, CaptureFailure> {

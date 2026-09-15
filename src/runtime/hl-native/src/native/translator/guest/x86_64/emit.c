@@ -111,12 +111,20 @@ static void emit_host_ptr(int rd, uint64_t v, int kind) {
 static int g_shared_obs;
 
 static void e_dmb_ish(void) {
-    if (!g_threaded && !g_shared_obs) return; // no peer thread AND no shared mapping -> nothing can observe
+    if (!g_threaded && !g_shared_obs) { // no peer thread AND no shared mapping -> nothing can observe
+        g_x86_mech_dmb_elide++;         // translate-time census only
+        return;
+    }
+    g_x86_mech_dmb_emit++;
     emit32(0xD5033ABFu);                      // DMB ISHST -- StoreStore only (see above; loads self-fence via ISHLD)
 }
 
 static void e_dmb_ishld(void) {
-    if (!g_threaded && !g_shared_obs) return; // no peer thread AND no shared mapping -> nothing can observe
+    if (!g_threaded && !g_shared_obs) { // no peer thread AND no shared mapping -> nothing can observe
+        g_x86_mech_dmb_elide++;
+        return;
+    }
+    g_x86_mech_dmb_emit++;
     emit32(0xD50339BFu);
 }
 
@@ -148,7 +156,7 @@ void e_ldrs(int w, int rt, int rn) {                                        // s
 
 // Address-mode-folded load/store: fold a [base+disp] memory operand into ONE ldr/str.
 // Scaled unsigned-offset form (disp a multiple of w, disp/w in [0,4095]):
-static void e_load_uoff(int w, int rt, int rn, unsigned disp) {
+void e_load_uoff(int w, int rt, int rn, unsigned disp) {
     uint32_t b = w == 1 ? 0x39400000u : w == 2 ? 0x79400000u : w == 4 ? 0xB9400000u : 0xF9400000u;
     emit32(b | (((disp / (unsigned)w) & 0xFFF) << 10) | (rn << 5) | rt);
     e_dmb_ishld();
@@ -161,7 +169,7 @@ void e_store_uoff(int w, int rt, int rn, unsigned disp) { // str{b,h,,} rt,[rn,#
 }
 
 // Unscaled signed-offset form (simm9 in [-256,255]) -- covers small negative disps:
-static void e_ldur(int w, int rt, int rn, int simm9) {
+void e_ldur(int w, int rt, int rn, int simm9) {
     uint32_t b = w == 1 ? 0x38400000u : w == 2 ? 0x78400000u : w == 4 ? 0xB8400000u : 0xF8400000u;
     emit32(b | (((uint32_t)simm9 & 0x1FF) << 12) | (rn << 5) | rt);
     e_dmb_ishld();
@@ -790,7 +798,13 @@ void hl_x86_emit_block_return(void) {
 
 // ---------------- prologue / spill / exits ----------------
 // Prologue: entered x0 = &cpu. Pin cpu in x28, restore flags + 16 guest GPRs (x0 last).
-static void emit_prologue(void) {
+// EVERY word below is a compile-time constant encoding (register numbers and cpu-struct byte
+// offsets only -- no guest pc, no host pointer, no PC-relative displacement), so the sequence is
+// byte-identical at all 40,702 region heads.  HL_X86_PROLOGUE_WORDS records its length; the
+// out-of-line trampoline below asserts the two agree.
+#define HL_X86_PROLOGUE_WORDS 27u
+
+static void emit_prologue_inline(void) {
     emit32(0xAA0003FCu); // mov x28, x0   (cpu)
     e_nzcv_load();       // restore flags
     for (int t = 0; t < 16; t += 2)
@@ -1043,6 +1057,39 @@ static void emit_direct_store_span_guard(int address_register, uint64_t size, ui
     *cached = 0x14000000u | ((uint32_t)((resume - (uint8_t *)cached) / 4) & 0x03ffffffu);
 }
 
+/* HL_X86_EA_RECORD_ELIDE: emit the guest-EA snapshot below only where a reader
+   can exist.  Launch-scoped and read once; unset keeps the unconditional store. */
+static int ea_record_elide_enabled(void) {
+    static int cached = -1;
+    if (cached < 0) cached = hl_option_flag_value("HL_X86_EA_RECORD_ELIDE", 0);
+    return cached;
+}
+
+/*
+ * cpu->soft_guest_ea has exactly one reader: HL_DISPATCH_FAULT_ADDRESS, which
+ * consults it only when cpu->bus_ea is nonzero AND equals the faulting address.
+ * bus_ea is written only by code emit_memory_guard emits BELOW this point --
+ * the executable-alias record, the direct cross-page store span guard's miss
+ * exit, the soft guard's miss exit and the BUS guard's slow path.  A guard that
+ * emits none of those can never publish a bus_ea to pair with the snapshot, and
+ * any bus_ea left over from an earlier access is still paired with the
+ * soft_guest_ea recorded alongside it (they are always written together, for the
+ * same address), so the stale pair stays self-consistent.  The snapshot store is
+ * then architecturally unobservable and may be elided.  This is the same
+ * reasoning the folded `mov reg,[base+disp]` path already relies on: it emits no
+ * guard, and therefore no snapshot, at all.
+ */
+static int ea_record_observable(uint64_t size, uint32_t required) {
+    if (jit_guest_soft_active() || g_rwx_guest || jit_guest_bus_active()) return 1;
+    /* emit_direct_store_span_guard's miss exit publishes BUS_EA. */
+    return (required & X86_SOFT_WRITE) != 0 && size > 1;
+}
+
+/* Shared out-of-line BUS-guard slow path (HL_X86_BUS_THUNK); body laid at the region head,
+   see the obligation list beside emit_bus_thunk_body below.  0 -> caller emits the inline copy. */
+static int emit_bus_thunk_site(uint64_t size, uint64_t rip);
+static uint64_t g_bus_inline_sites, g_bus_inline_words, g_bus_thunk_sites, g_bus_thunk_words;
+
 void emit_memory_guard(int address_register, uint64_t size, uint64_t rip, uint32_t required) {
     /*
      * The post-store executable-alias observer consumes the original guest
@@ -1053,12 +1100,17 @@ void emit_memory_guard(int address_register, uint64_t size, uint64_t rip, uint32
      * armed executable-memory generation, before a soft guard can translate
      * address_register to its host backing address.
      */
-    if (!g_address_recorded) e_str(address_register, 28, OFF_SOFT_GUEST_EA);
+    g_x86_mech_ea_guard++;
+    if (!g_address_recorded && (!ea_record_elide_enabled() || ea_record_observable(size, required))) {
+        g_x86_mech_ea_deadstore++;
+        e_str(address_register, 28, OFF_SOFT_GUEST_EA);
+    }
     g_address_recorded = 0;
     if (!jit_guest_soft_active() && g_rwx_guest) e_str(address_register, 28, OFF_BUS_EA);
     emit_direct_store_span_guard(address_register, size, rip, required);
     emit_soft_guard(address_register, size, rip, required);
     if (!jit_guest_bus_active()) return;
+    uint32_t *guard_begin = (uint32_t *)g_cp;
     /* Sticky guarded translations become nearly inert after the final BUS
        range is released: two loads plus this flag-free state branch, with no
        architectural stores or register spill. */
@@ -1085,6 +1137,22 @@ void emit_memory_guard(int address_register, uint64_t size, uint64_t rip, uint32
     emit32(0); /* tbz x9,#0,resume-filter-miss */
     uint8_t *slow = g_cp;
     *force_slow = 0x37000000u | (1u << 19) | (((uint32_t)((slow - (uint8_t *)force_slow) / 4) & 0x3FFFu) << 5) | 16u;
+    if (emit_bus_thunk_site(size, rip)) {
+        /* The thunk returns to the word after the literal triple, which is exactly the
+           `resume_fast` join below -- the same join the inline resume falls into. */
+        uint8_t *resume_fast_thunk = g_cp;
+        e_ldr(9, 28, OFF_BUS_SCRATCH);
+        e_ldr(address_register, 28, OFF_BUS_EA);
+        *filter_miss =
+            0x36000000u | (((uint32_t)((resume_fast_thunk - (uint8_t *)filter_miss) / 4) & 0x3FFFu) << 5) | 9u;
+        uint8_t *resume_inactive_thunk = g_cp;
+        *inactive_fast =
+            0x36000000u |
+            (((uint32_t)((resume_inactive_thunk - (uint8_t *)inactive_fast) / 4) & 0x3FFFu) << 5) | 16u;
+        g_bus_thunk_words += (uint64_t)((uint32_t *)g_cp - guard_begin);
+        return;
+    }
+    g_bus_inline_sites++;
     e_ldr(9, 28, OFF_BUS_SCRATCH);
     emit_spill();
     e_ldr(0, 28, OFF_BUS_EA);
@@ -1115,6 +1183,7 @@ void emit_memory_guard(int address_register, uint64_t size, uint64_t rip, uint32
     uint8_t *resume_inactive = g_cp;
     *inactive_fast =
         0x36000000u | (((uint32_t)((resume_inactive - (uint8_t *)inactive_fast) / 4) & 0x3FFFu) << 5) | 16u;
+    g_bus_inline_words += (uint64_t)((uint32_t *)g_cp - guard_begin);
 }
 
 void emit_guest_address_store(int address_register, int cpu_offset) {
@@ -1199,7 +1268,12 @@ static void emit_bus_guard_mem17(uint64_t size, int offset) {
         e_addi(17, 16, (unsigned)-offset, 1);
 }
 
+/* Static-expansion census for the constant-rip exit: how many sites take the full inline
+   sequence and how many host words they cost.  Translate-time only. */
+static uint64_t g_exit_inline_sites, g_exit_inline_words;
+
 void emit_exit_const(uint64_t rip, uint64_t reason) {
+    uint32_t *census_begin = (uint32_t *)g_cp;
     hl_x86_a64_route_note_exit(reason);
     // a plain R_SYSCALL exit skips the xmm spill WHEN cpu->V is current (cpu->vdirty==0); else
     // full. Runtime check (blocks chain without spilling). x16 is engine scratch here (guest is x0..x15).
@@ -1224,6 +1298,398 @@ void emit_exit_const(uint64_t rip, uint64_t reason) {
     e_str(16, 28, OFF_RSN);
     emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
     e_br(16); // block_return uses x28 (still cpu)
+    g_exit_inline_sites++;
+    g_exit_inline_words += (uint64_t)((uint32_t *)g_cp - census_begin);
+}
+
+// ---------------- shared out-of-line constant-rip exit thunk (HL_X86_EXIT_THUNK) ----------------
+// Every UNRESOLVED direct edge -- a Jcc's taken and fall-through arms, a direct jmp/call whose
+// target is not translated yet, and the IRQ-poll tail stub -- emits a full inline exit today:
+// the 27-word spill, the guest target, the reason, the baked block_return pointer and `br`.
+// Only the guest target differs between sites; every other word is identical at all of them.
+//
+// With this option on the site emits instead
+//      bl   <thunk>              // x30 -> the two literal words that follow
+//      .word target_lo, .word target_hi
+// and ONE copy of the invariant body is laid down per code arena.  Obligations:
+//   * ABI.  Guest GPRs live in x0..x15, guest xmm in v0..v15, guest flags in the live ARM NZCV,
+//     cpu pinned in x28.  x16/x17 are engine scratch at every exit point and x20 is the flag
+//     scratch the spill itself uses.  x30 is dead in emitted code: run_block stores the host x30
+//     into cpu->host_save and block_return reloads it, and emitted code already clobbers it
+//     (`blr x16` in the bus-fault, store-alias and rep-string helpers).  So `bl` is free.
+//     The thunk reads its literals BEFORE the spill and touches no guest register.
+//   * Reach.  `bl` is +/-128MB; the arena is CACHE_SZ (64MB) and the thunk lives in the SAME
+//     arena as its callers, so every site reaches it.  The range is still checked and the site
+//     falls back to the inline exit if it ever could not.
+//   * Chaining.  The `bl` IS the patch slot add_pend3 records, exactly as the first word of the
+//     inline exit was; patch_links_to rewrites that one word to `b body` (is_bl == 0) and
+//     publishes 4 bytes, after which the two literals are unreachable dead bytes.
+//   * Publication.  The thunk is emitted from translate_block, i.e. inside the dispatcher's
+//     jit_wprot(0) window and inside [g_emit_start, g_cp), so the existing jit_publish_code
+//     covers it with no new bracket.
+//   * Safepoints.  The thunk performs the same spill and the same block_return hand-off, so the
+//     dispatcher round-trip and the successor body's entry IRQ poll are unchanged.
+//   * Invalidation.  The entry is tagged with the arena generation and must lie inside the live
+//     arena; a wholesale flush, an in-place rewind or a rotation all move g_cache_gen (or g_cp),
+//     so the next region lays a fresh thunk instead of calling into dropped code.
+static int g_exit_thunk;                // 0 -> byte-identical to the historical emission
+
+// ---------------- threaded block chaining and threaded IBTC fill ----------------
+// HL_X86_MT_CHAIN / HL_X86_MT_IBTC.  Both default OFF; unset, every emission path below is
+// byte-identical to the historical one and `g_threaded` keeps disabling chaining and IBTC fill.
+//
+// WHY THEY WERE DISABLED.  Chaining back-patches a branch word inside a block that a PEER guest
+// thread may be executing; IBTC fill writes a {target, body} pair that emitted code reads with two
+// independent 8-byte loads, so a peer could observe a NEW target beside a STALE body and branch to
+// the wrong translation.  The second is a real miscompile; the first is only a hazard because of
+// HOW the patch slot was shaped, not because patching is inherently unsafe.
+//
+// WHAT MAKES THEM SAFE.  See emit_chain_exit() (patch-slot shaping) and xibtc_publish() /
+// emit_ibranch() (16-byte atomic pair) below.  The aarch64-guest backend already ships the IBTC
+// half of this (translator/cache.c ibtc_publish + guest/aarch64/stubs.c's atomic ldp reader); this
+// is that same mechanism carried to the x86 backend, plus the patch-slot shaping the aarch64
+// backend does NOT do.
+static int g_mtchain;     // HL_X86_MT_CHAIN: chain direct edges while a peer guest thread is live
+static int g_x86_mtibtc;  // HL_X86_MT_IBTC:  fill the 2-way IBTC while a peer guest thread is live
+// HL_X86_IBTC8: the FEAT_LSE2-free IBTC.  The emitted probe stops trusting the 16-byte
+// {target, body} pair as one atom and instead treats the entry as an 8-BYTE HINT -- the body
+// pointer alone -- re-validating the tag from an IMMUTABLE header word laid at body-8 and reached
+// by an ADDRESS DEPENDENCY from the loaded pointer.  See emit_ibranch() and emit_ibtc8_header().
+static int g_x86_ibtc8;
+
+// Latched off by the first SMC event that removes a translation (jit86_smc_commit). From then on
+// every direct edge returns through the dispatcher, so no baked branch can outlive its target's
+// invalidation. Never re-armed: SMC authority, once seen, is permanent for the process.
+static int g_mtchain_smc_off;
+
+void hl_x86_emit_set_mt_chain(int enabled) {
+    g_mtchain = enabled != 0;
+}
+
+int hl_x86_emit_mt_chain_enabled(void) {
+    return g_mtchain && !g_mtchain_smc_off;
+}
+
+void hl_x86_emit_mt_chain_smc_disable(void) {
+    g_mtchain_smc_off = 1;
+}
+
+void hl_x86_emit_set_mt_ibtc(int enabled) {
+    g_x86_mtibtc = enabled != 0;
+}
+
+void hl_x86_emit_set_ibtc8(int enabled) {
+    g_x86_ibtc8 = enabled != 0;
+}
+
+int hl_x86_emit_ibtc8_enabled(void) {
+    return g_x86_ibtc8;
+}
+
+// Lay the per-region IBTC header immediately before `body`, and branch the prologue's fall-through
+// over it.  Region layout with the option on becomes
+//
+//     host: <prologue ...>            (dispatcher entry; unchanged)
+//           [nop]                     (0 or 1, only to land `body` on an 8-byte boundary)
+//           b    .+12                 (jump over the 8 header bytes into `body`)
+//           .word gpc_lo / .word gpc_hi   <-- the header: the guest PC this body was translated for
+//     body: <irq poll header> ...     (unchanged: every chain, self-loop fold and IBTC hit lands here)
+//
+// The header is WRITE-ONCE.  It is stored during emission, i.e. strictly before the region is
+// published (jit_publish_code) and therefore strictly before its address can appear in the map or in
+// an IBTC entry, and nothing in the tree ever rewrites it -- tier-2 promotion overwrites body[0] and
+// body[2], both AFTER the header, and emits its own header for the new body.  So the value a reader
+// observes through a published body pointer is the value that body's translator wrote, and no
+// atomicity property of the header load is required at all: it is an immutable word.
+//
+// It costs ONE retired instruction (the `b`, plus at most one `nop`) on the DISPATCHER-ENTRY path
+// only.  Chained edges, self-loop folds and IBTC hits all jump to `body` or `body + g_fwdskip` and
+// never execute it.  It costs 12 or 16 bytes of arena per region.
+static void emit_ibtc8_header(uint64_t gpc) {
+    if (!g_x86_ibtc8) return;
+    // `body` = here + 12 (or +16 with the pad).  Land it on 8 bytes so the probe's header load is
+    // naturally aligned; g_cp is always 4-aligned, so at most one nop is ever needed.  Alignment is
+    // a performance property only -- the header is immutable, so even a torn read of it returns the
+    // one value that was ever written.
+    if ((((uintptr_t)g_cp) & 7u) == 0u) emit32(0xD503201Fu); // nop
+    emit32(0x14000003u);                                     // b .+12  (over the two header words)
+    emit32((uint32_t)(gpc & 0xFFFFFFFFu));
+    emit32((uint32_t)(gpc >> 32));
+}
+
+void hl_x86_emit_set_exit_thunk(int enabled) {
+    g_exit_thunk = enabled != 0;
+}
+static uint32_t *g_exit_thunk_entry;    // constant-rip thunk entry in the CURRENT arena
+static uint32_t *g_ibranch_thunk_entry; // IBTC-miss thunk entry (guest target already in x16)
+static uint64_t g_exit_thunk_gen;       // arena generation both entries belong to
+static uint64_t g_exit_thunk_bodies, g_exit_thunk_body_words, g_exit_thunk_sites, g_ibranch_thunk_sites;
+
+static int exit_thunk_live(void) {
+    return g_exit_thunk_entry != NULL && g_exit_thunk_gen == g_cache_gen &&
+           (uint8_t *)g_exit_thunk_entry >= (uint8_t *)g_cache && (uint8_t *)g_exit_thunk_entry < (uint8_t *)g_cp;
+}
+
+// Lay the one invariant body for this arena.  Called at the head of a region, before its
+// prologue, so nothing can fall into it (a region is only ever entered at its body) and the
+// dispatcher's publish window already covers it.
+static void emit_exit_thunk_body(void) {
+    if (!g_exit_thunk || exit_thunk_live()) return;
+    uint32_t *begin = (uint32_t *)g_cp;
+    g_exit_thunk_entry = begin;
+    g_exit_thunk_gen = g_cache_gen;
+    // x30 addresses the caller's literal pair; load it as two words so the 4-byte-aligned
+    // instruction stream never needs an unaligned 8-byte access.
+    emit32(0x29400000u | (17 << 10) | (30 << 5) | 16); // ldp w16, w17, [x30]
+    e_rrr(A_ORR, 16, 16, 17, 1, 32);                   // orr x16, x16, x17, lsl #32  -> guest target
+    emit_spill();                                      // x16 survives (spill uses x20)
+    e_str(16, 28, OFF_RIP);
+    e_movconst(16, R_BRANCH);
+    e_str(16, 28, OFF_RSN);
+    emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
+    e_br(16);
+    // Second body: the IBTC-miss tail shared by every `ret` / `jmp reg` / `call reg`.  It needs no
+    // literal at all -- emit_ibranch already leaves the guest target in x16 -- so the site collapses
+    // to a single `b`.  x30 is not touched here, and the sequence is a verbatim copy of the inline
+    // miss tail (rip, spill, reason, ic_miss = 1, block_return).
+    g_ibranch_thunk_entry = (uint32_t *)g_cp;
+    e_str(16, 28, OFF_RIP);
+    emit_spill();
+    e_movconst(16, R_BRANCH);
+    e_str(16, 28, OFF_RSN);
+    e_movconst(16, 1);
+    e_str(16, 28, OFF_ICMISS); // dispatcher fills the IBTC for cpu->rip
+    emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
+    e_br(16);
+    g_exit_thunk_bodies++;
+    g_exit_thunk_body_words += (uint64_t)((uint32_t *)g_cp - begin);
+}
+
+// Emit the 3-word call site in place of a full R_BRANCH exit.  0 -> caller must emit the
+// inline exit (option off, no live thunk, or out of `bl` reach).
+static int emit_exit_thunk_site(uint64_t target) {
+    if (!g_exit_thunk || !exit_thunk_live()) return 0;
+    int64_t d = ((uint8_t *)g_exit_thunk_entry - (uint8_t *)g_cp) / 4;
+    if (d < -(INT64_C(1) << 25) || d >= (INT64_C(1) << 25)) return 0;
+    emit32(0x94000000u | ((uint32_t)d & 0x3FFFFFFu)); // bl thunk  (the add_pend3 patch slot)
+    emit32((uint32_t)(target & 0xFFFFFFFFu));
+    emit32((uint32_t)(target >> 32));
+    g_exit_thunk_sites++;
+    return 1;
+}
+
+// The IBTC-miss tail: one `b` to the shared body in place of the 37-word inline copy.
+static int emit_ibranch_thunk_site(void) {
+    if (!g_exit_thunk || !exit_thunk_live() || g_ibranch_thunk_entry == NULL) return 0;
+    int64_t d = ((uint8_t *)g_ibranch_thunk_entry - (uint8_t *)g_cp) / 4;
+    if (d < -(INT64_C(1) << 25) || d >= (INT64_C(1) << 25)) return 0;
+    emit32(0x14000000u | ((uint32_t)d & 0x3FFFFFFu)); // b thunk
+    g_ibranch_thunk_sites++;
+    return 1;
+}
+
+// ---------------- shared out-of-line region prologue (HL_X86_PROLOGUE_THUNK) ----------------
+// emit_prologue_inline() lays a byte-identical HL_X86_PROLOGUE_WORDS-word block at EVERY region head
+// (mov x28,x0; ldr x20/msr nzcv; 8x ldp_q; 16x ldr).  It runs only on DISPATCHER entry: chained edges
+// enter at `body` / `body + g_fwdskip` and never see it.  With this option on the head collapses to
+//      bl   <prologue trampoline>
+// and one copy of the reload lives per code arena, ending in `br x30`.  Obligations:
+//   * x30.  `bl` writes x30 = the address of the NEXT instruction, which is exactly `body` -- so the
+//     trampoline needs no adr/adrp (whose +/-1MB reach would not span the 64MB arena anyway) and no
+//     literal.  x30 is dead in emitted code: run_block spills the host x30 into cpu->host_save and
+//     block_return reloads it, and emitted code already clobbers it (`blr x16` in the bus-fault,
+//     store-alias and rep-string helpers; `bl` at every HL_X86_EXIT_THUNK site).  The exit thunk also
+//     wants x30, but the two uses cannot overlap: this one is produced by the region's own first
+//     instruction and consumed by the trampoline's terminal `br x30` with no guest code in between,
+//     while the exit thunk's is produced at a block terminator.  Neither value is live across any
+//     guest instruction.
+//   * Entry points.  `host` (the dispatcher's entry, the value map_put records and tier2_promote
+//     replaces) is still the first word of the region; `body` is still the word after the prologue,
+//     now host+4.  The two-instruction IRQ poll header still occupies body+0/body+4 and a forward
+//     chain still lands on body+g_fwdskip (= body+8) -- the trampoline is BEFORE `body`, so the
+//     body+0 / body[2] slots tier2_promote rewrites and the add_pend3/patch_links_to branch slots are
+//     bit-for-bit the layout they were.  `body` stays 4-byte aligned (it was host+108 before, also
+//     4- but not 16-aligned, so no alignment property is lost).
+//   * Reach.  `bl` is +/-128MB and the trampoline lives in the SAME 64MB arena as its callers; the
+//     range is still checked and the head falls back to the inline prologue if it ever could not.
+//   * Faults.  The trampoline only loads from the pinned cpu struct, exactly as the inline copy did,
+//     and jit_pc_in_retained_cache() is a plain arena range test, so a PC inside it classifies as
+//     in-cache identically.  jit_instruction_map_put records only per-guest-instruction ranges
+//     starting at `body`, so provenance is unchanged (the prologue never had an entry either).
+//   * Relocation.  The body contains no baked host pointer, so it adds no PRELOC_* entry and cannot
+//     poison a persistent-cache save; the `bl` is arena-internal and PC-relative, so an arena that is
+//     re-slid wholesale (HL_PCACHE / the HL_CHECKPOINT forced bases, which force GUEST image bases and
+//     move the arena as one block) keeps the displacement valid.
+//   * Invalidation.  Tagged with the arena generation and required to lie inside the live arena, so a
+//     wholesale flush, jit_cache_rewind_in_place or a rotation (each bumps g_cache_gen or resets g_cp)
+//     makes the next region lay a fresh trampoline instead of calling into dropped code.  A fork child
+//     inherits the arena and the entry pointer together; exec replaces both.
+//   * Publication.  Laid from translate_block inside the dispatcher's jit_wprot(0) window and inside
+//     [g_emit_start, g_cp), so the existing jit_publish_code covers it with no new bracket -- the same
+//     seam the exit thunk body uses.  Both bodies are laid at the head of the same region, each
+//     terminated by an unconditional branch, so neither can be fallen into.
+static int g_prologue_thunk;       // 0 -> byte-identical to the historical inline emission
+static uint32_t *g_prologue_entry; // trampoline entry in the CURRENT arena
+static uint64_t g_prologue_thunk_gen;
+static uint64_t g_prologue_thunk_bodies, g_prologue_thunk_body_words, g_prologue_thunk_sites, g_prologue_inline_sites;
+
+void hl_x86_emit_set_prologue_thunk(int enabled) {
+    g_prologue_thunk = enabled != 0;
+}
+
+static int prologue_thunk_live(void) {
+    return g_prologue_entry != NULL && g_prologue_thunk_gen == g_cache_gen &&
+           (uint8_t *)g_prologue_entry >= (uint8_t *)g_cache && (uint8_t *)g_prologue_entry < (uint8_t *)g_cp;
+}
+
+// Lay this arena's one shared prologue trampoline.  Called at the head of a region, before `host`.
+static void emit_prologue_thunk_body(void) {
+    if (!g_prologue_thunk || prologue_thunk_live()) return;
+    uint32_t *begin = (uint32_t *)g_cp;
+    g_prologue_entry = begin;
+    g_prologue_thunk_gen = g_cache_gen;
+    emit_prologue_inline();
+    e_br(30); // br x30 -> the caller's `body` (the word after its `bl`)
+    uint64_t words = (uint64_t)((uint32_t *)g_cp - begin);
+    if (words != HL_X86_PROLOGUE_WORDS + 1u) {
+        // The inline prologue changed length: the trampoline is still correct (it is the same
+        // emitter), but HL_X86_PROLOGUE_WORDS -- which the region stitch budget uses to stay
+        // identical with the option off -- is stale.  Refuse the option rather than silently
+        // changing region composition.
+        g_prologue_thunk = 0;
+        g_prologue_entry = NULL;
+        g_cp = (uint8_t *)begin;
+        return;
+    }
+    g_prologue_thunk_bodies++;
+    g_prologue_thunk_body_words += words;
+}
+
+// The region head: one `bl` in place of the inline reload.  0 -> caller emitted the inline prologue.
+static void emit_prologue(void) {
+    if (g_prologue_thunk && prologue_thunk_live()) {
+        int64_t d = ((uint8_t *)g_prologue_entry - (uint8_t *)g_cp) / 4;
+        if (d >= -(INT64_C(1) << 25) && d < (INT64_C(1) << 25)) {
+            emit32(0x94000000u | ((uint32_t)d & 0x3FFFFFFu)); // bl <trampoline>; x30 == body
+            g_prologue_thunk_sites++;
+            return;
+        }
+    }
+    g_prologue_inline_sites++;
+    emit_prologue_inline();
+}
+
+
+// ---------------- shared out-of-line BUS guard slow path (HL_X86_BUS_THUNK) ----------------
+// A guest run that asks for a persistent translation cache arms and LATCHES the guest BUS ledger
+// before its entry point (hl_guest_bus_arm_latched), because a persisted arena must carry guards in
+// every block and because a later 0 -> 1 activation edge would rotate the restored arena away.  So
+// with --translation-cache every guest memory operand takes emit_memory_guard's armed shape for the
+// whole run.  Its FAST path is 15 words; everything after the filter miss -- the 27-word spill, the
+// helper call, the BUS exit and the 26-word reload -- is INVARIANT at every site except for two
+// scalars (the access `size` and the guest `rip` to publish on a fault).  That invariant tail is
+// what takes the x86 guest's emitted code from ~782 to ~2,118 bytes per block.
+//
+// With this option on the tail collapses to
+//      bl   <bus thunk>
+//      .word rip_lo, .word rip_hi, .word size
+// and ONE copy of the tail lives per code arena.  Obligations, mirroring HL_X86_EXIT_THUNK and
+// HL_X86_PROLOGUE_THUNK:
+//   * Semantics.  The thunk performs exactly the inline tail's actions in exactly its order:
+//     restore guest x9 from cpu->bus_scratch (the filter probe borrowed it), full spill, call
+//     jit_guest_bus_fault(cpu->bus_ea, size), and either take the R_BUS exit through block_return
+//     with cpu->rip = the literal rip, or full-reload and resume.  The inline path's extra
+//     `ldr x9,[bus_scratch]; str x9,[R_OFF(9)]` repair before the BUS exit is dropped ONLY in the
+//     thunk, where it is provably dead: x9 is restored BEFORE the spill, so the spill has already
+//     written the architectural r9 into the saved cpu image.
+//   * ABI.  Guest GPRs are x0..x15, guest xmm v0..v15, guest flags the live NZCV, cpu pinned in x28,
+//     x16/x17 engine scratch, x20 the spill's flag scratch.  x30 is dead in emitted code (run_block
+//     saves the host x30 into cpu->host_save; emitted code already clobbers it at every `blr x16`
+//     helper call and every HL_X86_EXIT_THUNK site), so `bl` is free.  `blr x16` into the C helper
+//     clobbers x30, so the thunk stashes it in cpu->bus_scratch[1] across the call -- slot 0 is the
+//     guest-x9 save the guard already owns, slots 1 and 2 have no other reader in the engine, and
+//     using an EXISTING field keeps sizeof(struct cpu) -- and therefore the persistent cache
+//     header's cpu_sz identity -- unchanged.
+//   * Return point.  `bl` leaves x30 = the address of the first literal, so the resume arm returns
+//     to x30+12, which is exactly the `resume_fast` join the filter-miss branch also targets.  The
+//     three literals are only ever reached as data through that x30; nothing falls into them,
+//     because the word before them is an unconditional `bl`.
+//   * Reach.  `bl` is +/-128MB and the thunk lives in the SAME arena as its callers; the range is
+//     still checked and the site falls back to the inline tail if it ever could not.
+//   * Relocation.  The two baked host pointers (jit_guest_bus_fault and block_return) move from the
+//     site into the body, so a guarded arena records TWO PRELOC entries per arena instead of two per
+//     guarded memory operand -- a large reduction in PC_RELOC_CAP pressure, and the reason a warm
+//     cc1 stops poisoning its own save.  The `bl` is arena-internal and PC-relative and the literals
+//     are guest addresses (which the persistent cache pins, not slides), so a wholesale re-slid
+//     arena keeps every displacement valid.
+//   * Invalidation.  Tagged with the arena generation and required to lie inside the live arena, so
+//     a flush, an in-place rewind or a rotation makes the next region lay a fresh body instead of
+//     calling into dropped code.  A fork child inherits arena and entry together; exec replaces both.
+//   * Publication.  Laid from translate_block inside the dispatcher's jit_wprot(0) window and inside
+//     [g_emit_start, g_cp), so the existing jit_publish_code covers it with no new bracket.
+//   * Provenance.  The body is laid BEFORE `host`, so every recorded per-instruction host range and
+//     every region body/tail word census is unchanged, exactly as for the other two thunks.
+static int g_bus_thunk;              // 0 -> byte-identical to the historical inline emission
+static uint32_t *g_bus_thunk_entry;  // thunk entry in the CURRENT arena
+static uint64_t g_bus_thunk_gen;     // arena generation the entry belongs to
+static uint64_t g_bus_thunk_bodies, g_bus_thunk_body_words;
+
+void hl_x86_emit_set_bus_thunk(int enabled) {
+    g_bus_thunk = enabled != 0;
+}
+
+static int bus_thunk_live(void) {
+    return g_bus_thunk_entry != NULL && g_bus_thunk_gen == g_cache_gen &&
+           (uint8_t *)g_bus_thunk_entry >= (uint8_t *)g_cache && (uint8_t *)g_bus_thunk_entry < (uint8_t *)g_cp;
+}
+
+#define OFF_BUS_RETURN (OFF_BUS_SCRATCH + 8) /* bus_scratch[1]: the thunk's x30 save */
+
+static void emit_bus_thunk_body(void) {
+    if (!g_bus_thunk || bus_thunk_live()) return;
+    uint32_t *begin = (uint32_t *)g_cp;
+    g_bus_thunk_entry = begin;
+    g_bus_thunk_gen = g_cache_gen;
+    e_ldr(9, 28, OFF_BUS_SCRATCH); // the filter probe borrowed guest x9; restore it BEFORE the spill
+    emit_spill();                  // ... so the spill writes the architectural r9 into the cpu image
+    e_str(30, 28, OFF_BUS_RETURN); // the helper call below clobbers x30
+    emit32(0xB9400000u | (2u << 10) | (30 << 5) | 1u); // ldr w1,[x30,#8]  -> access size
+    e_ldr(0, 28, OFF_BUS_EA);                          // x0 = the guest effective address
+    emit_host_ptr(16, (uint64_t)(uintptr_t)&jit_guest_bus_fault, PRELOC_HOSTGLOBAL);
+    emit32(0xD63F0000u | (16 << 5)); // blr x16
+    uint32_t *fault = (uint32_t *)g_cp;
+    emit32(0); // cbnz x0, Lfault
+    e_ldr(30, 28, OFF_BUS_RETURN);
+    emit_reload_full();
+    e_addi(30, 30, 12, 1); // step over the literal triple
+    e_br(30);
+    uint8_t *Lfault = g_cp;
+    *fault = 0xB5000000u | (((uint32_t)((Lfault - (uint8_t *)fault) / 4) & 0x7FFFFu) << 5) | 0u;
+    e_str(0, 28, OFF_FAULT_ADDR);
+    e_ldr(30, 28, OFF_BUS_RETURN);
+    emit32(0x29400000u | (17 << 10) | (30 << 5) | 16); // ldp w16,w17,[x30]
+    e_rrr(A_ORR, 16, 16, 17, 1, 32);                   // orr x16,x16,x17,lsl #32  -> guest rip
+    e_str(16, 28, OFF_RIP);
+    e_movconst(16, R_BUS);
+    e_str(16, 28, OFF_RSN);
+    emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
+    e_br(16);
+    g_bus_thunk_bodies++;
+    g_bus_thunk_body_words += (uint64_t)((uint32_t *)g_cp - begin);
+}
+
+// The 4-word call site in place of the invariant inline tail.  0 -> caller must emit that tail
+// (option off, no live thunk, or out of `bl` reach).
+static int emit_bus_thunk_site(uint64_t size, uint64_t rip) {
+    if (!g_bus_thunk || !bus_thunk_live()) return 0;
+    int64_t d = ((uint8_t *)g_bus_thunk_entry - (uint8_t *)g_cp) / 4;
+    if (d < -(INT64_C(1) << 25) || d >= (INT64_C(1) << 25)) return 0;
+    emit32(0x94000000u | ((uint32_t)d & 0x3FFFFFFu)); // bl thunk; x30 == the literal triple
+    emit32((uint32_t)(rip & 0xFFFFFFFFu));
+    emit32((uint32_t)(rip >> 32));
+    emit32((uint32_t)size);
+    g_bus_thunk_sites++;
+    return 1;
 }
 
 // ---------------- S1: inline vDSO-style time fast path (cntvct-based) ----------------
@@ -1600,7 +2066,7 @@ static void emit_fast_syscall(uint64_t next) {
 // past the fixed 2-insn poll header -- every in-cache cycle still polls via its backward or
 // indirect edge (see the g_fwdskip invariant note in engine/cache.c).
 void emit_chain_exit(uint64_t target) {
-    if (g_threaded) {
+    if (g_threaded && !hl_x86_emit_mt_chain_enabled()) {
         emit_exit_const(target, R_BRANCH);
         return;
     }
@@ -1608,12 +2074,43 @@ void emit_chain_exit(uint64_t target) {
     uint32_t *slot = (uint32_t *)g_cp;
     int fwd = g_fwdskip && target > g_emit_gpc;
     if (body) {
+        // Resolved at emission time: no live code is ever rewritten, so this edge is safe under
+        // threads with no further argument -- this block has not been published yet and therefore
+        // cannot be executing anywhere.
         int64_t d = (((uint8_t *)body + (fwd ? g_fwdskip : 0)) - (uint8_t *)slot) / 4;
         emit32(0x14000000u | ((uint32_t)d & 0x3FFFFFFu));
         return;
     }
+    // MTCHAIN PATCH-SLOT SHAPING.  patch_links_to() later rewrites *slot to `b body` while a peer
+    // may be executing that very word.  ARM ARM (DDI 0487) B2.2.5 "Concurrent modification and
+    // execution of instructions" guarantees a concurrent executor observes either the old or the
+    // new encoding -- with no cache maintenance and no ISB on the executing PE -- ONLY when both
+    // the old and the new instruction come from a restricted set that includes B and BL.  The
+    // historical slot is the first word of emit_exit_const()'s spill (an `stp`/`str`), or `bl thunk`
+    // when HL_X86_EXIT_THUNK is on.  Rewriting a `str` to a `b` under a concurrent executor is
+    // outside that set and is architecturally CONSTRAINED UNPREDICTABLE.
+    //
+    // So when MTCHAIN is on the slot is ALWAYS a branch: lay `b .+4` -- a no-op forward branch over
+    // itself into the exit sequence that follows.  Before the patch the slot is `b`, after it is
+    // `b`, only the imm26 differs, which is squarely inside B2.2.5's set.  Both encodings are also
+    // semantically complete: the old one falls into the full dispatcher exit (correct, slow), the
+    // new one jumps straight to the successor body (correct, fast).  There is no intermediate
+    // state, because there is only ever one store.
+    //
+    // The shaping is unconditional once the option is on, NOT conditional on g_threaded: g_pend
+    // entries recorded before the guest's first clone() are patched after it, so a slot laid down
+    // while single-threaded can still be rewritten under live peers.
+    //
+    // Cost when unpatched: one extra retired instruction on an edge that is about to pay a full
+    // dispatcher round trip.  Cost when patched: zero -- the branch is the chain.
+    if (hl_x86_emit_mt_chain_enabled()) {
+        emit32(0x14000001u); // b .+4 (the patch slot; -> the exit sequence below)
+        add_pend3(slot, target, 0, fwd);
+        if (!emit_exit_thunk_site(target)) emit_exit_const(target, R_BRANCH);
+        return;
+    }
     add_pend3(slot, target, 0, fwd);
-    emit_exit_const(target, R_BRANCH);
+    if (!emit_exit_thunk_site(target)) emit_exit_const(target, R_BRANCH);
 }
 
 // Indirect branch (ret / jmp reg / call reg) with the guest target already in x16.
@@ -1627,6 +2124,161 @@ void emit_ibranch(void) {
     emit32(0xD3423800u | (16 << 5) | 17); // ubfx x17, x16, #2, #13  ((tgt>>2)&0x1FFF)
     e_ldr(19, 28, OFF_IBTC);
     emit32(0x8B000000u | (17 << 16) | (5 << 10) | (19 << 5) | 19);
+    if (g_x86_ibtc8) {
+        // ---------------------------------------------------------------------------------------
+        // IBTC8 READER.  The entry is an 8-BYTE HINT: the body pointer, and nothing else.  The tag
+        // is re-read from the immutable header word emit_ibtc8_header() laid at body-8, reached by
+        // an ADDRESS DEPENDENCY from the pointer that was just loaded.  The 16-byte {target, body}
+        // pair, and with it FEAT_LSE2, disappears from the correctness argument entirely.
+        //
+        // WHY THIS IS CORRECT ON EVERY Armv8 PART, leg by leg (DDI 0487 issue M.c):
+        //
+        //  1. THE POINTER LOAD IS INDIVISIBLE, UNCONDITIONALLY.  B2.2.1 "Requirements for
+        //     single-copy atomicity": "A read that is generated by a load instruction that loads a
+        //     single general-purpose register and is aligned to the size of the read in the
+        //     instruction is single-copy atomic", and symmetrically for the write.  No feature, no
+        //     architecture version, no memory-type qualifier is attached to those two bullets --
+        //     the feature-gated material lives in the separate subsection B2.2.1.1.  `slot.body` is
+        //     8 bytes at offset 8 of a 16-byte-aligned hl_x86_ibtc_entry, so both the writer's
+        //     single-register store and this single-register load are naturally aligned and each is
+        //     one atom.  A reader therefore sees a WHOLE pointer: either the new occupant's body or
+        //     the previous one's, never a mixture.  (Contrast B2.2.1's LDP/STP rule, which makes a
+        //     pair of X registers "two single-copy atomic reads, one for each register" regardless
+        //     of 16-byte alignment, and B2.2.1.1, which upgrades that to one 16-byte atom only "If
+        //     FEAT_LSE2 is implemented", and B2.8.2.1.1, which says outright that without it
+        //     "the access is not guaranteed to be single-copy atomic except at the byte access
+        //     level".)
+        //
+        //  2. THE HEADER IS ORDERED AFTER THE POINTER BY AN ADDRESS DEPENDENCY, WITH NO BARRIER.
+        //     All of chapter B2.3 is "Ordering requirements defined by the formal concurrency
+        //     model".  B2.3.6 "Dependency relations" defines an Address dependency from a read to an
+        //     Effect whose Location address is computed from the value that read produced, and
+        //     explicitly admits a READ as the dependent Effect.  B2.3.7 "Ordering relations", in
+        //     full: "An Effect E1 is Dependency-ordered-before an Effect E2 if one of the following
+        //     applies: There is an Address dependency from E1 to E2."  Dependency-ordered-before
+        //     implies Locally-ordered-before, then Locally-hardware-required-ordered-before, then
+        //     Hardware-required-ordered-before, then Ordered-before, and B2.3.9 closes it: "an
+        //     Architecturally Allowed Execution must not exhibit a cycle in the Ordered-before
+        //     relation."  x21 is loaded from the table and is then the base register of the header
+        //     load, so the two reads are ordered on any Armv8 part with no DMB.  This is the read
+        //     side Linux calls a consume / rcu_dereference, and it is why AArch64 -- unlike Alpha --
+        //     needs no barrier there.
+        //     THE THREE CAVEATS THE MANUAL ATTACHES, AND WHY NONE BITES HERE.  (a) A DISCARDED value
+        //     creates no Address dependency -- the loaded pointer must really be consumed in the
+        //     address computation.  It is: x21 IS the base register, and it is also the branch
+        //     target.  (b) B2.3's scope excludes SVE/SME and FEAT_MOPS Effects; neither appears in
+        //     this probe.  (c) The familiar "compilers may break dependencies" warning is a C-level
+        //     concern (Linux memory-barriers.txt / rcu_dereference.rst), not an architectural one.
+        //     It cannot apply here at all: these two words are emitted by this function, not by a
+        //     compiler, so nothing can re-materialize the header address independently of x21.
+        //
+        //  3. THE WRITE SIDE PUBLISHES THE HEADER FIRST.  The header is stored during emission of
+        //     its own region; that region then goes through jit_publish_code() (dc cvau / dsb ish /
+        //     ic ivau / dsb ish / isb) before its address can reach the map, and the fill itself
+        //     (hl_x86_xibtc_publish8) stores the pointer with an explicit RELEASE store.  Release
+        //     store on the writer paired with address dependency on the reader is a complete
+        //     message-passing shape: a reader that observes the pointer must observe the header.
+        //
+        // WHY A TORN OR STALE OBSERVATION IS NOW HARMLESS, which is the whole point.  Every 64-bit
+        // value this probe can load from the table is a WHOLE pointer to some body, and every body
+        // carries its own gpc at -8.  So the compare `header(loaded body) == x16` is self-validating:
+        // it cannot be passed by a mismatched pair, because there is no pair.  The dangerous case
+        // the 16-byte design had -- a matching new target beside a stale body -- has no analogue
+        // here, because the tag is read THROUGH the body rather than beside it.
+        //
+        // NULL.  An empty or cleared slot is 0 (G_SHADOW_CLEAR / the SMC memsets), and `ldur
+        // x20,[x21,#-8]` on 0 would fault, so the pointer is tested before it is dereferenced.  That
+        // `cbz` is the one instruction this design costs over the 16-byte `ldp` probe per way; it
+        // also makes a cleared table reject rip 0, which the target-compare form did not.
+        //
+        // COST: 6 instructions on a way-0 hit (ldr, cbz, ldur, sub, cbnz, br) against the `ldp`
+        // probe's 4 and the historical two-load probe's 5.  Stated, measured and preregistered.
+        //
+        // `sub` not `subs`, as in every other way of this probe, so NZCV (where the x86 lazy flags
+        // live) survives into the cached body exactly as it does across a chained edge.
+        uint32_t *p_w1_a, *p_w1_b, *p_miss_a;
+        e_ldr(21, 19, 8);                                                   // ldr x21, [x19, #8]   way 0 body
+        p_w1_a = (uint32_t *)g_cp;
+        emit32(0);                                                          // cbz x21 -> Lway1
+        emit32(0xF8400000u | ((uint32_t)(-8 & 0x1FF) << 12) | (21 << 5) | 20); // ldur x20, [x21,#-8]
+        emit32(0xCB000000u | (16 << 16) | (20 << 5) | 20);                  // sub x20, x20, x16
+        p_w1_b = (uint32_t *)g_cp;
+        emit32(0);                                                          // cbnz x20 -> Lway1
+        e_br(21);
+        uint32_t *Lway1 = (uint32_t *)g_cp;
+        e_ldr(21, 19, 24);                                                  // ldr x21, [x19, #24]  way 1 body
+        p_miss_a = (uint32_t *)g_cp;
+        emit32(0);                                                          // cbz x21 -> Lmiss
+        emit32(0xF8400000u | ((uint32_t)(-8 & 0x1FF) << 12) | (21 << 5) | 20); // ldur x20, [x21,#-8]
+        emit32(0xCB000000u | (16 << 16) | (20 << 5) | 20);                  // sub x20, x20, x16
+        p_miss = (uint32_t *)g_cp;
+        emit32(0);                                                          // cbnz x20 -> Lmiss
+        e_br(21);
+        *p_w1_a = 0xB4000000u | (((uint32_t)(((uint8_t *)Lway1 - (uint8_t *)p_w1_a) / 4) & 0x7FFFF) << 5) | 21;
+        *p_w1_b = 0xB5000000u | (((uint32_t)(((uint8_t *)Lway1 - (uint8_t *)p_w1_b) / 4) & 0x7FFFF) << 5) | 20;
+        uint32_t *miss8 = (uint32_t *)g_cp;
+        if (!emit_ibranch_thunk_site()) {
+            e_str(16, 28, OFF_RIP);
+            emit_spill();
+            e_movconst(16, R_BRANCH);
+            e_str(16, 28, OFF_RSN);
+            e_movconst(16, 1);
+            e_str(16, 28, OFF_ICMISS);
+            emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
+            e_br(16);
+        }
+        *p_miss_a = 0xB4000000u | (((uint32_t)(((uint8_t *)miss8 - (uint8_t *)p_miss_a) / 4) & 0x7FFFF) << 5) | 21;
+        *p_miss = 0xB5000000u | (((uint32_t)(((uint8_t *)miss8 - (uint8_t *)p_miss) / 4) & 0x7FFFF) << 5) | 20;
+        return;
+    }
+    if (g_x86_mtibtc) {
+        // MTIBTC READER.  The historical probe reads {target, body} as two independent 8-byte loads,
+        // so a concurrent fill can be observed TORN: new target beside stale body -> a branch into
+        // the wrong translation.  That, not the fill itself, is why G_IBTC_FILL is skipped under
+        // threads today.  Read the pair with ONE naturally-aligned 16-byte `ldp` instead, which is
+        // single-copy atomic under FEAT_LSE2 and therefore mutually atomic with the writer's `stp`
+        // in xibtc_publish().  FEAT_LSE2 IS GATED: engine/target/x86_64.c probes AT_HWCAP's
+        // HWCAP_USCAT once at init and refuses to set g_x86_mtibtc without it, so this reader is
+        // only ever emitted on a part where the 16-byte pair really is indivisible.  The gate is
+        // required rather than avoidable: the probe below re-validates only `target`, and a torn
+        // pair's danger is precisely a MATCHING new target beside a stale body, so no strengthening
+        // of this compare can detect it -- nothing in the 16 bytes ties the two halves together.
+        // Making a torn read benign would mean removing the pair (an 8-byte entry plus a guest-PC
+        // header the probe re-checks through the loaded body pointer), which is a block-layout
+        // change, not a check.  This is exactly the discipline the aarch64-guest backend already
+        // ships (guest/aarch64/stubs.c's "atomic 128-bit load {target,body} (LSE2)" probes against
+        // translator/cache.c's ibtc_publish), and cache.c's own comment there records the
+        // obligation: "A future emit_ibranch MUST use one aligned 16-byte load, not two 8-byte
+        // ones."  hl_x86_ibtc_entry carries __attribute__((aligned(16))) and the emitted set index is
+        // scaled by 32 (`add x19, x19, x17, lsl #5`), so both ways of every set are 16-byte aligned.
+        // It is also one instruction SHORTER per way than the two-load form.
+        emit32(0xA9400000u | (21 << 10) | (19 << 5) | 20); // ldp x20, x21, [x19, #0]   (way 0)
+        emit32(0xCB000000u | (16 << 16) | (20 << 5) | 20); // sub x20, x20, x16
+        uint32_t *p_w1 = (uint32_t *)g_cp;
+        emit32(0); // cbnz x20 -> Lway1
+        e_br(21);
+        uint32_t *Lway1 = (uint32_t *)g_cp;
+        emit32(0xA9400000u | (2u << 15) | (21 << 10) | (19 << 5) | 20); // ldp x20, x21, [x19, #16]
+        emit32(0xCB000000u | (16 << 16) | (20 << 5) | 20);              // sub x20, x20, x16
+        p_miss = (uint32_t *)g_cp;
+        emit32(0); // cbnz x20 -> Lmiss
+        e_br(21);
+        *p_w1 = 0xB5000000u | (((uint32_t)(((uint8_t *)Lway1 - (uint8_t *)p_w1) / 4) & 0x7FFFF) << 5) | 20;
+        uint32_t *miss_mt = (uint32_t *)g_cp;
+        if (!emit_ibranch_thunk_site()) {
+            e_str(16, 28, OFF_RIP);
+            emit_spill();
+            e_movconst(16, R_BRANCH);
+            e_str(16, 28, OFF_RSN);
+            e_movconst(16, 1);
+            e_str(16, 28, OFF_ICMISS);
+            emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
+            e_br(16);
+        }
+        *p_miss =
+            0xB5000000u | (((uint32_t)(((uint8_t *)miss_mt - (uint8_t *)p_miss) / 4) & 0x7FFFF) << 5) | 20;
+        return;
+    }
     e_ldr(20, 19, 0);
     emit32(0xCB000000u | (16 << 16) | (20 << 5) | 20);
     uint32_t *p_w1 = (uint32_t *)g_cp;
@@ -1642,14 +2294,16 @@ void emit_ibranch(void) {
     e_br(21);
     *p_w1 = 0xB5000000u | (((uint32_t)(((uint8_t *)Lway1 - (uint8_t *)p_w1) / 4) & 0x7FFFF) << 5) | 20;
     uint32_t *miss = (uint32_t *)g_cp;
-    e_str(16, 28, OFF_RIP);
-    emit_spill(); // MISS: slow path
-    e_movconst(16, R_BRANCH);
-    e_str(16, 28, OFF_RSN);
-    e_movconst(16, 1);
-    e_str(16, 28, OFF_ICMISS); // dispatcher fills the IBTC for cpu->rip
-    emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
-    e_br(16);
+    if (!emit_ibranch_thunk_site()) {
+        e_str(16, 28, OFF_RIP);
+        emit_spill(); // MISS: slow path
+        e_movconst(16, R_BRANCH);
+        e_str(16, 28, OFF_RSN);
+        e_movconst(16, 1);
+        e_str(16, 28, OFF_ICMISS); // dispatcher fills the IBTC for cpu->rip
+        emit_host_ptr(16, (uint64_t)block_return, PRELOC_BLOCKRET);
+        e_br(16);
+    }
     *p_miss =
         0xB5000000u | (((uint32_t)(((uint8_t *)miss - (uint8_t *)p_miss) / 4) & 0x7FFFF) << 5) | 20; // cbnz->Lmiss
 }

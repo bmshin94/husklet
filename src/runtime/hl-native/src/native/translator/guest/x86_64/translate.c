@@ -18,6 +18,8 @@
 #include "lower/x87.h"
 #include "lower/x87_decode.h"
 
+#include <stdarg.h>
+
 // ---------------- the translator ----------------
 void report_unimpl(uint64_t pc, struct insn *I);
 
@@ -50,6 +52,15 @@ enum hl_x86_a64_family {
     HL_X86_A64_FAMILY_COUNT,
 };
 
+enum hl_x86_a64_branch {
+    HL_X86_A64_BRANCH_JCC,
+    HL_X86_A64_BRANCH_JMP,
+    HL_X86_A64_BRANCH_CALL,
+    HL_X86_A64_BRANCH_RET,
+    HL_X86_A64_BRANCH_INDIRECT,
+    HL_X86_A64_BRANCH_COUNT,
+};
+
 enum hl_x86_a64_other {
     HL_X86_A64_OTHER_STACK,
     HL_X86_A64_OTHER_MOVE,
@@ -62,13 +73,27 @@ enum hl_x86_a64_other {
 static enum hl_x86_a64_route g_x86_a64_route_current;
 static enum hl_x86_a64_family g_x86_a64_family_current;
 static enum hl_x86_a64_other g_x86_a64_other_current;
+static enum hl_x86_a64_branch g_x86_a64_branch_current;
 static uint32_t *g_x86_a64_family_emit_begin;
+static uint64_t g_x86_a64_glen_current;
 static _Atomic uint64_t g_x86_a64_route_total;
 static _Atomic uint64_t g_x86_a64_route_count[HL_X86_A64_ROUTE_COUNT];
 static _Atomic uint64_t g_x86_a64_family_route_count[HL_X86_A64_FAMILY_COUNT][HL_X86_A64_ROUTE_COUNT];
 static _Atomic uint64_t g_x86_a64_family_route_words[HL_X86_A64_FAMILY_COUNT][HL_X86_A64_ROUTE_COUNT];
+static _Atomic uint64_t g_x86_a64_family_route_gbytes[HL_X86_A64_FAMILY_COUNT][HL_X86_A64_ROUTE_COUNT];
 static _Atomic uint64_t g_x86_a64_other_count[HL_X86_A64_OTHER_COUNT];
 static _Atomic uint64_t g_x86_a64_other_words[HL_X86_A64_OTHER_COUNT];
+static _Atomic uint64_t g_x86_a64_other_gbytes[HL_X86_A64_OTHER_COUNT];
+static _Atomic uint64_t g_x86_a64_branch_count[HL_X86_A64_BRANCH_COUNT];
+static _Atomic uint64_t g_x86_a64_branch_words[HL_X86_A64_BRANCH_COUNT];
+static _Atomic uint64_t g_x86_a64_branch_gbytes[HL_X86_A64_BRANCH_COUNT];
+/* Whole-block emission, so the per-instruction census can be reconciled against the
+   block prologue + entry IRQ poll that belong to no single guest instruction. */
+static _Atomic uint64_t g_x86_a64_block_count;
+static _Atomic uint64_t g_x86_a64_block_words;
+static _Atomic uint64_t g_x86_a64_block_guest_blocks;
+static _Atomic uint64_t g_x86_a64_block_prologue_words;
+static _Atomic uint64_t g_x86_a64_block_tail_words;
 
 static enum hl_x86_a64_other hl_x86_a64_other(const struct insn *instruction) {
     const uint8_t op = instruction->op;
@@ -88,6 +113,16 @@ static enum hl_x86_a64_other hl_x86_a64_other(const struct insn *instruction) {
         (instruction->two && (op == 0x01 || op == 0x05 || op == 0x31 || op == 0x32 || op == 0xa2)))
         return HL_X86_A64_OTHER_SYSTEM;
     return HL_X86_A64_OTHER_UNKNOWN;
+}
+
+static enum hl_x86_a64_branch hl_x86_a64_branch(const struct insn *instruction) {
+    const uint8_t op = instruction->op;
+    if (instruction->two) return HL_X86_A64_BRANCH_JCC; /* 0f 80..8f only reaches here */
+    if (op >= 0x70 && op <= 0x7f) return HL_X86_A64_BRANCH_JCC;
+    if (op == 0xe9 || op == 0xeb) return HL_X86_A64_BRANCH_JMP;
+    if (op == 0xe8) return HL_X86_A64_BRANCH_CALL;
+    if (op == 0xc2 || op == 0xc3) return HL_X86_A64_BRANCH_RET;
+    return HL_X86_A64_BRANCH_INDIRECT; /* ff /2 call, ff /4 jmp, ff /3, ff /5 */
 }
 
 static enum hl_x86_a64_family hl_x86_a64_family(const struct insn *instruction) {
@@ -116,7 +151,10 @@ static void hl_x86_a64_route_begin(const struct insn *instruction) {
     g_x86_a64_family_current = hl_x86_a64_family(instruction);
     if (g_x86_a64_family_current == HL_X86_A64_FAMILY_OTHER)
         g_x86_a64_other_current = hl_x86_a64_other(instruction);
+    if (g_x86_a64_family_current == HL_X86_A64_FAMILY_BRANCH_CALL)
+        g_x86_a64_branch_current = hl_x86_a64_branch(instruction);
     g_x86_a64_family_emit_begin = (uint32_t *)g_cp;
+    g_x86_a64_glen_current = (uint64_t)instruction->len;
 }
 
 static void hl_x86_a64_route_note_exit(uint64_t reason) {
@@ -159,9 +197,19 @@ static void hl_x86_a64_route_commit(int unimplemented) {
                               memory_order_relaxed);
     atomic_fetch_add_explicit(&g_x86_a64_family_route_words[g_x86_a64_family_current][route], words,
                               memory_order_relaxed);
+    atomic_fetch_add_explicit(&g_x86_a64_family_route_gbytes[g_x86_a64_family_current][route],
+                              g_x86_a64_glen_current, memory_order_relaxed);
+    if (g_x86_a64_family_current == HL_X86_A64_FAMILY_BRANCH_CALL) {
+        atomic_fetch_add_explicit(&g_x86_a64_branch_count[g_x86_a64_branch_current], 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(&g_x86_a64_branch_words[g_x86_a64_branch_current], words, memory_order_relaxed);
+        atomic_fetch_add_explicit(&g_x86_a64_branch_gbytes[g_x86_a64_branch_current], g_x86_a64_glen_current,
+                                  memory_order_relaxed);
+    }
     if (g_x86_a64_family_current == HL_X86_A64_FAMILY_OTHER) {
         atomic_fetch_add_explicit(&g_x86_a64_other_count[g_x86_a64_other_current], 1, memory_order_relaxed);
         atomic_fetch_add_explicit(&g_x86_a64_other_words[g_x86_a64_other_current], words, memory_order_relaxed);
+        atomic_fetch_add_explicit(&g_x86_a64_other_gbytes[g_x86_a64_other_current], g_x86_a64_glen_current,
+                                  memory_order_relaxed);
     }
 }
 
@@ -169,27 +217,51 @@ static void hl_x86_a64_route_note_unimplemented(void) {
     if (g_prof) g_x86_a64_route_current = HL_X86_A64_ROUTE_UNIMPL;
 }
 
+/* Length-correct record appender.  The previous accumulation pattern guarded every
+   continuation with `written < size`, so the sizing call (size == 0) returned only the
+   FIRST line's length; the rendered record was then longer than the caller's malloc
+   receipt and profile_record_write rejected it -- which is why this whole census has
+   never appeared in a diagnostics run.  vsnprintf reports the would-have-written length
+   whether or not there is room, so accumulating it unconditionally sizes correctly. */
+static void hl_x86_a64_appendf(char *out, size_t size, int *written, const char *format, ...) {
+    if (*written < 0) return;
+    size_t offset = (size_t)*written;
+    char *cursor = (out != NULL && offset < size) ? out + offset : NULL;
+    size_t room = (out != NULL && offset < size) ? size - offset : 0;
+    va_list arguments;
+    va_start(arguments, format);
+    int produced = vsnprintf(cursor, room, format, arguments);
+    va_end(arguments);
+    if (produced < 0) {
+        *written = produced;
+        return;
+    }
+    *written += produced;
+}
+
 static int hl_x86_a64_route_report(char *out, size_t size) {
     uint64_t count[HL_X86_A64_ROUTE_COUNT], family_route_sum[HL_X86_A64_ROUTE_COUNT] = {0};
-    uint64_t sum = 0, family_sum = 0, words_sum = 0, other_family_count = 0, other_family_words = 0;
+    uint64_t sum = 0, family_sum = 0, words_sum = 0, gbytes_sum = 0;
+    uint64_t other_family_count = 0, other_family_words = 0;
     for (unsigned route = 0; route < HL_X86_A64_ROUTE_COUNT; ++route) {
         count[route] = atomic_load_explicit(&g_x86_a64_route_count[route], memory_order_relaxed);
         sum += count[route];
     }
     uint64_t total = atomic_load_explicit(&g_x86_a64_route_total, memory_order_relaxed);
-    int written = snprintf(out, size,
-                    "[prof] x86-a64-route: total=%llu direct=%llu avx=%llu sse3b=%llu repstr=%llu div=%llu"
-                    " x87=%llu service=%llu trap=%llu unimpl=%llu sum=%llu reconcile=%u\n",
-                    (unsigned long long)total, (unsigned long long)count[HL_X86_A64_ROUTE_DIRECT],
-                    (unsigned long long)count[HL_X86_A64_ROUTE_AVX],
-                    (unsigned long long)count[HL_X86_A64_ROUTE_SSE3B],
-                    (unsigned long long)count[HL_X86_A64_ROUTE_REPSTR],
-                    (unsigned long long)count[HL_X86_A64_ROUTE_DIV],
-                    (unsigned long long)count[HL_X86_A64_ROUTE_X87],
-                    (unsigned long long)count[HL_X86_A64_ROUTE_SERVICE],
-                    (unsigned long long)count[HL_X86_A64_ROUTE_TRAP],
-                    (unsigned long long)count[HL_X86_A64_ROUTE_UNIMPL], (unsigned long long)sum,
-                    total == sum);
+    int written = 0;
+    hl_x86_a64_appendf(out, size, &written,
+                       "[prof] x86-a64-route: total=%llu direct=%llu avx=%llu sse3b=%llu repstr=%llu div=%llu"
+                       " x87=%llu service=%llu trap=%llu unimpl=%llu sum=%llu reconcile=%u\n",
+                       (unsigned long long)total, (unsigned long long)count[HL_X86_A64_ROUTE_DIRECT],
+                       (unsigned long long)count[HL_X86_A64_ROUTE_AVX],
+                       (unsigned long long)count[HL_X86_A64_ROUTE_SSE3B],
+                       (unsigned long long)count[HL_X86_A64_ROUTE_REPSTR],
+                       (unsigned long long)count[HL_X86_A64_ROUTE_DIV],
+                       (unsigned long long)count[HL_X86_A64_ROUTE_X87],
+                       (unsigned long long)count[HL_X86_A64_ROUTE_SERVICE],
+                       (unsigned long long)count[HL_X86_A64_ROUTE_TRAP],
+                       (unsigned long long)count[HL_X86_A64_ROUTE_UNIMPL], (unsigned long long)sum,
+                       total == sum);
     static const char *const family_name[HL_X86_A64_FAMILY_COUNT] = {"alu", "memory", "branch", "sse", "other"};
     static const char *const route_name[HL_X86_A64_ROUTE_COUNT] = {
         "direct", "avx", "sse3b", "repstr", "div", "x87", "service", "trap", "unimpl",
@@ -201,14 +273,16 @@ static int hl_x86_a64_route_report(char *out, size_t size) {
                 atomic_load_explicit(&g_x86_a64_family_route_count[family][route], memory_order_relaxed);
             uint64_t cell_words =
                 atomic_load_explicit(&g_x86_a64_family_route_words[family][route], memory_order_relaxed);
+            uint64_t cell_gbytes =
+                atomic_load_explicit(&g_x86_a64_family_route_gbytes[family][route], memory_order_relaxed);
             family_count += cell_count;
             family_words += cell_words;
+            gbytes_sum += cell_gbytes;
             family_route_sum[route] += cell_count;
-            if (written >= 0 && (size_t)written < size)
-                written += snprintf(out + written, size - (size_t)written,
-                                    "[prof] x86-a64-expand: family=%s route=%s count=%llu words=%llu\n",
-                                    family_name[family], route_name[route], (unsigned long long)cell_count,
-                                    (unsigned long long)cell_words);
+            hl_x86_a64_appendf(out, size, &written,
+                               "[prof] x86-a64-expand: family=%s route=%s count=%llu words=%llu gbytes=%llu\n",
+                               family_name[family], route_name[route], (unsigned long long)cell_count,
+                               (unsigned long long)cell_words, (unsigned long long)cell_gbytes);
         }
         family_sum += family_count;
         words_sum += family_words;
@@ -218,41 +292,116 @@ static int hl_x86_a64_route_report(char *out, size_t size) {
         }
     }
     uint64_t other_count[HL_X86_A64_OTHER_COUNT], other_words[HL_X86_A64_OTHER_COUNT];
+    uint64_t other_gbytes[HL_X86_A64_OTHER_COUNT];
     uint64_t other_sum = 0, other_words_sum = 0;
     for (unsigned other = 0; other < HL_X86_A64_OTHER_COUNT; ++other) {
         other_count[other] = atomic_load_explicit(&g_x86_a64_other_count[other], memory_order_relaxed);
         other_words[other] = atomic_load_explicit(&g_x86_a64_other_words[other], memory_order_relaxed);
+        other_gbytes[other] = atomic_load_explicit(&g_x86_a64_other_gbytes[other], memory_order_relaxed);
         other_sum += other_count[other];
         other_words_sum += other_words[other];
     }
-    if (written >= 0 && (size_t)written < size)
-        written += snprintf(
-            out + written, size - (size_t)written,
-            "[prof] x86-a64-other: stack=%llu stack_words=%llu move=%llu move_words=%llu address=%llu"
-            " address_words=%llu system=%llu system_words=%llu unknown=%llu unknown_words=%llu total=%llu"
-            " words=%llu family_total=%llu family_words=%llu reconcile=%u words_reconcile=%u\n",
-            (unsigned long long)other_count[HL_X86_A64_OTHER_STACK],
-            (unsigned long long)other_words[HL_X86_A64_OTHER_STACK],
-            (unsigned long long)other_count[HL_X86_A64_OTHER_MOVE],
-            (unsigned long long)other_words[HL_X86_A64_OTHER_MOVE],
-            (unsigned long long)other_count[HL_X86_A64_OTHER_ADDRESS],
-            (unsigned long long)other_words[HL_X86_A64_OTHER_ADDRESS],
-            (unsigned long long)other_count[HL_X86_A64_OTHER_SYSTEM],
-            (unsigned long long)other_words[HL_X86_A64_OTHER_SYSTEM],
-            (unsigned long long)other_count[HL_X86_A64_OTHER_UNKNOWN],
-            (unsigned long long)other_words[HL_X86_A64_OTHER_UNKNOWN], (unsigned long long)other_sum,
-            (unsigned long long)other_words_sum, (unsigned long long)other_family_count,
-            (unsigned long long)other_family_words, other_sum == other_family_count,
-            other_words_sum == other_family_words);
+    static const char *const branch_name[HL_X86_A64_BRANCH_COUNT] = {"jcc", "jmp", "call", "ret", "indirect"};
+    for (unsigned branch = 0; branch < HL_X86_A64_BRANCH_COUNT; ++branch)
+        hl_x86_a64_appendf(out, size, &written,
+                           "[prof] x86-a64-branch-split: kind=%s count=%llu words=%llu gbytes=%llu\n",
+                           branch_name[branch],
+                           (unsigned long long)atomic_load_explicit(&g_x86_a64_branch_count[branch],
+                                                                    memory_order_relaxed),
+                           (unsigned long long)atomic_load_explicit(&g_x86_a64_branch_words[branch],
+                                                                    memory_order_relaxed),
+                           (unsigned long long)atomic_load_explicit(&g_x86_a64_branch_gbytes[branch],
+                                                                    memory_order_relaxed));
+    hl_x86_a64_appendf(out, size, &written,
+                       "[prof] x86-a64-block: regions=%llu region_words=%llu guest_blocks=%llu"
+                       " prologue_words=%llu tail_words=%llu\n",
+                       (unsigned long long)atomic_load_explicit(&g_x86_a64_block_count, memory_order_relaxed),
+                       (unsigned long long)atomic_load_explicit(&g_x86_a64_block_words, memory_order_relaxed),
+                       (unsigned long long)atomic_load_explicit(&g_x86_a64_block_guest_blocks,
+                                                                memory_order_relaxed),
+                       (unsigned long long)atomic_load_explicit(&g_x86_a64_block_prologue_words,
+                                                                memory_order_relaxed),
+                       (unsigned long long)atomic_load_explicit(&g_x86_a64_block_tail_words,
+                                                                memory_order_relaxed));
+    /* Constant-rip exit accounting: the full inline sequence vs the 3-word shared-thunk call
+       site, plus the per-arena thunk bodies (which live OUTSIDE the per-region word census
+       above, so a total must add thunk_body_words to region_words). */
+    hl_x86_a64_appendf(
+        out, size, &written,
+        "[prof] x86-a64-exit: inline_sites=%llu inline_words=%llu thunk_sites=%llu"
+        " thunk_words=%llu ibranch_sites=%llu ibranch_words=%llu thunk_bodies=%llu thunk_body_words=%llu\n",
+        (unsigned long long)g_exit_inline_sites, (unsigned long long)g_exit_inline_words,
+        (unsigned long long)g_exit_thunk_sites, (unsigned long long)(g_exit_thunk_sites * 3u),
+        (unsigned long long)g_ibranch_thunk_sites, (unsigned long long)g_ibranch_thunk_sites,
+        (unsigned long long)g_exit_thunk_bodies, (unsigned long long)g_exit_thunk_body_words);
+    /* Region-prologue accounting: inline heads (HL_X86_PROLOGUE_WORDS each) vs 1-word `bl` heads,
+       plus the per-arena trampoline bodies (OUTSIDE the per-region word census, like the exit
+       thunk bodies above). */
+    hl_x86_a64_appendf(out, size, &written,
+                       "[prof] x86-a64-prologue: inline_sites=%llu inline_words=%llu thunk_sites=%llu"
+                       " thunk_words=%llu bodies=%llu body_words=%llu\n",
+                       (unsigned long long)g_prologue_inline_sites,
+                       (unsigned long long)(g_prologue_inline_sites * (uint64_t)HL_X86_PROLOGUE_WORDS),
+                       (unsigned long long)g_prologue_thunk_sites, (unsigned long long)g_prologue_thunk_sites,
+                       (unsigned long long)g_prologue_thunk_bodies,
+                       (unsigned long long)g_prologue_thunk_body_words);
+    /* BUS-guard accounting: inline guards (fast path + the invariant tail) vs 4-word thunk call
+       sites (fast path + `bl` + 3 literals), plus the per-arena thunk bodies (OUTSIDE the per-region
+       word census, like the exit and prologue thunk bodies above). */
+    hl_x86_a64_appendf(out, size, &written,
+                       "[prof] x86-a64-bus: inline_sites=%llu inline_words=%llu thunk_sites=%llu"
+                       " thunk_words=%llu bodies=%llu body_words=%llu\n",
+                       (unsigned long long)g_bus_inline_sites, (unsigned long long)g_bus_inline_words,
+                       (unsigned long long)g_bus_thunk_sites, (unsigned long long)g_bus_thunk_words,
+                       (unsigned long long)g_bus_thunk_bodies, (unsigned long long)g_bus_thunk_body_words);
+    static const char *const other_name[HL_X86_A64_OTHER_COUNT] = {"stack", "move", "address", "system", "unknown"};
+    for (unsigned other = 0; other < HL_X86_A64_OTHER_COUNT; ++other)
+        hl_x86_a64_appendf(out, size, &written,
+                           "[prof] x86-a64-other-split: kind=%s count=%llu words=%llu gbytes=%llu\n",
+                           other_name[other], (unsigned long long)other_count[other],
+                           (unsigned long long)other_words[other], (unsigned long long)other_gbytes[other]);
+    hl_x86_a64_appendf(
+        out, size, &written,
+        "[prof] x86-a64-other: stack=%llu stack_words=%llu move=%llu move_words=%llu address=%llu"
+        " address_words=%llu system=%llu system_words=%llu unknown=%llu unknown_words=%llu total=%llu"
+        " words=%llu family_total=%llu family_words=%llu reconcile=%u words_reconcile=%u\n",
+        (unsigned long long)other_count[HL_X86_A64_OTHER_STACK],
+        (unsigned long long)other_words[HL_X86_A64_OTHER_STACK],
+        (unsigned long long)other_count[HL_X86_A64_OTHER_MOVE],
+        (unsigned long long)other_words[HL_X86_A64_OTHER_MOVE],
+        (unsigned long long)other_count[HL_X86_A64_OTHER_ADDRESS],
+        (unsigned long long)other_words[HL_X86_A64_OTHER_ADDRESS],
+        (unsigned long long)other_count[HL_X86_A64_OTHER_SYSTEM],
+        (unsigned long long)other_words[HL_X86_A64_OTHER_SYSTEM],
+        (unsigned long long)other_count[HL_X86_A64_OTHER_UNKNOWN],
+        (unsigned long long)other_words[HL_X86_A64_OTHER_UNKNOWN], (unsigned long long)other_sum,
+        (unsigned long long)other_words_sum, (unsigned long long)other_family_count,
+        (unsigned long long)other_family_words, other_sum == other_family_count,
+        other_words_sum == other_family_words);
     unsigned route_reconcile = 1;
     for (unsigned route = 0; route < HL_X86_A64_ROUTE_COUNT; ++route)
         route_reconcile &= family_route_sum[route] == count[route];
-    if (written >= 0 && (size_t)written < size)
-        written += snprintf(out + written, size - (size_t)written,
-                            "[prof] x86-a64-expand-total: count=%llu words=%llu route_total=%llu reconcile=%u"
-                            " route_reconcile=%u\n",
-                            (unsigned long long)family_sum, (unsigned long long)words_sum,
-                            (unsigned long long)total, family_sum == total, route_reconcile);
+    hl_x86_a64_appendf(out, size, &written,
+                       "[prof] x86-a64-expand-total: count=%llu words=%llu gbytes=%llu route_total=%llu"
+                       " reconcile=%u route_reconcile=%u\n",
+                       (unsigned long long)family_sum, (unsigned long long)words_sum,
+                       (unsigned long long)gbytes_sum, (unsigned long long)total, family_sum == total,
+                       route_reconcile);
+    /* Mechanism census: every field is a TRANSLATE-time event count, never a timing. */
+    hl_x86_a64_appendf(out, size, &written,
+                       "[prof] x86-a64-mech: dmb_emit=%llu dmb_elide=%llu ea_guard=%llu ea_record=%llu"
+                       " ea_deadstore=%llu pfaf_attempt=%llu pfaf_dead=%llu rmload_mem=%llu"
+                       " rmload_foldable=%llu rmload_folded=%llu xflag=%llu xflag_scan=%llu t2fold=%llu threaded=%d"
+                       " shared_obs=%d\n",
+                       (unsigned long long)g_x86_mech_dmb_emit, (unsigned long long)g_x86_mech_dmb_elide,
+                       (unsigned long long)g_x86_mech_ea_guard, (unsigned long long)g_x86_mech_ea_record,
+                       (unsigned long long)g_x86_mech_ea_deadstore,
+                       (unsigned long long)g_x86_mech_pfaf_attempt, (unsigned long long)g_x86_mech_pfaf_dead,
+                       (unsigned long long)g_x86_mech_rmload_mem,
+                       (unsigned long long)g_x86_mech_rmload_foldable, (unsigned long long)g_x86_mech_rmload_folded,
+                       (unsigned long long)g_prof_xflag,
+                       (unsigned long long)g_prof_xflag_scan, (unsigned long long)g_prof_t2fold, g_threaded,
+                       g_shared_obs);
     return written;
 }
 
@@ -894,6 +1043,16 @@ static int lower_sse_horizontal(struct insn *instruction, uint64_t guest_pc, uin
     return TX_NEXT;
 }
 
+// Masked shift count register for the by-CL double shifts. NOT x17: for a MEMORY destination rm_load
+// leaves the effective address in x17 and rm_store stores through it ("EA already in x17"), so parking
+// the count there overwrote the address and the result went to the COUNT reinterpreted as a pointer.
+// The masked count is 0..63, so `shld %cl,%rsi,[mem]` stored 1-8 bytes at a near-null address -- a
+// SIGSEGV for every addressing mode, every operand width and every CL value including zero, and the
+// real destination was left stale. The immediate-count forms never touched x17 and were always right.
+// x26 is a translator scratch no emitter between the count computation and rm_store touches: the same
+// register (and the same reason) as the `shr [mem],cl` operand stash in lower/shift.c.
+#define DSHIFT_COUNT 26
+
 static int lower_double_shift(struct insn *instruction, uint64_t next) {
     uint8_t opcode = instruction->op;
     if (opcode != 0xA4 && opcode != 0xA5 && opcode != 0xAC && opcode != 0xAD) return TX_FALL;
@@ -909,7 +1068,10 @@ static int lower_double_shift(struct insn *instruction, uint64_t next) {
         if (!bycl) {
             int n = (int)(instruction->imm & 31);
             if (n == 0) {
-                if (mem) e_store(2, dst, 17);
+                if (mem) {
+                    emit_rm_fold_address(); /* a folded rm_load left no EA in x17 */
+                    e_store(2, dst, 17);
+                }
                 return TX_NEXT;
             } // count 0 -> no change, flags intact
             if (isleft) {
@@ -924,16 +1086,16 @@ static int lower_double_shift(struct insn *instruction, uint64_t next) {
             }
         } else {
             e_movconst(23, 31);
-            e_rrr(A_AND, 17, RCX, 23, 0, 0); // n = cl & 31
+            e_rrr(A_AND, DSHIFT_COUNT, RCX, 23, 0, 0); // n = cl & 31
             if (isleft) {
                 e_lsl_i(19, 19, 16, 0);
                 e_rrr(A_ORR, 19, 19, 20, 0, 0); // (dst<<16)|src
-                e_shv(S_LSLV, 19, 19, 17, 0);   // <<= n
+                e_shv(S_LSLV, 19, 19, DSHIFT_COUNT, 0); // <<= n
                 e_lsr_i(16, 19, 16, 0);
             } else {
                 e_lsl_i(20, 20, 16, 0);
                 e_rrr(A_ORR, 19, 20, 19, 0, 0); // (src<<16)|dst
-                e_shv(S_LSRV, 16, 19, 17, 0);   // >>= n
+                e_shv(S_LSRV, 16, 19, DSHIFT_COUNT, 0); // >>= n
             }
             // n==0: dst unchanged. The concat-shift already yields dst for n==0, so no csel needed.
         }
@@ -948,7 +1110,10 @@ static int lower_double_shift(struct insn *instruction, uint64_t next) {
     if (!bycl) {
         int n = (int)(instruction->imm & (ssf ? 63 : 31));
         if (n == 0) {
-            if (mem) e_store(w, dst, 17);
+            if (mem) {
+                emit_rm_fold_address(); /* a folded rm_load left no EA in x17 */
+                e_store(w, dst, 17);
+            }
             return TX_NEXT;
         } // count 0 -> no change, flags intact
         if (isleft)
@@ -970,18 +1135,18 @@ static int lower_double_shift(struct insn *instruction, uint64_t next) {
     // ---- SHLD/SHRD by CL ----
     e_mov_rr(22, dst, ssf); // preserve orig dst for the n==0 select + CF
     e_movconst(19, ssf ? 63 : 31);
-    e_rrr(A_AND, 17, RCX, 19, ssf, 0); // n = cl & (W-1)
+    e_rrr(A_AND, DSHIFT_COUNT, RCX, 19, ssf, 0); // n = cl & (W-1)
     e_movconst(20, width);
-    e_rrr(A_SUB, 20, 20, 17, ssf, 0); // 20 = W - n
+    e_rrr(A_SUB, 20, 20, DSHIFT_COUNT, ssf, 0); // 20 = W - n
     if (isleft) {
-        e_shv(S_LSLV, 19, dst, 17, ssf);
+        e_shv(S_LSLV, 19, dst, DSHIFT_COUNT, ssf);
         e_shv(S_LSRV, 20, src, 20, ssf);
     } else {
-        e_shv(S_LSRV, 19, dst, 17, ssf);
+        e_shv(S_LSRV, 19, dst, DSHIFT_COUNT, ssf);
         e_shv(S_LSLV, 20, src, 20, ssf);
     }
     e_rrr(A_ORR, 16, 19, 20, ssf, 0); // combined = t1 | t2
-    e_tst(17, ssf);
+    e_tst(DSHIFT_COUNT, ssf);
     e_csel(16, 22, 16, 0 /*EQ: n==0*/, ssf); // n==0 -> dst unchanged
     // M: x86 flags. If the masked count n==0 ALL flags are unchanged; else SF/ZF/PF from the
     // result and CF = the last bit shifted out of the ORIGINAL dst (x22): SHLD bit (W-n), SHRD
@@ -991,9 +1156,9 @@ static int lower_double_shift(struct insn *instruction, uint64_t next) {
     emit32(0xD53B4200u | 20); // mrs x20, nzcv (N/Z valid; C/V stale)
     if (isleft) {
         e_movconst(19, width);
-        e_rrr(A_SUB, 19, 19, 17, ssf, 0); // x19 = W - n
+        e_rrr(A_SUB, 19, 19, DSHIFT_COUNT, ssf, 0); // x19 = W - n
     } else {
-        e_subi(19, 17, 1, ssf); // x19 = n - 1
+        e_subi(19, DSHIFT_COUNT, 1, ssf); // x19 = n - 1
     }
     e_shv(S_LSRV, 21, 22, 19, ssf);
     e_movconst(19, 1);
@@ -1002,7 +1167,7 @@ static int lower_double_shift(struct insn *instruction, uint64_t next) {
     e_movconst(19, 1u << 29);
     e_rrr(A_BIC, 20, 20, 19, 1, 0);  // clear stored C (bit 29)
     e_rrr(A_ORR, 20, 20, 21, 1, 29); // stored C = (NOT CF) << 29
-    e_tst(17, ssf);                  // Z = (n == 0)
+    e_tst(DSHIFT_COUNT, ssf);        // Z = (n == 0)
     e_csel(20, 24, 20, 0 /*EQ*/, 1); // n==0 -> keep old flags
     e_str(20, 28, OFF_NZCV);
     if (!hl_x86_legacy_pfaf_dead()) { // PF: n==0 keeps old, else result low byte (live Z still = n==0 here)
@@ -1014,6 +1179,8 @@ static int lower_double_shift(struct insn *instruction, uint64_t next) {
     rm_store(instruction, w, 16);
     return TX_NEXT;
 }
+
+#undef DSHIFT_COUNT
 
 static int lower_scalar_two_byte(struct insn *instruction, uint64_t guest_pc, uint64_t next, int sf,
                                  const hl_x86_trace_state *trace_state) {
@@ -1473,6 +1640,10 @@ advance:
 }
 
 // Translate the basic block at guest address gpc; returns host entry pointer.
+// HL_X86_MT_CHAIN: guest PC awaiting post-publication chaining (0 = none). See
+// hl_x86_mt_chain_after_publish() below.
+static uint64_t g_mtchain_pending;
+
 static void *translate_block(uint64_t gpc) {
     /* Observe writes made through another MAP_SHARED alias before decoding
        an executable view backed by an emulated host-page snapshot. */
@@ -1495,8 +1666,21 @@ static void *translate_block(uint64_t gpc) {
     };
     const int stitch = 1;
     uint64_t start = gpc;
+    // Lay this arena's shared out-of-line exit thunk before the region proper, so `host` (and every
+    // recorded body/provenance range) still starts at the prologue and nothing can fall into it.
+    emit_exit_thunk_body();
+    // Same seam for the shared out-of-line region prologue: laid before `host`, so `host` still
+    // starts the region proper and every recorded body/provenance range is unchanged.
+    emit_prologue_thunk_body();
+    // Same seam again for the shared out-of-line BUS guard tail.
+    emit_bus_thunk_body();
     void *host = g_cp;
     emit_prologue();
+    // HL_X86_IBTC8: the immutable {guest pc} header this region's body is re-validated through,
+    // laid BEFORE `body` and branched over, so `body` itself -- the target of every chain, every
+    // self-loop fold, every IBTC hit, tier-2's body[0]/body[2] rewrites and every recorded
+    // provenance range -- keeps exactly the meaning and the contents it has always had.
+    emit_ibtc8_header(start);
     void *body = g_cp;
     // poll cpu->irq at the body entry so a caught async signal reaches a no-syscall guest loop.
     emit_irq_check(start);
@@ -1526,15 +1710,21 @@ static void *translate_block(uint64_t gpc) {
     // chains of hard-to-predict conditionals are cut. Ending a region early is always semantics-preserving:
     // intermediate block-starts are never registered in g_map, so the truncated successor self-heals as an
     // on-demand fresh translation via the ordinary chain-exit path (identical to NOSTITCH, re-anchored).
+// The budget is measured from `body` plus the CONSTANT inline-prologue length rather than from
+// `host`: with HL_X86_PROLOGUE_THUNK off body == host + HL_X86_PROLOGUE_WORDS*4, so this is the same
+// expression it always was, and with the option on the region composition (and therefore the count of
+// guest instructions translated) stays identical instead of silently widening by the 104 bytes the
+// out-of-line prologue frees.
 #ifndef STITCH_MAX_COND
 #define STITCH_MAX_COND 3
 #endif
 #define STITCH_OK                                                                                                      \
     (stitch && trace_blk < HL_X86_TRACE_MAX_BLOCKS - 1 && ncond < STITCH_MAX_COND &&                                   \
-     (size_t)((uint8_t *)g_cp - (uint8_t *)host) < HL_X86_TRACE_MAX_BYTES)
+     (size_t)((uint8_t *)g_cp - (uint8_t *)body) + HL_X86_PROLOGUE_WORDS * 4u < HL_X86_TRACE_MAX_BYTES)
     for (;;) {
         struct insn I;
         g_emit_gpc = gpc; // IRQSLIM: tag chain emission with the current branch's rip
+        emit_rm_fold_discard(); // a deferred rm_load EA never outlives its instruction
         if (hl_x86_decode(gpc, &I) < 0) {
             /* Logical execute permission/range failure is a guest instruction
                fetch fault, not an engine-side dereference crash. */
@@ -1595,6 +1785,7 @@ static void *translate_block(uint64_t gpc) {
         report_unimpl(gpc, &I);
         break;
     }
+    void *loop_end = g_cp;
     if (prov_mem) jit_instruction_map_put(prov_host, (uint64_t)g_cp, prov_guest); // close the final insn
     // IRQSLIM: the out-of-line poll exit stub the body-entry cbnz targets (irq set -> exit to
     // the dispatcher at the block start, exactly like the legacy inline poll).
@@ -1602,22 +1793,65 @@ static void *translate_block(uint64_t gpc) {
         uint32_t *p = g_irq_patch;
         g_irq_patch = NULL;
         *p = 0xB5000000u | (((uint32_t)(((uint8_t *)g_cp - (uint8_t *)p) / 4) & 0x7FFFF) << 5) | 16; // cbnz x16
-        emit_exit_const(start, R_BRANCH);
+        if (!emit_exit_thunk_site(start)) emit_exit_const(start, R_BRANCH);
     }
     // W5B tier-2: the promoter (g_tier2_build) recompiles in place and updates the EXISTING map entry
     // itself, so don't insert a duplicate and don't chain pending edges here (the promoter does both
     // AFTER icache-flushing the new code). Expose the body for it.
     g_last_body = body;
+    if (g_prof) {
+        /* Whole-region emission, against which the per-instruction census reconciles. */
+        atomic_fetch_add_explicit(&g_x86_a64_block_count, 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(&g_x86_a64_block_words,
+                                  (uint64_t)(((uint8_t *)g_cp - (uint8_t *)host) / 4), memory_order_relaxed);
+        atomic_fetch_add_explicit(&g_x86_a64_block_guest_blocks, (uint64_t)nseen, memory_order_relaxed);
+        atomic_fetch_add_explicit(&g_x86_a64_block_prologue_words,
+                                  (uint64_t)(((uint8_t *)body - (uint8_t *)host) / 4), memory_order_relaxed);
+        atomic_fetch_add_explicit(&g_x86_a64_block_tail_words,
+                                  (uint64_t)(((uint8_t *)g_cp - (uint8_t *)loop_end) / 4), memory_order_relaxed);
+    }
     if (!g_tier2_build) {
         if (map_put(start, start, gpc > start ? gpc : start + 1, host, body) != MAP_PUT_OK) {
             static const char message[] = "translation map is full";
             (void)jit_fail(HL_STATUS_OUT_OF_MEMORY, message, sizeof message - 1u);
             return NULL;
         }
-        if (!g_threaded) patch_links_to(start, body); // chaining mutates live blocks -> off when threaded
+        if (!g_threaded)
+            patch_links_to(start, body); // single-threaded: nobody else can be executing the patch slot
+        else if (hl_x86_emit_mt_chain_enabled())
+            // MTCHAIN: DEFER the patch to the dispatcher's G_DISPATCH_CHAIN hook, which runs after
+            // jit_publish_code() has made this new block instruction-cache coherent across the inner
+            // shareable domain.  Chaining a live predecessor to it here, before publication, would let
+            // a peer core branch into bytes its I-cache has not seen.  `start` is all the hook needs;
+            // it re-resolves the body from the map.
+            g_mtchain_pending = start;
     }
     return host;
 #undef STITCH_OK
+}
+
+// ---------------- HL_X86_MT_CHAIN: post-publication chaining hook ----------------
+// translate_block() records the guest PC it just translated here when the guest is threaded and the
+// option is on; the dispatcher calls hl_x86_mt_chain_after_publish() (via G_DISPATCH_CHAIN) once the
+// new block has been published, and only then are existing blocks back-patched to point at it.
+//
+// Ordering obligation, in full:
+//   1. translate_block() emits the new block.                     (writer alias, not yet coherent)
+//   2. dispatcher: jit_publish_code() -> dc cvau / dsb ish / ic ivau / dsb ish / isb.
+//   3. HERE: patch_links_to() rewrites each pending predecessor's `b .+4` patch slot to `b body`.
+//      Each rewrite is a single naturally-aligned 4-byte store of a B over a B (see the B2.2.5
+//      argument at emit_chain_exit), followed by its own jit_publish_code() of those 4 bytes.
+// Step 3 can only make a peer reach the new block AFTER step 2 has made it fetchable.  A peer that
+// still observes the pre-patch `b .+4` takes the dispatcher round trip -- correct, just slow -- and
+// picks the chain up whenever its own fetch sees the new word.
+//
+// The whole sequence runs with g_jit_lock held and inside the dispatcher's jit_wprot(0) window, so
+// there is exactly one patcher at a time.
+static void hl_x86_mt_chain_after_publish(void) {
+    uint64_t gpc = g_mtchain_pending;
+    if (!gpc) return;
+    g_mtchain_pending = 0;
+    patch_links_to(gpc, map_body(gpc));
 }
 
 // W5B tier-2: promote a hot self-loop (its in-cache counter hit threshold and exited R_TIER2 with

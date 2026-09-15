@@ -24,6 +24,16 @@ uint64_t g_pmovmskb_n;
 uint64_t g_prof_t2fold;
 uint64_t g_prof_xflag;
 uint64_t g_prof_xflag_scan;
+uint64_t g_x86_mech_dmb_emit;
+uint64_t g_x86_mech_dmb_elide;
+uint64_t g_x86_mech_ea_record;
+uint64_t g_x86_mech_ea_deadstore;
+uint64_t g_x86_mech_ea_guard;
+uint64_t g_x86_mech_pfaf_attempt;
+uint64_t g_x86_mech_pfaf_dead;
+uint64_t g_x86_mech_rmload_mem;
+uint64_t g_x86_mech_rmload_folded;
+uint64_t g_x86_mech_rmload_foldable;
 
 uint64_t coldprof_now_ns(const hl_host_services *services) {
     hl_host_result result;

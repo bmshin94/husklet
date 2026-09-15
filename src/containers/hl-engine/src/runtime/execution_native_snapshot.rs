@@ -16,8 +16,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::time::Instant;
 
+/// The one place the `native-x86` image format version lives.  Bumping it here
+/// is a compile error until every other carrier of the version moves with it:
+/// see the `const` block below.
+const NATIVE_FORMAT_VERSION: u16 = 2;
+
 const MAGIC: &[u8; 8] = b"HLNXREG\0";
-const VERSION: u16 = 1;
+const VERSION: u16 = NATIVE_FORMAT_VERSION;
 const ELF_MACHINE_X86_64: u16 = 62;
 pub(super) const RECORD_SIZE: usize = 256;
 const REGISTER_COUNT: usize = 27;
@@ -34,7 +39,7 @@ const STOP_DEADLINE: Duration = Duration::from_secs(2);
 #[cfg(target_os = "linux")]
 const ABORT_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 
-pub(crate) const REGISTER_OBJECT: &str = "native/registers.x86-v1";
+pub(crate) const REGISTER_OBJECT: &str = "native/registers.x86-v2";
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub(crate) fn pin_native_process(pid: libc::pid_t) -> io::Result<OwnedFd> {
@@ -47,13 +52,47 @@ pub(crate) fn pin_native_process(pid: libc::pid_t) -> io::Result<OwnedFd> {
         Ok(unsafe { OwnedFd::from_raw_fd(descriptor as libc::c_int) })
     }
 }
-pub(crate) const MEMORY_OBJECT: &str = "native/memory.x86-v1";
-const MANIFEST_MAGIC: &[u8; 16] = b"HLNATIVE-X86-V1\0";
-const MANIFEST_SIZE: usize = 160;
+pub(crate) const MEMORY_OBJECT: &str = "native/memory.x86-v2";
+/// Extended processor state -- x87, SSE, AVX and AVX-512 -- as its own object.
+/// The XSAVE area is variable length and host dependent, so it does not belong
+/// in the fixed-size register record; giving it a manifest slot buys it the same
+/// declared size and SHA-256 digest every other object already gets.
+pub(crate) const XSTATE_OBJECT: &str = "native/xstate.x86-v2";
+const MANIFEST_MAGIC: &[u8; 16] = b"HLNATIVE-X86-V2\0";
+const MANIFEST_SIZE: usize = 232;
+const MANIFEST_SLOT: usize = 72;
+
+/// Four places used to carry the format version independently -- `VERSION`, the
+/// `MANIFEST_MAGIC` text, the `...x86-vN` object-name suffixes, and (a fifth the
+/// audit missed) the image envelope's payload version -- and nothing made them
+/// move together.  This does.
+const _: () = {
+    assert!(NATIVE_FORMAT_VERSION > 0 && NATIVE_FORMAT_VERSION < 10);
+    assert!(VERSION == NATIVE_FORMAT_VERSION);
+    assert!(XSTATE_VERSION == NATIVE_FORMAT_VERSION);
+    assert!(MANIFEST_MAGIC[15] == 0);
+    assert!(ascii_format_version(MANIFEST_MAGIC[14]) == NATIVE_FORMAT_VERSION);
+    assert!(trailing_format_version(REGISTER_OBJECT) == NATIVE_FORMAT_VERSION);
+    assert!(trailing_format_version(MEMORY_OBJECT) == NATIVE_FORMAT_VERSION);
+    assert!(trailing_format_version(XSTATE_OBJECT) == NATIVE_FORMAT_VERSION);
+    assert!(crate::runtime::checkpoint::image_envelope::NATIVE_X86_PAYLOAD_VERSION == NATIVE_FORMAT_VERSION as u32);
+    assert!(MANIFEST_SIZE == 16 + 3 * MANIFEST_SLOT);
+};
+
+const fn ascii_format_version(digit: u8) -> u16 {
+    assert!(digit.is_ascii_digit(), "format version carrier must end in a digit");
+    (digit - b'0') as u16
+}
+
+const fn trailing_format_version(name: &str) -> u16 {
+    let bytes = name.as_bytes();
+    ascii_format_version(bytes[bytes.len() - 1])
+}
 
 pub(crate) struct NativeSnapshotObjects {
     pub(crate) registers: Vec<u8>,
     pub(crate) memory: Vec<u8>,
+    pub(crate) xstate: Vec<u8>,
     pub(crate) manifest: Vec<u8>,
 }
 
@@ -62,21 +101,17 @@ pub(crate) fn capture_stopped_native(
     pid: libc::pid_t,
     deadline: Instant,
 ) -> Result<NativeSnapshotObjects, CompositionError> {
-    let registers = capture_until(pid, deadline)
-        .map_err(|error| {
-            if error.kind() == io::ErrorKind::TimedOut {
-                CompositionError::DeadlineExceeded
-            } else {
-                CompositionError::RuntimeConstruction
-            }
-        })?
-        .encode()
-        .to_vec();
-    let memory = capture_stopped_memory(pid, deadline)
-        .and_then(|image| {
-            image
+    // One attachment spans the thread state and the memory image.  Capturing
+    // them under two separate attachments detached in between, and detaching a
+    // group-stopped tracee makes it briefly runnable while it re-enters group
+    // stop -- during which `capture_stopped_memory`'s one-shot "is it stopped"
+    // admission fails.  See `capture_thread_and_memory_until`.
+    let (thread, memory) = capture_thread_and_memory_until(pid, deadline)
+        .and_then(|(thread, image)| {
+            let memory = image
                 .encode()
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{error:?}")))
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{error:?}")))?;
+            Ok((thread, memory))
         })
         .map_err(|error| {
             if error.kind() == io::ErrorKind::TimedOut {
@@ -85,19 +120,23 @@ pub(crate) fn capture_stopped_native(
                 CompositionError::RuntimeConstruction
             }
         })?;
+    let registers = thread.registers.encode().to_vec();
+    let xstate = thread.xstate.encode();
     if Instant::now() >= deadline {
         return Err(CompositionError::DeadlineExceeded);
     }
-    let manifest = native_manifest(&registers, &memory);
+    let manifest = native_manifest(&registers, &memory, &xstate);
     validate_native_objects(&manifest, |name| match name {
         REGISTER_OBJECT => Some(registers.clone()),
         MEMORY_OBJECT => Some(memory.clone()),
+        XSTATE_OBJECT => Some(xstate.clone()),
         _ => None,
     })
     .map_err(|_| CompositionError::RuntimeConstruction)?;
     Ok(NativeSnapshotObjects {
         registers,
         memory,
+        xstate,
         manifest,
     })
 }
@@ -112,6 +151,7 @@ pub(crate) struct PreparedNativeRestore {
     pid: libc::pid_t,
     _pidfd: OwnedFd,
     registers: X86RegisterRecord,
+    xstate: X86XstateRecord,
     image: NativeMemoryImage,
     guard: TraceGuard,
 }
@@ -122,12 +162,15 @@ pub(crate) fn prepare_native_restore(
     pidfd: OwnedFd,
     registers: &[u8],
     memory: &[u8],
+    xstate: &[u8],
     deadline: Instant,
 ) -> io::Result<PreparedNativeRestore> {
     let registers = X86RegisterRecord::decode(registers)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("invalid register image: {error:?}")))?;
     let image = NativeMemoryImage::decode(memory)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("invalid memory image: {error:?}")))?;
+    let xstate = X86XstateRecord::decode(xstate)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("invalid xstate image: {error:?}")))?;
     if pid <= 1 || pid == unsafe { libc::getpid() } || !process_incarnation_matches(pid, pidfd.as_raw_fd())? {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -167,14 +210,28 @@ pub(crate) fn prepare_native_restore(
     if current.len() != image.mappings.len() || mismatch.is_some() {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "fresh process address-space layout differs from NativeX86V1 image",
+            "fresh process address-space layout differs from NativeX86 image",
         ));
     }
+    // Cross-host admission, decided before any mutation.  The local convention
+    // and area size are read from the restore target itself, which is the only
+    // authority for this kernel and CPU; the enabled XCR0 comes from XGETBV.
+    // Every failure is a refusal -- nothing is zero filled, truncated, or
+    // re-laid-out component by component to make a foreign area fit.
+    check_deadline(deadline)?;
+    let local = capture_xstate(pid)?;
+    xstate.admits(&local).map_err(|mismatch| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("native xstate host mismatch: {mismatch:?}"),
+        )
+    })?;
 
     Ok(PreparedNativeRestore {
         pid,
         _pidfd: pidfd,
         registers,
+        xstate,
         image,
         guard,
     })
@@ -186,6 +243,7 @@ pub(crate) fn complete_native_restore(prepared: PreparedNativeRestore, deadline:
         pid,
         _pidfd,
         registers,
+        xstate,
         image,
         guard,
     } = prepared;
@@ -219,6 +277,19 @@ pub(crate) fn complete_native_restore(prepared: PreparedNativeRestore, deadline:
         pid,
         libc::NT_PRSTATUS as usize,
         (&raw mut iov) as usize,
+    )?;
+    // Replay the XSAVE area verbatim.  The kernel validates the header it is
+    // handed and rejects anything it cannot accept, which keeps this fail-closed.
+    let mut area = xstate.area.clone();
+    let mut xstate_iov = libc::iovec {
+        iov_base: area.as_mut_ptr().cast(),
+        iov_len: area.len(),
+    };
+    ptrace(
+        libc::PTRACE_SETREGSET,
+        pid,
+        NT_X86_XSTATE as usize,
+        (&raw mut xstate_iov) as usize,
     )?;
     ptrace(
         libc::PTRACE_SETSIGMASK,
@@ -267,15 +338,24 @@ fn write_process_mem_exact(memory: &std::fs::File, address: u64, bytes: &[u8], d
     Ok(())
 }
 
-fn native_manifest(registers: &[u8], memory: &[u8]) -> Vec<u8> {
+/// Manifest slot `index`: a 32-byte object name, an 8-byte declared size and a
+/// 32-byte SHA-256 digest, at `16 + index * MANIFEST_SLOT`.
+const fn manifest_slot(index: usize) -> (usize, usize, usize) {
+    let at = 16 + index * MANIFEST_SLOT;
+    (at, at + 32, at + 40)
+}
+
+const NATIVE_OBJECTS: [&str; 3] = [REGISTER_OBJECT, MEMORY_OBJECT, XSTATE_OBJECT];
+
+fn native_manifest(registers: &[u8], memory: &[u8], xstate: &[u8]) -> Vec<u8> {
     let mut out = vec![0; MANIFEST_SIZE];
     out[..16].copy_from_slice(MANIFEST_MAGIC);
-    out[16..48].copy_from_slice(&object_name(REGISTER_OBJECT));
-    out[48..56].copy_from_slice(&(registers.len() as u64).to_le_bytes());
-    out[56..88].copy_from_slice(&Sha256::digest(registers));
-    out[88..120].copy_from_slice(&object_name(MEMORY_OBJECT));
-    out[120..128].copy_from_slice(&(memory.len() as u64).to_le_bytes());
-    out[128..160].copy_from_slice(&Sha256::digest(memory));
+    for (index, bytes) in [registers, memory, xstate].into_iter().enumerate() {
+        let (name_at, size_at, digest_at) = manifest_slot(index);
+        out[name_at..name_at + 32].copy_from_slice(&object_name(NATIVE_OBJECTS[index]));
+        out[size_at..size_at + 8].copy_from_slice(&(bytes.len() as u64).to_le_bytes());
+        out[digest_at..digest_at + 32].copy_from_slice(&Sha256::digest(bytes));
+    }
     out
 }
 
@@ -289,23 +369,27 @@ pub(crate) fn validate_native_objects(
     manifest: &[u8],
     object: impl Fn(&str) -> Option<Vec<u8>>,
 ) -> Result<(), InvalidNativeImage> {
-    if manifest.len() != MANIFEST_SIZE
-        || &manifest[..16] != MANIFEST_MAGIC
-        || manifest[16..48] != object_name(REGISTER_OBJECT)
-        || manifest[88..120] != object_name(MEMORY_OBJECT)
-    {
+    if manifest.len() != MANIFEST_SIZE || &manifest[..16] != MANIFEST_MAGIC {
         return Err(InvalidNativeImage::Manifest);
     }
-    let registers = object(REGISTER_OBJECT).ok_or(InvalidNativeImage::Missing)?;
-    let memory = object(MEMORY_OBJECT).ok_or(InvalidNativeImage::Missing)?;
-    for (size_at, digest_at, bytes) in [(48, 56, registers.as_slice()), (120, 128, memory.as_slice())] {
+    let mut objects = Vec::with_capacity(NATIVE_OBJECTS.len());
+    for (index, name) in NATIVE_OBJECTS.into_iter().enumerate() {
+        let (name_at, _, _) = manifest_slot(index);
+        if manifest[name_at..name_at + 32] != object_name(name) {
+            return Err(InvalidNativeImage::Manifest);
+        }
+        objects.push(object(name).ok_or(InvalidNativeImage::Missing)?);
+    }
+    for (index, bytes) in objects.iter().enumerate() {
+        let (_, size_at, digest_at) = manifest_slot(index);
         let size = u64::from_le_bytes(manifest[size_at..size_at + 8].try_into().expect("manifest field"));
         if size != bytes.len() as u64 || manifest[digest_at..digest_at + 32] != Sha256::digest(bytes)[..] {
             return Err(InvalidNativeImage::Digest);
         }
     }
-    X86RegisterRecord::decode(&registers).map_err(|_| InvalidNativeImage::Registers)?;
-    NativeMemoryImage::decode(&memory).map_err(|_| InvalidNativeImage::Memory)?;
+    X86RegisterRecord::decode(&objects[0]).map_err(|_| InvalidNativeImage::Registers)?;
+    NativeMemoryImage::decode(&objects[1]).map_err(|_| InvalidNativeImage::Memory)?;
+    X86XstateRecord::decode(&objects[2]).map_err(|_| InvalidNativeImage::Xstate)?;
     Ok(())
 }
 
@@ -316,6 +400,7 @@ pub(crate) enum InvalidNativeImage {
     Digest,
     Registers,
     Memory,
+    Xstate,
 }
 
 /// Atomically stages a complete stopped-process image.  `commit_until` is the only publication
@@ -343,10 +428,11 @@ pub(super) fn publish_stopped_native(
         let image = capture_stopped_native(pid, deadline)?;
         sink.put_until(transaction, REGISTER_OBJECT, &image.registers, deadline)?;
         sink.put_until(transaction, MEMORY_OBJECT, &image.memory, deadline)?;
+        sink.put_until(transaction, XSTATE_OBJECT, &image.xstate, deadline)?;
         sink.put_until(
             transaction,
             crate::runtime::checkpoint::image_envelope::OBJECT,
-            &crate::runtime::checkpoint::image_envelope::Reader::NativeX86V1.encode(),
+            &crate::runtime::checkpoint::image_envelope::Reader::NativeX86.encode(),
             deadline,
         )?;
         sink.commit_until(transaction, &image.manifest, deadline)
@@ -366,6 +452,168 @@ pub(super) fn publish_stopped_native(
 pub(super) struct X86RegisterRecord {
     pub(super) signal_mask: u64,
     pub(super) registers: [u64; REGISTER_COUNT],
+}
+
+const XSTATE_MAGIC: &[u8; 8] = b"HLNXXST\0";
+const XSTATE_VERSION: u16 = NATIVE_FORMAT_VERSION;
+const XSTATE_HEADER_SIZE: usize = 32;
+/// 512-byte FXSAVE legacy area plus the 64-byte XSAVE header.
+const XSTATE_MIN_AREA: usize = 576;
+/// Only an upper bound for discovery -- never a declared layout size.  The real
+/// size comes from `CPUID.(EAX=0Dh,ECX=0)` by way of the regset's reported length.
+const XSTATE_MAX_AREA: usize = 1 << 16;
+const XSTATE_BV_AT: usize = 512;
+const XSTATE_XCOMP_BV_AT: usize = 520;
+const XSTATE_HEADER_RESERVED_AT: usize = 528;
+/// `XCOMP_BV` bit 63: the area is in the compacted (`XSAVEC`) layout rather than
+/// the standard one.  Linux's ptrace uabi format is the standard one, so this is
+/// recorded and compared rather than assumed.
+const XSTATE_COMPACTED_BIT: u64 = 1 << 63;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const NT_X86_XSTATE: libc::c_uint = 0x202;
+
+/// Canonical `native-x86-v2` extended processor state: the XSAVE area exactly as
+/// `NT_X86_XSTATE` delivered it, plus the capturing host's effective `XCR0`.
+///
+/// `NT_PRFPREG` is deliberately **not** used: it yields only the 512-byte FXSAVE
+/// legacy area and silently drops every YMM upper half and all AVX-512 state.
+///
+/// The area is stored and replayed byte for byte.  In particular `XSTATE_BV` and
+/// `XCOMP_BV` are never rewritten: writing back a header with a component's bit
+/// cleared does not preserve that component, it asks the kernel to restore the
+/// component's *init* value, so a capture that "cleans" bits it believes unused
+/// actively destroys state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct X86XstateRecord {
+    /// `XCR0` as enabled on the capturing host, for cross-host admission.
+    pub(super) xcr0: u64,
+    /// The uabi XSAVE area: legacy 0..512 (x87, MXCSR at 24, `MXCSR_MASK` at 28,
+    /// XMM0-15 at 160), XSAVE header 512..576, extended components beyond.
+    pub(super) area: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum InvalidXstateRecord {
+    Size,
+    Magic,
+    Version,
+    Architecture,
+    DeclaredSize,
+    Reserved,
+    AreaSize,
+    HeaderReserved,
+    Components,
+}
+
+/// Why a captured XSAVE area cannot be replayed on *this* host.  Every arm is a
+/// refusal: the area is never zero filled, truncated, or re-laid-out component
+/// by component to make it fit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum XstateHostMismatch {
+    /// The restoring host does not enable every component the image actually set.
+    Features,
+    /// Standard versus compacted (`XSAVEC`) layout convention differs.
+    Layout,
+    /// The local uabi area is a different size, so the component offsets differ
+    /// and `PTRACE_SETREGSET` would reject the write anyway.
+    AreaSize,
+}
+
+impl X86XstateRecord {
+    fn header_word(&self, at: usize) -> u64 {
+        u64::from_le_bytes(self.area[at..at + 8].try_into().expect("xsave header word"))
+    }
+
+    /// Components carrying non-init values in this image.
+    pub(super) fn xstate_bv(&self) -> u64 {
+        self.header_word(XSTATE_BV_AT)
+    }
+
+    pub(super) fn xcomp_bv(&self) -> u64 {
+        self.header_word(XSTATE_XCOMP_BV_AT)
+    }
+
+    pub(super) fn compacted(&self) -> bool {
+        self.xcomp_bv() & XSTATE_COMPACTED_BIT != 0
+    }
+
+    /// Fail closed unless this host can replay the image exactly as captured.
+    pub(super) fn admits(&self, local: &Self) -> Result<(), XstateHostMismatch> {
+        if self.xstate_bv() & !local.xcr0 != 0 {
+            return Err(XstateHostMismatch::Features);
+        }
+        if self.compacted() != local.compacted() {
+            return Err(XstateHostMismatch::Layout);
+        }
+        if self.area.len() != local.area.len() {
+            return Err(XstateHostMismatch::AreaSize);
+        }
+        Ok(())
+    }
+
+    pub(super) fn encode(&self) -> Vec<u8> {
+        let total = XSTATE_HEADER_SIZE + self.area.len();
+        let mut bytes = vec![0_u8; total];
+        bytes[..8].copy_from_slice(XSTATE_MAGIC);
+        bytes[8..10].copy_from_slice(&XSTATE_VERSION.to_le_bytes());
+        bytes[10..12].copy_from_slice(&ELF_MACHINE_X86_64.to_le_bytes());
+        bytes[12..16].copy_from_slice(&(total as u32).to_le_bytes());
+        bytes[16..24].copy_from_slice(&self.xcr0.to_le_bytes());
+        bytes[XSTATE_HEADER_SIZE..].copy_from_slice(&self.area);
+        bytes
+    }
+
+    pub(super) fn decode(bytes: &[u8]) -> Result<Self, InvalidXstateRecord> {
+        if bytes.len() < XSTATE_HEADER_SIZE + XSTATE_MIN_AREA || bytes.len() > XSTATE_HEADER_SIZE + XSTATE_MAX_AREA {
+            return Err(InvalidXstateRecord::Size);
+        }
+        if &bytes[..8] != XSTATE_MAGIC {
+            return Err(InvalidXstateRecord::Magic);
+        }
+        if u16::from_le_bytes(bytes[8..10].try_into().expect("fixed field")) != XSTATE_VERSION {
+            return Err(InvalidXstateRecord::Version);
+        }
+        if u16::from_le_bytes(bytes[10..12].try_into().expect("fixed field")) != ELF_MACHINE_X86_64 {
+            return Err(InvalidXstateRecord::Architecture);
+        }
+        if u32::from_le_bytes(bytes[12..16].try_into().expect("fixed field")) as usize != bytes.len() {
+            return Err(InvalidXstateRecord::DeclaredSize);
+        }
+        if bytes[24..XSTATE_HEADER_SIZE].iter().any(|byte| *byte != 0) {
+            return Err(InvalidXstateRecord::Reserved);
+        }
+        let record = Self {
+            xcr0: u64::from_le_bytes(bytes[16..24].try_into().expect("fixed field")),
+            area: bytes[XSTATE_HEADER_SIZE..].to_vec(),
+        };
+        if record.area.len() < XSTATE_MIN_AREA {
+            return Err(InvalidXstateRecord::AreaSize);
+        }
+        if record.area[XSTATE_HEADER_RESERVED_AT..XSTATE_MIN_AREA]
+            .iter()
+            .any(|byte| *byte != 0)
+        {
+            return Err(InvalidXstateRecord::HeaderReserved);
+        }
+        if record.xstate_bv() & !record.xcr0 != 0 {
+            return Err(InvalidXstateRecord::Components);
+        }
+        Ok(record)
+    }
+}
+
+/// `XCR0` as the OS has it enabled, which is what decides the uabi XSAVE layout.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn host_xcr0() -> Option<u64> {
+    #[target_feature(enable = "xsave")]
+    fn read() -> u64 {
+        // SAFETY: the enclosing `#[target_feature(enable = "xsave")]` is only
+        // entered after `xsave` was detected, which is this intrinsic's contract.
+        unsafe { core::arch::x86_64::_xgetbv(0) }
+    }
+    // SAFETY: `xsave` was detected, so CR4.OSXSAVE is set and `XGETBV` with
+    // ECX=0 is available to user mode on this host.
+    std::arch::is_x86_feature_detected!("xsave").then(|| unsafe { read() })
 }
 
 /// One canonical Linux VMA. File mappings name immutable input below the
@@ -1020,40 +1268,99 @@ impl X86RegisterRecord {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
-pub(super) fn capture(pid: libc::pid_t) -> io::Result<X86RegisterRecord> {
-    capture_with_until(pid, Instant::now() + STOP_DEADLINE, || Ok(()))
+/// One stopped thread's complete architectural state.
+///
+/// Deliberately a container of per-mechanism records rather than a widened
+/// `X86RegisterRecord`: an aarch64 sibling is a different set of regsets, not
+/// more fields on this one.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct NativeThreadState {
+    pub(super) registers: X86RegisterRecord,
+    pub(super) xstate: X86XstateRecord,
 }
 
 #[cfg(target_arch = "x86_64")]
-fn capture_until(pid: libc::pid_t, deadline: Instant) -> io::Result<X86RegisterRecord> {
-    capture_with_until(pid, deadline, || Ok(()))
+pub(super) fn capture(pid: libc::pid_t) -> io::Result<NativeThreadState> {
+    capture_with_until(pid, Instant::now() + STOP_DEADLINE, || Ok(()), || Ok(())).map(|(thread, ())| thread)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn capture_until(pid: libc::pid_t, deadline: Instant) -> io::Result<NativeThreadState> {
+    capture_with_until(pid, deadline, || Ok(()), || Ok(())).map(|(thread, ())| thread)
+}
+
+/// Captures the architectural thread state and the memory image under a
+/// **single** ptrace attachment.
+///
+/// The two halves used to be captured under two separate attachments, which
+/// meant `PTRACE_DETACH` ran between them.  Detaching a tracee that was in
+/// group-stop does not leave it stopped instantaneously: the kernel re-arms
+/// `JOBCTL_STOP_PENDING` and wakes the task so it can re-enter group stop, so
+/// there is a window in which `/proc/<pid>/status` reports a runnable state.
+/// `capture_stopped_memory` admits its target by reading exactly that field,
+/// once, with no retry and without consulting the deadline -- so whenever the
+/// tracee had not been scheduled back into its stop yet, capture failed with
+/// `RuntimeConstruction` no matter how much of the budget was left.  That is
+/// why the failure was contention-sensitive rather than deadline-sensitive.
+///
+/// Holding one attachment across both halves removes the window rather than
+/// polling around it, and buys a correctness property the split never had: the
+/// registers and the memory image now come from the same frozen instant.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn capture_thread_and_memory_until(
+    pid: libc::pid_t,
+    deadline: Instant,
+) -> io::Result<(NativeThreadState, NativeMemoryImage)> {
+    // While attached the tracee sits in ptrace-stop, which `process_is_stopped`
+    // recognises as `t`, so the memory half's admission check still applies.
+    capture_with_until(pid, deadline, || Ok(()), || capture_stopped_memory(pid, deadline))
+}
+
+#[cfg(all(target_os = "linux", not(target_arch = "x86_64")))]
+fn capture_thread_and_memory_until(
+    pid: libc::pid_t,
+    deadline: Instant,
+) -> io::Result<(NativeThreadState, NativeMemoryImage)> {
+    let thread = capture_until(pid, deadline)?;
+    let memory = capture_stopped_memory(pid, deadline)?;
+    Ok((thread, memory))
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-fn capture_until(pid: libc::pid_t, _deadline: Instant) -> io::Result<X86RegisterRecord> {
+fn capture_until(pid: libc::pid_t, _deadline: Instant) -> io::Result<NativeThreadState> {
     capture(pid)
 }
 
+/// aarch64 and every other host stays refusing.  Returning `Unsupported` is why
+/// it is safe today; returning success without the FP/vector file is what made
+/// x86-64 unsafe.  An aarch64 record would need `NT_PRSTATUS`, `NT_FPREGSET`
+/// (Q0-31, FPSR, FPCR), `NT_ARM_TLS` for `TPIDR_EL0` -- easy to forget, since
+/// x86-64 carries FS/GS base inside `user_regs_struct` -- and `NT_ARM_SVE` /
+/// `NT_ARM_ZA`, whose payloads are prefixed by a vector length that must be set
+/// before the payload is written back.
 #[cfg(not(target_arch = "x86_64"))]
-pub(super) fn capture(_pid: libc::pid_t) -> io::Result<X86RegisterRecord> {
+pub(super) fn capture(_pid: libc::pid_t) -> io::Result<NativeThreadState> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "native-x86-v1 register capture requires a Linux x86-64 host",
+        "native-x86 architectural capture requires a Linux x86-64 host",
     ))
 }
 
 #[cfg(target_arch = "x86_64")]
-fn capture_with(pid: libc::pid_t, after_stop: impl FnOnce() -> io::Result<()>) -> io::Result<X86RegisterRecord> {
-    capture_with_until(pid, Instant::now() + STOP_DEADLINE, after_stop)
+fn capture_with(pid: libc::pid_t, after_stop: impl FnOnce() -> io::Result<()>) -> io::Result<NativeThreadState> {
+    capture_with_until(pid, Instant::now() + STOP_DEADLINE, after_stop, || Ok(())).map(|(thread, ())| thread)
 }
 
+/// `after_stop` runs as soon as the stop has been *observed*; `while_attached`
+/// runs after the architectural state has been read and before the tracee is
+/// detached, so anything it captures is guaranteed to come from the same stop.
 #[cfg(target_arch = "x86_64")]
-fn capture_with_until(
+fn capture_with_until<T>(
     pid: libc::pid_t,
     deadline: Instant,
     after_stop: impl FnOnce() -> io::Result<()>,
-) -> io::Result<X86RegisterRecord> {
+    while_attached: impl FnOnce() -> io::Result<T>,
+) -> io::Result<(NativeThreadState, T)> {
     if pid <= 1 || pid == unsafe { libc::getpid() } {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -1101,8 +1408,58 @@ fn capture_with_until(
         (&raw mut signal_mask) as usize,
     )?;
     let registers = unsafe { std::ptr::read_unaligned((&raw const raw).cast::<[u64; REGISTER_COUNT]>()) };
+    check_deadline(deadline)?;
+    let xstate = capture_xstate(pid)?;
+    // Still attached: the tracee cannot leave this stop underneath the caller.
+    let attached = while_attached()?;
     drop(guard);
-    Ok(X86RegisterRecord { signal_mask, registers })
+    Ok((
+        NativeThreadState {
+            registers: X86RegisterRecord { signal_mask, registers },
+            xstate,
+        },
+        attached,
+    ))
+}
+
+/// Reads the whole extended processor state through `NT_X86_XSTATE`.
+///
+/// The XSAVE area is not a fixed-size structure: `CPUID.(EAX=0Dh,ECX=0)` and the
+/// enabled `XCR0` decide its size, so nothing here hardcodes 832 or 2696.  The
+/// kernel clamps `iov_len` to the regset's own length and writes the copied
+/// length back, so a generous buffer makes the kernel authoritative -- the same
+/// contract the `NT_PRSTATUS` read above already relies on.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn capture_xstate(pid: libc::pid_t) -> io::Result<X86XstateRecord> {
+    let xcr0 = host_xcr0().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "native-x86 capture requires an XSAVE-enabled host",
+        )
+    })?;
+    let mut area = vec![0_u8; XSTATE_MAX_AREA];
+    let mut iov = libc::iovec {
+        iov_base: area.as_mut_ptr().cast(),
+        iov_len: area.len(),
+    };
+    ptrace(
+        libc::PTRACE_GETREGSET,
+        pid,
+        NT_X86_XSTATE as usize,
+        (&raw mut iov) as usize,
+    )?;
+    if iov.iov_len < XSTATE_MIN_AREA || iov.iov_len >= area.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "implausible x86-64 NT_X86_XSTATE register set length",
+        ));
+    }
+    area.truncate(iov.iov_len);
+    let record = X86XstateRecord { xcr0, area };
+    // Refuse to publish an area we could not decode back; capture and restore
+    // must agree on validity before anything reaches a manifest.
+    X86XstateRecord::decode(&record.encode())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("invalid xstate capture: {error:?}")))
 }
 
 #[cfg(target_os = "linux")]
@@ -1344,20 +1701,37 @@ mod tests {
         pid
     }
 
+    /// Runs one live-capture test alone in a child process.
+    ///
+    /// The child's output goes to a *file*, deliberately not to the pipes
+    /// `Command::output()` would create.  Several fixtures in this module fork a
+    /// child that never execs and parks in `pause()`, and such a child inherits
+    /// every descriptor that was open at fork time -- including the write ends of
+    /// those pipes.  If the isolated run then panics before it reaps its fixture,
+    /// the leaked fixture holds the pipe open indefinitely, `output()` blocks
+    /// waiting for an EOF that can never arrive, and a clean test failure becomes
+    /// an unkillable hang (which also strands every other descriptor the fixture
+    /// inherited, the shared box lock among them).  A file has no EOF to wait for:
+    /// `status()` returns as soon as the child itself exits, so the isolated run
+    /// always reports its real result.
     fn isolated_live_capture(test: &str) -> bool {
         const CHILD: &str = "HL_ENGINE_NATIVE_SNAPSHOT_CHILD";
         if std::env::var_os(CHILD).is_some() {
             return false;
         }
-        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        let log = tempfile::NamedTempFile::new().expect("isolated capture log");
+        let status = std::process::Command::new(std::env::current_exe().expect("test executable"))
             .args(["--exact", test, "--nocapture", "--test-threads=1"])
             .env(CHILD, "1")
-            .output()
+            .stdin(Stdio::null())
+            .stdout(log.reopen().expect("isolated capture stdout"))
+            .stderr(log.reopen().expect("isolated capture stderr"))
+            .status()
             .expect("spawn isolated native snapshot test");
         assert!(
-            output.status.success(),
+            status.success(),
             "isolated native snapshot test failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            std::fs::read_to_string(log.path()).unwrap_or_default()
         );
         true
     }
@@ -1373,10 +1747,10 @@ mod tests {
         let sink = AtomicSink::default();
         publish_stopped_native(&sink, pid, Instant::now() + Duration::from_secs(10)).unwrap();
         let state = sink.state.lock().unwrap();
-        assert_eq!(state.0.len(), 4);
+        assert_eq!(state.0.len(), 5);
         assert_eq!(
             crate::runtime::checkpoint::image_envelope::Reader::decode(&state.0["IMAGE"]),
-            Ok(crate::runtime::checkpoint::image_envelope::Reader::NativeX86V1),
+            Ok(crate::runtime::checkpoint::image_envelope::Reader::NativeX86),
         );
         assert_eq!(
             validate_native_objects(&state.0["MANIFEST"], |name| state.0.get(name).cloned()),
@@ -1456,6 +1830,7 @@ mod tests {
             unsafe { OwnedFd::from_raw_fd(replacement_pidfd) },
             &image.registers,
             &image.memory,
+            &image.xstate,
             Instant::now() + Duration::from_secs(10),
         )
         .unwrap();
@@ -1470,6 +1845,796 @@ mod tests {
             "native fresh-exec capture_us={} restore_us={}",
             capture_elapsed.as_micros(),
             restore_elapsed.as_micros()
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // FP / vector round-trip fixture.
+    //
+    // Layout of the fixture buffer (byte offsets are duplicated as literal
+    // displacements inside the asm templates below; the const asserts keep the
+    // two in step):
+    //   0..4      MXCSR
+    //   64..128   eight x87 integers, st(0)..st(7)
+    //   128..1152 sixteen 64-byte slots, zmm0..zmm15 (the tier decides how many
+    //             bytes of each slot are live: 16 SSE, 32 AVX, 64 AVX-512)
+    //   1152..2176 sixteen 64-byte slots, zmm16..zmm31
+    //   2176..2240 eight 64-bit opmask registers k0..k7
+    const FP_MXCSR: usize = 0;
+    const FP_X87: usize = 64;
+    const FP_VEC: usize = 128;
+    const FP_VEC_HI16: usize = 1152;
+    const FP_KREG: usize = 2176;
+    const FP_LEN: usize = 2240;
+    const _: () = {
+        assert!(FP_MXCSR == 0 && FP_X87 == 64 && FP_VEC == 128);
+        assert!(FP_VEC_HI16 == 1152 && FP_KREG == 2176 && FP_LEN == 2240);
+    };
+
+    /// Deliberately non-default MXCSR: FTZ, DAZ and round-toward-+inf, with the
+    /// exception masks left set. `FNINIT`/loader startup leaves 0x1f80.
+    const FP_MXCSR_PATTERN: u32 = 0xdfc0;
+    /// The anti-pattern the *replacement* stub loads: also non-default, and
+    /// different from the captured one in FTZ, DAZ and rounding mode.
+    const FP_MXCSR_ANTI: u32 = 0x3f80;
+    const FP_SEED_CAPTURED: u8 = 0x5b;
+    const FP_SEED_ANTI: u8 = 0xc7;
+
+    fn fp_pattern(seed: u8, mxcsr: u32) -> Vec<u8> {
+        let mut bytes = vec![0_u8; FP_LEN];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = ((index as u8).wrapping_mul(37).wrapping_add(seed)) ^ 0xa5;
+        }
+        bytes[FP_MXCSR..FP_MXCSR + 4].copy_from_slice(&mxcsr.to_le_bytes());
+        for slot in 0..8 {
+            let at = FP_X87 + slot * 8;
+            let raw = u64::from_le_bytes(bytes[at..at + 8].try_into().expect("x87 slot"));
+            // Any i64 is exact in the 80-bit format, so `fild`/`fistp` round-trips
+            // bit for bit. Keep it positive and far from zero or one.
+            let value = (raw & 0x0000_ffff_ffff_ffff) | 0x0000_0100_0000_0000;
+            bytes[at..at + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// 0 = SSE only, 1 = + AVX (YMM upper halves), 2 = + AVX-512 (ZMM upper
+    /// halves, ZMM16-31, opmasks).
+    fn fp_tier() -> u8 {
+        let mut tier = 0;
+        if std::arch::is_x86_feature_detected!("avx") {
+            tier = 1;
+        }
+        if std::arch::is_x86_feature_detected!("avx512f") && std::arch::is_x86_feature_detected!("avx512bw") {
+            tier = 2;
+        }
+        tier
+    }
+
+    fn fp_tier_names(tier: u8) -> &'static str {
+        match tier {
+            2 => "sse,avx,avx512",
+            1 => "sse,avx",
+            _ => "sse",
+        }
+    }
+
+    unsafe fn fp_roundtrip_sse(pattern: *const u8, out: *mut u8, pid: i32) {
+        unsafe {
+            core::arch::asm!(
+                "ldmxcsr [{p} + 0]",
+                "movups xmm0, [{p} + 128]",
+                "movups xmm1, [{p} + 192]",
+                "movups xmm2, [{p} + 256]",
+                "movups xmm3, [{p} + 320]",
+                "movups xmm4, [{p} + 384]",
+                "movups xmm5, [{p} + 448]",
+                "movups xmm6, [{p} + 512]",
+                "movups xmm7, [{p} + 576]",
+                "movups xmm8, [{p} + 640]",
+                "movups xmm9, [{p} + 704]",
+                "movups xmm10, [{p} + 768]",
+                "movups xmm11, [{p} + 832]",
+                "movups xmm12, [{p} + 896]",
+                "movups xmm13, [{p} + 960]",
+                "movups xmm14, [{p} + 1024]",
+                "movups xmm15, [{p} + 1088]",
+                "fild qword ptr [{p} + 64]",
+                "fild qword ptr [{p} + 72]",
+                "fild qword ptr [{p} + 80]",
+                "fild qword ptr [{p} + 88]",
+                "fild qword ptr [{p} + 96]",
+                "fild qword ptr [{p} + 104]",
+                "fild qword ptr [{p} + 112]",
+                "fild qword ptr [{p} + 120]",
+                "syscall",
+                "stmxcsr [{o} + 0]",
+                "movups [{o} + 128], xmm0",
+                "movups [{o} + 192], xmm1",
+                "movups [{o} + 256], xmm2",
+                "movups [{o} + 320], xmm3",
+                "movups [{o} + 384], xmm4",
+                "movups [{o} + 448], xmm5",
+                "movups [{o} + 512], xmm6",
+                "movups [{o} + 576], xmm7",
+                "movups [{o} + 640], xmm8",
+                "movups [{o} + 704], xmm9",
+                "movups [{o} + 768], xmm10",
+                "movups [{o} + 832], xmm11",
+                "movups [{o} + 896], xmm12",
+                "movups [{o} + 960], xmm13",
+                "movups [{o} + 1024], xmm14",
+                "movups [{o} + 1088], xmm15",
+                "fistp qword ptr [{o} + 120]",
+                "fistp qword ptr [{o} + 112]",
+                "fistp qword ptr [{o} + 104]",
+                "fistp qword ptr [{o} + 96]",
+                "fistp qword ptr [{o} + 88]",
+                "fistp qword ptr [{o} + 80]",
+                "fistp qword ptr [{o} + 72]",
+                "fistp qword ptr [{o} + 64]",
+                p = in(reg) pattern,
+                o = in(reg) out,
+                inlateout("rax") 62_i64 => _,
+                in("rdi") pid,
+                in("rsi") 19_i32,
+                lateout("rcx") _,
+                lateout("r11") _,
+                out("xmm0") _,
+                out("xmm1") _,
+                out("xmm2") _,
+                out("xmm3") _,
+                out("xmm4") _,
+                out("xmm5") _,
+                out("xmm6") _,
+                out("xmm7") _,
+                out("xmm8") _,
+                out("xmm9") _,
+                out("xmm10") _,
+                out("xmm11") _,
+                out("xmm12") _,
+                out("xmm13") _,
+                out("xmm14") _,
+                out("xmm15") _,
+            );
+        }
+    }
+
+    #[target_feature(enable = "avx")]
+    unsafe fn fp_roundtrip_avx(pattern: *const u8, out: *mut u8, pid: i32) {
+        unsafe {
+            core::arch::asm!(
+                "ldmxcsr [{p} + 0]",
+                "vmovups ymm0, [{p} + 128]",
+                "vmovups ymm1, [{p} + 192]",
+                "vmovups ymm2, [{p} + 256]",
+                "vmovups ymm3, [{p} + 320]",
+                "vmovups ymm4, [{p} + 384]",
+                "vmovups ymm5, [{p} + 448]",
+                "vmovups ymm6, [{p} + 512]",
+                "vmovups ymm7, [{p} + 576]",
+                "vmovups ymm8, [{p} + 640]",
+                "vmovups ymm9, [{p} + 704]",
+                "vmovups ymm10, [{p} + 768]",
+                "vmovups ymm11, [{p} + 832]",
+                "vmovups ymm12, [{p} + 896]",
+                "vmovups ymm13, [{p} + 960]",
+                "vmovups ymm14, [{p} + 1024]",
+                "vmovups ymm15, [{p} + 1088]",
+                "fild qword ptr [{p} + 64]",
+                "fild qword ptr [{p} + 72]",
+                "fild qword ptr [{p} + 80]",
+                "fild qword ptr [{p} + 88]",
+                "fild qword ptr [{p} + 96]",
+                "fild qword ptr [{p} + 104]",
+                "fild qword ptr [{p} + 112]",
+                "fild qword ptr [{p} + 120]",
+                "syscall",
+                "stmxcsr [{o} + 0]",
+                "vmovups [{o} + 128], ymm0",
+                "vmovups [{o} + 192], ymm1",
+                "vmovups [{o} + 256], ymm2",
+                "vmovups [{o} + 320], ymm3",
+                "vmovups [{o} + 384], ymm4",
+                "vmovups [{o} + 448], ymm5",
+                "vmovups [{o} + 512], ymm6",
+                "vmovups [{o} + 576], ymm7",
+                "vmovups [{o} + 640], ymm8",
+                "vmovups [{o} + 704], ymm9",
+                "vmovups [{o} + 768], ymm10",
+                "vmovups [{o} + 832], ymm11",
+                "vmovups [{o} + 896], ymm12",
+                "vmovups [{o} + 960], ymm13",
+                "vmovups [{o} + 1024], ymm14",
+                "vmovups [{o} + 1088], ymm15",
+                "fistp qword ptr [{o} + 120]",
+                "fistp qword ptr [{o} + 112]",
+                "fistp qword ptr [{o} + 104]",
+                "fistp qword ptr [{o} + 96]",
+                "fistp qword ptr [{o} + 88]",
+                "fistp qword ptr [{o} + 80]",
+                "fistp qword ptr [{o} + 72]",
+                "fistp qword ptr [{o} + 64]",
+                p = in(reg) pattern,
+                o = in(reg) out,
+                inlateout("rax") 62_i64 => _,
+                in("rdi") pid,
+                in("rsi") 19_i32,
+                lateout("rcx") _,
+                lateout("r11") _,
+                out("ymm0") _,
+                out("ymm1") _,
+                out("ymm2") _,
+                out("ymm3") _,
+                out("ymm4") _,
+                out("ymm5") _,
+                out("ymm6") _,
+                out("ymm7") _,
+                out("ymm8") _,
+                out("ymm9") _,
+                out("ymm10") _,
+                out("ymm11") _,
+                out("ymm12") _,
+                out("ymm13") _,
+                out("ymm14") _,
+                out("ymm15") _,
+            );
+        }
+    }
+
+    #[target_feature(enable = "avx512f,avx512bw")]
+    unsafe fn fp_roundtrip_avx512(pattern: *const u8, out: *mut u8, pid: i32) {
+        unsafe {
+            core::arch::asm!(
+                "ldmxcsr [{p} + 0]",
+                "vmovups zmm0, [{p} + 128]",
+                "vmovups zmm1, [{p} + 192]",
+                "vmovups zmm2, [{p} + 256]",
+                "vmovups zmm3, [{p} + 320]",
+                "vmovups zmm4, [{p} + 384]",
+                "vmovups zmm5, [{p} + 448]",
+                "vmovups zmm6, [{p} + 512]",
+                "vmovups zmm7, [{p} + 576]",
+                "vmovups zmm8, [{p} + 640]",
+                "vmovups zmm9, [{p} + 704]",
+                "vmovups zmm10, [{p} + 768]",
+                "vmovups zmm11, [{p} + 832]",
+                "vmovups zmm12, [{p} + 896]",
+                "vmovups zmm13, [{p} + 960]",
+                "vmovups zmm14, [{p} + 1024]",
+                "vmovups zmm15, [{p} + 1088]",
+                "vmovups zmm16, [{p} + 1152]",
+                "vmovups zmm17, [{p} + 1216]",
+                "vmovups zmm18, [{p} + 1280]",
+                "vmovups zmm19, [{p} + 1344]",
+                "vmovups zmm20, [{p} + 1408]",
+                "vmovups zmm21, [{p} + 1472]",
+                "vmovups zmm22, [{p} + 1536]",
+                "vmovups zmm23, [{p} + 1600]",
+                "vmovups zmm24, [{p} + 1664]",
+                "vmovups zmm25, [{p} + 1728]",
+                "vmovups zmm26, [{p} + 1792]",
+                "vmovups zmm27, [{p} + 1856]",
+                "vmovups zmm28, [{p} + 1920]",
+                "vmovups zmm29, [{p} + 1984]",
+                "vmovups zmm30, [{p} + 2048]",
+                "vmovups zmm31, [{p} + 2112]",
+                "kmovq k0, qword ptr [{p} + 2176]",
+                "kmovq k1, qword ptr [{p} + 2184]",
+                "kmovq k2, qword ptr [{p} + 2192]",
+                "kmovq k3, qword ptr [{p} + 2200]",
+                "kmovq k4, qword ptr [{p} + 2208]",
+                "kmovq k5, qword ptr [{p} + 2216]",
+                "kmovq k6, qword ptr [{p} + 2224]",
+                "kmovq k7, qword ptr [{p} + 2232]",
+                "fild qword ptr [{p} + 64]",
+                "fild qword ptr [{p} + 72]",
+                "fild qword ptr [{p} + 80]",
+                "fild qword ptr [{p} + 88]",
+                "fild qword ptr [{p} + 96]",
+                "fild qword ptr [{p} + 104]",
+                "fild qword ptr [{p} + 112]",
+                "fild qword ptr [{p} + 120]",
+                "syscall",
+                "stmxcsr [{o} + 0]",
+                "vmovups [{o} + 128], zmm0",
+                "vmovups [{o} + 192], zmm1",
+                "vmovups [{o} + 256], zmm2",
+                "vmovups [{o} + 320], zmm3",
+                "vmovups [{o} + 384], zmm4",
+                "vmovups [{o} + 448], zmm5",
+                "vmovups [{o} + 512], zmm6",
+                "vmovups [{o} + 576], zmm7",
+                "vmovups [{o} + 640], zmm8",
+                "vmovups [{o} + 704], zmm9",
+                "vmovups [{o} + 768], zmm10",
+                "vmovups [{o} + 832], zmm11",
+                "vmovups [{o} + 896], zmm12",
+                "vmovups [{o} + 960], zmm13",
+                "vmovups [{o} + 1024], zmm14",
+                "vmovups [{o} + 1088], zmm15",
+                "vmovups [{o} + 1152], zmm16",
+                "vmovups [{o} + 1216], zmm17",
+                "vmovups [{o} + 1280], zmm18",
+                "vmovups [{o} + 1344], zmm19",
+                "vmovups [{o} + 1408], zmm20",
+                "vmovups [{o} + 1472], zmm21",
+                "vmovups [{o} + 1536], zmm22",
+                "vmovups [{o} + 1600], zmm23",
+                "vmovups [{o} + 1664], zmm24",
+                "vmovups [{o} + 1728], zmm25",
+                "vmovups [{o} + 1792], zmm26",
+                "vmovups [{o} + 1856], zmm27",
+                "vmovups [{o} + 1920], zmm28",
+                "vmovups [{o} + 1984], zmm29",
+                "vmovups [{o} + 2048], zmm30",
+                "vmovups [{o} + 2112], zmm31",
+                "kmovq qword ptr [{o} + 2176], k0",
+                "kmovq qword ptr [{o} + 2184], k1",
+                "kmovq qword ptr [{o} + 2192], k2",
+                "kmovq qword ptr [{o} + 2200], k3",
+                "kmovq qword ptr [{o} + 2208], k4",
+                "kmovq qword ptr [{o} + 2216], k5",
+                "kmovq qword ptr [{o} + 2224], k6",
+                "kmovq qword ptr [{o} + 2232], k7",
+                "fistp qword ptr [{o} + 120]",
+                "fistp qword ptr [{o} + 112]",
+                "fistp qword ptr [{o} + 104]",
+                "fistp qword ptr [{o} + 96]",
+                "fistp qword ptr [{o} + 88]",
+                "fistp qword ptr [{o} + 80]",
+                "fistp qword ptr [{o} + 72]",
+                "fistp qword ptr [{o} + 64]",
+                p = in(reg) pattern,
+                o = in(reg) out,
+                inlateout("rax") 62_i64 => _,
+                in("rdi") pid,
+                in("rsi") 19_i32,
+                lateout("rcx") _,
+                lateout("r11") _,
+                out("zmm0") _,
+                out("zmm1") _,
+                out("zmm2") _,
+                out("zmm3") _,
+                out("zmm4") _,
+                out("zmm5") _,
+                out("zmm6") _,
+                out("zmm7") _,
+                out("zmm8") _,
+                out("zmm9") _,
+                out("zmm10") _,
+                out("zmm11") _,
+                out("zmm12") _,
+                out("zmm13") _,
+                out("zmm14") _,
+                out("zmm15") _,
+                out("zmm16") _,
+                out("zmm17") _,
+                out("zmm18") _,
+                out("zmm19") _,
+                out("zmm20") _,
+                out("zmm21") _,
+                out("zmm22") _,
+                out("zmm23") _,
+                out("zmm24") _,
+                out("zmm25") _,
+                out("zmm26") _,
+                out("zmm27") _,
+                out("zmm28") _,
+                out("zmm29") _,
+                out("zmm30") _,
+                out("zmm31") _,
+                out("k0") _,
+                out("k1") _,
+                out("k2") _,
+                out("k3") _,
+                out("k4") _,
+                out("k5") _,
+                out("k6") _,
+                out("k7") _,
+            );
+        }
+    }
+
+    fn fp_region_divergence(expected: &[u8], observed: &[u8], start: usize, len: usize) -> Option<usize> {
+        (start..start + len).find(|at| expected[*at] != observed[*at])
+    }
+
+    /// First byte of the fixture the tier actually writes back that did not survive.
+    /// Allocation-free: the leaf calls this after resuming and must not touch malloc.
+    fn fp_first_divergence(tier: u8, expected: &[u8], observed: &[u8]) -> Option<usize> {
+        let width = match tier {
+            2 => 64,
+            1 => 32,
+            _ => 16,
+        };
+        if let Some(at) = fp_region_divergence(expected, observed, FP_MXCSR, 4) {
+            return Some(at);
+        }
+        if let Some(at) = fp_region_divergence(expected, observed, FP_X87, 64) {
+            return Some(at);
+        }
+        for slot in 0..16 {
+            if let Some(at) = fp_region_divergence(expected, observed, FP_VEC + slot * 64, width) {
+                return Some(at);
+            }
+        }
+        if tier == 2 {
+            for slot in 0..16 {
+                if let Some(at) = fp_region_divergence(expected, observed, FP_VEC_HI16 + slot * 64, 64) {
+                    return Some(at);
+                }
+            }
+            if let Some(at) = fp_region_divergence(expected, observed, FP_KREG, 64) {
+                return Some(at);
+            }
+        }
+        None
+    }
+
+    unsafe fn fp_roundtrip(tier: u8, pattern: *const u8, out: *mut u8, pid: i32) {
+        unsafe {
+            match tier {
+                2 => fp_roundtrip_avx512(pattern, out, pid),
+                1 => fp_roundtrip_avx(pattern, out, pid),
+                _ => fp_roundtrip_sse(pattern, out, pid),
+            }
+        }
+    }
+
+    fn fp_reset_mxcsr() {
+        let default: u32 = 0x1f80;
+        // SAFETY: `ldmxcsr` only reloads MXCSR from the supplied four-byte operand.
+        unsafe { core::arch::asm!("ldmxcsr [{d}]", d = in(reg) &raw const default) };
+    }
+
+    // ---- allocation-free leaf plumbing -----------------------------------
+
+    fn fp_hex_into(slot: &mut [u8], value: u64) {
+        for (index, digit) in slot.iter_mut().rev().enumerate() {
+            *digit = b"0123456789abcdef"[((value >> (4 * index)) & 0xf) as usize];
+        }
+    }
+
+    fn fp_decimal_into(slot: &mut [u8], value: u64) {
+        let mut rest = value;
+        for digit in slot.iter_mut().rev() {
+            *digit = b'0' + (rest % 10) as u8;
+            rest /= 10;
+        }
+    }
+
+    /// `<result>-<pid:08>.<suffix>` -- fixed width so the two spawns allocate
+    /// identically, and so the leaf can patch the pid in without formatting.
+    fn fp_keyed_path(result: &Path, pid: libc::pid_t, suffix: &str) -> PathBuf {
+        let mut path = result.to_path_buf();
+        let name = format!(
+            "{}-{pid:08}.{suffix}",
+            path.file_name().expect("result name").to_string_lossy()
+        );
+        path.set_file_name(name);
+        path
+    }
+
+    /// The same path as a NUL-terminated byte buffer, plus the offset of the
+    /// eight pid digits so the forked leaf can fill them in without allocating.
+    fn fp_keyed_template(result: &Path, suffix: &str) -> (Vec<u8>, usize) {
+        let path = fp_keyed_path(result, 0, suffix);
+        let mut bytes = path.into_os_string().into_encoded_bytes();
+        let digits_at = bytes.len() - suffix.len() - 9;
+        debug_assert_eq!(&bytes[digits_at..digits_at + 8], b"00000000");
+        bytes.push(0);
+        (bytes, digits_at)
+    }
+
+    fn fp_write_file(path: &[u8], bytes: &[u8]) -> bool {
+        // SAFETY: `path` is NUL terminated and `bytes` is a live slice for the call.
+        unsafe {
+            let fd = libc::open(
+                path.as_ptr().cast(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
+                0o600 as libc::c_uint,
+            );
+            if fd < 0 {
+                return false;
+            }
+            let written = libc::write(fd, bytes.as_ptr().cast(), bytes.len());
+            libc::close(fd);
+            written == bytes.len() as isize
+        }
+    }
+
+    /// Everything the forked leaf needs, reserved before the fork.
+    struct FpLeafPlan {
+        tier: u8,
+        captured_role: bool,
+        sentinel: u64,
+        pattern: Vec<u8>,
+        expected: Vec<u8>,
+        observed: Vec<u8>,
+        rendezvous: Vec<u8>,
+        role_template: (Vec<u8>, usize),
+        result_template: (Vec<u8>, usize),
+        line: [u8; 43],
+        stamp: [u8; 34],
+    }
+
+    static mut FP_SENTINEL: u64 = 0;
+
+    /// Runs as the **thread group leader** of a freshly forked, single-threaded
+    /// process.  That is deliberate: a libtest test body runs on a spawned
+    /// thread, and the checkpoint path captures the leader, so a fixture that
+    /// stopped itself on the test thread would have the parked main thread's
+    /// registers captured instead.  The leaf must not allocate -- it forked out
+    /// of a multi-threaded process and another thread may hold the malloc lock --
+    /// so every buffer and path below was reserved before the fork.
+    fn fp_leaf(mut plan: FpLeafPlan) -> ! {
+        let pid = unsafe { libc::getpid() };
+        fp_decimal_into(
+            &mut plan.role_template.0[plan.role_template.1..plan.role_template.1 + 8],
+            pid as u64,
+        );
+        fp_decimal_into(
+            &mut plan.result_template.0[plan.result_template.1..plan.result_template.1 + 8],
+            pid as u64,
+        );
+        // Trap 2, witnessed: record which fixture this incarnation is about to
+        // load, before it stops, so the harness can prove the two roles differed.
+        if !fp_write_file(
+            &plan.role_template.0,
+            if plan.captured_role { b"captured" } else { b"replaced" },
+        ) {
+            unsafe { libc::_exit(91) };
+        }
+        fp_hex_into(&mut plan.stamp[..16], pid as u64);
+        plan.stamp[16] = b' ';
+        fp_hex_into(&mut plan.stamp[17..33], plan.sentinel);
+        plan.stamp[33] = b'\n';
+        if !fp_write_file(&plan.rendezvous, &plan.stamp) {
+            unsafe { libc::_exit(92) };
+        }
+        // Loads the fixture into the FP/vector file, group-stops with a raw
+        // `SYS_kill` inside the same asm block so nothing can perturb the file
+        // between the load and the stop, and spills it straight back out on resume.
+        // SAFETY: both pointers address `FP_LEN` bytes that stay live for the call.
+        unsafe { fp_roundtrip(plan.tier, plan.pattern.as_ptr(), plan.observed.as_mut_ptr(), pid) };
+        fp_reset_mxcsr();
+        let divergence = fp_first_divergence(plan.tier, &plan.expected, &plan.observed);
+        let mxcsr = u32::from_le_bytes(plan.observed[FP_MXCSR..FP_MXCSR + 4].try_into().expect("mxcsr"));
+        plan.line = *b"tier=0 div=0000000000000000 mxcsr=00000000\n";
+        plan.line[5] = b'0' + plan.tier;
+        fp_hex_into(&mut plan.line[11..27], divergence.map_or(u64::MAX, |at| at as u64));
+        fp_hex_into(&mut plan.line[34..42], mxcsr as u64);
+        let published = fp_write_file(&plan.result_template.0, &plan.line);
+        unsafe {
+            libc::_exit(if published {
+                divergence.is_some() as libc::c_int
+            } else {
+                93
+            })
+        }
+    }
+
+    fn fp_restore_child() -> ! {
+        let role =
+            std::fs::read(std::env::var_os("HL_ENGINE_NATIVE_FPSTATE_ROLE").expect("role path")).expect("read role");
+        let captured_role = role == b"captured";
+        assert!(
+            captured_role || role == b"replaced",
+            "role file must carry one of the two equal-length roles"
+        );
+        let result = PathBuf::from(std::env::var_os("HL_ENGINE_NATIVE_FPSTATE_RESULT").expect("result path"));
+        let mut rendezvous =
+            PathBuf::from(std::env::var_os("HL_ENGINE_NATIVE_FPSTATE_RENDEZVOUS").expect("rendezvous path"))
+                .into_os_string()
+                .into_encoded_bytes();
+        rendezvous.push(0);
+        unsafe { std::ptr::write_volatile(&raw mut FP_SENTINEL, 0x5a71_cafe_9876_4321) };
+        // Trap 2: the replacement deliberately loads a *different* non-default
+        // pattern, so a restore that carries no FP state cannot pass by accident.
+        let plan = FpLeafPlan {
+            tier: fp_tier(),
+            captured_role,
+            sentinel: (&raw const FP_SENTINEL) as u64,
+            pattern: if captured_role {
+                fp_pattern(FP_SEED_CAPTURED, FP_MXCSR_PATTERN)
+            } else {
+                fp_pattern(FP_SEED_ANTI, FP_MXCSR_ANTI)
+            },
+            expected: fp_pattern(FP_SEED_CAPTURED, FP_MXCSR_PATTERN),
+            observed: vec![0_u8; FP_LEN],
+            rendezvous,
+            role_template: fp_keyed_template(&result, "role"),
+            result_template: fp_keyed_template(&result, "state"),
+            line: [0; 43],
+            stamp: [0; 34],
+        };
+        let leaf = unsafe { libc::fork() };
+        assert!(leaf >= 0, "fork single-threaded leaf");
+        if leaf == 0 {
+            fp_leaf(plan);
+        }
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(leaf, &raw mut status, 0) }, leaf);
+        std::fs::write(fp_keyed_path(&result, leaf, "status"), format!("{status:#010x}")).expect("publish status");
+        std::process::exit(0);
+    }
+
+    fn spawn_fp_restore_child(test: &str, rendezvous: &Path, role: &Path, result: &Path) -> (Child, libc::pid_t, u64) {
+        // argv and environment are identical for both spawns -- the role is
+        // carried in a file whose two possible contents are the same length --
+        // so the ASLR-disabled layout is reproduced byte for byte.
+        let mut command = Command::new(std::env::current_exe().expect("test executable"));
+        command
+            .args(["--exact", test, "--nocapture", "--test-threads=1"])
+            .env("HL_ENGINE_NATIVE_FPSTATE_CHILD", "1")
+            .env("HL_ENGINE_NATIVE_FPSTATE_RENDEZVOUS", rendezvous)
+            .env("HL_ENGINE_NATIVE_FPSTATE_ROLE", role)
+            .env("HL_ENGINE_NATIVE_FPSTATE_RESULT", result)
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        unsafe {
+            command.pre_exec(|| {
+                let current = libc::personality(!0_u64 as libc::c_ulong);
+                if current < 0
+                    || libc::personality((current as libc::c_ulong) | libc::ADDR_NO_RANDOMIZE as libc::c_ulong) < 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let child = command.spawn().expect("spawn fp-state restore child");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (leaf, address) = loop {
+            if let Ok(value) = std::fs::read_to_string(rendezvous)
+                && let Some((leaf, address)) = value.trim().split_once(' ')
+                && let Ok(leaf) = i64::from_str_radix(leaf.trim(), 16)
+                && let Ok(address) = u64::from_str_radix(address.trim(), 16)
+                && leaf > 0
+            {
+                break (leaf as libc::pid_t, address);
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fp-state leaf did not publish its rendezvous stamp"
+            );
+            std::thread::yield_now();
+        };
+        wait_until_stopped(leaf);
+        (child, leaf, address)
+    }
+
+    #[test]
+    fn native_image_restores_fp_and_vector_state_after_the_original_is_reaped() {
+        const TEST: &str = "runtime::execution::native_snapshot::tests::native_image_restores_fp_and_vector_state_after_the_original_is_reaped";
+        if std::env::var_os("HL_ENGINE_NATIVE_FPSTATE_CHILD").is_some() {
+            fp_restore_child();
+        }
+        let rendezvous = tempfile::NamedTempFile::new().unwrap();
+        let role = tempfile::NamedTempFile::new().unwrap();
+        let result = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(role.path(), b"captured").unwrap();
+        let (mut original, original_leaf, original_address) =
+            spawn_fp_restore_child(TEST, rendezvous.path(), role.path(), result.path());
+        let image = capture_stopped_native(original_leaf, Instant::now() + Duration::from_secs(10)).unwrap();
+        assert_eq!(unsafe { libc::kill(original_leaf, libc::SIGKILL) }, 0);
+        // SIGKILL already terminates a group-stopped task, so this SIGCONT only
+        // nudges the harness's blocking `waitpid` along -- and it races that
+        // reap.  Once the real parent has collected the leaf the pid is gone, so
+        // ESRCH here means the kill worked, not that anything went wrong.  The
+        // sibling fresh-exec test kills without a SIGCONT for the same reason.
+        if unsafe { libc::kill(original_leaf, libc::SIGCONT) } != 0 {
+            assert_eq!(
+                io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH),
+                "SIGCONT after SIGKILL may only fail because the leaf was already reaped"
+            );
+        }
+        assert!(
+            original.wait().unwrap().success(),
+            "original harness must reap its leaf"
+        );
+
+        std::fs::write(rendezvous.path(), b"").unwrap();
+        std::fs::write(role.path(), b"replaced").unwrap();
+        let (mut replacement, replacement_leaf, replacement_address) =
+            spawn_fp_restore_child(TEST, rendezvous.path(), role.path(), result.path());
+        assert_ne!(replacement_leaf, original_leaf);
+        assert_eq!(
+            replacement_address, original_address,
+            "ASLR-disabled fresh exec must reproduce layout"
+        );
+        // Trap 2, mechanically: the two incarnations must have loaded *different*
+        // fixtures, or a "restored" FP file could simply be the stub's own.
+        assert_eq!(
+            std::fs::read_to_string(fp_keyed_path(result.path(), original_leaf, "role")).expect("original role"),
+            "captured"
+        );
+        assert_eq!(
+            std::fs::read_to_string(fp_keyed_path(result.path(), replacement_leaf, "role")).expect("replacement role"),
+            "replaced"
+        );
+
+        // Cross-host refusal, end to end and before any mutation: an image whose
+        // XSTATE_BV names a component this host does not enable must be refused
+        // by name.  No second machine is needed -- the recorded feature mask is
+        // mutated in the image instead.
+        let foreign = {
+            let mut record = X86XstateRecord::decode(&image.xstate).unwrap();
+            let absent = (0..63)
+                .find(|bit| host_xcr0().expect("host xcr0") & (1 << bit) == 0)
+                .expect("a state component this host does not enable");
+            let widened = record.xstate_bv() | 1 << absent;
+            record.xcr0 |= 1 << absent;
+            record.area[XSTATE_BV_AT..XSTATE_BV_AT + 8].copy_from_slice(&widened.to_le_bytes());
+            record.encode()
+        };
+        let refusal_pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, replacement_leaf, 0) } as RawFd;
+        assert!(refusal_pidfd >= 0, "pidfd_open for the refusal probe");
+        let refusal = prepare_native_restore(
+            replacement_leaf,
+            unsafe { OwnedFd::from_raw_fd(refusal_pidfd) },
+            &image.registers,
+            &image.memory,
+            &foreign,
+            Instant::now() + Duration::from_secs(10),
+        )
+        .err()
+        .expect("a foreign feature mask must be refused, not restored");
+        assert_eq!(refusal.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(refusal.to_string(), "native xstate host mismatch: Features");
+        wait_until_stopped(replacement_leaf);
+
+        let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, replacement_leaf, 0) } as RawFd;
+        assert!(pidfd >= 0, "pidfd_open replacement leaf");
+        let prepared = prepare_native_restore(
+            replacement_leaf,
+            unsafe { OwnedFd::from_raw_fd(pidfd) },
+            &image.registers,
+            &image.memory,
+            &image.xstate,
+            Instant::now() + Duration::from_secs(10),
+        )
+        .unwrap();
+        complete_native_restore(prepared, Instant::now() + Duration::from_secs(10)).unwrap();
+        assert_eq!(unsafe { libc::kill(replacement_leaf, libc::SIGCONT) }, 0);
+        assert!(
+            replacement.wait().unwrap().success(),
+            "replacement harness must reap its leaf"
+        );
+
+        let status = std::fs::read_to_string(fp_keyed_path(result.path(), replacement_leaf, "status"))
+            .expect("harness must publish the leaf wait status");
+        // The restored leaf runs on the original's memory, so it publishes under
+        // the *original* leaf's key -- which is itself evidence the image landed.
+        let report = std::fs::read_to_string(fp_keyed_path(result.path(), original_leaf, "state"))
+            .unwrap_or_else(|error| panic!("restored leaf published no report (status={status}): {error}"));
+        eprintln!("native fp/vector restore: {} status={status}", report.trim());
+
+        // Trap 3: prove the CPU-feature gate actually ran, and that the tier the
+        // leaf exercised is the one this box supports -- a cpuid helper silently
+        // returning zero would disagree with the parent's own detection here.
+        let tier: u8 = report
+            .split_whitespace()
+            .find_map(|field| field.strip_prefix("tier="))
+            .and_then(|value| value.parse().ok())
+            .expect("leaf must report the tier it exercised");
+        assert_eq!(tier, fp_tier(), "leaf and harness must agree on the CPU-feature gate");
+        eprintln!("native fp/vector tiers exercised: {}", fp_tier_names(tier));
+        assert!(
+            fp_tier_names(tier).starts_with("sse"),
+            "the SSE tier must always be exercised"
+        );
+        let divergence = report
+            .split_whitespace()
+            .find_map(|field| field.strip_prefix("div="))
+            .and_then(|value| u64::from_str_radix(value, 16).ok())
+            .expect("leaf must report a divergence field");
+        assert_eq!(
+            (divergence, status.as_str()),
+            (u64::MAX, "0x00000000"),
+            "restored leaf must resume with the captured FP/vector state; report: {}",
+            report.trim()
         );
     }
 
@@ -1552,7 +2717,7 @@ mod tests {
         };
         let encoded = record.encode();
         assert_eq!(&encoded[..8], b"HLNXREG\0");
-        assert_eq!(&encoded[8..10], &1_u16.to_le_bytes());
+        assert_eq!(&encoded[8..10], &2_u16.to_le_bytes());
         assert_eq!(&encoded[10..12], &62_u16.to_le_bytes());
         assert_eq!(&encoded[12..16], &256_u32.to_le_bytes());
         assert_eq!(X86RegisterRecord::decode(&encoded), Ok(record));
@@ -1571,13 +2736,126 @@ mod tests {
         assert_eq!(X86RegisterRecord::decode(&encoded[..255]), Err(InvalidRecord::Size));
     }
 
+    fn synthetic_xstate() -> X86XstateRecord {
+        let mut area = vec![0_u8; XSTATE_MIN_AREA];
+        for (index, byte) in area[..XSTATE_BV_AT].iter_mut().enumerate() {
+            *byte = (index as u8).wrapping_mul(31) ^ 0x5a;
+        }
+        // x87 + SSE + AVX, and a non-default MXCSR in the legacy area.
+        area[24..28].copy_from_slice(&0xdfc0_u32.to_le_bytes());
+        area[XSTATE_BV_AT..XSTATE_BV_AT + 8].copy_from_slice(&0b111_u64.to_le_bytes());
+        X86XstateRecord { xcr0: 0b111, area }
+    }
+
+    #[test]
+    fn canonical_xstate_codec_is_exact_and_rejects_every_structural_mutation() {
+        let record = synthetic_xstate();
+        let encoded = record.encode();
+        assert_eq!(encoded.len(), XSTATE_HEADER_SIZE + XSTATE_MIN_AREA);
+        assert_eq!(&encoded[..8], b"HLNXXST\0");
+        assert_eq!(&encoded[8..10], &2_u16.to_le_bytes());
+        assert_eq!(&encoded[10..12], &62_u16.to_le_bytes());
+        assert_eq!(&encoded[12..16], &(encoded.len() as u32).to_le_bytes());
+        assert_eq!(&encoded[16..24], &0b111_u64.to_le_bytes());
+        // The area is carried verbatim: no field of it is reconstructed.
+        assert_eq!(&encoded[XSTATE_HEADER_SIZE..], &record.area[..]);
+        assert_eq!(X86XstateRecord::decode(&encoded), Ok(record.clone()));
+
+        for (at, expected) in [
+            (0, InvalidXstateRecord::Magic),
+            (8, InvalidXstateRecord::Version),
+            (10, InvalidXstateRecord::Architecture),
+            (12, InvalidXstateRecord::DeclaredSize),
+            (24, InvalidXstateRecord::Reserved),
+            (31, InvalidXstateRecord::Reserved),
+            (16, InvalidXstateRecord::Components),
+            (
+                XSTATE_HEADER_SIZE + XSTATE_HEADER_RESERVED_AT,
+                InvalidXstateRecord::HeaderReserved,
+            ),
+            (
+                XSTATE_HEADER_SIZE + XSTATE_MIN_AREA - 1,
+                InvalidXstateRecord::HeaderReserved,
+            ),
+        ] {
+            let mut changed = encoded.clone();
+            changed[at] ^= 1;
+            assert_eq!(X86XstateRecord::decode(&changed), Err(expected), "offset {at}");
+        }
+        assert_eq!(
+            X86XstateRecord::decode(&encoded[..encoded.len() - 1]),
+            Err(InvalidXstateRecord::Size)
+        );
+        assert_eq!(
+            X86XstateRecord::decode(&encoded[..XSTATE_HEADER_SIZE]),
+            Err(InvalidXstateRecord::Size)
+        );
+
+        // XCOMP_BV is preserved exactly, never normalized away.
+        let mut compacted = record.clone();
+        compacted.area[XSTATE_XCOMP_BV_AT..XSTATE_XCOMP_BV_AT + 8]
+            .copy_from_slice(&(XSTATE_COMPACTED_BIT | 0b111).to_le_bytes());
+        assert!(compacted.compacted());
+        assert_eq!(X86XstateRecord::decode(&compacted.encode()), Ok(compacted));
+    }
+
+    #[test]
+    fn xstate_refuses_every_host_whose_layout_or_features_differ() {
+        let local = synthetic_xstate();
+        assert_eq!(local.admits(&local), Ok(()));
+
+        // A component the restoring host does not enable: refuse, never drop it.
+        let mut foreign = synthetic_xstate();
+        foreign.xcr0 |= 1 << 17;
+        foreign.area[XSTATE_BV_AT..XSTATE_BV_AT + 8].copy_from_slice(&(0b111_u64 | 1 << 17).to_le_bytes());
+        assert_eq!(foreign.admits(&local), Err(XstateHostMismatch::Features));
+
+        // Compacted versus standard layout: refuse, never re-lay-out.
+        let mut compacted = synthetic_xstate();
+        compacted.area[XSTATE_XCOMP_BV_AT..XSTATE_XCOMP_BV_AT + 8]
+            .copy_from_slice(&(XSTATE_COMPACTED_BIT | 0b111).to_le_bytes());
+        assert_eq!(compacted.admits(&local), Err(XstateHostMismatch::Layout));
+
+        // A different area size means different component offsets: refuse,
+        // never truncate and never zero fill.
+        let mut wider = synthetic_xstate();
+        wider.area.resize(XSTATE_MIN_AREA + 256, 0);
+        assert_eq!(wider.admits(&local), Err(XstateHostMismatch::AreaSize));
+        let mut narrower = synthetic_xstate();
+        narrower.area.truncate(XSTATE_MIN_AREA);
+        assert_eq!(narrower.admits(&wider), Err(XstateHostMismatch::AreaSize));
+    }
+
+    #[test]
+    fn every_carrier_of_the_native_format_version_moves_together() {
+        assert_eq!(VERSION, NATIVE_FORMAT_VERSION);
+        assert_eq!(XSTATE_VERSION, NATIVE_FORMAT_VERSION);
+        assert!(MANIFEST_MAGIC.ends_with(b"-V2\0"));
+        for name in NATIVE_OBJECTS {
+            assert!(name.ends_with("-v2"), "{name} must carry the format version");
+        }
+        assert_eq!(
+            crate::runtime::checkpoint::image_envelope::NATIVE_X86_PAYLOAD_VERSION,
+            u32::from(NATIVE_FORMAT_VERSION)
+        );
+        // A version-one manifest is still rejected byte for byte, which is the
+        // only reason an image predating the xstate object cannot be half read.
+        let mut stale = native_manifest(b"registers", b"memory", b"xstate");
+        stale[..16].copy_from_slice(b"HLNATIVE-X86-V1\0");
+        assert_eq!(
+            validate_native_objects(&stale, |_| Some(Vec::new())),
+            Err(InvalidNativeImage::Manifest)
+        );
+    }
+
     #[test]
     fn live_child_register_sentinel_and_signal_mask_are_captured_without_leaving_it_stopped() {
         let (pid, ready) = sentinel_child(false);
         wait_byte(ready);
-        let record = capture(pid).unwrap();
-        assert_eq!(record.registers[0], 0x1515_1515_1515_1515, "r15 sentinel");
-        assert_ne!(record.signal_mask & (1 << (libc::SIGUSR1 - 1)), 0);
+        let state = capture(pid).unwrap();
+        assert_eq!(state.registers.registers[0], 0x1515_1515_1515_1515, "r15 sentinel");
+        assert_ne!(state.registers.signal_mask & (1 << (libc::SIGUSR1 - 1)), 0);
+        assert!(state.xstate.area.len() >= XSTATE_MIN_AREA, "xstate area captured");
         wait_until_running(pid);
         kill_and_reap(pid);
     }

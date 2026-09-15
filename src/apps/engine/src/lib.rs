@@ -124,6 +124,9 @@ struct LaunchArguments {
     /// Late-link unresolved constant JCC targets through the same-ISA IBTC.
     #[arg(long, value_enum, value_name = "on|off")]
     translit_jcc_ibtc: Option<JccIbtcControl>,
+    /// Link a same-ISA descriptor's own backward JCC edge straight to its entry (experimental, off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, requires = "translit", hide = true)]
+    translit_jcc_self_link: Option<TranslitFeatureControl>,
     /// Late-link direct JMP targets through the same-ISA IBTC.
     #[arg(long, value_enum, value_name = "on|off")]
     translit_direct_jmp_ibtc: Option<DirectJmpIbtcControl>,
@@ -133,12 +136,52 @@ struct LaunchArguments {
     /// Control natural RIP-relative register-load lowering (disabled by default).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, requires = "translit")]
     translit_riprel_load_bridge: Option<TranslitFeatureControl>,
+    /// Route unresolved constant-rip x86 block exits through one shared per-arena thunk (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_exit_thunk: Option<TranslitFeatureControl>,
+    /// Route the x86 region prologue through one shared per-arena trampoline (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_prologue_thunk: Option<TranslitFeatureControl>,
+    /// Route the x86 guest BUS memory-guard slow path through one shared per-arena thunk (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_bus_thunk: Option<TranslitFeatureControl>,
+    /// Chain direct x86 block edges while a peer guest thread is live (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_mt_chain: Option<TranslitFeatureControl>,
+    /// Fill the x86 indirect-branch target cache while a peer guest thread is live (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_mt_ibtc: Option<TranslitFeatureControl>,
+    /// Fill the x86 indirect-branch target cache under threads through an 8-byte entry re-validated
+    /// from a per-body header, with no FEAT_LSE2 dependency (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_ibtc8: Option<TranslitFeatureControl>,
     /// Control the strict FS-load bridge (enabled by default for x86-64 transliteration).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, requires = "translit")]
     translit_fs_load_bridge: Option<TranslitFeatureControl>,
+    /// Elide the x86 guest effective-address snapshot where no fault path can read it (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_ea_record_elide: Option<TranslitFeatureControl>,
+    /// Fold [base+displacement] x86 r/m memory loads into one addressing-mode load (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_rmload_fold: Option<TranslitFeatureControl>,
+    /// Resolve the x86 body-owner generation slot through an occupancy index instead of a full table walk (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_owner_index: Option<TranslitFeatureControl>,
+    /// Answer the guest PROT_NONE prefix query from a per-thread clean-page cache instead of walking the whole ledger (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_gna_page_cache: Option<TranslitFeatureControl>,
+    /// Merge abutting guest PROT_NONE / read-only / non-executable intervals on insert instead of keeping every mmap-sized fragment separate (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_bus_range_coalesce: Option<TranslitFeatureControl>,
+    /// Admit byte-authorized decode-memo hits on the thread-local decode path instead of re-reading the guest bytes on every hit (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_decode_thread_authority: Option<TranslitFeatureControl>,
     /// Control automatic same-ISA native syscall supervision.
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true)]
     native_supervised: Option<NativeSupervisedControl>,
+    /// Widen the supervised terminal ioctl surface and project a devpts for pty-spawning guests (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    native_supervised_pane: Option<TranslitFeatureControl>,
     /// Set one launch-scoped native test injection in a hooks-enabled worker.
     #[cfg(feature = "native-test-hooks")]
     #[arg(long, value_name = "KEY=VALUE", hide = true, value_parser = parse_native_test_option)]
@@ -146,6 +189,27 @@ struct LaunchArguments {
     /// Publish same-ISA block maps for sampling-only profiling.
     #[arg(long, value_name = "PATH", hide = true, requires = "translit", value_parser = parse_translit_perf_map)]
     translit_perf_map: Option<PathBuf>,
+    /// Keep the indirect-branch cache lazily cleared across a guest exec instead of rewriting it (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    exec_ibtc_lazy: Option<TranslitFeatureControl>,
+    /// Clear only the used prefix of the persistent-cache execution census across a guest exec (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    exec_census_lazy: Option<TranslitFeatureControl>,
+    /// Maintain the call-simulation shadow table only while diagnostics can read it (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    call_sim_diag_only: Option<TranslitFeatureControl>,
+    /// Let a warm run re-publish the translation cache within bounded growth (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    pcache_converge: Option<TranslitFeatureControl>,
+    /// Treat a non-PIE image at its deterministic link address as cache-revivable (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    pcache_link_image: Option<TranslitFeatureControl>,
+    /// Persist translations of content-keyed guest library mappings (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    pcache_libs: Option<TranslitFeatureControl>,
+    /// Append a cross-process translation-provenance census to PATH (measurement only).
+    #[arg(long, value_name = "PATH", hide = true)]
+    xlat_census: Option<PathBuf>,
     /// Existing container root used to resolve the guest entry and `PT_INTERP`.
     #[arg(long)]
     rootfs: Option<PathBuf>,
@@ -196,10 +260,15 @@ fn parse_native_test_option(value: &str) -> Result<NativeTestOption, String> {
             name: "HL_TRANSLIT_DIRECT_CALL_PRE_SPILL_TEST",
             value: "1",
         }),
+        "HL_HOST_ASSUME_NO_LSE2=1" => Ok(NativeTestOption {
+            name: "HL_HOST_ASSUME_NO_LSE2",
+            value: "1",
+        }),
         _ if !value.contains('=') => Err("native test options use KEY=VALUE syntax".to_owned()),
         _ => Err(
             "unsupported native test option; expected one of HL_TRANSLIT_FS_AUTHORITY_TEST=1, \
-             HL_TRANSLIT_SYMBOL_RECEIPT=1, or HL_TRANSLIT_DIRECT_CALL_PRE_SPILL_TEST=1"
+             HL_TRANSLIT_SYMBOL_RECEIPT=1, HL_TRANSLIT_DIRECT_CALL_PRE_SPILL_TEST=1, or \
+             HL_HOST_ASSUME_NO_LSE2=1"
                 .to_owned(),
         ),
     }
@@ -412,6 +481,11 @@ fn execute(guest: Guest, launch: &LaunchArguments) -> Result<hl_engine::engine::
             "--translit-jcc-ibtc is available only in the x86-64 worker".to_owned(),
         ));
     }
+    if launch.translit_jcc_self_link.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--translit-jcc-self-link is available only in the x86-64 worker".to_owned(),
+        ));
+    }
     if launch.translit_direct_jmp_ibtc.is_some() && !launch.translit {
         return Err(Failure::Request(
             "--translit-direct-jmp-ibtc requires --translit".to_owned(),
@@ -430,6 +504,96 @@ fn execute(guest: Guest, launch: &LaunchArguments) -> Result<hl_engine::engine::
     if launch.translit_riprel_load_bridge.is_some() && guest != Guest::X86_64 {
         return Err(Failure::Request(
             "--translit-riprel-load-bridge is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.x86_exit_thunk.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-exit-thunk is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.x86_prologue_thunk.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-prologue-thunk is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.x86_bus_thunk.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-bus-thunk is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.x86_mt_chain.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-mt-chain is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.x86_mt_ibtc.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-mt-ibtc is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.x86_ibtc8.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-ibtc8 is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.x86_ea_record_elide.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-ea-record-elide is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.x86_rmload_fold.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-rmload-fold is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.x86_owner_index.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-owner-index is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.x86_gna_page_cache.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-gna-page-cache is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.x86_bus_range_coalesce.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-bus-range-coalesce is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.x86_decode_thread_authority.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-decode-thread-authority is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.exec_census_lazy.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--exec-census-lazy is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.call_sim_diag_only.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--call-sim-diag-only is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.pcache_converge.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--pcache-converge is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.pcache_link_image.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--pcache-link-image is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.pcache_libs.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--pcache-libs is available only in the x86-64 worker".to_owned(),
+        ));
+    }
+    if launch.xlat_census.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--xlat-census is available only in the x86-64 worker".to_owned(),
         ));
     }
     if launch.translit_fs_load_bridge.is_some() && guest != Guest::X86_64 {
@@ -547,6 +711,10 @@ fn rootfs_plan(
             launch.translit && launch.a64_x86_jcc_link != Some(TranslitFeatureControl::Off),
             "HL_A64_X86_JCC_LINK",
         ),
+        (
+            launch.translit && launch.translit_jcc_self_link == Some(TranslitFeatureControl::On),
+            "HL_TRANSLIT_JCC_SELF_LINK",
+        ),
     ] {
         if enabled {
             options
@@ -560,9 +728,28 @@ fn rootfs_plan(
             .map_err(|error| Failure::Request(format!("cannot set the engine launch option HL_NATIVE_SUPERVISED: {error:?}")))?;
     }
     for (control, name) in [
+        (launch.x86_ea_record_elide, "HL_X86_EA_RECORD_ELIDE"),
+        (launch.x86_rmload_fold, "HL_X86_RMLOAD_FOLD"),
+        (launch.x86_owner_index, "HL_X86_OWNER_INDEX"),
+        (launch.x86_gna_page_cache, "HL_X86_GNA_PAGE_CACHE"),
+        (launch.x86_bus_range_coalesce, "HL_X86_BUS_RANGE_COALESCE"),
+        (launch.x86_decode_thread_authority, "HL_X86_DECODE_THREAD_AUTHORITY"),
         (launch.translit_riprel_readonly, "HL_TRANSLIT_RIPREL_READONLY"),
         (launch.translit_riprel_load_bridge, "HL_TRANSLIT_RIPREL_LOAD_BRIDGE"),
         (launch.translit_fs_load_bridge, "HL_TRANSLIT_FS_LOAD_BRIDGE"),
+        (launch.x86_exit_thunk, "HL_X86_EXIT_THUNK"),
+        (launch.x86_prologue_thunk, "HL_X86_PROLOGUE_THUNK"),
+        (launch.x86_bus_thunk, "HL_X86_BUS_THUNK"),
+        (launch.x86_mt_chain, "HL_X86_MT_CHAIN"),
+        (launch.x86_mt_ibtc, "HL_X86_MT_IBTC"),
+        (launch.x86_ibtc8, "HL_X86_IBTC8"),
+        (launch.exec_ibtc_lazy, "HL_EXEC_IBTC_LAZY"),
+        (launch.exec_census_lazy, "HL_EXEC_CENSUS_LAZY"),
+        (launch.call_sim_diag_only, "HL_CALL_SIM_DIAG_ONLY"),
+        (launch.native_supervised_pane, "HL_NATIVE_SUPERVISED_PANE"),
+        (launch.pcache_libs, "HL_PCACHE_LIBS"),
+        (launch.pcache_link_image, "HL_PCACHE_LINK_IMAGE"),
+        (launch.pcache_converge, "HL_PCACHE_CONVERGE"),
     ] {
         if let Some(control) = control {
             let value = if control == TranslitFeatureControl::On {
@@ -628,6 +815,11 @@ fn rootfs_plan(
         options
             .set("HL_TRANSLIT_PERF_MAP", &path.to_string_lossy(), false)
             .map_err(|error| Failure::Request(format!("cannot set --translit-perf-map: {error:?}")))?;
+    }
+    if let Some(path) = &launch.xlat_census {
+        options
+            .set("HL_XLAT_CENSUS", &path.to_string_lossy(), false)
+            .map_err(|error| Failure::Request(format!("cannot set --xlat-census: {error:?}")))?;
     }
     if launch.translation_cache_observe {
         options
@@ -907,7 +1099,23 @@ mod tests {
         assert_eq!(defaults.translit_riprel_readonly, None);
         assert_eq!(defaults.translit_riprel_load_bridge, None);
         assert_eq!(defaults.translit_fs_load_bridge, None);
+        assert_eq!(defaults.x86_exit_thunk, None);
+        assert_eq!(defaults.x86_prologue_thunk, None);
+        assert_eq!(defaults.x86_bus_thunk, None);
+        assert_eq!(defaults.x86_mt_chain, None);
+        assert_eq!(defaults.x86_mt_ibtc, None);
+        assert_eq!(defaults.x86_ibtc8, None);
+        assert_eq!(defaults.x86_ea_record_elide, None);
+        assert_eq!(defaults.x86_rmload_fold, None);
+        assert_eq!(defaults.x86_owner_index, None);
+        assert_eq!(defaults.x86_gna_page_cache, None);
+        assert_eq!(defaults.x86_bus_range_coalesce, None);
+        assert_eq!(defaults.x86_decode_thread_authority, None);
+        assert_eq!(defaults.exec_ibtc_lazy, None);
+        assert_eq!(defaults.exec_census_lazy, None);
+        assert_eq!(defaults.call_sim_diag_only, None);
         assert_eq!(defaults.native_supervised, None);
+        assert_eq!(defaults.native_supervised_pane, None);
 
         let selected = launch(&[
             "--diagnostics",
@@ -918,7 +1126,23 @@ mod tests {
             "--translit-riprel-readonly",
             "--translit-riprel-load-bridge",
             "--translit-fs-load-bridge",
+            "--x86-exit-thunk=on",
+            "--x86-prologue-thunk=on",
+            "--x86-bus-thunk=on",
+            "--x86-mt-chain=on",
+            "--x86-mt-ibtc=on",
+            "--x86-ibtc8=on",
+            "--x86-ea-record-elide=on",
+            "--x86-rmload-fold=off",
+            "--x86-owner-index=on",
+            "--x86-gna-page-cache=on",
+            "--x86-bus-range-coalesce=on",
+            "--x86-decode-thread-authority=on",
+            "--exec-ibtc-lazy=on",
+            "--exec-census-lazy=on",
+            "--call-sim-diag-only=off",
             "--native-supervised",
+            "--native-supervised-pane=on",
             "--rootfs",
             "/image",
             "bin/program",
@@ -943,7 +1167,29 @@ mod tests {
             selected.translit_fs_load_bridge,
             Some(super::TranslitFeatureControl::On)
         );
+        assert_eq!(selected.x86_exit_thunk, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_prologue_thunk, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_bus_thunk, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_mt_chain, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_mt_ibtc, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_ibtc8, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_ea_record_elide, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_rmload_fold, Some(super::TranslitFeatureControl::Off));
+        assert_eq!(selected.x86_owner_index, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_gna_page_cache, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.x86_bus_range_coalesce, Some(super::TranslitFeatureControl::On));
+        assert_eq!(
+            selected.x86_decode_thread_authority,
+            Some(super::TranslitFeatureControl::On)
+        );
+        assert_eq!(selected.exec_ibtc_lazy, Some(super::TranslitFeatureControl::On));
+        assert_eq!(selected.exec_census_lazy, Some(super::TranslitFeatureControl::On));
+        assert_eq!(
+            selected.call_sim_diag_only,
+            Some(super::TranslitFeatureControl::Off)
+        );
         assert_eq!(selected.native_supervised, Some(super::NativeSupervisedControl::On));
+        assert_eq!(selected.native_supervised_pane, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.rootfs.as_deref(), Some(std::path::Path::new("/image")));
 
         for option in [
@@ -1172,6 +1418,267 @@ mod tests {
             .translit_riprel_load_bridge,
             Some(super::TranslitFeatureControl::Off)
         );
+    }
+
+    /// Every backend flag this effort added is x86-64-only, hidden, and spelled `=on|off` with a
+    /// required `=`.  The guard matters because an accepted-but-inert flag on the aarch64 worker is
+    /// how a measurement lane attributes a number to a mechanism that never ran.
+    #[test]
+    /// `--native-supervised-pane` is NOT in the x86-only enumeration above, because
+    /// native supervision is host-ISA-generic: it supervises a same-ISA guest, so an
+    /// AArch64 worker supervising an AArch64 guest reads this flag for real. A worker
+    /// guard would be wrong. It still needs the rest of the contract pinned, and
+    /// nothing pinned it -- it shipped with no test at all.
+    ///
+    /// The `=off` case is the one that matters. The reader is C
+    /// (`hl_native_supervised_flag`), and the failure mode this asserts against is a
+    /// reader spelled `hl_options_get(...) != NULL`, which inverts a default-off flag
+    /// the moment someone writes `=off`: the plan below stores the string "0", which
+    /// such a reader reports as ON. Deleting the `!(value[0] == '0' && ...)` clause
+    /// from the C reader cannot be caught here, but storing anything other than "0"
+    /// on the Rust side can, and that is the half this layer owns.
+    fn the_supervised_pane_flag_requires_equals_and_stores_off_as_zero() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let root = tempfile::tempdir().unwrap();
+        let program = root.path().join("bin/program");
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        std::fs::write(&program, b"\x7fELF").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = root.path().to_str().unwrap();
+
+        for invalid in ["yes", "1", "0", "enabled", ""] {
+            let option = format!("--native-supervised-pane={invalid}");
+            assert!(
+                LaunchArguments::try_parse_from(["hl-x86_64", option.as_str(), "bin/program"]).is_err(),
+                "--native-supervised-pane accepted {invalid:?}"
+            );
+        }
+
+        let absent = rootfs_plan(root.path(), &launch(&["--rootfs", path, "bin/program"])).unwrap();
+        assert_eq!(
+            absent.options.get("HL_NATIVE_SUPERVISED_PANE"),
+            None,
+            "the pane surface must be absent by default, not merely off"
+        );
+
+        let on = rootfs_plan(
+            root.path(),
+            &launch(&["--native-supervised-pane=on", "--rootfs", path, "bin/program"]),
+        )
+        .unwrap();
+        assert_eq!(on.options.get("HL_NATIVE_SUPERVISED_PANE"), Some("1"));
+
+        let off = rootfs_plan(
+            root.path(),
+            &launch(&["--native-supervised-pane=off", "--rootfs", path, "bin/program"]),
+        )
+        .unwrap();
+        assert_eq!(
+            off.options.get("HL_NATIVE_SUPERVISED_PANE"),
+            Some("0"),
+            "=off must store \"0\"; a registered-but-non-zero value reads ON in the worker"
+        );
+
+        assert!(
+            on.environment
+                .iter()
+                .all(|entry| !entry.starts_with(b"HL_NATIVE_SUPERVISED_PANE=")),
+            "launch options must not enter the guest environment"
+        );
+    }
+
+    /// Every integrated default-off flag must reach the worker through its own
+    /// row in the plan's option mapping. A missing row is invisible to argument
+    /// parsing -- the CLI still accepts the flag, the struct field is still set,
+    /// and the worker simply never sees it -- so the per-flag assertions below are
+    /// the only thing standing between a dropped row and a silently dead switch.
+    ///
+    /// `absent` is asserted as None rather than Some("0"): these flags must be
+    /// absent by default, not merely off, so that the worker's
+    /// hl_option_flag_value(name, 0) default is what decides.
+    #[test]
+    fn every_integrated_flag_maps_to_its_worker_option() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let root = tempfile::tempdir().unwrap();
+        let program = root.path().join("bin/program");
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        std::fs::write(&program, b"\x7fELF").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = root.path().to_str().unwrap();
+
+        // `off_is_absent` marks the one flag that is emitted by the on-only boolean
+        // table rather than the tri-state table, so `=off` leaves the option absent
+        // instead of storing "0". That is a difference in SHAPE, not in behaviour:
+        // the worker reads every one of these through
+        // hl_option_flag_value(name, 0), for which absent and "0" are the same
+        // answer. It is asserted rather than normalised so that a future change to
+        // either table has to come here and say which one it meant.
+        for (flag, option, off_is_absent) in [
+            ("--translit-jcc-self-link", "HL_TRANSLIT_JCC_SELF_LINK", true),
+            ("--x86-exit-thunk", "HL_X86_EXIT_THUNK", false),
+            ("--x86-prologue-thunk", "HL_X86_PROLOGUE_THUNK", false),
+            ("--x86-bus-thunk", "HL_X86_BUS_THUNK", false),
+            ("--x86-mt-chain", "HL_X86_MT_CHAIN", false),
+            ("--x86-mt-ibtc", "HL_X86_MT_IBTC", false),
+            ("--x86-ibtc8", "HL_X86_IBTC8", false),
+            ("--x86-ea-record-elide", "HL_X86_EA_RECORD_ELIDE", false),
+            ("--x86-rmload-fold", "HL_X86_RMLOAD_FOLD", false),
+            ("--x86-owner-index", "HL_X86_OWNER_INDEX", false),
+            ("--x86-gna-page-cache", "HL_X86_GNA_PAGE_CACHE", false),
+            ("--x86-bus-range-coalesce", "HL_X86_BUS_RANGE_COALESCE", false),
+            ("--x86-decode-thread-authority", "HL_X86_DECODE_THREAD_AUTHORITY", false),
+            ("--native-supervised-pane", "HL_NATIVE_SUPERVISED_PANE", false),
+            ("--exec-ibtc-lazy", "HL_EXEC_IBTC_LAZY", false),
+            ("--exec-census-lazy", "HL_EXEC_CENSUS_LAZY", false),
+            ("--call-sim-diag-only", "HL_CALL_SIM_DIAG_ONLY", false),
+            ("--pcache-converge", "HL_PCACHE_CONVERGE", false),
+            ("--pcache-link-image", "HL_PCACHE_LINK_IMAGE", false),
+            ("--pcache-libs", "HL_PCACHE_LIBS", false),
+        ] {
+            let absent = rootfs_plan(
+                root.path(),
+                &launch(&["--translit", "--rootfs", path, "bin/program"]),
+            )
+            .unwrap();
+            assert_eq!(
+                absent.options.get(option),
+                None,
+                "{flag} must be absent by default, not merely off"
+            );
+
+            let on = rootfs_plan(
+                root.path(),
+                &launch(&[
+                    "--translit",
+                    &format!("{flag}=on"),
+                    "--rootfs",
+                    path,
+                    "bin/program",
+                ]),
+            )
+            .unwrap();
+            assert_eq!(
+                on.options.get(option),
+                Some("1"),
+                "{flag}=on did not reach the worker as {option}=1; the mapping row is missing"
+            );
+
+            let off = rootfs_plan(
+                root.path(),
+                &launch(&[
+                    "--translit",
+                    &format!("{flag}=off"),
+                    "--rootfs",
+                    path,
+                    "bin/program",
+                ]),
+            )
+            .unwrap();
+            assert_eq!(
+                off.options.get(option),
+                if off_is_absent { None } else { Some("0") },
+                "{flag}=off stored the wrong thing; a registered-but-non-zero value reads ON in the worker"
+            );
+
+            assert!(
+                on.environment
+                    .iter()
+                    .all(|entry| !entry.starts_with(format!("{option}=").as_bytes())),
+                "{flag} leaked into the guest environment"
+            );
+        }
+    }
+
+    #[test]
+    fn integrated_backend_flags_are_x86_only_and_require_equals() {
+        for flag in [
+            "--x86-owner-index",
+            "--x86-gna-page-cache",
+            "--x86-bus-range-coalesce",
+            "--x86-decode-thread-authority",
+            "--x86-bus-thunk",
+            "--x86-mt-chain",
+            "--x86-mt-ibtc",
+            "--pcache-converge",
+            "--pcache-link-image",
+            "--pcache-libs",
+            "--x86-ibtc8",
+            "--exec-census-lazy",
+            "--call-sim-diag-only",
+            "--translit-jcc-self-link",
+            "--x86-exit-thunk",
+            "--x86-prologue-thunk",
+            "--x86-ea-record-elide",
+            "--x86-rmload-fold",
+        ] {
+            // One spelling only: `=on` / `=off`, and nothing else.
+            for invalid in ["yes", "1", "0", "enabled", ""] {
+                let option = format!("{flag}={invalid}");
+                // `--translit` is supplied so the only thing left to reject is the
+                // VALUE: --translit-jcc-self-link carries requires = "translit", and
+                // without it this would pass for the wrong reason.
+                assert!(
+                    LaunchArguments::try_parse_from([
+                        "hl-x86_64",
+                        "--translit",
+                        option.as_str(),
+                        "bin/program"
+                    ])
+                    .is_err(),
+                    "{flag} accepted {invalid:?}"
+                );
+            }
+            assert!(
+                LaunchArguments::try_parse_from([
+                    "hl-x86_64",
+                    "--translit",
+                    &format!("{flag}=off"),
+                    "--rootfs",
+                    "/image",
+                    "bin/program"
+                ])
+                .is_ok(),
+                "{flag} rejected =off"
+            );
+            // require_equals, pinned by consequence rather than by spelling.
+            // The space form does NOT error -- clap takes the flag's
+            // default_missing_value and leaves "on" to the next positional -- so the
+            // observable guarantee is that "on" lands on the EXECUTABLE and is never
+            // consumed as the flag's value. Dropping require_equals silently flips
+            // this: "on" becomes the value and "bin/program" becomes the executable.
+            let spaced = LaunchArguments::try_parse_from([
+                "hl-x86_64",
+                "--translit",
+                flag,
+                "on",
+                "--rootfs",
+                "/image",
+                "bin/program",
+            ])
+            .unwrap_or_else(|e| panic!("{flag} space form failed to parse: {e}"));
+            assert_eq!(
+                spaced.executable,
+                std::path::Path::new("on"),
+                "{flag} consumed a space-separated value; require_equals is missing"
+            );
+            let failure = execute(
+                Guest::Aarch64,
+                &launch(&["--translit", &format!("{flag}=on"), "--rootfs", "/image", "bin/program"]),
+            )
+            .unwrap_err();
+            assert!(
+                reason(&failure).contains("available only in the x86-64 worker"),
+                "{flag} is missing its worker guard"
+            );
+        }
+        let failure = execute(
+            Guest::Aarch64,
+            &launch(&["--translit", "--xlat-census", "/tmp/census", "--rootfs", "/image", "bin/program"]),
+        )
+        .unwrap_err();
+        assert!(reason(&failure).contains("available only in the x86-64 worker"));
     }
 
     #[cfg(not(feature = "native-test-hooks"))]
@@ -1444,10 +1951,27 @@ mod tests {
         assert_eq!(defaults.options.get("HL_TRANSLIT"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_MIXED_SSE_DISABLE"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_JCC_IBTC_DISABLE"), None);
+        assert_eq!(defaults.options.get("HL_TRANSLIT_JCC_SELF_LINK"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_DIRECT_JMP_IBTC_DISABLE"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_RIPREL_LOAD_BRIDGE"), None);
+        assert_eq!(defaults.options.get("HL_X86_EXIT_THUNK"), None);
+        assert_eq!(defaults.options.get("HL_X86_PROLOGUE_THUNK"), None);
+        assert_eq!(defaults.options.get("HL_X86_BUS_THUNK"), None);
+        assert_eq!(defaults.options.get("HL_X86_MT_CHAIN"), None);
+        assert_eq!(defaults.options.get("HL_X86_MT_IBTC"), None);
+        assert_eq!(defaults.options.get("HL_X86_IBTC8"), None);
+        assert_eq!(defaults.options.get("HL_X86_EA_RECORD_ELIDE"), None);
+        assert_eq!(defaults.options.get("HL_X86_RMLOAD_FOLD"), None);
+        assert_eq!(defaults.options.get("HL_X86_OWNER_INDEX"), None);
+        assert_eq!(defaults.options.get("HL_X86_GNA_PAGE_CACHE"), None);
+        assert_eq!(defaults.options.get("HL_X86_BUS_RANGE_COALESCE"), None);
+        assert_eq!(defaults.options.get("HL_X86_DECODE_THREAD_AUTHORITY"), None);
+        assert_eq!(defaults.options.get("HL_EXEC_IBTC_LAZY"), None);
+        assert_eq!(defaults.options.get("HL_EXEC_CENSUS_LAZY"), None);
+        assert_eq!(defaults.options.get("HL_CALL_SIM_DIAG_ONLY"), None);
         assert_eq!(defaults.options.get("HL_TRANSLIT_FS_LOAD_BRIDGE"), None);
         assert_eq!(defaults.options.get("HL_NATIVE_SUPERVISED"), None);
+        assert_eq!(defaults.options.get("HL_NATIVE_SUPERVISED_PANE"), None);
 
         let selected = rootfs_plan(
             root.path(),
@@ -1460,6 +1984,7 @@ mod tests {
                 "--translit-riprel-readonly",
                 "--translit-riprel-load-bridge",
                 "--translit-fs-load-bridge",
+                "--x86-decode-thread-authority=on",
                 "--native-supervised",
                 "--rootfs",
                 root.path().to_str().unwrap(),
@@ -1476,6 +2001,10 @@ mod tests {
         assert_eq!(selected.options.get("HL_TRANSLIT_RIPREL_READONLY"), Some("1"));
         assert_eq!(selected.options.get("HL_TRANSLIT_RIPREL_LOAD_BRIDGE"), Some("1"));
         assert_eq!(selected.options.get("HL_TRANSLIT_FS_LOAD_BRIDGE"), Some("1"));
+        // The mapping itself, not just the CLI shape: dropping the
+        // (launch.x86_decode_thread_authority, "HL_X86_DECODE_THREAD_AUTHORITY") row
+        // leaves the argument parsing untouched and the worker never sees the option.
+        assert_eq!(selected.options.get("HL_X86_DECODE_THREAD_AUTHORITY"), Some("1"));
         assert!(
             selected
                 .environment
@@ -1489,6 +2018,7 @@ mod tests {
             &launch(&[
                 "--translit",
                 "--a64-x86-jcc-link=off",
+                "--x86-decode-thread-authority=off",
                 "--translit-riprel-readonly=off",
                 "--translit-riprel-load-bridge=off",
                 "--translit-fs-load-bridge=off",
@@ -1498,6 +2028,9 @@ mod tests {
             ]),
         )
         .unwrap();
+        // "=off" writes the STRING "0", which is why the engine must read this
+        // through hl_option_flag_value and never through hl_option_get(name) != NULL.
+        assert_eq!(disabled.options.get("HL_X86_DECODE_THREAD_AUTHORITY"), Some("0"));
         assert_eq!(disabled.options.get("HL_TRANSLIT_RIPREL_READONLY"), Some("0"));
         assert_eq!(disabled.options.get("HL_TRANSLIT_RIPREL_LOAD_BRIDGE"), Some("0"));
         assert_eq!(disabled.options.get("HL_TRANSLIT_FS_LOAD_BRIDGE"), Some("0"));

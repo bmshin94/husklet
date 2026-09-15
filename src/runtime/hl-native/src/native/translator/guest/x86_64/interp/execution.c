@@ -459,6 +459,10 @@ static void *translate_block(hl_x86_hot_context *context, uint64_t gpc) {
     block->profile_insns = 0;
     INTERP_BLOCK_PCACHE_SET_ORDINAL(block, g_pcache && g_coldprof && translit_pcache_census_next != UINT16_MAX
                                               ? translit_pcache_census_next++ : UINT16_MAX);
+    /* Monotone over the whole process, never rewound by a generation reset: this is what makes the
+       prefix clear in translit_external_absolute_generation_reset() provably equal to the full one. */
+    if (translit_pcache_census_next > translit_pcache_census_high_water)
+        translit_pcache_census_high_water = translit_pcache_census_next;
     if (g_coldprof && !g_pcache && INTERP_BLOCK_PCACHE_ORDINAL(block) != UINT16_MAX)
         translit_pcache_census_emitted_while_disabled++;
 #if defined(HL_NATIVE_TEST_HOOKS)

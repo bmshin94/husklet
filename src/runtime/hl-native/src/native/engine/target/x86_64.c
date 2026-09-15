@@ -142,6 +142,7 @@ uint64_t hl_x86_guest_pointer(uint64_t address);
 #include "../../translator/guest/x86_64/abi.h" // cpu-interface seam (G_* contract + sysmap + normalize)
 // The dispatch seam is per (guest ISA, HOST CPU): dispatch.h patches AArch64 branch encodings.
 #include "../../host/cpu.h"
+#include "../../host/cpu_features.h"
 #include "../../translator/guest_memory.h"
 #if defined(HL_HOST_CPU_AARCH64)
 #include "../../translator/guest/x86_64/smc/index.h"
@@ -436,6 +437,7 @@ static void address_record_guest(void *context, int reg, int rip_relative) {
     // Effective addresses are architectural guest coordinates. Displaced ET_EXEC PCs are now
     // canonical throughout x86 lowering, so a RIP-relative address is already LOW; subtracting the
     // storage bias here wrapped it into 0xffff... and exposed that engine-private value as si_addr.
+    g_x86_mech_ea_record++;
     e_str(reg, 28, OFF_SOFT_GUEST_EA);
     g_address_recorded = 1;
 }
@@ -508,9 +510,16 @@ static int translit_enabled(void) {
 static void translit_profile_options_refresh(void) {}
 
 static int translit_report(char *out, size_t size) {
+    /* Length-correct two-part record. The old form returned after the first line whenever the
+       buffer was already full -- including the `size == 0` SIZING call every caller makes first --
+       so the reported requirement covered one line while the rendered record covered the whole
+       census. profile_record_write compares the two and dropped the record, which is why neither
+       this line nor the x86-a64 expansion census has ever reached a diagnostics run. */
     int written = snprintf(out, size, "[prof] translit: absent, this host takes the JIT\n");
-    if (written < 0 || (size_t)written >= size) return written;
-    int route = hl_x86_a64_route_report(out + written, size - (size_t)written);
+    if (written < 0) return written;
+    size_t offset = (size_t)written;
+    int fits = out != NULL && offset < size;
+    int route = hl_x86_a64_route_report(fits ? out + offset : NULL, fits ? size - offset : 0);
     return route < 0 ? route : written + route;
 }
 
@@ -773,11 +782,32 @@ static void jit86_smc_commit(struct cpu *cpu) {
        ingress. */
     if (!invalidates_code) return;
     uint32_t removed;
-    if (cpu->smc_range_overflow) {
+    /* HL_X86_MT_CHAIN and precise SMC invalidation are incompatible, so the first SMC event that
+       actually removes a translation escalates to the conservative wholesale drop and permanently
+       stops chaining -- which is exactly the aarch64 backend's model (guest/aarch64/stubs.c's
+       emit_chain_exit_from: "The first SMC event performs one conservative wholesale map drop, which
+       makes every pre-SMC direct edge unreachable. Thereafter translations must remain individually
+       removable").
+       WHY. map_invalidate_source_ranges() removes dispatcher INGRESS only; host bytes in the arena are
+       immutable and nothing in the tree ever un-patches a resolved `b body` edge. So a predecessor A
+       that was chained to a block B keeps branching into B's stale code after B's source page has been
+       rewritten. That staleness window exists today on the single-threaded path and is accepted there;
+       it must not be widened to a second CPU that can re-enter A immediately. map_clear() makes every
+       old block unreachable from the dispatcher, and since no old block can be entered, no baked edge
+       out of one can be taken. pend_reset() then drops the unresolved pends so nothing recorded before
+       this point is patched afterwards. Peers are parked at a dispatcher safepoint by
+       stw_mapping_begin() above, off the code cache, so none is mid-block in the code being orphaned.
+       Unset (the default) this is inert: the option-off path never chains under threads. */
+    int mtchain_smc_escalate = hl_x86_emit_mt_chain_enabled() && !cpu->smc_range_overflow;
+    if (cpu->smc_range_overflow || mtchain_smc_escalate) {
         removed = g_live_map_count;
         map_clear();
         memset(g_ibtc, 0, sizeof g_ibtc);
         memset(g_xibtc, 0, sizeof g_xibtc);
+        if (mtchain_smc_escalate) {
+            pend_reset();
+            hl_x86_emit_mt_chain_smc_disable();
+        }
     } else {
         removed = map_invalidate_source_ranges((const uint64_t (*)[2])cpu->smc_ranges, (uint32_t)cpu->smc_range_count);
         if (removed) {
@@ -1226,6 +1256,276 @@ HL_API int hl_x86_64_reserved_register_test(void) {
 #undef HL_X86_RESERVED_GPR
 #endif
 
+#if defined(HL_NATIVE_TEST_HOOKS)
+/*
+ * `rm_load` leaves a memory operand's effective address in x17 and `rm_store` stores through it --
+ * "EA already in x17" is the read-modify-write contract every memory-destination lowering obeys.
+ * SHLD/SHRD by CL broke it: it parked the masked shift count in x17, so `shld %cl,%rsi,(%rbx)` stored
+ * the result to the COUNT reinterpreted as a pointer.  The masked count is 0..63, so that is a
+ * near-null store -- a SIGSEGV for every addressing mode, every operand width and every CL value
+ * including zero, with the real destination left stale.  The immediate-count forms never touched x17,
+ * which is why it survived review; the operand matrix below spans both.
+ *
+ * The contract has TWO emitted shapes and the fixture drives both, because HL_X86_RMLOAD_FOLD
+ * (default off) changes which one a memory r/m operand takes:
+ *
+ *   unfolded -- `rm_load` emits the effective address into x17, loads through [x17], and `rm_store`
+ *     stores through the same x17.  The address is live across the whole lowering, so the invariant
+ *     is the window one: between the load through [x17] and the store through [x17], no instruction
+ *     may name x17 as its destination.
+ *
+ *   folded -- `rm_load` addresses [base,#imm] directly (`ldr x16,[base,#imm]`, no x17 at all) and
+ *     defers the address to `emit_rm_fold_address()`, which `rm_store` calls just before storing.
+ *     There is no x17 load to anchor on, so the window invariant is vacuous here and a window scan
+ *     reports "no load/store pair" -- verdict 2 -- on a perfectly correct lowering.  The invariant
+ *     that actually holds is the ownership one: nothing in the emitted fixture writes x17 except the
+ *     deferred materialization -- one contiguous run of address arithmetic seeded from the r/m base
+ *     register, with x17 unwritten from there through to the store.  The fold conditions
+ *     (base only, no index, no segment, not rip-relative, no addr32, no non-PIE bias, bus inactive)
+ *     leave `emit_ea` exactly that shape and leave the bus guard inert, so anything else writing x17
+ *     -- before the run, inside it, or between it and the store -- is a lowering borrowing the
+ *     reserved effective-address register, which is what this test exists to catch.
+ *
+ * Only the base-register shapes fold; index, rip-relative and absolute operands stay unfolded even
+ * with the option on, so the fixture matrix covers both invariants in one pass of the folded mode.
+ * Which shape each fixture must take is PREDICTED from `ea_imm_fold` rather than inferred from the
+ * emitted words: a fixture that silently changes shape is itself a regression, not a free pass.
+ *
+ * Returns 0 clean, 1 when a fixture lets anything but the effective-address contract own x17, 2 when
+ * a fixture emitted neither shape or emitted the shape it was not predicted to (a scan of nothing
+ * must never read as a pass), and 3 when the scan met an instruction class it cannot decode a
+ * destination for.
+ */
+
+/* Destination register of one emitted word: -1 for "writes no GPR", -2 for "unrecognized class". */
+static int x86_double_shift_gpr_dest(uint32_t word) {
+    int rd = (int)(word & 31u);
+    if ((word & 0xFFFFFFE0u) == 0xD53B4200u) return rd;                            /* mrs xd, nzcv */
+    if ((word & 0xFFFFFFE0u) == 0xD51B4200u) return -1;                            /* msr nzcv, xs */
+    if ((word & 0x3B000000u) == 0x39000000u) return (word & 0x00400000u) ? rd : -1; /* ldr/str, uoff */
+    if ((word & 0x3B200C00u) == 0x38000000u) return (word & 0x00400000u) ? rd : -1; /* ldur/stur */
+    if ((word & 0x1F800000u) == 0x12800000u) return rd;                            /* movz/movk/movn */
+    if ((word & 0x1F000000u) == 0x0A000000u) return rd;                            /* logical, shifted reg */
+    if ((word & 0x1F000000u) == 0x0B000000u) return rd;                            /* add/sub, shifted/ext */
+    if ((word & 0x1F800000u) == 0x11000000u) return rd;                            /* add/sub, immediate */
+    if ((word & 0x1F800000u) == 0x12000000u) return rd;                            /* logical, immediate */
+    if ((word & 0x1F800000u) == 0x13000000u) return rd;                            /* sbfm/bfm/ubfm */
+    if ((word & 0x1F800000u) == 0x13800000u) return rd;                            /* extr */
+    if ((word & 0x1FE00000u) == 0x1A800000u) return rd;                            /* csel family */
+    if ((word & 0x1FE00000u) == 0x1AC00000u) return rd;                            /* lslv/lsrv/asrv/rorv */
+    return -2;
+}
+
+#define HL_X86_DOUBLE_SHIFT_EA 17
+#define HL_X86_DOUBLE_SHIFT_VALUE 16
+
+/* First word of a deferred address materialization: x17 taken from the r/m BASE register, which is
+   the only seed `emit_ea` has for a fold-eligible operand -- `add`/`sub x17,base,#imm` for a
+   displacement that fits an immediate, plain `mov x17,base` when it does not. */
+static int x86_double_shift_ea_seed(uint32_t word, int base) {
+    if ((int)(word & 31u) != HL_X86_DOUBLE_SHIFT_EA) return 0;
+    if ((word & 0xFFE0FFE0u) == 0xAA0003E0u) return (int)((word >> 16) & 31u) == base; /* mov x17,base */
+    if ((word & 0xFF800000u) != 0x91000000u && (word & 0xFF800000u) != 0xD1000000u) return 0;
+    return (int)((word >> 5) & 31u) == base; /* add/sub x17,base,#imm */
+}
+
+/* Continuation of that materialization: the displacement terms `emit_ea` adds on top of the seed. */
+static int x86_double_shift_ea_step(uint32_t word) {
+    if ((int)(word & 31u) != HL_X86_DOUBLE_SHIFT_EA) return 0;
+    if ((word & 0xFF800000u) != 0x91000000u && (word & 0xFF800000u) != 0xD1000000u) return 0;
+    return (int)((word >> 5) & 31u) == HL_X86_DOUBLE_SHIFT_EA; /* add/sub x17,x17,#imm */
+}
+
+/* The folded load itself: the value arrives in x16 straight out of [base,#imm], never through x17. */
+static int x86_double_shift_folded_load(uint32_t word, int base) {
+    if (!(word & 0x00400000u)) return 0;
+    if ((word & 0x3B000000u) != 0x39000000u && (word & 0x3B200C00u) != 0x38000000u) return 0;
+    return (int)(word & 31u) == HL_X86_DOUBLE_SHIFT_VALUE && (int)((word >> 5) & 31u) == base;
+}
+
+HL_API int hl_x86_64_double_shift_memory_ea_test(void) {
+#if !defined(HL_HOST_CPU_AARCH64)
+    return 4; /* no emitted code on a host without the JIT; see hl_x86_64_reserved_register_test */
+#else
+    static uint32_t code[4096];
+    /* SHLD and SHRD, by CL and by imm8, at every operand width the lowering has a path for. */
+    static const uint8_t opcodes[4] = {0xA5, 0xAD, 0xA4, 0xAC};
+    static const int widths[3] = {8, 4, 2};
+    uint8_t *saved_cp = g_cp;
+    int saved_recorded = g_address_recorded;
+    int saved_rwx = g_rwx_guest;
+    int unfolded_pairs = 0, folded_pairs = 0, verdict = 0;
+    g_address_recorded = 0;
+    g_rwx_guest = 0; /* scan the plain direct-store lowering, not the soft-mapping one */
+
+    /* HL_X86_RMLOAD_FOLD is launch-scoped and read once, so the fixture drives the cached answer
+       itself: one pass per emitted shape, in-process, with no dependence on how this process was
+       launched.  Both passes must hold -- the option decides which lowering ships, not whether the
+       reserved-register contract applies. */
+    for (int fold = 0; fold < 2 && verdict == 0; ++fold) {
+        hl_x86_rmload_fold_test_set(fold);
+        for (int shape = 0; shape < 6 && verdict == 0; ++shape)
+            for (int which = 0; which < 4 && verdict == 0; ++which)
+                for (int size = 0; size < 3 && verdict == 0; ++size) {
+                    struct insn insn;
+                    memset(&insn, 0, sizeof insn);
+                    insn.len = 5;
+                    insn.two = 1;
+                    insn.op = opcodes[which];
+                    insn.opsize = widths[size];
+                    insn.p66 = widths[size] == 2;
+                    insn.rexW = widths[size] == 8;
+                    insn.has_rex = insn.rexW;
+                    insn.is_mem = 1;
+                    insn.reg = 6; /* source operand: guest rsi */
+                    insn.imm = 5; /* immediate-count forms */
+                    switch (shape) {
+                    case 0: /* [base] */
+                        insn.m_hasbase = 1;
+                        insn.m_base = 3;
+                        break;
+                    case 1: /* [base + disp8] */
+                        insn.m_hasbase = 1;
+                        insn.m_base = 3;
+                        insn.disp = 8;
+                        break;
+                    case 2: /* [base + index*8] */
+                        insn.m_hasbase = 1;
+                        insn.m_base = 3;
+                        insn.m_hasindex = 1;
+                        insn.m_index = 2;
+                        insn.m_scale = 3;
+                        break;
+                    case 3: /* [base + index*8 + disp32] */
+                        insn.m_hasbase = 1;
+                        insn.m_base = 3;
+                        insn.m_hasindex = 1;
+                        insn.m_index = 2;
+                        insn.m_scale = 3;
+                        insn.disp = 0x120;
+                        break;
+                    case 4: /* [rip + disp32] */
+                        insn.rip_rel = 1;
+                        insn.disp = 0x40;
+                        break;
+                    default: /* [disp32] -- absolute, no base and no index */
+                        insn.disp = 0x1000;
+                        break;
+                    }
+
+                    /* Predicted shape: `rm_load` folds exactly when the option is on and the operand
+                       is fold-eligible.  Index, rip-relative and absolute operands never are. */
+                    int fold_base = 0, fold_offset = 0;
+                    int expect_fold = fold && ea_imm_fold(&insn, widths[size], &fold_base, &fold_offset) != 0;
+
+                    uint32_t *base = code;
+                    g_cp = (uint8_t *)code;
+                    (void)lower_double_shift(&insn, UINT64_C(0x401000));
+                    size_t count = (size_t)((uint32_t *)g_cp - base);
+                    if (count == 0 || count > sizeof code / sizeof code[0]) {
+                        verdict = 2;
+                        break;
+                    }
+
+                    /* The store through [x17] closes both shapes; only the unfolded one opens with a
+                       load through [x17]. */
+                    size_t load = count, store = count;
+                    for (size_t index = 0; index < count; ++index) {
+                        uint32_t word = code[index];
+                        if ((word & 0x3B000000u) != 0x39000000u) continue;
+                        if ((int)((word >> 5) & 31u) != HL_X86_DOUBLE_SHIFT_EA) continue;
+                        if (word & 0x00400000u) {
+                            if (load == count) load = index;
+                        } else
+                            store = index;
+                    }
+                    if (store == count || (load != count) == (expect_fold != 0)) {
+                        verdict = 2; /* no store, or the shape the option did not ask for */
+                        break;
+                    }
+
+                    if (!expect_fold) {
+                        if (load == count || store <= load) {
+                            verdict = 2;
+                            break;
+                        }
+                        unfolded_pairs++;
+                        for (size_t index = load + 1; index < store; ++index) {
+                            int dest = x86_double_shift_gpr_dest(code[index]);
+                            if (dest == -2) {
+                                verdict = 3;
+                                break;
+                            }
+                            if (dest == HL_X86_DOUBLE_SHIFT_EA) {
+                                verdict = 1;
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+
+                    /* Folded: x17 belongs to the deferred materialization alone.  Collect every word
+                       ahead of the store that writes it and require them to be one contiguous run
+                       seeded from the r/m base register: the last write before the store is then the
+                       materialization by construction, and nothing else in the fixture ever owned the
+                       address.  What the guard emits between that run and the store only READS x17 --
+                       it records the effective address into the cpu image -- which is a use of the
+                       contract, not a violation of it. */
+                    size_t first = count, last = count, writes = 0;
+                    int folded_load = 0;
+                    for (size_t index = 0; index < store; ++index) {
+                        int dest = x86_double_shift_gpr_dest(code[index]);
+                        if (dest == -2) {
+                            verdict = 3;
+                            break;
+                        }
+                        if (x86_double_shift_folded_load(code[index], fold_base)) folded_load = 1;
+                        if (dest != HL_X86_DOUBLE_SHIFT_EA) continue;
+                        if (first == count) first = index;
+                        last = index;
+                        writes++;
+                    }
+                    if (verdict) break;
+                    if (!folded_load || first == count) {
+                        /* No folded load, or a store through an x17 nobody materialized: the write
+                           half has no address behind it at all. */
+                        verdict = first == count ? 1 : 2;
+                        break;
+                    }
+                    if (last - first + 1 != writes) {
+                        verdict = 1; /* a second, disjoint writer owns x17 as well */
+                        break;
+                    }
+                    if (!x86_double_shift_ea_seed(code[first], fold_base)) {
+                        verdict = 1; /* the run does not start from the r/m base register */
+                        break;
+                    }
+                    for (size_t index = first + 1; index <= last; ++index)
+                        if (!x86_double_shift_ea_step(code[index])) {
+                            verdict = 1;
+                            break;
+                        }
+                    if (verdict) break;
+                    folded_pairs++;
+                }
+    }
+
+    hl_x86_rmload_fold_test_set(-1); /* back to the launch-scoped answer */
+    g_cp = saved_cp;
+    g_address_recorded = saved_recorded;
+    g_rwx_guest = saved_rwx;
+    hl_x86_integer_reset_flags();
+    if (verdict) return verdict;
+    /* Both passes ran every fixture, and the folded pass really did fold the two base-register
+       shapes: 72 unfolded fixtures with the option off, 48 unfolded plus 24 folded with it on. */
+    return unfolded_pairs == (6 * 4 * 3) + (4 * 4 * 3) && folded_pairs == 2 * 4 * 3 ? 0 : 2;
+#endif
+}
+
+#undef HL_X86_DOUBLE_SHIFT_VALUE
+#undef HL_X86_DOUBLE_SHIFT_EA
+#endif
+
 static int x86_signal_cache_contains(void *context, uint64_t pc) {
     (void)context;
     return jit_pc_in_retained_cache(pc);
@@ -1296,6 +1596,37 @@ static void sigframe_resume_dispatch(struct cpu *c, void *native_context) {
 static void sigframe_resume_dispatch(struct cpu *c, void *native_context) {
     interp_signal_resume(c, native_context);
 }
+#endif
+
+#if !defined(HL_HOST_CPU_AARCH64)
+/* No AArch64 emitter on this host, so there are no exit thunks to route through: the option is
+   accepted (the Rust and C registries must agree on the whole option set regardless of host) and
+   has no emission to change. Mirrors translit_enabled()/translit_report() above. */
+void hl_x86_emit_set_exit_thunk(int enabled) {
+    (void)enabled;
+}
+void hl_x86_emit_set_prologue_thunk(int enabled) {
+    (void)enabled;
+}
+void hl_x86_emit_set_bus_thunk(int enabled) {
+    (void)enabled;
+}
+void hl_x86_emit_set_mt_chain(int enabled) {
+    (void)enabled;
+}
+void hl_x86_emit_set_mt_ibtc(int enabled) {
+    (void)enabled;
+}
+void hl_x86_emit_set_ibtc8(int enabled) {
+    (void)enabled;
+}
+int hl_x86_emit_ibtc8_enabled(void) {
+    return 0;
+}
+int hl_x86_emit_mt_chain_enabled(void) {
+    return 0;
+}
+void hl_x86_emit_mt_chain_smc_disable(void) {}
 #endif
 
 static int fastclk_fault_fixup(siginfo_t *info, void *native_context) {
@@ -1419,6 +1750,7 @@ static size_t g_initial_interpreter_size;
 static uint64_t g_loaded_image_identity;
 #include "../../linux_abi/x86.c" // Linux x86-64 ELF loader + stack + fault handlers
 #include "../../linux_abi/checkpoint.c"
+
 
 // ---------------- entry ----------------
 static int g_engine_inited;
@@ -1856,6 +2188,93 @@ int hl_run_linux_guest(const hl_host_services *host, hl_linux_abi *box, const ch
     /* Restore enters engine_global_init and translated execution from inside ckpt_restore_tree, so the
        execution-scoped diagnostic and symbol-publication snapshot must exist before that early return. */
     g_prof = hl_option_get("HL_C_DIAGNOSTICS") != NULL;
+    /* Route unresolved constant-rip exits through one shared per-arena thunk instead of a full
+       inline exit at every edge.  Unset -> the historical inline emission, byte for byte. */
+    hl_x86_emit_set_exit_thunk(hl_option_flag_value("HL_X86_EXIT_THUNK", 0));
+    /* Replace the inline 27-word region prologue with a `bl` to one shared per-arena trampoline.
+       Unset -> the historical inline emission, byte for byte. */
+    hl_x86_emit_set_prologue_thunk(hl_option_flag_value("HL_X86_PROLOGUE_THUNK", 0));
+    hl_x86_emit_set_bus_thunk(hl_option_flag_value("HL_X86_BUS_THUNK", 0));
+    /* Chain direct block edges, and fill the 2-way IBTC, while a peer guest thread is live.
+       Unset -> `g_threaded` keeps both disabled exactly as before, byte for byte. */
+    if (hl_option_flag_value("HL_HOST_ASSUME_NO_LSE2", 0)) hl_host_atomic_pair16_assume_absent();
+    hl_x86_emit_set_mt_chain(hl_option_flag_value("HL_X86_MT_CHAIN", 0));
+    /* FEAT_LSE2 GATE.  HL_X86_MT_IBTC's whole correctness argument is that the writer's one 16-byte
+       `stp` (hl_x86_xibtc_publish) and the emitted probe's one 16-byte `ldp` are mutually atomic, so
+       a peer sees the {target, body} pair whole or not at all.  That is single-copy atomicity of a
+       16-byte access, and on AArch64 it is NOT baseline.  ARM ARM (DDI 0487) B2.2.1 "Requirements for
+       single-copy atomicity": reads/writes generated by a Load/Store Pair of two general-purpose
+       registers "are treated as two single-copy atomic reads [writes], one for each register".
+       16-byte ALIGNMENT does not change that -- the alignment the baseline rule names is per-register
+       8-byte alignment, and B2.8.2.1.1 states outright that without FEAT_LSE2 "the access is not
+       guaranteed to be single-copy atomic except at the byte access level".  B2.2.1.1 "Changes to
+       single-copy atomicity in Armv8.4" is what upgrades it: "If FEAT_LSE2 is implemented, LDP, LDNP,
+       and STP instructions that load or store two 64-bit registers are single-copy atomic when ...
+       the overall memory access is aligned to 16 bytes [and] accesses are to Inner Write-Back, Outer
+       Write-Back Normal cacheable memory."  FEAT_LSE2 is OPTIONAL from Armv8.2 and mandatory only
+       from Armv8.4.  Both conditions hold here -- the entry is __attribute__((aligned(16))) and the
+       table is ordinary anonymous Normal WB memory -- so the feature bit is the ONLY open question.  Without it a peer may observe the new `target` beside the previous
+       occupant's `body`; the probe compares only `target`, so it PASSES that compare and branches
+       into the wrong translation.  A silent miscompile, not a crash.
+       The probe does NOT re-validate the body it loaded, so a torn read is not benign and cannot be
+       made benign by strengthening the compare: nothing in the 16 bytes ties the two halves together.
+       Hence a gate rather than a check.  Fall back rather than fail the launch: the option is a pure
+       optimisation, every miss is simply a dispatcher round trip, and refusing to run a guest because
+       of a CPU erratum-class feature bit would be a worse outcome than running it correctly and
+       slower.  Say so on stderr, unconditionally -- a silently ignored option is how a measurement
+       lane ends up attributing a number to a mechanism that never ran. */
+    int mtibtc_requested = hl_option_flag_value("HL_X86_MT_IBTC", 0);
+    if (mtibtc_requested && !hl_host_atomic_pair16()) {
+        fprintf(stderr,
+                "hl-engine: --x86-mt-ibtc refused: this host cannot publish a 16-byte IBTC entry "
+                "atomically (%s); threaded indirect branches will miss to the dispatcher\n",
+                hl_host_atomic_pair16_detail());
+        mtibtc_requested = 0;
+    } else if (mtibtc_requested && hl_option_flag_value("HL_C_DIAGNOSTICS", 0)) {
+        fprintf(stderr, "hl-engine: --x86-mt-ibtc enabled: %s\n", hl_host_atomic_pair16_detail());
+    }
+    /* HL_X86_IBTC8 -- the same threaded IBTC fill WITHOUT the FEAT_LSE2 dependency.
+       The 16-byte {target, body} entry is the whole reason --x86-mt-ibtc needs a CPU feature: the
+       pair has to be published and consumed as one atom or a peer can see a matching new target
+       beside a stale body, and nothing inside those 16 bytes ties the halves together, so no
+       strengthening of the compare can detect it.  This option removes the pair instead of making it
+       atomic.  The entry emitted code reads shrinks to 8 bytes -- the body pointer -- and the tag is
+       re-read from an IMMUTABLE header word laid at body-8 (emit_ibtc8_header) and reached by an
+       ADDRESS DEPENDENCY from the loaded pointer (emit_ibranch).  Three legs, all baseline Armv8.  Section numbers
+       are those of DDI 0487 ISSUE M.c, checked against Arm's own content service; chapter B2.3 was
+       restructured when its relations became transliterations of the formal model, so earlier issues
+       may number these differently -- cite the issue, or the section TITLE:
+         * B2.2.1 "Requirements for single-copy atomicity" -- "A read that is generated by a load
+           instruction that loads a single general-purpose register and is aligned to the size of the
+           read in the instruction is single-copy atomic", with no feature, version or memory-type
+           qualifier; every FEAT_LSE2 clause is segregated into B2.2.1.1.  The 8-byte pointer is
+           therefore observed whole or not at all on every Armv8 part.
+         * B2.3 "Ordering requirements defined by the formal concurrency model": B2.3.6 "Dependency
+           relations" defines the Address dependency and admits a READ as the dependent Effect, and
+           B2.3.7 "Ordering relations" says "An Effect E1 is Dependency-ordered-before an Effect E2
+           if one of the following applies: There is an Address dependency from E1 to E2"; B2.3.9
+           closes it with "an Architecturally Allowed Execution must not exhibit a cycle in the
+           Ordered-before relation".  No DMB.  This is the consume side of a message pass, and the
+           manual's own condition -- that the value be CONSUMED in the address computation -- holds:
+           the loaded pointer is the header load's base register and the branch target both.
+         * The header is write-once, stored before its region is published, and the fill publishes the
+           pointer with a RELEASE store (hl_x86_xibtc_publish8) on top of jit_publish_code's
+           dc/dsb/ic/dsb/isb -- so a reader that sees the pointer must see the header.
+       A stale or evicted entry is now HARMLESS by construction rather than by timing: every value in
+       the table is a whole pointer to some body, every body carries its own guest PC at -8, and the
+       compare therefore validates the very thing it is about to branch to.
+       Consequently NO CPU-feature gate is applied here, and none is needed.  The option supersedes
+       --x86-mt-ibtc: the two emit different, mutually incompatible probe shapes for the same table,
+       so if both are asked for, IBTC8 wins and MT_IBTC is turned off with a word on stderr. */
+    int ibtc8_requested = hl_option_flag_value("HL_X86_IBTC8", 0);
+    if (ibtc8_requested && mtibtc_requested) {
+        fprintf(stderr, "hl-engine: --x86-ibtc8 supersedes --x86-mt-ibtc; the 16-byte probe is not emitted\n");
+        mtibtc_requested = 0;
+    }
+    hl_x86_emit_set_ibtc8(ibtc8_requested);
+    if (ibtc8_requested && hl_option_flag_value("HL_C_DIAGNOSTICS", 0))
+        fprintf(stderr, "hl-engine: --x86-ibtc8 enabled: 8-byte IBTC entry + body-8 header, no FEAT_LSE2 dependency\n");
+    hl_x86_emit_set_mt_ibtc(mtibtc_requested);
     translit_profile_options_refresh();
     const char *rdir = hl_option_get("HL_RESTORE");
     if (rdir != NULL) return hl_vfs_cursor_state_finish(ckpt_restore_tree(rootfs));
@@ -1928,6 +2347,11 @@ int hl_run_linux_guest(const hl_host_services *host, hl_linux_abi *box, const ch
         }
     }
     int ec = run_loaded(argc, argv, &lm, jump, at_base);
+#ifdef G_XLAT_CENSUS_EPOCH
+    /* Census epoch close for the final image. Deliberately OUTSIDE the g_pcache gate so a cache-OFF
+       baseline run is measured by exactly the same instrument as a cache-ON run. */
+    G_XLAT_CENSUS_EPOCH("exit");
+#endif
     if (__builtin_expect(g_pcache, 0) && hl_fatal_status(&g_jit_fatal) == HL_STATUS_OK)
         pcache_save(); // exit via syscall 93 returns here; syscall 94 saves before _exit (idempotent atomic rename)
     if (hl_fatal_status(&g_jit_fatal) != HL_STATUS_OK) {
@@ -1957,6 +2381,74 @@ HL_API int hl_x86_64_dispatch_profile_test(void) {
 
 HL_API int hl_x86_64_stw_cpu_slot_lifecycle_test(void) {
     return stw_translated_lifecycle_test();
+}
+
+/*
+ * Per-instruction cost of the guest BUS memory guard, in emitted host words.
+ *
+ * Enabling the persistent translation cache arms and LATCHES the guest BUS ledger for the whole run
+ * (hl_guest_bus_arm_latched, called from the launch path before pcache_load), so every guest memory
+ * operand takes emit_memory_guard's armed shape instead of its disarmed one.  This hook emits ONE
+ * representative operand -- an 8-byte read whose effective address is already in the reserved x17 --
+ * under each combination and reports the word count, so the arena-level bytes-per-block ratio has a
+ * per-instruction explanation rather than a correlation.
+ *
+ * `scenario` bits: 1 = ledger armed, 2 = HL_X86_BUS_THUNK on, 4 = persistent cache on (which makes
+ * emit_host_ptr lay a fixed 4-word relocatable slot instead of a compact movconst).  Returns the word
+ * count, or -1 when the guard shape could not be emitted and -2 on a host without the emitters.
+ *
+ * The hook owns a local arena: it moves g_cache/g_cp/g_cache_gen at the buffer, drops any thunk entry
+ * from an earlier call, and restores every global -- including the relocation table's count and the
+ * poison flag, which a cache-on emission would otherwise grow -- before returning.
+ */
+HL_API int hl_x86_64_bus_guard_cost_test(uint32_t scenario) {
+#if !defined(HL_HOST_CPU_AARCH64)
+    (void)scenario;
+    return -2;
+#else
+    static uint32_t code[8192];
+    uint8_t *saved_cache = g_cache;
+    uint8_t *saved_cp = g_cp;
+    uint64_t saved_gen = g_cache_gen;
+    uint32_t *saved_entry = g_bus_thunk_entry;
+    uint64_t saved_thunk_gen = g_bus_thunk_gen;
+    int saved_thunk = g_bus_thunk;
+    int saved_pcache = g_pcache;
+    int saved_poison = g_pcache_poison;
+    int saved_reloc = g_reloc_table.count;
+    int saved_recorded = g_address_recorded;
+    int saved_rwx = g_rwx_guest;
+    int saved_bus = jit_guest_bus_active();
+
+    g_address_recorded = 0;
+    g_rwx_guest = 0;
+    g_pcache = (scenario & 4u) ? 1 : 0;
+    g_bus_thunk = (scenario & 2u) ? 1 : 0;
+    g_bus_thunk_entry = NULL;
+    g_bus_thunk_gen = 0;
+    jit_guest_bus_test_set((scenario & 1u) ? 1 : 0);
+    g_cache = (uint8_t *)code;
+    g_cp = (uint8_t *)code;
+    g_cache_gen = saved_gen;
+    emit_bus_thunk_body(); /* laid at a region head in production; excluded from the site count */
+    uint32_t *site = (uint32_t *)g_cp;
+    emit_memory_guard(17, 8, UINT64_C(0x401000), X86_SOFT_READ);
+    int words = (int)((uint32_t *)g_cp - site);
+
+    g_cache = saved_cache;
+    g_cp = saved_cp;
+    g_cache_gen = saved_gen;
+    g_bus_thunk_entry = saved_entry;
+    g_bus_thunk_gen = saved_thunk_gen;
+    g_bus_thunk = saved_thunk;
+    g_pcache = saved_pcache;
+    g_pcache_poison = saved_poison;
+    g_reloc_table.count = saved_reloc;
+    g_address_recorded = saved_recorded;
+    g_rwx_guest = saved_rwx;
+    jit_guest_bus_test_set(saved_bus);
+    return words > 0 ? words : -1;
+#endif
 }
 
 /* See hl_linux_imported_path_guard_probe (linux_abi/syscall/fs.c): the pathname operand a handler
