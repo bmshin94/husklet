@@ -45,7 +45,93 @@ _Static_assert(sizeof(((hl_x86_hot_context *)0)->memo) == 216 * DECODE_MEMO_SLOT
                "decode memo table footprint changed");
 _Static_assert(sizeof(hl_x86_hot_context) == 221400, "decode hot context footprint changed");
 
-static _Thread_local decode_memo_entry g_decode_memo[DECODE_MEMO_SLOTS];
+
+/*
+ * HL_X86_DECODE_THREAD_AUTHORITY -- give the thread-local decode memo the
+ * byte-authority admission the per-context memo has always had.  Off by
+ * default; unset, hl_x86_decode() performs the identical decode_with() call it
+ * performed before, on the identical memo table.
+ *
+ * WHAT THE AUTHORITY IS.  g_decode_authority (translator/guest_fetch.c) is one
+ * process-wide word: a version in the high bits, a count of writers currently
+ * inside a mapping publication in the low 16, a reader-lease field between
+ * them, and a sticky DISABLED bit at 63.  Every publication that can change
+ * WHICH BYTES live at a guest PC bumps the version inside a writer window --
+ * logical-VMA snapshot publish / plan commit / destroy (linux_abi/logical_vma.c)
+ * and the guest non-executable ledger's gnx_add / gnx_clear / gnx_reset
+ * (linux_abi/thread/bus_ranges.c), which is the path guest mprotect and the SMC
+ * invalidation both take.  Every event that could let guest bytes change
+ * WITHOUT a mapping change -- an mmap or mprotect granting PROT_EXEC together
+ * with PROT_WRITE, an anonymous executable arena, or the publication of a
+ * MAP_SHARED file view -- calls hl_guest_fetch_authority_disable() first, which
+ * sets bit 63 permanently.
+ *
+ * SO THE INVARIANT IS: while the whole word (minus the reader-lease field) is
+ * unchanged and "stable" -- non-zero, not DISABLED, no writer active -- the
+ * bytes at a guest PC decoded under that same word cannot have changed.  A
+ * process that has ever held a writable alias of executable bytes has DISABLED
+ * latched and never takes this path at all, which is what keeps self-modifying
+ * guest code exact.
+ *
+ * WHY IT IS WORTH DOING.  decode_with() already implements exactly this
+ * admission, but reaches it only when handed a context carrying an
+ * authority_source, and only the transliterating interpreter ever creates one
+ * (interp_dispatch.h's G_HOT_CONTEXT_CREATE).  hl_x86_decode() -- the JIT block
+ * loop in translate.c, the 32-instruction flag-liveness lookahead in
+ * lower/trace.c, lower/integer.c's PF/AF successor probe, and the SSE/AVX
+ * fallbacks -- passes NULL, so decode_authority_sample() returns 0, "stable" is
+ * false, and every memo hit is re-proved by re-reading the guest bytes through
+ * hl_guest_fetch_exec() and memcmp'ing them.  That re-read is essentially the
+ * whole cost of the guest-fetch subsystem on a cc1 -O2 run.
+ *
+ * THE CARRIER, AND WHY IT LIVES BESIDE THE MEMO.  decode_with() takes its memo
+ * table as a separate argument, so the thread keeps decoding into the same
+ * table it always did; the context exists only to hold the five authority
+ * fields, and is allocated lazily, once per thread, and only when the option is
+ * on.  It is reached through the SAME _Thread_local object as the memo on
+ * purpose.  This engine resolves thread-local storage dynamically, and
+ * _dl_tlsdesc_dynamic is already 1.8% of a cc1 run: a first revision that kept
+ * the carrier in its own _Thread_local pointer paid a SECOND TLS descriptor
+ * call on every decode, moved _dl_tlsdesc_dynamic by +154.8 M retired ARM, and
+ * handed back 42% of the saving.  One thread-local symbol, one resolution.
+ */
+typedef struct {
+    decode_memo_entry memo[DECODE_MEMO_SLOTS];
+    /* NULL while the option is off or unresolved; see decode_thread_carrier. */
+    hl_x86_hot_context *carrier;
+} decode_thread_memo;
+
+static _Thread_local decode_thread_memo g_decode_thread_memo;
+#define g_decode_memo (g_decode_thread_memo.memo)
+
+/* <0 unresolved, 0 off, 1 on.  A plain global, not thread-local, so the
+   steady-state off test is an ordinary load and costs no TLS descriptor call.
+   The racy idempotent initialisation matches gna_page_cache_selected(). */
+/* Resolved ONCE, at engine init, by hl_x86_decode_set_instruction_fetch -- never on the decode
+   path.  hl_option_get() lazily calloc()s a per-thread default option table on a thread's first
+   lookup, and hl_x86_decode is reached inside forked children: resolving it there deadlocked the
+   aarch64 exec_page_cache suite roughly one run in four, on the malloc lock a peer thread held
+   across the fork.  Left at -1 (treated as OFF) the feature is simply unavailable, which is the
+   right answer for a default-off option in a build that never initialised the engine -- the
+   decoder's own standalone unit tests. */
+static int g_decode_thread_authority = -1;
+
+/* Out of line: nothing but the two predictable tests belongs in the caller. */
+__attribute__((noinline)) static hl_x86_hot_context *decode_thread_carrier(decode_thread_memo *state) {
+    if (state->carrier == NULL) {
+        hl_x86_hot_context *context = calloc(1, sizeof *context);
+        if (context == NULL) return NULL; /* fall back to the re-read path */
+        /* fetch_fn stays NULL so decode_with's FETCH resolves to the same
+           instruction_fetch() -- and so the same registered g_instruction_fetch
+           -- the NULL-context path uses.  Which bytes are read never changes;
+           only whether they are read again. */
+        context->fetch_opaque = &context->fetch;
+        context->authority_source = hl_guest_fetch_authority_source();
+        context->count_authorized_hits = (uint8_t)g_decode_diagnostics;
+        state->carrier = context;
+    }
+    return state->carrier;
+}
 
 #if defined(HL_NATIVE_TEST_HOOKS)
 static _Thread_local uint64_t g_decode_memo_decodes;
@@ -61,6 +147,10 @@ static _Atomic int g_hot_context_test_live;
 
 void hl_x86_decode_set_instruction_fetch(hl_x86_instruction_fetch_fn fetch) {
     g_instruction_fetch = fetch;
+    /* engine_global_init's one-time, single-threaded, pre-fork hook: the only place this option
+       is ever looked up. */
+    if (g_decode_thread_authority < 0)
+        g_decode_thread_authority = hl_option_flag_value("HL_X86_DECODE_THREAD_AUTHORITY", 0);
 }
 
 static int instruction_fetch(uint64_t guest, void *destination, size_t length) {
@@ -503,7 +593,22 @@ void hl_x86_decode_set_diagnostics(int enabled) {
 }
 
 int hl_x86_decode(uint64_t pc, hl_x86_insn *I) {
-    return decode_with(NULL, pc, I, g_decode_memo, NULL, NULL, NULL);
+    /* ONE reference to the thread-local object and ONE call to decode_with.
+       An earlier revision branched to three separate decode_with calls; gcc
+       then rematerialised the TLS descriptor call on the option-off path, so
+       every decode paid a second _dl_tlsdesc_dynamic and the OFF arm measured
+       +1.18% on a whole cc1 run.  With the carrier NULL this is the original
+       call, argument for argument. */
+    decode_thread_memo *state = &g_decode_thread_memo;
+    /* Pin the resolved thread-local address in a register.  Without this gcc
+       re-runs the TLS descriptor call in each successor block, which is a real
+       call in this engine (_dl_tlsdesc_dynamic is already 1.8% of a cc1 run)
+       and cost +1.18% with the option OFF before the barrier was added. */
+    __asm__("" : "+r"(state));
+    hl_x86_hot_context *context = state->carrier;
+    if (__builtin_expect(context == NULL && g_decode_thread_authority > 0, 0))
+        context = decode_thread_carrier(state);
+    return decode_with(context, pc, I, state->memo, NULL, NULL, NULL);
 }
 
 hl_x86_hot_context *hl_x86_hot_context_create(hl_x86_context_fetch_fn fetch, void *opaque,
@@ -694,6 +799,284 @@ void hl_x86_decode_transaction_release(hl_x86_hot_context *context) {
 }
 
 #if defined(HL_NATIVE_TEST_HOOKS)
+/*
+ * HL_X86_DECODE_THREAD_AUTHORITY differential battery.
+ *
+ * WHAT A WRONG ANSWER COSTS.  This machinery decides whether a decoded guest
+ * instruction may be reused without re-reading the guest bytes.  A wrong
+ * "yes" translates bytes that have since changed -- silent miscompilation of
+ * the guest, not a crash -- so the test is DIFFERENTIAL, not
+ * expectation-based: every probe is answered with the option off (the shipped
+ * re-read-and-compare path) and then with it on, and any disagreement in the
+ * DECODED INSTRUCTION fails.  The fetch counts are allowed to differ; that
+ * difference is the entire point of the option.
+ *
+ * WHAT THE BATTERY MAY LEGALLY DO.  The invariant under test is "while the
+ * authority word is stable and unchanged, the bytes at a decoded PC cannot
+ * change".  Its other half is that every way guest bytes CAN change either
+ * moves the authority (mapping publication, the gnx execute-permission ledger
+ * -- which is the mprotect and SMC path) or latches DISABLED (a writable alias
+ * of executable bytes).  So every byte mutation below is paired with one of
+ * those two events; a battery that mutated bytes with neither would be testing
+ * a state the engine forbids, and would "prove" a bug that cannot occur.
+ */
+typedef struct {
+    uint64_t base;
+    uint8_t page[2 * 4096];
+    uint64_t fetches;
+} thread_authority_fixture;
+
+static thread_authority_fixture *g_thread_authority_fixture;
+
+static int thread_authority_fetch(uint64_t guest, void *destination, size_t length) {
+    thread_authority_fixture *fixture = g_thread_authority_fixture;
+    if (fixture == NULL) return -1;
+    if (guest < fixture->base || guest + length > fixture->base + sizeof fixture->page) return -1;
+    ++fixture->fetches;
+    memcpy(destination, fixture->page + (guest - fixture->base), length);
+    return 0;
+}
+
+/* Observations are (return, length, opcode, first immediate byte); anything a
+   stale memo could get wrong shows up in at least one of them. */
+enum { TA_OBS = 4, TA_STEPS = 16, TA_TOTAL = TA_OBS * TA_STEPS };
+
+static void thread_authority_observe(uint64_t pc, uint32_t *out) {
+    hl_x86_insn insn;
+    memset(&insn, 0, sizeof insn);
+    int length = hl_x86_decode(pc, &insn);
+    out[0] = (uint32_t)(length & 0xffff);
+    out[1] = (uint32_t)(insn.len & 0xffff);
+    out[2] = insn.op;
+    out[3] = (uint32_t)(insn.imm & 0xff);
+}
+
+/* nop / ret / "mov eax, imm32" -- distinguishable in opcode, in length, and in
+   the immediate, so a stale hit cannot hide behind any single field. */
+static void thread_authority_write(thread_authority_fixture *fixture, size_t offset, int form, uint8_t tail) {
+    uint8_t *p = fixture->page + offset;
+    memset(p, 0x90, X86_MAX_INSN);
+    if (form == 0) {
+        p[0] = 0x90; /* nop */
+    } else if (form == 1) {
+        p[0] = 0xc3; /* ret */
+    } else {
+        p[0] = 0xb8; /* mov eax, imm32 */
+        p[1] = tail;
+        p[2] = 0x00;
+        p[3] = 0x00;
+        p[4] = 0x00;
+    }
+}
+
+static void thread_authority_bump(_Atomic uint64_t *authority) {
+    /* Exactly what a mapping publication does: a writer window that leaves the
+       version advanced and the word stable again. */
+    int begun = hl_guest_fetch_authority_test_begin(authority);
+    hl_guest_fetch_authority_test_end(authority, begun);
+}
+
+static void thread_authority_round(thread_authority_fixture *fixture, _Atomic uint64_t *authority,
+                                   uint32_t *out, uint64_t *fetch_marks) {
+    uint64_t pc = fixture->base + 0x100;
+    unsigned step = 0;
+#define TA_STEP()                                                                                                      \
+    do {                                                                                                               \
+        uint64_t before_fetches = fixture->fetches;                                                                    \
+        thread_authority_observe(pc, out + TA_OBS * step);                                                              \
+        fetch_marks[step] = fixture->fetches - before_fetches;                                                          \
+        ++step;                                                                                                        \
+    } while (0)
+
+    /* 0: cold fill. */
+    thread_authority_write(fixture, 0x100, 2, 0x11);
+    TA_STEP();
+    /* 1,2: nothing changed -- the case the option exists for. */
+    TA_STEP();
+    TA_STEP();
+    /* 3: FIRST byte of the decoded instruction rewritten, paired with a
+          mapping publication.  Opcode and length both move. */
+    thread_authority_write(fixture, 0x100, 1, 0);
+    thread_authority_bump(authority);
+    TA_STEP();
+    /* 4: settled again. */
+    TA_STEP();
+    /* 5: LAST byte of the decoded instruction rewritten (the immediate's low
+          byte), paired with a publication.  Opcode and length do NOT move, so
+          only the immediate can catch a stale hit. */
+    thread_authority_write(fixture, 0x100, 2, 0x22);
+    thread_authority_bump(authority);
+    TA_STEP();
+    /* 6: settled. */
+    TA_STEP();
+    /* 7: a writer is INSIDE its window (active != 0) when the decode happens,
+          and the bytes change inside that window.  That is the state the
+          writer-side wait exists for; the word is not stable, so nothing may
+          be authorized. */
+    {
+        int begun = hl_guest_fetch_authority_test_begin(authority);
+        thread_authority_write(fixture, 0x100, 2, 0x44);
+        TA_STEP();
+        hl_guest_fetch_authority_test_end(authority, begun);
+    }
+    /* 8: the window closed; the epoch moved, so this decode must re-read. */
+    TA_STEP();
+    /* 9: settled. */
+    TA_STEP();
+    /* 10: a writer begins BETWEEN the decode's two authority loads -- the
+           "modification arrives during the window" case.  The fill must come
+           out unauthorized. */
+    g_decode_authority_begin_between_loads = 1;
+    thread_authority_write(fixture, 0x100, 2, 0x55);
+    TA_STEP();
+    g_decode_authority_begin_between_loads = 0;
+    /* That hook leaves one writer permanently counted as active; drop it so the
+       word can settle, exactly as a real authority_end would. */
+    atomic_fetch_sub_explicit(authority, 1, memory_order_release);
+    /* 11: and the entry that fill left behind must not be reusable. */
+    thread_authority_write(fixture, 0x100, 0, 0);
+    thread_authority_bump(authority);
+    TA_STEP();
+    /* 12: settled. */
+    TA_STEP();
+    /* 13: DISABLED latched -- a writable alias of executable bytes has been
+           observed.  From here nothing may be authorized ever again. */
+    atomic_fetch_or_explicit(authority, HL_GUEST_FETCH_AUTHORITY_DISABLED, memory_order_release);
+    thread_authority_write(fixture, 0x100, 2, 0x66);
+    TA_STEP();
+    /* 14: changed again with no publication at all -- legal precisely because
+           DISABLED is latched. */
+    thread_authority_write(fixture, 0x100, 1, 0);
+    TA_STEP();
+    /* 15: nothing changed, and still no grant: the latch is sticky, so the
+           step that grants in every other settled position must refuse here. */
+    TA_STEP();
+#undef TA_STEP
+}
+
+int hl_x86_decode_thread_authority_test(uint64_t *probes) {
+    thread_authority_fixture *fixture = calloc(1, sizeof *fixture);
+    if (fixture == NULL) return -140;
+    fixture->base = UINT64_C(0x70000000);
+
+    hl_x86_instruction_fetch_fn saved_fetch = g_instruction_fetch;
+    int saved_state = g_decode_thread_authority;
+    hl_x86_hot_context *saved_context = g_decode_thread_memo.carrier;
+    _Atomic uint64_t *authority = (_Atomic uint64_t *)hl_guest_fetch_authority_source();
+    uint64_t saved_authority = atomic_load_explicit(authority, memory_order_acquire);
+
+    g_thread_authority_fixture = fixture;
+    hl_x86_decode_set_instruction_fetch(thread_authority_fetch);
+    g_decode_thread_memo.carrier = NULL;
+
+    uint32_t off[TA_TOTAL], on[TA_TOTAL], on_warm[TA_TOTAL];
+    uint64_t off_marks[TA_STEPS], on_marks[TA_STEPS], warm_marks[TA_STEPS];
+    int result = 0;
+
+    /* Arm 1: the shipped path. */
+    g_decode_thread_authority = 0;
+    memset(g_decode_memo, 0, sizeof g_decode_memo);
+    atomic_store_explicit(authority, HL_GUEST_FETCH_AUTHORITY_VERSION_ONE, memory_order_release);
+    thread_authority_round(fixture, authority, off, off_marks);
+
+    /* Arm 2: the option on, from cold. */
+    g_decode_thread_authority = 1;
+    memset(g_decode_memo, 0, sizeof g_decode_memo);
+    if (g_decode_thread_memo.carrier != NULL) {
+        free(g_decode_thread_memo.carrier);
+        g_decode_thread_memo.carrier = NULL;
+    }
+    atomic_store_explicit(authority, HL_GUEST_FETCH_AUTHORITY_VERSION_ONE, memory_order_release);
+    thread_authority_round(fixture, authority, on, on_marks);
+
+    /* Arm 3: the option on again over a warm carrier, because a cache that is
+       only ever exercised cold proves nothing about reuse. */
+    memset(g_decode_memo, 0, sizeof g_decode_memo);
+    atomic_store_explicit(authority, HL_GUEST_FETCH_AUTHORITY_VERSION_ONE, memory_order_release);
+    thread_authority_round(fixture, authority, on_warm, warm_marks);
+
+    for (unsigned i = 0; i < TA_TOTAL; ++i)
+        if (off[i] != on[i] || off[i] != on_warm[i]) result = -(int)(200 + i);
+
+    /* A transaction that must abort and retry, over the same global authority.
+       The commit lease has to be refused when a publication lands inside the
+       build, and the abort has to strip the epochs that build authorized. */
+    if (result == 0) {
+        hl_x86_hot_context *context = hl_x86_hot_context_create(NULL, NULL, authority);
+        if (context == NULL) result = -141;
+        else {
+            atomic_store_explicit(authority, HL_GUEST_FETCH_AUTHORITY_VERSION_ONE, memory_order_release);
+            if (!hl_x86_decode_transaction_begin(context)) result = -142;
+            uint64_t epoch = context->authority_epoch;
+            size_t slot = ((fixture->base + 0x100) ^ ((fixture->base + 0x100) >> 10)) & (DECODE_MEMO_SLOTS - 1);
+            context->memo[slot].authority_epoch = epoch;
+            if (result == 0) {
+                thread_authority_bump(authority); /* a publication inside the build */
+                if (hl_x86_decode_transaction_commit(context)) result = -143;
+                if (result == 0 && !hl_x86_decode_transaction_rejected(context)) result = -144;
+                hl_x86_decode_transaction_abort(context);
+                if (result == 0 && context->memo[slot].authority_epoch != 0) result = -145;
+            }
+            /* The retry, on the settled authority, must now be able to commit. */
+            if (result == 0) {
+                if (!hl_x86_decode_transaction_begin(context)) result = -146;
+                else if (!hl_x86_decode_transaction_commit(context)) result = -147;
+                hl_x86_decode_transaction_release(context);
+            }
+            hl_x86_hot_context_destroy(context);
+        }
+    }
+
+    /* The SMC / execute-permission ledger is the path a guest mprotect and the
+       SMC invalidation both take.  Driving it for real -- not by hand-bumping
+       the word -- is what proves the two are actually wired together. */
+    if (result == 0) {
+        g_decode_thread_authority = 1;
+        memset(g_decode_memo, 0, sizeof g_decode_memo);
+        atomic_store_explicit(authority, HL_GUEST_FETCH_AUTHORITY_VERSION_ONE, memory_order_release);
+        uint64_t pc = fixture->base + 0x200;
+        uint32_t first[TA_OBS], second[TA_OBS];
+        thread_authority_write(fixture, 0x200, 2, 0x77);
+        thread_authority_observe(pc, first);
+        thread_authority_write(fixture, 0x200, 1, 0);
+        hl_x86_decode_test_invalidate_direct_registry(); /* gnx_reset(): the real ledger writer */
+        uint64_t before = fixture->fetches;
+        thread_authority_observe(pc, second);
+        if (fixture->fetches == before) result = -148;      /* it must have re-read */
+        if (result == 0 && second[2] != 0xc3) result = -149; /* and seen the new bytes */
+        if (result == 0 && (first[2] != 0xb8 || first[1] != 5)) result = -150;
+    }
+
+    /* NON-VACUITY.  The battery has to contain both grants (the option served a
+       decode with no fetch at all) and refusals (it re-read), or an
+       implementation that always re-read -- or one that never did -- would pass
+       it unchanged. */
+    if (result == 0) {
+        int grants = 0, refusals = 0, off_refusals = 0;
+        for (unsigned i = 0; i < TA_STEPS; ++i) {
+            if (warm_marks[i] == 0) grants++;
+            else refusals++;
+            if (off_marks[i] != 0) off_refusals++;
+        }
+        if (grants < 4 || refusals < 4) result = -151;
+        /* And the shipped path must refuse everything: if it did not, the
+           comparison above was not comparing against a re-reading baseline. */
+        if (result == 0 && off_refusals != TA_STEPS) result = -152;
+    }
+
+    if (probes != NULL) *probes = TA_TOTAL;
+
+    atomic_store_explicit(authority, saved_authority, memory_order_release);
+    if (g_decode_thread_memo.carrier != NULL) free(g_decode_thread_memo.carrier);
+    g_decode_thread_memo.carrier = saved_context;
+    g_decode_thread_authority = saved_state;
+    hl_x86_decode_set_instruction_fetch(saved_fetch);
+    g_thread_authority_fixture = NULL;
+    memset(g_decode_memo, 0, sizeof g_decode_memo);
+    free(fixture);
+    return result;
+}
+
 void hl_x86_decode_test_transaction_invalidate_on_sample(unsigned sample) {
     g_decode_transaction_invalidate_sample = sample;
 }

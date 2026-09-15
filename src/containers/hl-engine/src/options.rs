@@ -258,6 +258,11 @@ const DEFINITIONS: &[Definition] = &[
         Flag
     ),
     launch!(
+        "HL_X86_DECODE_THREAD_AUTHORITY",
+        "admit byte-authorized decode-memo hits on the thread-local decode path instead of re-reading and comparing the guest bytes on every hit",
+        Flag
+    ),
+    launch!(
         "HL_X86_GNA_PAGE_CACHE",
         "answer the guest PROT_NONE prefix query from a per-thread clean-page cache instead of walking the whole ledger",
         Flag

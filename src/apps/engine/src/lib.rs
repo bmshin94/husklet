@@ -173,6 +173,9 @@ struct LaunchArguments {
     /// Merge abutting guest PROT_NONE / read-only / non-executable intervals on insert instead of keeping every mmap-sized fragment separate (off by default).
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
     x86_bus_range_coalesce: Option<TranslitFeatureControl>,
+    /// Admit byte-authorized decode-memo hits on the thread-local decode path instead of re-reading the guest bytes on every hit (off by default).
+    #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true, hide = true)]
+    x86_decode_thread_authority: Option<TranslitFeatureControl>,
     /// Control automatic same-ISA native syscall supervision.
     #[arg(long, value_enum, value_name = "on|off", num_args = 0..=1, default_missing_value = "on", require_equals = true)]
     native_supervised: Option<NativeSupervisedControl>,
@@ -558,6 +561,11 @@ fn execute(guest: Guest, launch: &LaunchArguments) -> Result<hl_engine::engine::
             "--x86-bus-range-coalesce is available only in the x86-64 worker".to_owned(),
         ));
     }
+    if launch.x86_decode_thread_authority.is_some() && guest != Guest::X86_64 {
+        return Err(Failure::Request(
+            "--x86-decode-thread-authority is available only in the x86-64 worker".to_owned(),
+        ));
+    }
     if launch.exec_census_lazy.is_some() && guest != Guest::X86_64 {
         return Err(Failure::Request(
             "--exec-census-lazy is available only in the x86-64 worker".to_owned(),
@@ -725,6 +733,7 @@ fn rootfs_plan(
         (launch.x86_owner_index, "HL_X86_OWNER_INDEX"),
         (launch.x86_gna_page_cache, "HL_X86_GNA_PAGE_CACHE"),
         (launch.x86_bus_range_coalesce, "HL_X86_BUS_RANGE_COALESCE"),
+        (launch.x86_decode_thread_authority, "HL_X86_DECODE_THREAD_AUTHORITY"),
         (launch.translit_riprel_readonly, "HL_TRANSLIT_RIPREL_READONLY"),
         (launch.translit_riprel_load_bridge, "HL_TRANSLIT_RIPREL_LOAD_BRIDGE"),
         (launch.translit_fs_load_bridge, "HL_TRANSLIT_FS_LOAD_BRIDGE"),
@@ -1101,6 +1110,7 @@ mod tests {
         assert_eq!(defaults.x86_owner_index, None);
         assert_eq!(defaults.x86_gna_page_cache, None);
         assert_eq!(defaults.x86_bus_range_coalesce, None);
+        assert_eq!(defaults.x86_decode_thread_authority, None);
         assert_eq!(defaults.exec_ibtc_lazy, None);
         assert_eq!(defaults.exec_census_lazy, None);
         assert_eq!(defaults.call_sim_diag_only, None);
@@ -1127,6 +1137,7 @@ mod tests {
             "--x86-owner-index=on",
             "--x86-gna-page-cache=on",
             "--x86-bus-range-coalesce=on",
+            "--x86-decode-thread-authority=on",
             "--exec-ibtc-lazy=on",
             "--exec-census-lazy=on",
             "--call-sim-diag-only=off",
@@ -1167,6 +1178,10 @@ mod tests {
         assert_eq!(selected.x86_owner_index, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.x86_gna_page_cache, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.x86_bus_range_coalesce, Some(super::TranslitFeatureControl::On));
+        assert_eq!(
+            selected.x86_decode_thread_authority,
+            Some(super::TranslitFeatureControl::On)
+        );
         assert_eq!(selected.exec_ibtc_lazy, Some(super::TranslitFeatureControl::On));
         assert_eq!(selected.exec_census_lazy, Some(super::TranslitFeatureControl::On));
         assert_eq!(
@@ -1479,6 +1494,7 @@ mod tests {
             "--x86-owner-index",
             "--x86-gna-page-cache",
             "--x86-bus-range-coalesce",
+            "--x86-decode-thread-authority",
             "--x86-bus-thunk",
             "--x86-mt-chain",
             "--x86-mt-ibtc",
@@ -1810,6 +1826,7 @@ mod tests {
         assert_eq!(defaults.options.get("HL_X86_OWNER_INDEX"), None);
         assert_eq!(defaults.options.get("HL_X86_GNA_PAGE_CACHE"), None);
         assert_eq!(defaults.options.get("HL_X86_BUS_RANGE_COALESCE"), None);
+        assert_eq!(defaults.options.get("HL_X86_DECODE_THREAD_AUTHORITY"), None);
         assert_eq!(defaults.options.get("HL_EXEC_IBTC_LAZY"), None);
         assert_eq!(defaults.options.get("HL_EXEC_CENSUS_LAZY"), None);
         assert_eq!(defaults.options.get("HL_CALL_SIM_DIAG_ONLY"), None);
@@ -1828,6 +1845,7 @@ mod tests {
                 "--translit-riprel-readonly",
                 "--translit-riprel-load-bridge",
                 "--translit-fs-load-bridge",
+                "--x86-decode-thread-authority=on",
                 "--native-supervised",
                 "--rootfs",
                 root.path().to_str().unwrap(),
@@ -1844,6 +1862,10 @@ mod tests {
         assert_eq!(selected.options.get("HL_TRANSLIT_RIPREL_READONLY"), Some("1"));
         assert_eq!(selected.options.get("HL_TRANSLIT_RIPREL_LOAD_BRIDGE"), Some("1"));
         assert_eq!(selected.options.get("HL_TRANSLIT_FS_LOAD_BRIDGE"), Some("1"));
+        // The mapping itself, not just the CLI shape: dropping the
+        // (launch.x86_decode_thread_authority, "HL_X86_DECODE_THREAD_AUTHORITY") row
+        // leaves the argument parsing untouched and the worker never sees the option.
+        assert_eq!(selected.options.get("HL_X86_DECODE_THREAD_AUTHORITY"), Some("1"));
         assert!(
             selected
                 .environment
@@ -1857,6 +1879,7 @@ mod tests {
             &launch(&[
                 "--translit",
                 "--a64-x86-jcc-link=off",
+                "--x86-decode-thread-authority=off",
                 "--translit-riprel-readonly=off",
                 "--translit-riprel-load-bridge=off",
                 "--translit-fs-load-bridge=off",
@@ -1866,6 +1889,9 @@ mod tests {
             ]),
         )
         .unwrap();
+        // "=off" writes the STRING "0", which is why the engine must read this
+        // through hl_option_flag_value and never through hl_option_get(name) != NULL.
+        assert_eq!(disabled.options.get("HL_X86_DECODE_THREAD_AUTHORITY"), Some("0"));
         assert_eq!(disabled.options.get("HL_TRANSLIT_RIPREL_READONLY"), Some("0"));
         assert_eq!(disabled.options.get("HL_TRANSLIT_RIPREL_LOAD_BRIDGE"), Some("0"));
         assert_eq!(disabled.options.get("HL_TRANSLIT_FS_LOAD_BRIDGE"), Some("0"));
