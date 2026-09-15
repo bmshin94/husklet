@@ -688,6 +688,8 @@ export interface FileWalkResumeToken {
 export interface FileChange {
     /** Exact durable cursor immediately after this applied change. */
     cursor: FileCursor;
+    /** Furthest safe checkpoint after this change when a client-side scope omitted later changes. */
+    checkpoint?: FileCursor;
     kind: 'create' | 'modify' | 'remove' | 'invalidate';
     path: string;
     entry: FileEntry | null;
@@ -2539,7 +2541,10 @@ export interface WorkspaceApi {
             entries: AsyncGenerator<FileEntry, void, void>;
         }>;
         changes(cursor: FileCursor, limit?: number): Promise<FileChangePage>;
-        /** Restrict a host page to configured exact/subtree roots without losing its journal cursor. */
+        /**
+         * Restrict a host page to configured exact/subtree roots. Each retained change carries a
+         * checkpoint through omitted changes without altering its host-observed cursor.
+         */
         scopeChanges(page: FileChangePage, roots: readonly {
             path: string;
             grant: 'exact' | 'subtree';

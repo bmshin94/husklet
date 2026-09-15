@@ -17,9 +17,21 @@ const changes = [
   },
   {
     cursor: { journal: JOURNAL, revision: 2 },
+    kind: 'modify',
+    path: 'private/ignored.md',
+    entry: { path: 'private/ignored.md', directory: false, size: 9, identity: 'private-v1' },
+  },
+  {
+    cursor: { journal: JOURNAL, revision: 3 },
     kind: 'create',
     path: 'documents/new.md',
     entry: { path: 'documents/new.md', directory: false, size: 4, identity: 'file-v2' },
+  },
+  {
+    cursor: { journal: JOURNAL, revision: 4 },
+    kind: 'modify',
+    path: 'private/ignored.md',
+    entry: { path: 'private/ignored.md', directory: false, size: 10, identity: 'private-v2' },
   },
 ];
 
@@ -47,8 +59,8 @@ test('embeddings restart resumes after the exact applied rename half over fragme
               changes: remaining,
               journal: JOURNAL,
               after,
-              next: 2,
-              current: 2,
+              next: 4,
+              current: 4,
               more: false,
               truncated: false,
             },
@@ -72,7 +84,9 @@ test('embeddings restart resumes after the exact applied rename half over fragme
   try {
     const first = await connect({ path: socketPath });
     const firstFiles = workspace(first).files;
-    const page = await firstFiles.changes(durable);
+    const page = firstFiles.scopeChanges(await firstFiles.changes(durable), [
+      { path: 'documents', grant: 'subtree' },
+    ]);
     await assert.rejects(
       firstFiles.applyChangePage(page, durable, async (change, cursor) => {
         applied.push(change.path);
@@ -85,14 +99,16 @@ test('embeddings restart resumes after the exact applied rename half over fragme
 
     const resumed = await connect({ path: socketPath });
     const resumedFiles = workspace(resumed).files;
-    const remainder = await resumedFiles.changes(durable);
+    const remainder = resumedFiles.scopeChanges(await resumedFiles.changes(durable), [
+      { path: 'documents', grant: 'subtree' },
+    ]);
     const result = await resumedFiles.applyChangePage(remainder, durable, (change, cursor) => {
       applied.push(change.path);
       durable = { ...cursor };
     });
     assert.deepEqual(applied, ['documents/old.md', 'documents/new.md']);
-    assert.deepEqual(asked, [0, 1]);
-    assert.deepEqual(result, { cursor: { journal: JOURNAL, revision: 2 }, complete: true });
+    assert.deepEqual(asked, [0, 2]);
+    assert.deepEqual(result, { cursor: { journal: JOURNAL, revision: 4 }, complete: true });
     await resumed.close();
   } finally {
     for (const socket of sockets) socket.destroy();

@@ -193,6 +193,11 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
       scoped.changes.map(({ path }) => path),
       ['src/app.ts', 'README.md'],
     );
+    assert.deepEqual(
+      scoped.changes.map(({ checkpoint }) => checkpoint.revision),
+      [9, 11],
+      'each visible change checkpoints through the hidden tail before the next visible change',
+    );
     assert.equal(scoped.next, 11, 'filtering preserves the global journal cursor');
     assert.deepEqual(
       files.reconcilePathRecords(

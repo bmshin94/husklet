@@ -4875,15 +4875,22 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
             throw new TypeError('filesystem change root grant must be exact or subtree');
           return { path, grant };
         });
+        const changes = page.changes.filter((change) =>
+          selected.some(({ path, grant }) =>
+            grant === 'exact'
+              ? change.path === path
+              : filesystemSelectorPermits({ subtree: path }, change.path),
+          ),
+        );
         return {
           ...page,
-          changes: page.changes.filter((change) =>
-            selected.some(({ path, grant }) =>
-              grant === 'exact'
-                ? change.path === path
-                : filesystemSelectorPermits({ subtree: path }, change.path),
-            ),
-          ),
+          changes: changes.map((change, index) => ({
+            ...change,
+            checkpoint: {
+              journal: change.cursor.journal,
+              revision: (changes[index + 1]?.cursor.revision ?? page.next + 1) - 1,
+            },
+          })),
         };
       },
       applyChangePage: async (
@@ -4903,10 +4910,12 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
         let applied = { ...cursor };
         for (const change of page.changes) {
           requireFilesystemActive(signal);
-          await listener(change, change.cursor, signal);
+          const checkpoint = change.checkpoint ?? change.cursor;
+          await listener(change, checkpoint, signal);
           requireFilesystemActive(signal);
-          applied = { ...change.cursor };
+          applied = { ...checkpoint };
         }
+        if (page.changes.length === 0) applied = { journal: page.journal, revision: page.next };
         return { cursor: applied, complete: applied.revision === page.next };
       },
       reconcilePathRecords: (current, scanned, roots) => {
