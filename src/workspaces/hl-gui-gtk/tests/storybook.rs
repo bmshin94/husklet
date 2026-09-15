@@ -668,20 +668,20 @@ mod unix {
             }
         }
         if story == "IconButton" {
-            for (class, expected, icon) in [("size-small", 28, 14), ("size-medium", 36, 18), ("size-large", 44, 20)] {
-                let sizes = descendants::<gtk::Button>(&root)
+            for (class, icon) in [("size-small", 14), ("size-medium", 18), ("size-large", 20)] {
+                let buttons = descendants::<gtk::Button>(&root)
                     .into_iter()
                     .filter(|button| button.has_css_class("hl-iconbutton") && button.has_css_class(class))
-                    .map(|button| (button.width(), button.height()))
                     .collect::<Vec<_>>();
-                assert!(!sizes.is_empty(), "IconButton has no {class} specimens");
+                assert!(!buttons.is_empty(), "IconButton has no {class} specimens");
                 assert!(
-                    sizes.iter().all(|size| *size == (expected, expected)),
-                    "IconButton {class} specimens allocated {sizes:?}, expected {expected}px square"
+                    buttons
+                        .iter()
+                        .all(|button| button.width() >= 44 && button.height() >= 44),
+                    "IconButton {class} lost its 44px interaction target"
                 );
-                let icon_sizes = descendants::<gtk::Button>(&root)
-                    .into_iter()
-                    .filter(|button| button.has_css_class("hl-iconbutton") && button.has_css_class(class))
+                let icon_sizes = buttons
+                    .iter()
                     .filter_map(|button| button.child())
                     .filter_map(|child| child.downcast::<gtk::Image>().ok())
                     .map(|image| (image.width(), image.height()))

@@ -85,7 +85,7 @@ export function IconButtonWorkbench() {
               </Column>
             ))}
           </Row>
-          <Text label="Square 28px · 36px · 44px hit areas" color="text-dim" />
+          <Text label="14px · 18px · 20px optical icons · ≥44px target" color="text-dim" />
         </Block>
         <Block title="Variants" width={{ chars: 42 }}>
           <Row gap={2} wrap>

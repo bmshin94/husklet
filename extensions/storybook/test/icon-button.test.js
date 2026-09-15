@@ -5,7 +5,7 @@ import { createElement as h } from 'react';
 import { IconButtonWorkbench } from '../dist/icon-button.js';
 import { host } from './host.js';
 
-test('IconButton owns a focused document with square semantic sizes and accessible labels', () => {
+test('IconButton owns a focused document with semantic optical sizes and accessible targets', () => {
   const frame = host().render(h(IconButtonWorkbench));
   const ids = frame.patches
     .filter((patch) => patch.Create?.tag === 'IconButton')
@@ -59,6 +59,7 @@ test('IconButton owns a focused document with square semantic sizes and accessib
   assert(cellLabels.includes('Focus'));
   assert(cellLabels.includes('Pressed'));
   assert(cellLabels.includes('Toolbar action'));
+  assert(cellLabels.includes('14px · 18px · 20px optical icons · ≥44px target'));
   assert(
     cellLabels.some((label) => label?.includes('Persistent page actions keep a visible verb')),
   );

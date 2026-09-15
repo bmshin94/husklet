@@ -241,9 +241,7 @@ fn control_sizes(css: &mut String) {
          button.hl-button.size-small > .hl-button-chrome > box { border-spacing: 6px; } button.size-small image { -gtk-icon-size: 14px; }\n\
          button.hl-button.size-medium > .hl-button-chrome > box { border-spacing: 8px; } button.size-medium image { -gtk-icon-size: 18px; }\n\
          button.hl-button.size-large > .hl-button-chrome > box { border-spacing: 8px; } button.size-large image { -gtk-icon-size: 20px; }\n\
-         button.hl-iconbutton.size-small { min-width: 28px; min-height: 28px; padding: 0; }\n\
-         button.hl-iconbutton.size-medium { min-width: 36px; min-height: 36px; padding: 0; }\n\
-         button.hl-iconbutton.size-large { min-width: 44px; min-height: 44px; padding: 0; }\n\
+         button.hl-iconbutton { min-width: 44px; min-height: 44px; padding: 3px; }\n\
          button.hl-inline-button { min-height: 44px; padding: 0; background: transparent; border: 0; outline: none; box-shadow: none; }\n\
          button.hl-inline-button > .hl-inline-button-chrome { min-height: 18px; padding: 4px 8px; border: 1px solid transparent; border-radius: 6px; outline: none; box-shadow: none; font-size: 12px; }\n",
     );
@@ -371,8 +369,6 @@ fn components(css: &mut String, theme: &Theme) {
          .hl-listitembutton:focus, .hl-listitembutton:focus-visible {{ outline: none; background: {raised}; color: {text}; border-color: {accent}; box-shadow: inset 0 0 0 1px {accent}; }}\n\
          .hl-listitembutton.variant-filled:focus, .hl-listitembutton.variant-filled:focus-visible {{ background: alpha({accent}, .14); box-shadow: inset 3px 0 0 {accent}, inset 0 0 0 1px {accent}; }}\n\
          .hl-listsubheader {{ color: {dim}; min-height: 16px; padding: 2px 4px 0; font-size: 11px; font-weight: 600; letter-spacing: .04em; }}\n\
-         .hl-iconbutton {{ min-width: 30px; min-height: 30px; padding: 3px; border-color: transparent; background: transparent; }}\n\
-         .hl-iconbutton:hover {{ background: {raised}; border-color: {line}; }}\n\
          .hl-togglebutton {{ background: transparent; border-color: {line}; }}\n\
          .hl-togglebutton.size-small {{ min-height: 28px; padding: 0 8px; font-size: 12px; border-radius: 6px; }}\n\
          .hl-togglebutton.size-medium {{ min-height: 36px; padding: 0 12px; font-size: 14px; border-radius: 6px; }}\n\
@@ -528,7 +524,7 @@ mod tests {
             ".hl-navigationmenuitem:checked:focus, .hl-navigationmenuitem:checked:focus-visible { background: alpha(#559df7, .14); box-shadow: inset 3px 0 0 #559df7, inset 0 0 0 1px #559df7;"
         ));
         assert!(css.contains(".variant-ghost { background: transparent;"));
-        assert!(css.contains(".hl-iconbutton { min-width: 30px; min-height: 30px;"));
+        assert!(css.contains("button.hl-iconbutton { min-width: 44px; min-height: 44px;"));
         assert!(css.contains(".hl-togglebutton { background: transparent; border-color: #323843;"));
         assert!(css.contains(
             ".hl-togglebutton:checked, .hl-togglebutton:checked:hover { background: #21252d; color: #f0f2f5; border-color: #559df7; box-shadow: inset 0 -3px 0 #559df7; font-weight: 700;"
@@ -601,7 +597,6 @@ mod tests {
         assert!(css.contains(
             "button.hl-button.variant-outline.tone-accent > .hl-button-chrome { background: transparent; border: 1px solid #323843; outline: none; box-shadow: none; color: #559df7;"
         ));
-        assert!(css.contains("button.hl-iconbutton.size-large { min-width: 44px; min-height: 44px; padding: 0;"));
     }
 
     #[test]

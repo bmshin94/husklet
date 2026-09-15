@@ -75,7 +75,7 @@ fn toggle() -> gtk::ToggleButton {
 }
 
 fn icon() -> gtk::Button {
-    let widget = sized(gtk::Button::new());
+    let widget = sized(action());
     widget.set_icon_name("view-more-symbolic");
     widget
 }
