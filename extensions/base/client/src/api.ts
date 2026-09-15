@@ -2770,7 +2770,11 @@ export interface WorkspaceApi {
     updateJson<T>(
       codec: StateCodec<T>,
       update: (current: T) => T | Promise<T>,
-      options?: { attempts?: number; signal?: AbortSignal },
+      options?: {
+        attempts?: number;
+        /** Abort also interrupts an in-flight read or ambiguous CAS write. */
+        signal?: AbortSignal;
+      },
     ): Promise<JsonState<T>>;
   };
   /** Small workspace-local UI preferences, isolated to this authenticated extension. */

@@ -63,6 +63,8 @@ try {
   let host = workspace(session);
   const persistCheckpoint = async (update: (current: Checkpoint) => Checkpoint) => {
     try {
+      // Shutdown interrupts even an in-flight CAS; reply-loss recovery below reconciles
+      // the exact encoded checkpoint instead of repeating the updater or write blindly.
       return await host.state.updateJson(checkpointCodec, update, { signal: controller.signal });
     } catch (cause) {
       // A mismatched receipt is hostile/stale authority, not a reconnect ambiguity.

@@ -4733,14 +4733,15 @@ export function workspace(session, { signal } = {}) {
                     throw new RangeError('extension state JSON update attempts must be an integer from 1 through 16');
                 if (typeof update !== 'function')
                     throw new TypeError('extension state JSON update requires an update function');
+                const scoped = updateSignal ? api.withSignal(updateSignal) : api;
                 for (let attempt = 0; attempt < attempts; attempt += 1) {
                     requireStateUpdateActive(updateSignal);
-                    const current = await api.state.readJson(codec);
+                    const current = await scoped.state.readJson(codec);
                     requireStateUpdateActive(updateSignal);
                     const value = await update(current.value);
                     requireStateUpdateActive(updateSignal);
                     try {
-                        const identity = await api.state.writeJson(current.identity, value, codec);
+                        const identity = await scoped.state.writeJson(current.identity, value, codec);
                         return { identity, value };
                     }
                     catch (error) {

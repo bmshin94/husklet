@@ -2758,6 +2758,7 @@ export interface WorkspaceApi {
         /** The update callback may be rerun after a concurrent CAS conflict; abort prevents a later write/retry. */
         updateJson<T>(codec: StateCodec<T>, update: (current: T) => T | Promise<T>, options?: {
             attempts?: number;
+            /** Abort also interrupts an in-flight read or ambiguous CAS write. */
             signal?: AbortSignal;
         }): Promise<JsonState<T>>;
     };
