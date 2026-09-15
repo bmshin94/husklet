@@ -2907,7 +2907,7 @@ fn every_call_succeeds_with_its_capability_and_fails_without_it() {
             Ok(())
         }
     }
-    for (request, capability) in calls() {
+    for (mut request, capability) in calls() {
         let host = Host::new();
         let create_state = CreateState(RefCell::new(None));
 
@@ -2941,6 +2941,15 @@ fn every_call_succeeds_with_its_capability_and_fails_without_it() {
                 read: Vec::new(),
                 write: vec![hl_extension::WorkspaceEnvironmentSelector::All { all: true }],
             });
+        if let Request::TerminalWritePane { writer, .. } = &mut request {
+            let Reply::TerminalInputWriter(receipt) = granted
+                .dispatch(&Request::TerminalInputOpen, &services(&host))
+                .expect("open terminal input writer")
+            else {
+                panic!("terminal input writer receipt")
+            };
+            *writer = receipt.writer;
+        }
         if matches!(
             request,
             Request::ExecutionKill { .. } | Request::ExecutionCancel { .. } | Request::ExecutionRemove { .. }
