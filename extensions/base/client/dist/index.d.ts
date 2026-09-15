@@ -45,6 +45,12 @@ export declare class PostgresPageShapeProtocolError extends Error {
     readonly page: any;
     constructor(reason: any, page: any);
 }
+/** A PostgreSQL page stream lost transport after preserving its exact continuation. */
+export declare class PostgresPagesOperationError extends Error {
+    readonly resume: any;
+    readonly cause: any;
+    constructor(resume: any, cause: any);
+}
 /** The host returned database state for another lease or query. */
 export declare class PostgresStateProtocolError extends Error {
     readonly expectedLease: any;

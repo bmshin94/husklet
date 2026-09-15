@@ -276,6 +276,7 @@ order; the JavaScript client's checks are never treated as a security boundary.
 - Open and query-start outcomes echo the exact operation token; query-start also echoes its lease. `PostgresOperationProtocolError` rejects stale or hostile authority before a caller can use a lease or query ID. Retrying the same bounded request after reconnect reconciles to the existing lease/query instead of creating another.
 - Status and cancellation replies echo the exact lease and query. `PostgresStateProtocolError` rejects stale or misrouted state before it can be attributed to the current database operation.
 - Every `host.postgres.page(...)` reply carries its exact lease, query, and input cursor. The host retains the immediately preceding bounded page, so retrying that cursor after a lost reply returns identical rows without advancing the database stream; the client rejects a receipt from another connection, query, or cursor before exposing rows.
+- `host.postgres.pages(...)` iterates one query lazily with a 4,096-page default ceiling, rejects column-schema changes and cursor cycles across pages, and preserves the bound plus an exact reconnect token in `PostgresPagesOperationError`. `resumePages(...)` continues from that token without consuming the database stream twice or resetting its budget.
 
 ## Images
 

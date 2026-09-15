@@ -1125,6 +1125,22 @@ export declare class PostgresPageShapeProtocolError extends Error {
   readonly page: Readonly<PostgresPage>;
 }
 
+export type PostgresPagesResumeToken = {
+  version: 1;
+  lease: PostgresLeaseId;
+  query: PostgresQueryId;
+  cursor: PostgresCursor | null;
+  columns: readonly string[] | null;
+  cursors: readonly PostgresCursor[];
+  pages: number;
+  maxPages: number;
+};
+/** A PostgreSQL page stream lost transport after preserving its exact continuation. */
+export declare class PostgresPagesOperationError extends Error {
+  readonly resume: Readonly<PostgresPagesResumeToken>;
+  readonly cause: unknown;
+}
+
 /** The host returned database state for another lease or query. */
 export declare class PostgresStateProtocolError extends Error {
   readonly expectedLease: PostgresLeaseId;
@@ -2562,7 +2578,7 @@ export interface WorkspaceApi {
         cursor: FileCursor,
         signal: AbortSignal | undefined,
       ) => void | Promise<void>,
-      options?: { signal?: AbortSignal },
+      options?: { signal?: AbortSignal; maxPages?: number },
     ): Promise<{ cursor: FileCursor; complete: boolean }>;
     /** Replace path-keyed records inside configured roots while preserving records outside them. */
     reconcilePathRecords<T>(
@@ -2782,6 +2798,17 @@ export interface WorkspaceApi {
       query: PostgresQueryId,
       cursor?: PostgresCursor,
     ): Promise<PostgresPage>;
+    /** Iterate bounded pages while rejecting schema changes and cursor cycles. */
+    pages(
+      lease: PostgresLeaseId,
+      query: PostgresQueryId,
+      options?: { signal?: AbortSignal },
+    ): AsyncGenerator<PostgresPage, void, void>;
+    /** Continue a page iterator from the exact cursor preserved after lost transport. */
+    resumePages(
+      recovery: PostgresPagesOperationError | PostgresPagesResumeToken,
+      options?: { signal?: AbortSignal },
+    ): AsyncGenerator<PostgresPage, void, void>;
     cancel(lease: PostgresLeaseId, query: PostgresQueryId): Promise<PostgresQueryState>;
     /** Preserve exact cancellation authority when the state receipt is lost. */
     cancelRecoverable(

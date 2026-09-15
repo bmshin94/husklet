@@ -117,6 +117,21 @@ export class PostgresPageShapeProtocolError extends Error {
         this.page = page;
     }
 }
+/** A PostgreSQL page stream lost transport after preserving its exact continuation. */
+export class PostgresPagesOperationError extends Error {
+    resume;
+    cause;
+    constructor(resume, cause) {
+        super(`postgres page stream may resume at ${resume.cursor ?? 'the first page'}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+        this.name = 'PostgresPagesOperationError';
+        this.resume = Object.freeze({
+            ...resume,
+            columns: resume.columns && Object.freeze([...resume.columns]),
+            cursors: Object.freeze([...resume.cursors]),
+        });
+        this.cause = cause;
+    }
+}
 function validatePostgresPageShape(page, requestedCursor) {
     if (!Array.isArray(page.columns) || page.columns.length > 256)
         throw new PostgresPageShapeProtocolError('columns are not a bounded array', page);
@@ -4908,6 +4923,57 @@ export function workspace(session, { signal } = {}) {
             await api.postgres.closeLeaseOnce(operation, recovery.lease);
         }
         return { ...recovery, operation, closed: true };
+    };
+    const postgresPages = async function* (lease, query, options = {}) {
+        const { cursor: initialCursor, columns: initialColumns, cursors: initialCursors = [], pages: initialPages = 0, maxPages = 4_096, signal, } = options;
+        if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 1_000_000)
+            throw new RangeError('postgres page limit must be an integer from 1 through 1000000');
+        let cursor = initialCursor ?? null;
+        let columns = initialColumns ? [...initialColumns] : null;
+        const cursors = new Set(initialCursors);
+        let pages = initialPages;
+        for (;;) {
+            if (pages >= maxPages)
+                throw new RangeError(`postgres page stream exceeded its ${maxPages} page limit`);
+            let page;
+            try {
+                const client = signal ? api.withSignal(signal) : api;
+                page = await client.postgres.page(lease, query, cursor ?? undefined);
+            }
+            catch (cause) {
+                if (cause instanceof ExtensionError ||
+                    cause instanceof PostgresPageProtocolError ||
+                    cause instanceof PostgresPageShapeProtocolError)
+                    throw cause;
+                throw new PostgresPagesOperationError({ version: 1, lease, query, cursor, columns, cursors: [...cursors], pages, maxPages }, cause);
+            }
+            if (columns === null)
+                columns = [...page.columns];
+            else if (page.columns.length !== columns.length ||
+                page.columns.some((column, index) => column !== columns[index]))
+                throw new PostgresPageShapeProtocolError('columns changed within one query page stream', page);
+            if (cursor !== null)
+                cursors.add(cursor);
+            const next = page.next_cursor ?? null;
+            if (next !== null && cursors.has(next))
+                throw new PostgresPageShapeProtocolError('next cursor cycles within one query page stream', page);
+            cursor = next;
+            pages += 1;
+            yield page;
+            if (cursor === null)
+                return;
+        }
+    };
+    api.postgres.pages = postgresPages;
+    api.postgres.resumePages = (candidate, options = {}) => {
+        const resume = candidate instanceof PostgresPagesOperationError ? candidate.resume : candidate;
+        if (resume?.version !== 1 ||
+            !Array.isArray(resume.cursors) ||
+            (resume.columns !== null && !Array.isArray(resume.columns)) ||
+            !Number.isSafeInteger(resume.pages) ||
+            !Number.isSafeInteger(resume.maxPages))
+            throw new TypeError('postgres page recovery requires a version 1 resume token');
+        return postgresPages(resume.lease, resume.query, { ...resume, signal: options.signal });
     };
     const watch = async (topic, snapshot, listener, label) => {
         if (typeof listener !== 'function')

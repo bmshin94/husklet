@@ -2,7 +2,7 @@ import {
   ExtensionError,
   PostgresOperationProtocolError,
   PostgresCloseOperationError,
-  PostgresPageProtocolError,
+  PostgresPagesOperationError,
   connect,
   workspace,
 } from '@husklet/client';
@@ -96,33 +96,36 @@ const query = {
 };
 const started = await retryAfterDisconnect(() => host.postgres.startOnce(opened.lease, query));
 
-let cursor: string | undefined;
 let rowCount = 0;
 let columns: string[] = [];
 const preview: Array<Array<string | null>> = [];
+let pages = host.postgres.pages(opened.lease, started.query);
+let incomplete = true;
 try {
-  for (;;) {
-    let page;
+  while (incomplete && rowCount < maxRows) {
+    let item;
     try {
-      page = await host.postgres.page(opened.lease, started.query, cursor);
+      item = await pages.next();
     } catch (error) {
-      if (error instanceof ExtensionError || error instanceof PostgresPageProtocolError)
-        throw error;
-      // The host retains the prior page as a receipt. Reconnect and ask with the exact same
-      // cursor: this returns identical rows instead of consuming the database stream again.
+      if (!(error instanceof PostgresPagesOperationError)) throw error;
+      const recovery = JSON.parse(JSON.stringify(error.resume));
       await session.close().catch(() => {});
       session = await connect({ path: configuration.path, pendingLimit: 4, timeout: 5_000 });
       host = workspace(session);
-      page = await host.postgres.page(opened.lease, started.query, cursor);
+      pages = host.postgres.resumePages(recovery);
+      continue;
     }
+    if (item.done) {
+      incomplete = false;
+      break;
+    }
+    const page = item.value;
     columns = page.columns;
     const accepted = page.rows.slice(0, maxRows - rowCount);
     rowCount += accepted.length;
     preview.push(...accepted.slice(0, Math.max(0, 25 - preview.length)));
-    cursor = page.next_cursor ?? undefined;
-    if (!cursor || rowCount >= maxRows) break;
   }
-  if (cursor) await host.postgres.cancel(opened.lease, started.query);
+  if (incomplete) await host.postgres.cancel(opened.lease, started.query);
   process.stdout.write(`${JSON.stringify({ columns, rowCount, preview })}\n`);
 } finally {
   await closeRecoverably(() => host.postgres.closeQueryRecoverable(opened.lease, started.query));

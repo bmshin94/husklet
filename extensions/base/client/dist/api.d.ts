@@ -1121,6 +1121,21 @@ export declare class PostgresPageShapeProtocolError extends Error {
     readonly reason: string;
     readonly page: Readonly<PostgresPage>;
 }
+export type PostgresPagesResumeToken = {
+    version: 1;
+    lease: PostgresLeaseId;
+    query: PostgresQueryId;
+    cursor: PostgresCursor | null;
+    columns: readonly string[] | null;
+    cursors: readonly PostgresCursor[];
+    pages: number;
+    maxPages: number;
+};
+/** A PostgreSQL page stream lost transport after preserving its exact continuation. */
+export declare class PostgresPagesOperationError extends Error {
+    readonly resume: Readonly<PostgresPagesResumeToken>;
+    readonly cause: unknown;
+}
 /** The host returned database state for another lease or query. */
 export declare class PostgresStateProtocolError extends Error {
     readonly expectedLease: PostgresLeaseId;
@@ -2572,6 +2587,7 @@ export interface WorkspaceApi {
         /** Applies a page in order and exposes the exact durable cursor after each acknowledged change. */
         applyChangePage(page: FileChangePage, cursor: FileCursor, listener: (change: FileChange, cursor: FileCursor, signal: AbortSignal | undefined) => void | Promise<void>, options?: {
             signal?: AbortSignal;
+            maxPages?: number;
         }): Promise<{
             cursor: FileCursor;
             complete: boolean;
@@ -2765,6 +2781,14 @@ export interface WorkspaceApi {
          * same cursor after a lost reply returns the same page without advancing the database stream.
          */
         page(lease: PostgresLeaseId, query: PostgresQueryId, cursor?: PostgresCursor): Promise<PostgresPage>;
+        /** Iterate bounded pages while rejecting schema changes and cursor cycles. */
+        pages(lease: PostgresLeaseId, query: PostgresQueryId, options?: {
+            signal?: AbortSignal;
+        }): AsyncGenerator<PostgresPage, void, void>;
+        /** Continue a page iterator from the exact cursor preserved after lost transport. */
+        resumePages(recovery: PostgresPagesOperationError | PostgresPagesResumeToken, options?: {
+            signal?: AbortSignal;
+        }): AsyncGenerator<PostgresPage, void, void>;
         cancel(lease: PostgresLeaseId, query: PostgresQueryId): Promise<PostgresQueryState>;
         /** Preserve exact cancellation authority when the state receipt is lost. */
         cancelRecoverable(lease: PostgresLeaseId, query: PostgresQueryId): Promise<PostgresCancelRecoveryToken & {
