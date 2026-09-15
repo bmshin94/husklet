@@ -90,6 +90,13 @@ impl AcquisitionState {
         )
     }
 
+    fn occupies_worker(&self) -> bool {
+        matches!(
+            self,
+            Self::Inspecting | Self::Pulling { .. } | Self::ReadingManifest | Self::Committing
+        )
+    }
+
     pub(crate) const fn wire_state(&self) -> &'static str {
         match self {
             Self::Inspecting => "inspecting",
@@ -195,7 +202,7 @@ impl ExtensionAcquisitions {
             let active = registry
                 .jobs
                 .values()
-                .filter(|job| !job.snapshot.state.terminal())
+                .filter(|job| job.snapshot.state.occupies_worker())
                 .count();
             if active >= Self::ACTIVE_LIMIT {
                 return Err(HostError::Conflict(
@@ -1221,5 +1228,29 @@ mod tests {
             let revision = service.status(job).unwrap().revision;
             service.cancel(job, revision).unwrap();
         }
+    }
+
+    #[test]
+    fn retained_consent_reviews_do_not_consume_worker_slots() {
+        let root = tempfile::tempdir().unwrap();
+        let service = ExtensionAcquisitions::with_acquirer(
+            &workspace(root.path()),
+            |_, reference, progress, _, _refresh| {
+                let _ = progress.send(Acquisition::Ready(Candidate {
+                    reference: reference.into(),
+                    digest: format!("sha256:{reference}"),
+                    manifest: manifest("1.0.0", &[]),
+                }));
+            },
+        );
+        for index in 0..ExtensionAcquisitions::ACTIVE_LIMIT {
+            let job = service.start(&format!("registry/review:{index}"), false).unwrap();
+            let _ = ready(&service, job);
+        }
+
+        let next = service
+            .start("registry/review:next", false)
+            .expect("completed inspections cannot exhaust worker capacity");
+        assert!(matches!(ready(&service, next).state, AcquisitionState::Ready(_)));
     }
 }
