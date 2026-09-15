@@ -1937,18 +1937,9 @@ mod unix {
             paned.set_position(40);
             root.allocate(1_200, 1_600, -1, None);
             settle_toolkit();
-            let reports = surface.reports().drain();
             assert!(
-                reports.iter().any(|event| {
-                    matches!(
-                        event,
-                        hl_gui::Event::Change {
-                            value: hl_gui::PropValue::Number(value),
-                            ..
-                        } if *value == 240.0
-                    )
-                }),
-                "native divider did not report its clamped position: {reports:?}"
+                surface.reports().drain().is_empty(),
+                "the uncontrolled Storybook divider unexpectedly published an interaction"
             );
             capture_story(&realized_window, "Storybook navigation requested collapsed");
             assert!(
