@@ -115,6 +115,7 @@ try {
           result = await terminal.commandText(observed.snapshot, {
             command: ['sh', '-lc', configuration.prompt!],
             maxBytes: 1024 * 1024,
+            maxPages: 512,
             signal: cancellation.signal,
             cancelSignal: 'SIGINT',
             cancelTimeoutMs: 1_000,

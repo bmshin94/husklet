@@ -1048,3 +1048,143 @@ test('an aborted Unix recovery cancels its exact supervised command before retur
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('empty output pages retain one cross-reconnect budget and cancel at exhaustion over fragmented Unix', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-command-page-budget-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const connections = new Set();
+  const requests = [];
+  let incarnation = 0;
+  const server = net.createServer((socket) => {
+    const current = ++incarnation;
+    connections.add(socket);
+    socket.on('close', () => connections.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.kind !== KIND.request) continue;
+        requests.push([current, frame.payload.call]);
+        if (frame.payload.call === 'terminal_command_start') {
+          fragmented(socket, {
+            channel: frame.channel,
+            kind: KIND.response,
+            payload: {
+              reply: 'terminal_command_start',
+              with: { operation: frame.payload.with.operation, command: running },
+            },
+          });
+        } else if (frame.payload.call === 'terminal_command_output') {
+          fragmented(socket, {
+            channel: frame.channel,
+            kind: KIND.response,
+            payload: {
+              reply: 'terminal_command_output',
+              with: {
+                id,
+                owner,
+                ...pane,
+                output: {
+                  entries: [],
+                  next: frame.payload.with.after,
+                  more: false,
+                  eof: false,
+                  gap: false,
+                },
+              },
+            },
+          });
+          if (current < 3) setImmediate(() => socket.destroy());
+        } else if (frame.payload.call === 'terminal_command_cancel') {
+          fragmented(socket, {
+            channel: frame.channel,
+            kind: KIND.response,
+            payload: {
+              reply: 'terminal_command',
+              with: { ...running, running: false, exit_code: 143, pid: 0 },
+            },
+          });
+        }
+      }
+    });
+    fragmented(socket, {
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: {
+        protocol: 1,
+        peer: `page-budget-${current}`,
+        granted: ['terminals:process-control', 'terminals:output'],
+      },
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const first = await connect({ path: socketPath });
+    let failure;
+    await assert.rejects(
+      workspace(first).terminal.commandText(pane, {
+        command: running.command,
+        maxBytes: 1_024,
+        maxPages: 3,
+        pageLimit: 1,
+        pollIntervalMs: 10,
+      }),
+      (error) => {
+        failure = error;
+        return error instanceof TerminalCommandOperationError && error.resume.pages === 1;
+      },
+    );
+    await first.close().catch(() => {});
+
+    const second = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(second).terminal.resumeCommandText(JSON.parse(JSON.stringify(failure.resume)), {
+        pollIntervalMs: 10,
+      }),
+      (error) => {
+        failure = error;
+        return (
+          error instanceof TerminalCommandOperationError &&
+          error.resume.pages === 2 &&
+          error.resume.maxPages === 3
+        );
+      },
+    );
+    await second.close().catch(() => {});
+
+    const third = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(third).terminal.resumeCommandText(JSON.parse(JSON.stringify(failure.resume)), {
+        pollIntervalMs: 10,
+      }),
+      (error) =>
+        error instanceof TerminalCommandOperationError &&
+        error.resume.pages === 3 &&
+        error.resume.maxPages === 3 &&
+        error.command.running === false &&
+        error.cause instanceof RangeError,
+    );
+    assert.deepEqual(
+      requests.map((entry) => entry[1]),
+      [
+        'terminal_command_start',
+        'terminal_command_output',
+        'terminal_command_output',
+        'terminal_command_output',
+        'terminal_command_cancel',
+      ],
+    );
+    await assert.rejects(
+      workspace(third).terminal.resumeCommandText({ ...failure.resume, pages: 4, maxPages: 3 }),
+      /invalid page budget/,
+    );
+    await assert.rejects(
+      workspace(third).terminal.resumeCommandText(failure.resume, { maxPages: 4 }),
+      /maxPages must be between/,
+    );
+    await third.close();
+  } finally {
+    for (const connection of connections) connection.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});

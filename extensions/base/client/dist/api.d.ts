@@ -1185,6 +1185,10 @@ export type TerminalCommandResumeToken = {
     stdout: readonly number[];
     stderr: readonly number[];
     maxBytes: number;
+    /** Output pages already consumed across every prior connection. */
+    pages?: number;
+    /** Original cross-reconnect page ceiling. */
+    maxPages?: number;
 };
 /** A terminal text request cannot be represented by the host's bounded pane tail. */
 export declare class TerminalReadLimitError extends RangeError {
@@ -1748,6 +1752,7 @@ export interface WorkspaceApi {
             /** Bounded chunks written serially to stdin and half-closed before output is consumed. */
             input?: Iterable<string | Iterable<number>> | AsyncIterable<string | Iterable<number>>;
             maxBytes: number;
+            maxPages?: number;
             pageLimit?: number;
             pollIntervalMs?: number;
             signal?: AbortSignal;
@@ -2161,6 +2166,8 @@ export interface WorkspaceApi {
             workingDirectory?: string;
             input?: string | Iterable<number>;
             maxBytes: number;
+            /** Cross-reconnect output-page ceiling; defaults to 4,096 and counts empty pages. */
+            maxPages?: number;
             pageLimit?: number;
             pollIntervalMs?: number;
             signal?: AbortSignal;
@@ -2176,6 +2183,7 @@ export interface WorkspaceApi {
          * Abort cancels the recovered owned command before returning an operation error.
          */
         resumeCommandText(resume: Readonly<TerminalCommandResumeToken>, options?: {
+            /** May tighten, but never widen, the ceiling retained by a current recovery token. */
             maxPages?: number;
             pageLimit?: number;
             pollIntervalMs?: number;

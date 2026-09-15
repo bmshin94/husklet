@@ -751,7 +751,7 @@ export class TerminalCommandOperationError extends Error {
     stdout;
     stderr;
     resume;
-    constructor(command, phase, after, cause, output = undefined, maxBytes = undefined) {
+    constructor(command, phase, after, cause, output = undefined, maxBytes = undefined, pages = 0, maxPages = 4_096) {
         super(`terminal command ${command.id} ${phase} failed after sequence ${after}: ${cause instanceof Error ? cause.message : String(cause)}`);
         this.name = 'TerminalCommandOperationError';
         this.command = Object.freeze({ ...command, command: Object.freeze([...command.command]) });
@@ -769,6 +769,8 @@ export class TerminalCommandOperationError extends Error {
                     stdout: this.stdout ?? Object.freeze([]),
                     stderr: this.stderr ?? Object.freeze([]),
                     maxBytes,
+                    pages,
+                    maxPages,
                 });
         this.cause = cause;
     }
@@ -3377,9 +3379,12 @@ export function workspace(session, { signal } = {}) {
                     offset: recovery.offset,
                 });
             },
-            commandText: async (pane, { command: argv, operation, workingDirectory, input, maxBytes, pageLimit = 16, pollIntervalMs = 25, signal: abortSignal, cancelSignal = 'SIGTERM', cancelTimeoutMs = 5_000, }) => {
+            commandText: async (pane, { command: argv, operation, workingDirectory, input, maxBytes, maxPages = 4_096, pageLimit = 16, pollIntervalMs = 25, signal: abortSignal, cancelSignal = 'SIGTERM', cancelTimeoutMs = 5_000, }) => {
                 if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 16 * 1024 * 1024) {
                     throw new RangeError('terminal command maxBytes must be between 1 and 16777216');
+                }
+                if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 4_096) {
+                    throw new RangeError('terminal command maxPages must be between 1 and 4096');
                 }
                 if (!Number.isInteger(pageLimit) || pageLimit < 1 || pageLimit > 16) {
                     throw new RangeError('terminal command pageLimit must be between 1 and 16');
@@ -3393,6 +3398,7 @@ export function workspace(session, { signal } = {}) {
                 let total = 0;
                 let after = 0;
                 let phase = 'start';
+                let pages = 0;
                 const abort = async () => {
                     if (owned?.running) {
                         owned = await api.terminal.commandCancel(owned, {
@@ -3416,10 +3422,13 @@ export function workspace(session, { signal } = {}) {
                         await api.terminal.commandCloseInput(owned, { offset: contents.byteLength });
                     }
                     for (;;) {
+                        if (pages >= maxPages)
+                            throw new RangeError('terminal command exceeded maxPages');
                         phase = 'output';
                         if (abortSignal?.aborted)
                             throw abortSignal.reason ?? new DOMException('Aborted', 'AbortError');
                         const page = await api.terminal.commandOutput(owned, { after, limit: pageLimit });
+                        pages += 1;
                         if (page.output.gap) {
                             throw new ExecutionOutputGapError(owned.id, after, page.output.next);
                         }
@@ -3470,12 +3479,12 @@ export function workspace(session, { signal } = {}) {
                         throw new TerminalCommandOperationError(owned, phase, after, cause, {
                             stdout: flatten(chunks.stdout),
                             stderr: flatten(chunks.stderr),
-                        }, maxBytes);
+                        }, maxBytes, pages, maxPages);
                     }
                     throw cause;
                 }
             },
-            resumeCommandText: async (resume, { maxPages = 4_096, pageLimit = 16, pollIntervalMs = 25, signal, cancelSignal = 'SIGTERM', cancelTimeoutMs = 5_000, } = {}) => {
+            resumeCommandText: async (resume, { maxPages: requestedMaxPages, pageLimit = 16, pollIntervalMs = 25, signal, cancelSignal = 'SIGTERM', cancelTimeoutMs = 5_000, } = {}) => {
                 if (resume?.version !== 1 ||
                     !Number.isSafeInteger(resume.after) ||
                     resume.after < 0 ||
@@ -3486,10 +3495,24 @@ export function workspace(session, { signal } = {}) {
                 }
                 const command = exactTerminalCommand(resume.command);
                 const { after, maxBytes } = resume;
+                const consumedPages = resume.pages ?? 0;
+                const retainedMaxPages = resume.maxPages ?? 4_096;
                 const stdout = resume.stdout;
                 const stderr = resume.stderr;
-                if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 4_096)
+                if (!Number.isSafeInteger(consumedPages) ||
+                    consumedPages < 0 ||
+                    !Number.isSafeInteger(retainedMaxPages) ||
+                    retainedMaxPages < 1 ||
+                    retainedMaxPages > 4_096 ||
+                    consumedPages > retainedMaxPages)
+                    throw new TypeError('terminal command recovery carries an invalid page budget');
+                if (requestedMaxPages !== undefined &&
+                    (!Number.isSafeInteger(requestedMaxPages) ||
+                        requestedMaxPages < 1 ||
+                        requestedMaxPages > retainedMaxPages ||
+                        requestedMaxPages < consumedPages))
                     throw new RangeError('terminal command maxPages must be between 1 and 4096');
+                const maxPages = requestedMaxPages ?? retainedMaxPages;
                 if (!Number.isInteger(pageLimit) || pageLimit < 1 || pageLimit > 16)
                     throw new RangeError('terminal command pageLimit must be between 1 and 16');
                 exactExecutionPollInterval(pollIntervalMs);
@@ -3510,13 +3533,15 @@ export function workspace(session, { signal } = {}) {
                 let cursor = after;
                 let phase = 'output';
                 let owned = command;
+                let pages = consumedPages;
                 try {
-                    for (let pageNumber = 0; pageNumber < maxPages; pageNumber += 1) {
+                    for (; pages < maxPages;) {
                         requireOutputActive(signal);
                         const page = await scoped.terminal.commandOutput(command, {
                             after: cursor,
                             limit: pageLimit,
                         });
+                        pages += 1;
                         if (page.output.gap)
                             throw new ExecutionOutputGapError(command.id, cursor, page.output.next);
                         let pageBytes = 0;
@@ -3562,7 +3587,7 @@ export function workspace(session, { signal } = {}) {
                     throw new TerminalCommandOperationError(owned, phase, cursor, cause, {
                         stdout: Object.freeze(bytes.stdout),
                         stderr: Object.freeze(bytes.stderr),
-                    }, maxBytes);
+                    }, maxBytes, pages, maxPages);
                 }
             },
             read: async (slot, lines) => exactPane(expect(await session.call('terminal_read_pane', {

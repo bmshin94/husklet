@@ -305,7 +305,7 @@ export declare class TerminalCommandOperationError extends Error {
     readonly stdout: any;
     readonly stderr: any;
     readonly resume: any;
-    constructor(command: any, phase: any, after: any, cause: any, output?: any, maxBytes?: any);
+    constructor(command: any, phase: any, after: any, cause: any, output?: any, maxBytes?: any, pages?: number, maxPages?: number);
 }
 /** A terminal text request cannot be represented by the host's bounded pane tail. */
 export declare class TerminalReadLimitError extends RangeError {
