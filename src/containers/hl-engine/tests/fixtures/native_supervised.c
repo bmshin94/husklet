@@ -32,7 +32,7 @@
 #include <netdb.h>
 
 static void *thread_return(void *argument) { return argument; }
-static void checkpoint_alarm(int signal) { (void)signal; }
+static void checkpoint_wake(int signal) { (void)signal; }
 static volatile unsigned long long checkpoint_identity;
 static void *checkpoint_thread(void *argument) {
     const char *release = argument;
@@ -149,10 +149,28 @@ int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "checkpoint-native-capture")) {
         if (argc < 3) return 80;
         checkpoint_identity = strtoull(argv[2], NULL, 10);
-        signal(SIGALRM, checkpoint_alarm);
-        alarm(2);
+        /* The park, and why it is not an `alarm`.
+         *
+         * This fixture used to arm `signal(SIGALRM, ...)` + `alarm(2)` in BOTH the captured and the
+         * fresh process, so the restored image left `pause` only because the FRESH process's own
+         * interval timer and handler fired.  That made the whole native checkpoint path testable
+         * only by a mechanism the image never carried -- delete every kernel-state restore and the
+         * test still passed -- and an armed interval timer is now, correctly, a refusal.
+         *
+         * The wake is therefore external: the harness signals the guest once it has observed, in
+         * `/proc/<pid>/syscall`, that the task really is inside `pause`.  `syscall(SYS_pause)`
+         * rather than libc's `pause()` so that observation names syscall 34 exactly, and `sigaction`
+         * with `sa_flags` 0 rather than `signal()` so the park returns EINTR instead of restarting.
+         *
+         * Not a self-directed SIGSTOP either, and measurably so: the capture's own domain freeze
+         * sends SIGSTOP to a task that is already group-stopped, that signal is never dequeued, and
+         * the pending-signal gate then refuses the capture with verdict -6. */
+        struct sigaction wake;
+        memset(&wake, 0, sizeof wake);
+        wake.sa_handler = checkpoint_wake;
+        if (sigaction(SIGUSR1, &wake, NULL) != 0) return 78;
         if (write(STDOUT_FILENO, "native-capture-ready\n", 21) != 21) return 79;
-        pause();
+        if (syscall(SYS_pause) != -1) return 77;
         dprintf(STDOUT_FILENO, "native-restored:%llu\n", checkpoint_identity);
         return 0;
     }

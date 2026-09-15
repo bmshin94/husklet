@@ -1,4 +1,8 @@
 #![cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+// `kill(2)` has no safe wrapper, and the native checkpoint fixture's park is now woken from outside
+// rather than by an interval timer of its own.  Every call names a pid read out of /proc moments
+// earlier, together with the argv that identifies this test's own guest.
+#![allow(unsafe_code)]
 
 use hl_engine::{
     activation::GuestIsa,
@@ -1501,6 +1505,108 @@ fn auto_checkpoint_selects_native_for_capture_and_restore() {
     checkpoint_restores_a_fresh_process_after_terminating_the_original(false);
 }
 
+
+/// `__NR_pause` on x86-64, as `/proc/<pid>/syscall` reports it.
+///
+/// That file is the kernel's own statement of which syscall a task is blocked in, and it is the
+/// whole non-vacuity argument for the checkpoint fixture's park: a guest that raced past its park,
+/// or never reached it, is not in syscall 34 and the helpers below time out instead of signalling.
+#[cfg(target_arch = "x86_64")]
+const NR_PAUSE: &str = "34 ";
+
+/// The one task of this test's fixture, found by the argv the kernel publishes.
+///
+/// Located by `/proc/<pid>/cmdline` rather than by `comm`, because the supervisor renames the guest
+/// task.  The executable lives in a per-test temporary directory, so it names this test's guest and
+/// no other -- and the captured original is already reaped before a restore target exists, so at
+/// most one task ever matches.
+///
+/// Either identity is accepted on purpose.  A restore target is launched with one argv identity and
+/// then has the CAPTURED one written over it by the memory image, so insisting on a single value
+/// would make the lookup race the very event it is trying to observe.
+#[cfg(target_arch = "x86_64")]
+fn fixture_task(executable: &Path, identities: &[&[u8]]) -> Option<libc::pid_t> {
+    for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<libc::pid_t>() else {
+            continue;
+        };
+        let Ok(cmdline) = std::fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        let mut fields = cmdline.split(|byte| *byte == 0);
+        if fields.next() != Some(executable.as_os_str().as_encoded_bytes())
+            || fields.next() != Some(b"checkpoint-native-capture".as_slice())
+        {
+            continue;
+        }
+        let Some(identity) = fields.next() else { continue };
+        if identities.contains(&identity) {
+            return Some(pid);
+        }
+    }
+    None
+}
+
+/// `/proc/<pid>/cmdline`'s argv-2, i.e. which incarnation's memory the task is running on.
+#[cfg(target_arch = "x86_64")]
+fn task_identity(pid: libc::pid_t) -> Vec<u8> {
+    std::fs::read(format!("/proc/{pid}/cmdline"))
+        .map(|line| line.split(|byte| *byte == 0).nth(2).unwrap_or_default().to_vec())
+        .unwrap_or_default()
+}
+
+/// Waits for ONE named task to block in `pause`, polling only that task.
+///
+/// Deliberately not a rescan of all of /proc per iteration: under a fully parallel test binary that
+/// scan is the expensive part, and paying it in a tight loop is what made this wait miss its window
+/// under load while passing in isolation.  Locking onto the pid first makes the wait O(1) per poll,
+/// and it is also the stronger statement -- the task that was launched fresh is the one now sitting
+/// in the captured `pause`.
+#[cfg(target_arch = "x86_64")]
+fn wait_parked(pid: libc::pid_t, what: &str) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        if std::fs::read_to_string(format!("/proc/{pid}/syscall")).is_ok_and(|text| text.starts_with(NR_PAUSE)) {
+            return true;
+        }
+        // A task that has DIED is a different fact from one that is slow, and it is
+        // not this wait's to report: the caller's own assertions already say why a
+        // restore failed, and drowning that out with "never reached pause" would
+        // misattribute a product failure to the park.  Measured: under a fully
+        // parallel run this binary's restores intermittently fail outright -- on
+        // the BASELINE too, with the old timer-driven fixture, where the same two
+        // tests report `CaptureFailed` from the same cause.
+        if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            return false;
+        }
+        if std::time::Instant::now() >= deadline {
+            let state = std::fs::read_to_string(format!("/proc/{pid}/syscall")).unwrap_or_else(|e| format!("<{e}>"));
+            panic!(
+                "{what}: task {pid} never reached syscall {NR_PAUSE}(pause); it is in {state:?} \
+                 carrying identity {:?}",
+                String::from_utf8_lossy(&task_identity(pid))
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// Finds this test's guest, waiting for it to exist at all.
+#[cfg(target_arch = "x86_64")]
+fn await_fixture_task(executable: &Path, identities: &[&[u8]], what: &str) -> libc::pid_t {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        if let Some(pid) = fixture_task(executable, identities) {
+            return pid;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{what}: no task of this fixture is running at all"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
 #[cfg(target_arch = "x86_64")]
 fn checkpoint_restores_a_fresh_process_after_terminating_the_original(explicit: bool) {
     let work = TempDir::new().unwrap();
@@ -1536,6 +1642,13 @@ fn checkpoint_restores_a_fresh_process_after_terminating_the_original(explicit: 
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
     assert_eq!(output.stdout.lock().unwrap().as_slice(), b"native-capture-ready\n");
+    // The park is real before anything is captured from it.  Without this, a fixture that raced past
+    // its park would be captured mid-exit and the restored report below would be measuring nothing.
+    let captured_task = await_fixture_task(&executable, &[b"1111111111111111"], "capture");
+    assert!(
+        wait_parked(captured_task, "capture"),
+        "the guest died before it parked, so the capture had no parked process to take"
+    );
     let started = std::time::Instant::now();
     let capture = engine.capture_checkpoint_until(started + std::time::Duration::from_secs(10));
     if let Err(error) = capture {
@@ -1619,6 +1732,32 @@ fn checkpoint_restores_a_fresh_process_after_terminating_the_original(explicit: 
     if let Err(error) = restored.start() {
         let _ = restored.destroy();
         panic!("native restore start failed: {error:?}");
+    }
+    // The restored guest is woken from outside, once it is demonstrably sitting in the captured
+    // `pause`.
+    //
+    // The task is locked onto FIRST -- under either identity, since the image rewrites argv -- and
+    // then that one task is watched.  The fresh process never reaches `pause` on its own (its own
+    // `write` of the ready line is the notification the restore hijacks), so finding it there is
+    // proof the captured registers landed; and its argv having flipped to the CAPTURED identity,
+    // asserted on the very same pid, is proof the captured memory landed in that same task.
+    let restore_task = await_fixture_task(
+        &executable,
+        &[b"2222222222222222", b"1111111111111111"],
+        "restore",
+    );
+    if wait_parked(restore_task, "restore") {
+        assert_eq!(
+            task_identity(restore_task),
+            b"1111111111111111".to_vec(),
+            "the restored task is parked, but its argv is still the fresh process's own, so no captured \
+             memory landed in it"
+        );
+        assert_eq!(
+            unsafe { libc::kill(restore_task, libc::SIGUSR1) },
+            0,
+            "waking the restored guest"
+        );
     }
     let restore_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while store.aborts.load(std::sync::atomic::Ordering::Acquire) == 0 && std::time::Instant::now() < restore_deadline {

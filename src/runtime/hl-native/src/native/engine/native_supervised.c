@@ -1090,6 +1090,23 @@ static int hl_native_supervised_create_listener(const hl_options *options) {
         HL_NATIVE_NOTIFY(SYS_seccomp), HL_NATIVE_NOTIFY(SYS_sendmsg),
         /* Internal refusal-test probe. Production policy otherwise lets identity reads stay native. */
         HL_NATIVE_NOTIFY(SYS_getpid),
+        /* The kernel state no /proc scan can see.  These are notified only so the supervisor can
+         * mark the domain before the syscall runs; every one of them is answered with CONTINUE by
+         * the default arm below, so the guest's semantics are byte-for-byte unchanged and no
+         * refusal, injection or argument rewrite is involved.  See the taint gate for why a
+         * notification is the only observation point that exists for them. */
+#ifdef SYS_sigaltstack
+        HL_NATIVE_NOTIFY(SYS_sigaltstack),
+#endif
+#ifdef SYS_setitimer
+        HL_NATIVE_NOTIFY(SYS_setitimer),
+#endif
+#ifdef SYS_alarm
+        HL_NATIVE_NOTIFY(SYS_alarm),
+#endif
+#ifdef SYS_timer_create
+        HL_NATIVE_NOTIFY(SYS_timer_create),
+#endif
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
     };
     struct sock_filter selective[] = {
@@ -1104,6 +1121,23 @@ static int hl_native_supervised_create_listener(const hl_options *options) {
         HL_NATIVE_NOTIFY(SYS_ioctl), HL_NATIVE_NOTIFY(SYS_ptrace), HL_NATIVE_NOTIFY(SYS_seccomp),
         HL_NATIVE_NOTIFY(SYS_mount), HL_NATIVE_NOTIFY(SYS_umount2), HL_NATIVE_NOTIFY(SYS_pivot_root),
         HL_NATIVE_NOTIFY(SYS_chroot), HL_NATIVE_NOTIFY(SYS_setns), HL_NATIVE_NOTIFY(SYS_unshare),
+        /* The kernel state no /proc scan can see.  These are notified only so the supervisor can
+         * mark the domain before the syscall runs; every one of them is answered with CONTINUE by
+         * the default arm below, so the guest's semantics are byte-for-byte unchanged and no
+         * refusal, injection or argument rewrite is involved.  See the taint gate for why a
+         * notification is the only observation point that exists for them. */
+#ifdef SYS_sigaltstack
+        HL_NATIVE_NOTIFY(SYS_sigaltstack),
+#endif
+#ifdef SYS_setitimer
+        HL_NATIVE_NOTIFY(SYS_setitimer),
+#endif
+#ifdef SYS_alarm
+        HL_NATIVE_NOTIFY(SYS_alarm),
+#endif
+#ifdef SYS_timer_create
+        HL_NATIVE_NOTIFY(SYS_timer_create),
+#endif
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
     };
     struct sock_filter restore_selective[] = {
@@ -1118,6 +1152,23 @@ static int hl_native_supervised_create_listener(const hl_options *options) {
         HL_NATIVE_NOTIFY(SYS_ioctl), HL_NATIVE_NOTIFY(SYS_ptrace), HL_NATIVE_NOTIFY(SYS_seccomp),
         HL_NATIVE_NOTIFY(SYS_mount), HL_NATIVE_NOTIFY(SYS_umount2), HL_NATIVE_NOTIFY(SYS_pivot_root),
         HL_NATIVE_NOTIFY(SYS_chroot), HL_NATIVE_NOTIFY(SYS_setns), HL_NATIVE_NOTIFY(SYS_unshare),
+        /* The kernel state no /proc scan can see.  These are notified only so the supervisor can
+         * mark the domain before the syscall runs; every one of them is answered with CONTINUE by
+         * the default arm below, so the guest's semantics are byte-for-byte unchanged and no
+         * refusal, injection or argument rewrite is involved.  See the taint gate for why a
+         * notification is the only observation point that exists for them. */
+#ifdef SYS_sigaltstack
+        HL_NATIVE_NOTIFY(SYS_sigaltstack),
+#endif
+#ifdef SYS_setitimer
+        HL_NATIVE_NOTIFY(SYS_setitimer),
+#endif
+#ifdef SYS_alarm
+        HL_NATIVE_NOTIFY(SYS_alarm),
+#endif
+#ifdef SYS_timer_create
+        HL_NATIVE_NOTIFY(SYS_timer_create),
+#endif
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
     };
 #undef HL_NATIVE_NOTIFY
@@ -1492,6 +1543,121 @@ static int hl_native_checkpoint_signals_admissible(const char *proc_root, pid_t 
     return admissible ? 0 : -1;
 }
 
+/* Sixth gate: state the kernel holds per process that NOTHING outside the process can see.
+ *
+ * `sigaltstack` and the interval timers are the two cells the /proc scan cannot reach at all.
+ * Measured on this host: a process with `sigaltstack` registered reports `ss_sp=0x5d29b8a6d060` to
+ * itself and a free one reports `(nil)`, and no entry of /proc/<pid> differs between them -- the
+ * whole directory was enumerated.  With `ITIMER_REAL` armed at 7200 s the target reports
+ * `realtimer=7199` to itself while `/proc/<pid>/stat` field 21 (`itrealvalue`) reads 0 in BOTH arms
+ * and `/proc/<pid>/timers` is empty in both.  There is likewise no ptrace request that reads either
+ * one, and no syscall that sets either one in another task, so they can be neither captured nor
+ * compared nor reinstalled.
+ *
+ * Executed proof that this matters: an armed guest captured and restored into a free one reported
+ * `altstack=0 realtimer=0` while the capture committed, the restore reported success and the guest
+ * exited 0 -- with `identity=1111111111111111`, the CAPTURED argv digits, proving the memory image
+ * did land.  The same restore into a target that armed them itself reported `altstack=1 realtimer=1`,
+ * so the probe is not blind.
+ *
+ * What CAN be observed is the guest asking for them.  Every route to either one is a syscall, the
+ * supervisor already owns a seccomp notification listener on this domain, and a notification is
+ * delivered to the supervisor BEFORE the syscall runs.  So the domain is marked here, on receipt,
+ * and the mark is sticky: once a guest has armed an alternate stack or an interval timer, no later
+ * capture of that domain can honestly claim to carry it.
+ *
+ * The ordering is what makes this sound rather than approximate.  The taint is stored before the
+ * notification is answered, and the syscall cannot take effect until it is answered, so any domain
+ * whose state is actually armed was marked strictly earlier.  A notification that is still queued
+ * when a capture runs belongs to a syscall that has not executed, so nothing is armed yet and
+ * admitting is correct.  There is no window in which the state exists unmarked.
+ *
+ * Deliberately sticky, and deliberately not refined by reading the guest's argument buffers.  Stated
+ * precisely, because the reason is narrower than "it would race": a `stack_t` or `struct itimerval`
+ * lives in guest memory, and in a domain with more than one task a sibling can rewrite it between
+ * the supervisor's read and the kernel's copy.  In the ONLY shape this gate can ever admit -- a
+ * single task, which the topology arm demands -- the caller is blocked in the notification and no
+ * such sibling exists, so a read there would in fact be sound if it were guarded with
+ * SECCOMP_IOCTL_NOTIF_ID_VALID.  It is not done because this decision does not need it: the mark
+ * only has to record THAT a call happened, and the scalar arguments the kernel already copied into
+ * the notification settle the only cases worth skipping -- a NULL `new` pointer cannot arm anything,
+ * and `alarm(0)` only cancels.  Reading the buffer would buy nothing here and would put a
+ * guest-memory read on the supervisor's notification path.  It is, however, exactly the read a
+ * future lane would need if it wanted to CARRY the alternate stack rather than refuse it.
+ *
+ * `timer_create` is in the set as well.  POSIX timers ARE externally visible -- `/proc/<pid>/timers`
+ * lists them, measured -- and the arm below reads that file, but the taint covers the flavour
+ * uniformly and covers a timer that was created and deleted, which the file no longer shows.
+ *
+ * What this costs, measured rather than assumed, because it narrows a path that previously reported
+ * success.  Traced over each guest runtime available on this host, only Rust's std arms any of these
+ * at startup: it issues `sigaltstack(NULL, &old)` (a pure query, which the argument test above
+ * correctly ignores) and then `sigaltstack({ss_sp=..., ss_flags=0}, NULL)`, which arms and stays
+ * armed for the process's whole life.  C against static or dynamic glibc, /bin/sh, busybox, python3
+ * and node issue none of the four at all.  Go has no toolchain here and was not measured.  A parked
+ * single-threaded Rust guest holding only stdio classifies 0 on every other arm, so this one is the
+ * only thing that refuses it -- the narrowing is reachable, not masked.  What such a guest got
+ * before was a committed capture and an exit-0 restore that dropped its SIGSEGV alternate stack, so
+ * its stack-overflow handler would thereafter run on the overflowing stack.  This refusal replaces a
+ * silent wrong restore, not a correct one.
+ *
+ * `timerfd_create` is NOT in the set and needs no arm: a timerfd is an ordinary descriptor, and the
+ * descriptor gate already refuses every descriptor above 2 that the supervisor did not declare
+ * private.  That refusal is asserted by execution rather than assumed. */
+static _Atomic int hl_native_checkpoint_state_taint;
+
+static int hl_native_checkpoint_taints_state(int number, const __u64 *arguments) {
+    switch (number) {
+#ifdef SYS_sigaltstack
+        /* A NULL `new` is a pure query and leaves the alternate stack exactly as it was. */
+        case SYS_sigaltstack: return arguments[0] != 0;
+#endif
+#ifdef SYS_setitimer
+        /* A NULL `new_value` cannot arm a timer; `getitimer` is a different number and is absent. */
+        case SYS_setitimer: return arguments[1] != 0;
+#endif
+#ifdef SYS_alarm
+        /* `alarm(0)` only cancels.  Anything that armed ITIMER_REAL earlier already tainted. */
+        case SYS_alarm: return arguments[0] != 0;
+#endif
+#ifdef SYS_timer_create
+        case SYS_timer_create: return 1;
+#endif
+        default: return 0;
+    }
+}
+
+/* Seventh gate: POSIX interval timers, which unlike the two above DO have an external view.
+ *
+ * Measured: a process holding one armed `CLOCK_MONOTONIC` timer publishes
+ * `ID: 0 / signal: 10/... / notify: signal/pid.<pid> / ClockID: 1` in /proc/<pid>/timers, and a free
+ * process publishes nothing there.  Nothing in the image carries a timer id, its clock, its
+ * expiry, its interval, its overrun count or its sigevent, and `timer_create` names no other
+ * process, so a restore cannot rebuild one; this refuses instead.
+ *
+ * Presence of any entry is the whole test -- no field is parsed -- so a kernel that adds a column
+ * does not change the verdict.
+ *
+ * A /proc that does not publish the file at all is NOT refused here, and that is a deliberate,
+ * bounded exemption rather than an admission by omission: the taint arm above is the authority for
+ * this flavour and covers it without reading any file, because every POSIX timer begins with a
+ * `timer_create` the listener sees first.  This arm is the second, independent look. */
+static int hl_native_checkpoint_timers_admissible(const char *proc_root, pid_t process) {
+    char path[PATH_MAX];
+    if (hl_native_checkpoint_path(path, sizeof path, proc_root, process, "timers") != 0) return -1;
+    FILE *timers = fopen(path, "re");
+    if (timers == NULL) return 0;
+    char *line = NULL;
+    size_t capacity = 0;
+    int admissible = 1;
+    while (getline(&line, &capacity, timers) >= 0)
+        if (strncmp(line, "ID:", 3) == 0) { admissible = 0; break; }
+    if (ferror(timers)) admissible = 0;
+    free(line);
+    fclose(timers);
+    return admissible ? 0 : -1;
+}
+
 #if defined(HL_NATIVE_TEST_HOOKS)
 static _Atomic int hl_native_checkpoint_test_scan_stopped;
 static int hl_native_checkpoint_test_observe_stop;
@@ -1500,6 +1666,21 @@ static int hl_native_checkpoint_test_race_reply = -1;
 static pid_t hl_native_checkpoint_test_kill_after_stop = -1;
 static int hl_native_supervised_stopped(pid_t process);
 #endif
+
+/* One name per gate arm, so a refusal says which domain rejected it rather than only that something
+ * did.  The numbers are the admission verdicts and are part of the diagnostic contract. */
+static const char *hl_native_checkpoint_refusal_domain(int verdict) {
+    switch (verdict) {
+        case -2: return "task-topology";
+        case -3: return "descriptor";
+        case -4: return "mapping";
+        case -5: return "file-lock";
+        case -6: return "pending-signal";
+        case -7: return "unobservable-timer-or-altstack";
+        case -8: return "posix-timer";
+        default: return "unspecified";
+    }
+}
 
 static int hl_native_checkpoint_admissible_at(const char *proc_root, pid_t process,
                                               const int *private_fds, size_t private_count) {
@@ -1513,6 +1694,8 @@ static int hl_native_checkpoint_admissible_at(const char *proc_root, pid_t proce
     if (hl_native_checkpoint_maps_admissible(proc_root, process) != 0) return -4;
     if (hl_native_checkpoint_locks_admissible(proc_root, process, private_fds, private_count) != 0) return -5;
     if (hl_native_checkpoint_signals_admissible(proc_root, process) != 0) return -6;
+    if (atomic_load_explicit(&hl_native_checkpoint_state_taint, memory_order_acquire)) return -7;
+    if (hl_native_checkpoint_timers_admissible(proc_root, process) != 0) return -8;
     return 0;
 }
 
@@ -1520,12 +1703,17 @@ static int hl_native_checkpoint_admissible_at(const char *proc_root, pid_t proce
 static int hl_native_checkpoint_phase1_test(void);
 static int hl_native_checkpoint_empty_fds_test(void);
 static int hl_native_checkpoint_domain_freeze_test(void);
+static int hl_native_checkpoint_taint_test(void);
+static int hl_native_checkpoint_taint_set_test(int marked);
 HL_API int hl_native_checkpoint_admission_test(const char *proc_root, int process,
                                                const int *private_fds, size_t private_count) {
     if (proc_root == NULL || (private_count != 0 && private_fds == NULL)) return -1;
     if (strcmp(proc_root, "phase1:test") == 0) return hl_native_checkpoint_phase1_test();
     if (strcmp(proc_root, "empty-fds:test") == 0) return hl_native_checkpoint_empty_fds_test();
     if (strcmp(proc_root, "domain-freeze:test") == 0) return hl_native_checkpoint_domain_freeze_test();
+    if (strcmp(proc_root, "taint:test") == 0) return hl_native_checkpoint_taint_test();
+    if (strcmp(proc_root, "taint:set") == 0) return hl_native_checkpoint_taint_set_test(1);
+    if (strcmp(proc_root, "taint:clear") == 0) return hl_native_checkpoint_taint_set_test(0);
     return hl_native_checkpoint_admissible_at(proc_root, (pid_t)process, private_fds, private_count);
 }
 #endif
@@ -1729,21 +1917,36 @@ static int hl_native_supervised_checkpoint_phase1(pid_t workload, uint32_t gener
     hl_native_checkpoint_domain domain = {0};
     int freeze = workload > 0 ? hl_native_checkpoint_domain_freeze(workload, &domain) : -1;
     int admissible = freeze == 0;
-    for (size_t index = 0; admissible && index < domain.count; ++index)
-        admissible = hl_native_checkpoint_admissible_at("/proc", domain.members[index].pid, NULL, 0) == 0;
+    int verdict = 0;
+    for (size_t index = 0; admissible && index < domain.count; ++index) {
+        verdict = hl_native_checkpoint_admissible_at("/proc", domain.members[index].pid, NULL, 0);
+        if (hl_options_get(options, "HL_C_DIAGNOSTICS") != NULL)
+            fprintf(stderr, "[hl-native-checkpoint]\tphase=admission pid=%d verdict=%d members=%zu\n",
+                    (int)domain.members[index].pid, verdict, domain.count);
+        admissible = verdict == 0;
+    }
     if (!admissible) {
         hl_ckpt_request refusal = {.op = HL_CKPT_OP_CAPTURE_REFUSED, .generation = generation};
         (void)hl_ckpt_channel_acquire();
-        const char *reason = freeze == 1 ? "native phase-1 process-domain topology changed during freeze"
-                                         : "native phase-1 read-only admission rejected process state";
+        const char *domain_name = freeze == 1    ? "topology-race"
+                                  : freeze != 0 ? "freeze-failed"
+                                                : hl_native_checkpoint_refusal_domain(verdict);
+        char reason[192];
+        if (freeze == 1)
+            snprintf(reason, sizeof reason, "native phase-1 process-domain topology changed during freeze");
+        else if (freeze != 0)
+            snprintf(reason, sizeof reason, "native phase-1 could not freeze the process domain");
+        else
+            snprintf(reason, sizeof reason,
+                     "native phase-1 read-only admission rejected process state: %s domain (verdict %d)",
+                     domain_name, verdict);
         (void)hl_ckpt_channel_notify(&refusal, reason);
         int thawed = hl_native_checkpoint_domain_thaw(&domain) == 0;
         const char *receipt = hl_options_get(options, "HL_NATIVE_CKPT_TEST_RECEIPT");
         if (receipt != NULL) {
             char line[192];
             snprintf(line, sizeof line, "generation=%u registered=0 members=%zu frozen=%d thawed=%d refusal=%s\n",
-                     generation, domain.count, freeze >= 0, thawed,
-                     freeze == 1 ? "topology-race" : "unsupported-state");
+                     generation, domain.count, freeze >= 0, thawed, domain_name);
             (void)hl_native_supervised_write_text(receipt, line);
         }
         hl_native_checkpoint_domain_close(&domain);
@@ -1841,6 +2044,57 @@ static int hl_native_checkpoint_phase1_test(void) {
     (void)kill(child, SIGKILL); (void)waitpid(child, NULL, 0);
     hl_options_destroy(&options);
     return scanned_stopped && thawed ? 0 : 3;
+}
+
+/* The taint classifier's answer for every syscall it knows, for the argument shapes that cannot arm
+ * anything, and for one syscall outside the set.  The gate arm it feeds is driven from the Rust side
+ * against the synthetic closed-world /proc, because a forked child of the test harness is refused by
+ * an earlier arm and would mask it.  The non-zero return is the step that failed, so a regression
+ * names itself. */
+static int hl_native_checkpoint_taint_test(void) {
+    __u64 arguments[6];
+    memset(arguments, 0, sizeof arguments);
+    int step = 10;
+#ifdef SYS_sigaltstack
+    arguments[0] = 0;
+    if (hl_native_checkpoint_taints_state(SYS_sigaltstack, arguments)) return step;
+    ++step;
+    arguments[0] = 0x1000;
+    if (!hl_native_checkpoint_taints_state(SYS_sigaltstack, arguments)) return step;
+    ++step;
+    arguments[0] = 0;
+#endif
+#ifdef SYS_setitimer
+    arguments[1] = 0;
+    if (hl_native_checkpoint_taints_state(SYS_setitimer, arguments)) return step;
+    ++step;
+    arguments[1] = 0x1000;
+    if (!hl_native_checkpoint_taints_state(SYS_setitimer, arguments)) return step;
+    ++step;
+    arguments[1] = 0;
+#endif
+#ifdef SYS_alarm
+    arguments[0] = 0;
+    if (hl_native_checkpoint_taints_state(SYS_alarm, arguments)) return step;
+    ++step;
+    arguments[0] = 7200;
+    if (!hl_native_checkpoint_taints_state(SYS_alarm, arguments)) return step;
+    ++step;
+    arguments[0] = 0;
+#endif
+#ifdef SYS_timer_create
+    if (!hl_native_checkpoint_taints_state(SYS_timer_create, arguments)) return step;
+    ++step;
+#endif
+    /* A syscall outside the set must never mark, or the arm would refuse every capture there is. */
+    if (hl_native_checkpoint_taints_state(SYS_getpid, arguments)) return step;
+    return 0;
+}
+
+/* Drives the mark itself, so the gate arm can be exercised against a /proc the other arms admit. */
+static int hl_native_checkpoint_taint_set_test(int marked) {
+    atomic_store_explicit(&hl_native_checkpoint_state_taint, marked ? 1 : 0, memory_order_release);
+    return 0;
 }
 
 static int hl_native_checkpoint_empty_fds_test(void) {
@@ -1996,6 +2250,10 @@ static void hl_native_supervised_environment_free(char **environment) {
 
 static int hl_native_supervised_wait(int listener, int leader_pidfd, pid_t leader,
                                      const hl_options *options, int *guest_signal) {
+    /* A new supervised domain starts clean.  The mark belongs to this domain's guest processes and to
+     * nothing that ran before them; making that explicit here rather than relying on the supervisor
+     * being a fresh process keeps the scope a property of the code. */
+    atomic_store_explicit(&hl_native_checkpoint_state_taint, 0, memory_order_release);
     int refused_number, refused_error;
     if (hl_native_supervised_refusal(options, &refused_number, &refused_error) != 0) return 70;
     struct seccomp_notif_sizes sizes = {0};
@@ -2098,6 +2356,11 @@ static int hl_native_supervised_wait(int listener, int leader_pidfd, pid_t leade
         memset(response, 0, sizes.seccomp_notif_resp);
         response->id = request->id;
         int number = (int)request->data.nr;
+        /* Before the response, never after: the syscall cannot take effect until the notification is
+         * answered, so a domain whose alternate stack or interval timer is really armed is marked
+         * strictly earlier than the moment it becomes armed. */
+        if (hl_native_checkpoint_taints_state(number, request->data.args))
+            atomic_store_explicit(&hl_native_checkpoint_state_taint, 1, memory_order_release);
         int complete_restore_after_response = 0;
         if (count_notifications) {
             ++notifications;
