@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:c28f0e1ff1afa943
+// Protocol artifact fnv1a64:961416dc0494e291
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -3072,14 +3072,11 @@ const definitions = {
   "FileChange": {
     "fields": [
       {
-        "name": "revision",
+        "name": "cursor",
         "optional": false,
         "schema": {
-          "bits": 64,
-          "kind": "integer",
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "signed": false
+          "kind": "ref",
+          "name": "FileChangeCursor"
         }
       },
       {
@@ -3107,6 +3104,30 @@ const definitions = {
             "kind": "ref",
             "name": "Entry"
           }
+        }
+      }
+    ],
+    "kind": "struct",
+    "serde": {}
+  },
+  "FileChangeCursor": {
+    "fields": [
+      {
+        "name": "journal",
+        "optional": false,
+        "schema": {
+          "kind": "string"
+        }
+      },
+      {
+        "name": "revision",
+        "optional": false,
+        "schema": {
+          "bits": 64,
+          "kind": "integer",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "signed": false
         }
       }
     ],

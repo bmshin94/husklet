@@ -1491,7 +1491,7 @@ test('filesystem change watcher advances opaque pages and exposes truncation', a
       after: 10,
       changes: [
         {
-          revision: 11,
+          cursor: { journal: FILE_JOURNAL, revision: 11 },
           kind: 'modify',
           path: 'src/late.ts',
           entry: { path: 'src/late.ts', directory: false, size: 4, identity: 'v2' },
@@ -1505,7 +1505,14 @@ test('filesystem change watcher advances opaque pages and exposes truncation', a
     {
       journal: FILE_JOURNAL,
       after: 11,
-      changes: [{ revision: 12, kind: 'remove', path: 'src/gone.ts', entry: null }],
+      changes: [
+        {
+          cursor: { journal: FILE_JOURNAL, revision: 12 },
+          kind: 'remove',
+          path: 'src/gone.ts',
+          entry: null,
+        },
+      ],
       next: 12,
       current: 12,
       more: false,
@@ -1613,7 +1620,14 @@ test('latest filesystem work bounds the uncommitted changes retained across supe
         with: {
           journal: FILE_JOURNAL,
           after: payload.after,
-          changes: [{ revision, kind: 'modify', path: `src/${revision}.ts`, entry: null }],
+          changes: [
+            {
+              cursor: { journal: FILE_JOURNAL, revision },
+              kind: 'modify',
+              path: `src/${revision}.ts`,
+              entry: null,
+            },
+          ],
           next: revision,
           current: revision,
           more: false,
@@ -1676,7 +1690,7 @@ test('real Unix change-page iteration applies backpressure and surfaces overflow
           after: 10,
           changes: [
             {
-              revision: 11,
+              cursor: { journal: FILE_JOURNAL, revision: 11 },
               kind: 'modify',
               path: 'src/test.ts',
               entry: { path: 'src/test.ts', directory: false, size: 4, identity: 'file-v2' },
@@ -1730,7 +1744,14 @@ test('real Unix change-page iteration applies backpressure and surfaces overflow
         with: {
           journal: FILE_JOURNAL,
           after: 20,
-          changes: [{ revision: 20, kind: 'remove', path: 'src/stale.ts', entry: null }],
+          changes: [
+            {
+              cursor: { journal: FILE_JOURNAL, revision: 20 },
+              kind: 'remove',
+              path: 'src/stale.ts',
+              entry: null,
+            },
+          ],
           next: 20,
           current: 20,
           more: false,
@@ -1794,7 +1815,14 @@ test('callback filesystem watcher reports listener failure through its stop hand
         with: {
           journal: FILE_JOURNAL,
           after: 0,
-          changes: [{ revision: 1, kind: 'remove', path: 'stale.ts', entry: null }],
+          changes: [
+            {
+              cursor: { journal: FILE_JOURNAL, revision: 1 },
+              kind: 'remove',
+              path: 'stale.ts',
+              entry: null,
+            },
+          ],
           next: 1,
           current: 1,
           more: false,
@@ -4091,10 +4119,7 @@ test('terminal topology, bounded input, grid resize and retitle use exact typed 
   assert.throws(() => terminal.spawn('s1', ['sh', 'bad\0argument']), /NUL-free/);
   assert.throws(() => terminal.spawn('s1', ['x'.repeat(4097)]), /4096 bytes/);
   assert.throws(() => terminal.spawnObserved('s1', 4, -1, ['true']), /generation and revision/);
-  await assert.rejects(
-    terminal.writeInput('s1', 4, 7, new Uint8Array(65_537)),
-    /65536 byte limit/,
-  );
+  await assert.rejects(terminal.writeInput('s1', 4, 7, new Uint8Array(65_537)), /65536 byte limit/);
   await assert.rejects(terminal.writeInput('s1', -1, 7, 'x'), /generation and revision/);
   assert.throws(() => terminal.closeObserved('s1', 4, -1), /generation and revision/);
   assert.throws(() => terminal.splitObserved('s1', 4, -1, 'below'), /generation and revision/);

@@ -4852,12 +4852,13 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           page.current < page.next ||
           page.changes.some(
             (change, index) =>
-              change.revision <= after ||
-              change.revision > page.next ||
-              (index > 0 && change.revision <= page.changes[index - 1].revision) ||
+              change.cursor.journal !== page.journal ||
+              change.cursor.revision <= after ||
+              change.cursor.revision > page.next ||
+              (index > 0 && change.cursor.revision <= page.changes[index - 1].cursor.revision) ||
               change.path !== (change.entry?.path ?? change.path),
           ) ||
-          (page.changes.length > 0 && page.next < page.changes.at(-1).revision) ||
+          (page.changes.length > 0 && page.next < page.changes.at(-1).cursor.revision) ||
           (page.truncated && (page.changes.length > 0 || page.next !== page.current)) ||
           (page.more && (page.next <= after || page.next >= page.current)) ||
           (!page.more && page.next !== page.current)
@@ -4884,6 +4885,29 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
             ),
           ),
         };
+      },
+      applyChangePage: async (
+        page,
+        cursor,
+        listener,
+        { signal }: { signal?: AbortSignal } = {},
+      ) => {
+        if (typeof listener !== 'function')
+          throw new TypeError('filesystem change-page listener must be a function');
+        exactFilesystemJournal(cursor?.journal);
+        if (!Number.isSafeInteger(cursor?.revision) || cursor.revision < 0)
+          throw new TypeError('filesystem change cursor must be a nonnegative safe integer');
+        if (page.journal !== cursor.journal || page.after !== cursor.revision)
+          throw new TypeError('filesystem change page does not continue the supplied cursor');
+        requireFilesystemActive(signal);
+        let applied = { ...cursor };
+        for (const change of page.changes) {
+          requireFilesystemActive(signal);
+          await listener(change, change.cursor, signal);
+          requireFilesystemActive(signal);
+          applied = { ...change.cursor };
+        }
+        return { cursor: applied, complete: applied.revision === page.next };
       },
       reconcilePathRecords: (current, scanned, roots) => {
         if (!Array.isArray(roots) || roots.length < 1 || roots.length > 256)
@@ -5143,7 +5167,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
               const accumulated: FileChangePage = {
                 ...latest,
                 changes: [...changed.values()].sort(
-                  (left, right) => left.revision - right.revision,
+                  (left, right) => left.cursor.revision - right.cursor.revision,
                 ),
                 truncated: buffered.some((retained) => retained.truncated),
               };
@@ -9015,6 +9039,7 @@ export const protocolCoverage = Object.freeze({
       'beginWalk',
       'changes',
       'scopeChanges',
+      'applyChangePage',
       'reconcilePathRecords',
       'catchUpChanges',
       'changePages',

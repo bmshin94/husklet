@@ -721,7 +721,8 @@ export interface FileWalkResumeToken {
   readonly stack: readonly FileWalkResumeFrame[];
 }
 export interface FileChange {
-  revision: number;
+  /** Exact durable cursor immediately after this applied change. */
+  cursor: FileCursor;
   kind: 'create' | 'modify' | 'remove' | 'invalidate';
   path: string;
   entry: FileEntry | null;
@@ -2526,6 +2527,17 @@ export interface WorkspaceApi {
       page: FileChangePage,
       roots: readonly { path: string; grant: 'exact' | 'subtree' }[],
     ): FileChangePage;
+    /** Applies a page in order and exposes the exact durable cursor after each acknowledged change. */
+    applyChangePage(
+      page: FileChangePage,
+      cursor: FileCursor,
+      listener: (
+        change: FileChange,
+        cursor: FileCursor,
+        signal: AbortSignal | undefined,
+      ) => void | Promise<void>,
+      options?: { signal?: AbortSignal },
+    ): Promise<{ cursor: FileCursor; complete: boolean }>;
     /** Replace path-keyed records inside configured roots while preserving records outside them. */
     reconcilePathRecords<T>(
       current: Readonly<Record<string, T>>,

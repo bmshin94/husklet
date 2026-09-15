@@ -154,10 +154,30 @@ test('fragmented greeting exposes only the caller filesystem grant as immutable 
       {
         journal: 'a'.repeat(32),
         changes: [
-          { revision: 8, kind: 'modify', path: 'src/app.ts', entry: null },
-          { revision: 9, kind: 'modify', path: 'src2/private.ts', entry: null },
-          { revision: 10, kind: 'modify', path: 'README.md', entry: null },
-          { revision: 11, kind: 'modify', path: 'README.md.bak', entry: null },
+          {
+            cursor: { journal: 'a'.repeat(32), revision: 8 },
+            kind: 'modify',
+            path: 'src/app.ts',
+            entry: null,
+          },
+          {
+            cursor: { journal: 'a'.repeat(32), revision: 9 },
+            kind: 'modify',
+            path: 'src2/private.ts',
+            entry: null,
+          },
+          {
+            cursor: { journal: 'a'.repeat(32), revision: 10 },
+            kind: 'modify',
+            path: 'README.md',
+            entry: null,
+          },
+          {
+            cursor: { journal: 'a'.repeat(32), revision: 11 },
+            kind: 'modify',
+            path: 'README.md.bak',
+            entry: null,
+          },
         ],
         next: 11,
         current: 11,

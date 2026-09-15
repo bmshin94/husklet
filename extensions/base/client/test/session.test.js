@@ -267,7 +267,7 @@ test('real Unix filesystem catch-up is bounded, resumable, and journal-gap safe'
               after: input.after,
               changes: [
                 {
-                  revision,
+                  cursor: { journal: FILE_JOURNAL, revision },
                   kind: revision === 1 ? 'create' : 'modify',
                   path: 'src/a.ts',
                   entry: {
@@ -303,7 +303,14 @@ test('real Unix filesystem catch-up is bounded, resumable, and journal-gap safe'
             reply: 'file_changes',
             with: {
               after: input.after,
-              changes: [{ revision: 9, kind: 'remove', path: 'src/old.ts', entry: null }],
+              changes: [
+                {
+                  cursor: { journal: REPLACEMENT_FILE_JOURNAL, revision: 9 },
+                  kind: 'remove',
+                  path: 'src/old.ts',
+                  entry: null,
+                },
+              ],
               journal: REPLACEMENT_FILE_JOURNAL,
               next: 9,
               current: 9,
@@ -361,7 +368,7 @@ test('real Unix filesystem catch-up is bounded, resumable, and journal-gap safe'
     assert.deepEqual(partial.cursor, { journal: FILE_JOURNAL, revision: 2 });
     assert.equal(partial.current, 4);
     assert.deepEqual(
-      partial.changes.map(({ revision, kind }) => [revision, kind]),
+      partial.changes.map(({ cursor, kind }) => [cursor.revision, kind]),
       [
         [1, 'create'],
         [2, 'modify'],
@@ -2740,7 +2747,7 @@ test('real Unix latest-change watcher supersedes long test work without blocking
                   after: frame.payload.with.after,
                   changes: [
                     {
-                      revision,
+                      cursor: { journal: FILE_JOURNAL, revision },
                       kind: 'modify',
                       path: `src/revision-${revision}.ts`,
                       entry: null,
@@ -2790,7 +2797,7 @@ test('real Unix latest-change watcher supersedes long test work without blocking
     const session = await connect({ path: socketPath, timeout: 1_000 });
     stop = await workspace(session).files.watchLatestChanges(
       async (page, signal) => {
-        const revisions = page.changes.map(({ revision }) => revision);
+        const revisions = page.changes.map(({ cursor }) => cursor.revision);
         delivered.push(revisions);
         const revision = revisions.at(-1);
         started.push(revision);
@@ -2867,7 +2874,14 @@ test('real Unix filesystem watcher exposes listener failure without poisoning th
                 with: {
                   journal: FILE_JOURNAL,
                   after: frame.payload.with.after,
-                  changes: [{ revision: 3, kind: 'modify', path: 'src/a.ts', entry: null }],
+                  changes: [
+                    {
+                      cursor: { journal: FILE_JOURNAL, revision: 3 },
+                      kind: 'modify',
+                      path: 'src/a.ts',
+                      entry: null,
+                    },
+                  ],
                   next: 3,
                   current: 3,
                   more: false,

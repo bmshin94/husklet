@@ -548,7 +548,14 @@ test('embeddings indexer refuses publication after journal invalidation', async 
           with: {
             journal: FILE_JOURNAL,
             after: frame.payload.with.after,
-            changes: [{ revision: 21, kind: 'invalidate', path: 'src/a.md', entry: null }],
+            changes: [
+              {
+                cursor: { journal: FILE_JOURNAL, revision: 21 },
+                kind: 'invalidate',
+                path: 'src/a.md',
+                entry: null,
+              },
+            ],
             next: 21,
             current: 21,
             more: false,
@@ -600,7 +607,7 @@ test('embeddings workbench resumes, indexes changed ranges with an opaque creden
             after: frame.payload.with.after,
             changes: [
               {
-                revision: 6,
+                cursor: { journal: FILE_JOURNAL, revision: 6 },
                 kind: 'modify',
                 path: 'src/new.ts',
                 entry: {

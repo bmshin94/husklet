@@ -1341,7 +1341,10 @@ impl WorkspaceFiles for Host {
                 .leak_filesystem_paths
                 .get()
                 .then(|| hl_extension::port::FileChange {
-                    revision: 1,
+                    cursor: hl_extension::port::FileChangeCursor {
+                        journal: "a".repeat(32),
+                        revision: 1,
+                    },
                     kind: hl_extension::port::FileChangeKind::Modify,
                     path: path("private/token"),
                     entry: None,

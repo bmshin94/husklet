@@ -11,11 +11,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 
-use hl_extension::RelativePath;
 use hl_extension::port::{
-    DirectoryPage, Entry, FileChange, FileChangeKind, FileChangePage, FileInventory, FileRange, HostError,
-    WorkspaceFiles,
+    DirectoryPage, Entry, FileChange, FileChangeCursor, FileChangeKind, FileChangePage, FileInventory, FileRange,
+    HostError, WorkspaceFiles,
 };
+use hl_extension::RelativePath;
 use notify::{RecursiveMode, Watcher as _};
 
 /// The workspace file port, rooted at one directory.
@@ -248,11 +248,7 @@ impl WorkspaceDirectory {
         })
     }
 
-    fn mkdir_with(
-        &self,
-        path: &RelativePath,
-        before_create: impl FnOnce() -> io::Result<()>,
-    ) -> Result<(), HostError> {
+    fn mkdir_with(&self, path: &RelativePath, before_create: impl FnOnce() -> io::Result<()>) -> Result<(), HostError> {
         let _mutation = self
             .mutations
             .lock()
@@ -400,14 +396,17 @@ impl WorkspaceDirectory {
             journal.revision = journal.revision.saturating_add(1);
             let revision = journal.revision;
             journal.changes.push_back(FileChange {
-                revision,
+                cursor: FileChangeCursor {
+                    journal: journal.identity.clone(),
+                    revision,
+                },
                 kind,
                 path,
                 entry,
             });
             if journal.changes.len() > JOURNAL_HISTORY_LIMIT {
                 if let Some(discarded) = journal.changes.pop_front() {
-                    journal.oldest = discarded.revision;
+                    journal.oldest = discarded.cursor.revision;
                 }
             }
         }
@@ -524,13 +523,13 @@ impl WorkspaceFiles for WorkspaceDirectory {
             journal
                 .changes
                 .iter()
-                .filter(|change| change.revision > after)
+                .filter(|change| change.cursor.revision > after)
                 .take(limit)
                 .cloned()
                 .collect::<Vec<_>>()
         };
-        let next = changes.last().map_or(journal.revision, |change| change.revision);
-        let more = journal.changes.iter().any(|change| change.revision > next);
+        let next = changes.last().map_or(journal.revision, |change| change.cursor.revision);
+        let more = journal.changes.iter().any(|change| change.cursor.revision > next);
         let next = if more { next } else { journal.revision };
         Ok(FileChangePage {
             journal: journal.identity.clone(),
@@ -704,17 +703,12 @@ impl WorkspaceFiles for WorkspaceDirectory {
 
     fn stat(&self, path: &RelativePath) -> Result<Entry, HostError> {
         let entry = self.pinned(path)?;
-        let status = rustix::fs::statat(
-            &entry.directory,
-            &entry.name,
-            rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
-        )
-        .map_err(io::Error::from)
-        .map_err(|error| absence(path, &error))?;
+        let status = rustix::fs::statat(&entry.directory, &entry.name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(io::Error::from)
+            .map_err(|error| absence(path, &error))?;
         Ok(Entry {
             path: path.clone(),
-            directory: rustix::fs::FileType::from_raw_mode(status.st_mode)
-                == rustix::fs::FileType::Directory,
+            directory: rustix::fs::FileType::from_raw_mode(status.st_mode) == rustix::fs::FileType::Directory,
             size: status.st_size.try_into().unwrap_or(u64::MAX),
             identity: Some(status_identity(&status)),
         })
@@ -1002,12 +996,8 @@ fn atomic_replace_observed(
         .map_err(io::Error::from)?;
         let inspected = (|| {
             after_exchange(directory, temporary)?;
-            let displaced = rustix::fs::statat(
-                directory,
-                temporary,
-                rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
-            )
-            .map_err(io::Error::from)?;
+            let displaced = rustix::fs::statat(directory, temporary, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)
+                .map_err(io::Error::from)?;
             if (displaced.st_dev, displaced.st_ino) != (observed.dev(), observed.ino()) {
                 return Ok(None);
             }
@@ -1015,12 +1005,13 @@ fn atomic_replace_observed(
             directory.sync_all()?;
             Ok(Some(identity))
         })();
-        let Some(identity) = inspected.map_err(|error| match rollback_exchange(directory, temporary, &target.name) {
-            Ok(()) => error,
-            Err(rollback) => io::Error::other(format!(
-                "publication failed ({error}) and rollback failed ({rollback})"
-            )),
-        })?
+        let Some(identity) =
+            inspected.map_err(|error| match rollback_exchange(directory, temporary, &target.name) {
+                Ok(()) => error,
+                Err(rollback) => {
+                    io::Error::other(format!("publication failed ({error}) and rollback failed ({rollback})"))
+                }
+            })?
         else {
             rustix::fs::renameat_with(
                 directory,
@@ -1298,7 +1289,7 @@ fn described_at(parent: &RelativePath, directory: &File, entry: &rustix::fs::Dir
 
 #[cfg(test)]
 mod tests {
-    use super::{WorkspaceDirectory, atomic_replace_observed, open_entry_identity};
+    use super::{atomic_replace_observed, open_entry_identity, WorkspaceDirectory};
     use hl_extension::port::{HostError, WorkspaceFiles};
     use hl_extension::{FilesystemSelector, RelativePath};
     use std::sync::atomic::Ordering;
@@ -1357,14 +1348,23 @@ mod tests {
         let files = WorkspaceDirectory::new(&root).unwrap();
         let roots = [subtree("docs")];
         let inventory = files.inventory(&roots).unwrap();
-        let baseline = files.changes_since(&roots, &inventory.journal, inventory.revision, 32).unwrap();
+        let baseline = files
+            .changes_since(&roots, &inventory.journal, inventory.revision, 32)
+            .unwrap();
         files.watcher.lock().unwrap().overflow.store(true, Ordering::Release);
-        let overflow = files.changes_since(&roots, &baseline.journal, baseline.next, 32).unwrap();
+        let overflow = files
+            .changes_since(&roots, &baseline.journal, baseline.next, 32)
+            .unwrap();
         assert!(overflow.truncated);
         assert!(overflow.changes.is_empty());
         let rebased = files.inventory(&roots).unwrap();
         assert!(rebased.complete);
-        assert!(!files.changes_since(&roots, &rebased.journal, rebased.revision, 32).unwrap().truncated);
+        assert!(
+            !files
+                .changes_since(&roots, &rebased.journal, rebased.revision, 32)
+                .unwrap()
+                .truncated
+        );
     }
 
     #[test]
@@ -1381,13 +1381,14 @@ mod tests {
         std::fs::write(root.join("docs/readme.md"), b"after").unwrap();
         std::thread::sleep(std::time::Duration::from_millis(25));
 
-        let page = files.changes_since(&roots, &inventory.journal, inventory.revision, 32).unwrap();
+        let page = files
+            .changes_since(&roots, &inventory.journal, inventory.revision, 32)
+            .unwrap();
         assert!(!page.truncated);
-        assert!(
-            page.changes
-                .iter()
-                .any(|change| { change.revision > inventory.revision && change.path.as_str() == "docs/readme.md" })
-        );
+        assert!(page
+            .changes
+            .iter()
+            .any(|change| { change.cursor.revision > inventory.revision && change.path.as_str() == "docs/readme.md" }));
     }
 
     #[test]
@@ -1404,9 +1405,7 @@ mod tests {
         };
         std::fs::write(root.join("docs/readme.md"), b"changed while stopped").unwrap();
         let files = WorkspaceDirectory::new(&root).unwrap();
-        let invalidated = files
-            .changes_since(&roots, &old.journal, old.revision, 32)
-            .unwrap();
+        let invalidated = files.changes_since(&roots, &old.journal, old.revision, 32).unwrap();
 
         assert_ne!(invalidated.journal, old.journal);
         assert!(invalidated.truncated);
@@ -1414,10 +1413,12 @@ mod tests {
         assert_eq!(invalidated.next, invalidated.current);
         let fresh = files.inventory(&roots).unwrap();
         assert_eq!(fresh.journal, invalidated.journal);
-        assert!(!files
-            .changes_since(&roots, &fresh.journal, fresh.revision, 32)
-            .unwrap()
-            .truncated);
+        assert!(
+            !files
+                .changes_since(&roots, &fresh.journal, fresh.revision, 32)
+                .unwrap()
+                .truncated
+        );
     }
 
     #[test]
@@ -1439,30 +1440,22 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(25));
         let alpha_page = files.changes_since(&alpha, &alpha_inventory.journal, 0, 32).unwrap();
         let beta_page = files.changes_since(&beta, &beta_inventory.journal, 0, 32).unwrap();
-        assert!(
-            alpha_page
-                .changes
-                .iter()
-                .any(|change| change.path.as_str() == "alpha/transient")
-        );
-        assert!(
-            beta_page
-                .changes
-                .iter()
-                .any(|change| change.path.as_str() == "beta/transient")
-        );
-        assert!(
-            alpha_page
-                .changes
-                .iter()
-                .all(|change| !change.path.as_str().starts_with("beta/"))
-        );
-        assert!(
-            beta_page
-                .changes
-                .iter()
-                .all(|change| !change.path.as_str().starts_with("alpha/"))
-        );
+        assert!(alpha_page
+            .changes
+            .iter()
+            .any(|change| change.path.as_str() == "alpha/transient"));
+        assert!(beta_page
+            .changes
+            .iter()
+            .any(|change| change.path.as_str() == "beta/transient"));
+        assert!(alpha_page
+            .changes
+            .iter()
+            .all(|change| !change.path.as_str().starts_with("beta/")));
+        assert!(beta_page
+            .changes
+            .iter()
+            .all(|change| !change.path.as_str().starts_with("alpha/")));
     }
 
     #[test]
@@ -1756,12 +1749,10 @@ mod tests {
         let whole = files
             .inventory(&[subtree("source"), subtree("private")])
             .expect("declared-root inventory");
-        assert!(
-            whole
-                .entries
-                .iter()
-                .any(|entry| entry.path.to_string() == "private/key")
-        );
+        assert!(whole
+            .entries
+            .iter()
+            .any(|entry| entry.path.to_string() == "private/key"));
         for index in 0..260 {
             std::fs::write(root.join("source").join(format!("extra-{index}")), b"x").expect("extra file");
         }
@@ -1856,17 +1847,15 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(std::fs::read(&target).expect("old contents"), b"old bytes");
-        assert!(
-            std::fs::read_dir(temporary.path())
-                .expect("directory listing")
-                .all(|entry| {
-                    !entry
-                        .expect("entry")
-                        .file_name()
-                        .to_string_lossy()
-                        .starts_with(".husklet-write-")
-                })
-        );
+        assert!(std::fs::read_dir(temporary.path())
+            .expect("directory listing")
+            .all(|entry| {
+                !entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".husklet-write-")
+            }));
     }
 
     #[test]
@@ -1984,12 +1973,10 @@ mod tests {
         .expect("atomic publication");
 
         assert_eq!(std::fs::read(&target).expect("published contents"), b"new bytes");
-        assert!(
-            !std::fs::symlink_metadata(&target)
-                .expect("published metadata")
-                .file_type()
-                .is_symlink()
-        );
+        assert!(!std::fs::symlink_metadata(&target)
+            .expect("published metadata")
+            .file_type()
+            .is_symlink());
         assert_eq!(std::fs::read(&outside).expect("outside contents"), b"outside bytes");
     }
 
@@ -2047,12 +2034,10 @@ mod tests {
 
         assert_eq!(std::fs::read(&outside).expect("outside"), b"outside");
         assert!(!root.join("remove-link").exists());
-        assert!(
-            std::fs::symlink_metadata(root.join("renamed-link"))
-                .expect("renamed link")
-                .file_type()
-                .is_symlink()
-        );
+        assert!(std::fs::symlink_metadata(root.join("renamed-link"))
+            .expect("renamed link")
+            .file_type()
+            .is_symlink());
     }
 
     #[test]

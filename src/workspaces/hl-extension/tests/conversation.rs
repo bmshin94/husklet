@@ -1629,8 +1629,8 @@ fn terminal_history_cursor_crosses_a_fragmented_real_socket() {
     hl_extension::Wire::new(&mut encoded)
         .send(&codec::request(&request).expect("request encodes"))
         .expect("frame encodes");
-    for byte in encoded {
-        extension_end.write_all(&[byte]).expect("fragment crosses socket");
+    for fragment in encoded.chunks(7) {
+        extension_end.write_all(fragment).expect("fragment crosses socket");
     }
     let mut receiver = hl_extension::Wire::new(host_end);
     let decoded = codec::read_request(&receiver.receive().expect("request arrives")).expect("request decodes");
@@ -1648,9 +1648,18 @@ fn terminal_history_cursor_crosses_a_fragmented_real_socket() {
 #[test]
 fn filesystem_change_request_cursor_crosses_a_fragmented_real_socket() {
     let (host_end, mut extension_end) = connected_pair();
+    let journal = "0123456789abcdef0123456789abcdef".to_string();
     let page = hl_extension::FileChangePage {
-        changes: Vec::new(),
-        journal: "0123456789abcdef0123456789abcdef".into(),
+        changes: vec![hl_extension::FileChange {
+            cursor: hl_extension::FileChangeCursor {
+                journal: journal.clone(),
+                revision: 43,
+            },
+            kind: hl_extension::FileChangeKind::Remove,
+            path: RelativePath::new("documents/renamed-from.md").unwrap(),
+            entry: None,
+        }],
+        journal,
         after: 41,
         next: 47,
         current: 47,
@@ -1661,8 +1670,8 @@ fn filesystem_change_request_cursor_crosses_a_fragmented_real_socket() {
     hl_extension::Wire::new(&mut encoded)
         .send(&codec::reply(&Reply::FileChanges(page.clone())).expect("reply encodes"))
         .expect("frame encodes");
-    for byte in encoded {
-        extension_end.write_all(&[byte]).expect("fragment crosses socket");
+    for fragment in encoded.chunks(7) {
+        extension_end.write_all(fragment).expect("fragment crosses socket");
     }
     let mut receiver = hl_extension::Wire::new(host_end);
     let decoded = codec::read_reply(&receiver.receive().expect("reply arrives")).expect("reply decodes");

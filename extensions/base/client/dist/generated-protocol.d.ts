@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:c28f0e1ff1afa943
+// Protocol artifact fnv1a64:961416dc0494e291
 export const PROTOCOL_SPECIFICATION_VERSION: 1;
 export const PROTOCOL_VERSION: 1;
 export const PROTOCOL_BOUNDS: Readonly<{ "extension_job_bytes": number; "extension_reference_bytes": number; "pane_input_bytes": number; "pane_inventory_items": number; "pane_text_bytes": number; "resource_inventory_items": number; "semantic_action_value_bytes": number; "semantic_depth": number; "semantic_nodes": number; "semantic_text_bytes": number; "terminal_command_argument_bytes": number; "terminal_command_bytes": number }>;
@@ -55,7 +55,8 @@ export type ExtensionName = PeerName;
 export type ExtensionPreferences = { "revision": number; "entries": Array<[string, PreferenceValue]> };
 export type ExtensionState = { "identity": string; "contents": Array<number> };
 export type ExtensionSummary = { "name": string; "image_digest": string; "status": string; "version"?: string; "enabled"?: boolean; "pane_providers"?: Array<PaneProvider>; "granted"?: Grant; "images"?: ImageGrant; "containers"?: ContainerGrant; "networks"?: NetworkGrant; "volumes"?: VolumeGrant; "filesystem"?: FilesystemGrant; "workspace_environment"?: WorkspaceEnvironmentGrant; "credentials"?: CredentialGrant };
-export type FileChange = { "revision": number; "kind": FileChangeKind; "path": RelativePath; "entry"?: Entry | null };
+export type FileChange = { "cursor": FileChangeCursor; "kind": FileChangeKind; "path": RelativePath; "entry"?: Entry | null };
+export type FileChangeCursor = { "journal": string; "revision": number };
 export type FileChangeKind = "create" | "modify" | "remove" | "invalidate";
 export type FileChangePage = { "changes": Array<FileChange>; "journal": string; "after": number; "next": number; "current": number; "more": boolean; "truncated": boolean };
 export type FileInventory = { "entries": Array<Entry>; "complete": boolean; "coalesced": number; "journal": string; "revision": number };

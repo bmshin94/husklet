@@ -245,20 +245,29 @@ try {
       async (page, signal) => {
         const scopedPage = host.files.scopeChanges(page, roots);
         if (scopedPage.truncated) throw new Error('filesystem journal gap requires a full rescan');
-        for (const change of scopedPage.changes) {
-          if (change.entry && wanted(change.entry)) await index(change.entry, true, signal);
-          if (!change.entry && checkpoint.documents[change.path]) {
-            const { [change.path]: _removed, ...documents } = checkpoint.documents;
-            void _removed;
+        await host.files.applyChangePage(
+          scopedPage,
+          { journal: scopedPage.journal, revision: scopedPage.after },
+          async (change, cursor) => {
+            const indexed =
+              change.entry && wanted(change.entry)
+                ? await index(change.entry, false, signal)
+                : undefined;
             checkpoint = (
-              await persistCheckpoint((current) => ({
-                ...current,
-                revision: scopedPage.next,
-                documents,
-              }))
+              await persistCheckpoint((current) => {
+                const { [change.path]: _previous, ...documents } = current.documents;
+                void _previous;
+                return {
+                  ...current,
+                  journal: cursor.journal,
+                  revision: cursor.revision,
+                  documents: indexed ? { ...documents, [change.path]: indexed } : documents,
+                };
+              })
             ).value;
-          }
-        }
+          },
+          { signal },
+        );
         checkpoint = (
           await persistCheckpoint((current) => ({
             ...current,

@@ -2693,14 +2693,11 @@
     "FileChange": {
       "fields": [
         {
-          "name": "revision",
+          "name": "cursor",
           "optional": false,
           "schema": {
-            "bits": 64,
-            "kind": "integer",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "signed": false
+            "kind": "ref",
+            "name": "FileChangeCursor"
           }
         },
         {
@@ -2728,6 +2725,30 @@
               "kind": "ref",
               "name": "Entry"
             }
+          }
+        }
+      ],
+      "kind": "struct",
+      "serde": {}
+    },
+    "FileChangeCursor": {
+      "fields": [
+        {
+          "name": "journal",
+          "optional": false,
+          "schema": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "revision",
+          "optional": false,
+          "schema": {
+            "bits": 64,
+            "kind": "integer",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "signed": false
           }
         }
       ],
@@ -16675,7 +16696,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:482d549061273fe0",
+  "source_fingerprint": "fnv1a64:cb8690274fe919bb",
   "specification_version": 1,
   "topics": [
     {

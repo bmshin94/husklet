@@ -915,10 +915,21 @@ pub enum FileChangeKind {
 /// One metadata change in the workspace filesystem journal.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct FileChange {
-    pub revision: u64,
+    /// Exact durable cursor immediately after this change. Consumers must not
+    /// checkpoint the enclosing page cursor until every preceding change has
+    /// been applied.
+    pub cursor: FileChangeCursor,
     pub kind: FileChangeKind,
     pub path: RelativePath,
     pub entry: Option<Entry>,
+}
+
+/// JSON-persistable authority for resuming immediately after one applied
+/// filesystem change.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct FileChangeCursor {
+    pub journal: String,
+    pub revision: u64,
 }
 
 /// A bounded page of changes. `truncated` requires a fresh inventory before
@@ -940,13 +951,26 @@ impl FileChangePage {
     /// remaining history may stop before it.
     #[must_use]
     pub fn has_consistent_completion(&self) -> bool {
-        self.current >= self.next && self.more == (self.next < self.current)
+        self.current >= self.next
+            && self.more == (self.next < self.current)
+            && self.changes.iter().enumerate().all(|(index, change)| {
+                change.cursor.journal == self.journal
+                    && change.cursor.revision > self.after
+                    && change.cursor.revision <= self.next
+                    && index
+                        .checked_sub(1)
+                        .is_none_or(|previous| self.changes[previous].cursor.revision < change.cursor.revision)
+            })
+            && self
+                .changes
+                .last()
+                .is_none_or(|change| change.cursor.revision <= self.next)
     }
 }
 
 #[cfg(test)]
 mod file_change_page_tests {
-    use super::FileChangePage;
+    use super::{FileChange, FileChangeCursor, FileChangeKind, FileChangePage};
 
     #[test]
     fn a_terminal_change_page_cannot_leave_unreported_history() {
@@ -960,6 +984,37 @@ mod file_change_page_tests {
             truncated: false,
         };
         assert!(!page.has_consistent_completion());
+    }
+
+    #[test]
+    fn every_change_carries_an_ordered_cursor_for_its_own_commit() {
+        let journal = "0123456789abcdef0123456789abcdef".to_string();
+        let change = |revision| FileChange {
+            cursor: FileChangeCursor {
+                journal: journal.clone(),
+                revision,
+            },
+            kind: FileChangeKind::Remove,
+            path: crate::RelativePath::new(format!("documents/{revision}.md")).unwrap(),
+            entry: None,
+        };
+        let page = FileChangePage {
+            changes: vec![change(5), change(6)],
+            journal: journal.clone(),
+            after: 4,
+            next: 6,
+            current: 6,
+            more: false,
+            truncated: false,
+        };
+        assert!(page.has_consistent_completion());
+
+        let mut substituted = page.clone();
+        substituted.changes[1].cursor.journal = "fedcba9876543210fedcba9876543210".into();
+        assert!(!substituted.has_consistent_completion());
+        let mut reordered = page;
+        reordered.changes.swap(0, 1);
+        assert!(!reordered.has_consistent_completion());
     }
 }
 
@@ -1971,9 +2026,9 @@ pub trait WorkspaceFiles {
 #[cfg(test)]
 mod tests {
     use super::{
-        Division, LayoutNode, NetworkStore, Occupant, PANE_LINES, PANE_TEXT_BYTES, PaneSummary, PaneText,
-        TerminalHistoryCursor, TerminalHistoryPage, TerminalLifecycle, bounded_pane_text, bounded_terminal_history,
-        pane_lines,
+        bounded_pane_text, bounded_terminal_history, pane_lines, Division, LayoutNode, NetworkStore, Occupant,
+        PaneSummary, PaneText, TerminalHistoryCursor, TerminalHistoryPage, TerminalLifecycle, PANE_LINES,
+        PANE_TEXT_BYTES,
     };
 
     #[test]
@@ -2120,71 +2175,59 @@ mod tests {
             protocol: crate::PROTOCOL,
             architectures: vec!["amd64".into()],
         };
-        assert!(
-            super::ExtensionCatalogue {
-                entries: vec![entry.clone()],
-                complete: true,
-            }
-            .validate()
-            .is_ok()
-        );
-        assert!(
-            super::ExtensionCatalogue {
-                entries: vec![entry.clone(), entry.clone()],
-                complete: true,
-            }
-            .validate()
-            .is_err()
-        );
-        assert!(
-            super::ExtensionCatalogue {
-                entries: vec![super::ExtensionCatalogueEntry {
-                    architectures: vec!["amd64".into(), "amd64".into()],
-                    ..entry.clone()
-                }],
-                complete: true,
-            }
-            .validate()
-            .is_err()
-        );
-        assert!(
-            super::ExtensionCatalogue {
-                entries: vec![super::ExtensionCatalogueEntry {
-                    version: String::new(),
-                    ..entry.clone()
-                }],
-                complete: true,
-            }
-            .validate()
-            .is_err()
-        );
+        assert!(super::ExtensionCatalogue {
+            entries: vec![entry.clone()],
+            complete: true,
+        }
+        .validate()
+        .is_ok());
+        assert!(super::ExtensionCatalogue {
+            entries: vec![entry.clone(), entry.clone()],
+            complete: true,
+        }
+        .validate()
+        .is_err());
+        assert!(super::ExtensionCatalogue {
+            entries: vec![super::ExtensionCatalogueEntry {
+                architectures: vec!["amd64".into(), "amd64".into()],
+                ..entry.clone()
+            }],
+            complete: true,
+        }
+        .validate()
+        .is_err());
+        assert!(super::ExtensionCatalogue {
+            entries: vec![super::ExtensionCatalogueEntry {
+                version: String::new(),
+                ..entry.clone()
+            }],
+            complete: true,
+        }
+        .validate()
+        .is_err());
         for categories in [
             Vec::new(),
             vec!["Data".into(), "Data".into()],
             vec!["unsafe\ncategory".into()],
         ] {
-            assert!(
-                super::ExtensionCatalogue {
-                    entries: vec![super::ExtensionCatalogueEntry {
-                        categories,
-                        ..entry.clone()
-                    }],
-                    complete: true,
-                }
-                .validate()
-                .is_err()
-            );
-        }
-        assert!(
-            super::ExtensionCatalogue {
+            assert!(super::ExtensionCatalogue {
                 entries: vec![super::ExtensionCatalogueEntry {
-                    description: "unsafe\nmetadata".into(),
-                    ..entry
+                    categories,
+                    ..entry.clone()
                 }],
                 complete: true,
             }
             .validate()
-            .is_err()
-        );
+            .is_err());
+        }
+        assert!(super::ExtensionCatalogue {
+            entries: vec![super::ExtensionCatalogueEntry {
+                description: "unsafe\nmetadata".into(),
+                ..entry
+            }],
+            complete: true,
+        }
+        .validate()
+        .is_err());
     }
 }
