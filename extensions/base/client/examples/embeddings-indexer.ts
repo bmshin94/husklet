@@ -1,5 +1,6 @@
 import {
   FileTextOperationError,
+  FileWalkOperationError,
   StateWriteOperationError,
   StateWriteProtocolError,
   connect,
@@ -90,13 +91,31 @@ try {
   const wanted = (entry: FileEntry) =>
     !entry.directory && suffixes.some((suffix) => entry.path.endsWith(suffix));
 
+  const walkResiliently = async function* (path: string) {
+    let entries = host.files.walk(path, { signal: controller.signal });
+    for (;;) {
+      try {
+        for await (const entry of entries) yield entry;
+        return;
+      } catch (cause) {
+        if (!(cause instanceof FileWalkOperationError)) throw cause;
+        await session.close().catch(() => {});
+        session = await connect({ path: configuration.path, pendingLimit: 8, timeout: 30_000 });
+        host = workspace(session);
+        entries = host.files.resumeWalk(cause, { signal: controller.signal });
+      }
+    }
+  };
+
   const index = async (
     entry: FileEntry,
     persist = true,
     signal: AbortSignal = controller.signal,
   ) => {
     const exact = entry.identity ? entry : await host.files.stat(entry.path);
-    if (!exact.identity || checkpoint.documents[entry.path]?.identity === exact.identity) return;
+    if (!exact.identity) return;
+    const retained = checkpoint.documents[entry.path];
+    if (retained?.identity === exact.identity) return retained;
     let document;
     try {
       document = await host.files.readText(entry.path, {
@@ -181,7 +200,7 @@ try {
         if (document) scanned[entry.path] = document;
       }
     } else {
-      for await (const entry of host.files.walk(root.path, { signal: controller.signal })) {
+      for await (const entry of walkResiliently(root.path)) {
         if (wanted(entry)) {
           const document = await index(entry, false);
           if (document) scanned[entry.path] = document;

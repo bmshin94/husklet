@@ -894,6 +894,18 @@ export class FileChunkOperationError extends Error {
         });
     }
 }
+/** A recursive walk lost its session after preserving the exact per-directory continuation stack. */
+export class FileWalkOperationError extends Error {
+    resume;
+    constructor(resume, cause) {
+        super(`filesystem walk of ${resume.root} lost its session and can be resumed`, { cause });
+        this.name = 'FileWalkOperationError';
+        this.resume = Object.freeze({
+            ...resume,
+            stack: Object.freeze(resume.stack.map((frame) => Object.freeze({ ...frame }))),
+        });
+    }
+}
 /** A bounded text read lost transport after an exact prefix had been acknowledged. */
 export class FileTextOperationError extends Error {
     path;
@@ -1716,6 +1728,94 @@ export function workspace(session, { signal } = {}) {
         });
         state.operation = operation.catch(() => { });
         await operation;
+    };
+    const exactWalkResume = (candidate) => {
+        if (candidate === null ||
+            typeof candidate !== 'object' ||
+            candidate.version !== 1)
+            throw new TypeError('filesystem walk resume token must have version 1');
+        const token = candidate;
+        exactFilesystemPageSize(token.pageSize);
+        encodeRequest('filesystem_stat', { path: token.root });
+        if (!Array.isArray(token.stack) || token.stack.length < 1 || token.stack.length > 1_024)
+            throw new RangeError('filesystem walk resume stack must contain 1 through 1024 directories');
+        token.stack.forEach((frame, index) => {
+            if (frame === null || typeof frame !== 'object')
+                throw new TypeError('filesystem walk resume frame must be an object');
+            encodeRequest('filesystem_stat', { path: frame.path });
+            if ((frame.identity !== null &&
+                (typeof frame.identity !== 'string' ||
+                    !frame.identity ||
+                    new TextEncoder().encode(frame.identity).byteLength > 256)) ||
+                (frame.after !== null && typeof frame.after !== 'string') ||
+                (frame.after !== null && frame.identity === null) ||
+                (frame.after !== null && !isDirectFilesystemChild(frame.path, frame.after)) ||
+                (index === 0 && frame.path !== token.root) ||
+                (index > 0 && !isDirectFilesystemChild(token.stack[index - 1].path, frame.path)))
+                throw new TypeError('filesystem walk resume frame carries inconsistent cursor authority');
+        });
+        return token;
+    };
+    const walkFrom = async function* (token, pageSize, walkSignal) {
+        const stack = token.stack.map((frame) => ({
+            path: frame.path,
+            after: frame.after,
+            observed: frame.identity,
+            entries: [],
+            index: 0,
+            more: true,
+        }));
+        const recovery = () => ({
+            version: 1,
+            root: token.root,
+            pageSize: token.pageSize,
+            stack: stack.map(({ path, observed: identity, after }) => ({ path, identity, after })),
+        });
+        while (stack.length > 0) {
+            const current = stack.at(-1);
+            if (current.index < current.entries.length) {
+                const entry = current.entries[current.index++];
+                current.after = entry.path;
+                const child = entry.directory ? entry.path : null;
+                yield entry;
+                if (child !== null) {
+                    stack.push({
+                        path: child,
+                        after: null,
+                        observed: null,
+                        entries: [],
+                        index: 0,
+                        more: true,
+                    });
+                }
+                continue;
+            }
+            if (!current.more) {
+                stack.pop();
+                continue;
+            }
+            requireFilesystemActive(walkSignal);
+            let page;
+            try {
+                page = await api.files.listPage(current.path, {
+                    after: current.after,
+                    observed: current.observed,
+                    limit: pageSize,
+                });
+                requireFilesystemActive(walkSignal);
+            }
+            catch (cause) {
+                if (cause instanceof DirectoryIdentityChangedError ||
+                    cause instanceof ExtensionError ||
+                    cause instanceof TypeError)
+                    throw cause;
+                throw new FileWalkOperationError(recovery(), cause);
+            }
+            current.observed ??= page.identity;
+            current.entries = page.entries;
+            current.index = 0;
+            current.more = page.more;
+        }
     };
     const api = {
         get granted() {
@@ -3952,44 +4052,21 @@ export function workspace(session, { signal } = {}) {
             },
             walk: async function* (path, { pageSize = 256, signal } = {}) {
                 exactFilesystemPageSize(pageSize);
-                const stack = [
-                    { path, after: null, observed: null, entries: [], index: 0, more: true },
-                ];
-                while (stack.length > 0) {
-                    const current = stack.at(-1);
-                    if (current.index < current.entries.length) {
-                        const entry = current.entries[current.index++];
-                        const child = entry.directory ? entry.path : null;
-                        yield entry;
-                        if (child !== null) {
-                            stack.push({
-                                path: child,
-                                after: null,
-                                observed: null,
-                                entries: [],
-                                index: 0,
-                                more: true,
-                            });
-                        }
-                        continue;
-                    }
-                    if (!current.more) {
-                        stack.pop();
-                        continue;
-                    }
-                    requireFilesystemActive(signal);
-                    const page = await api.files.listPage(current.path, {
-                        after: current.after,
-                        observed: current.observed,
-                        limit: pageSize,
-                    });
-                    requireFilesystemActive(signal);
-                    current.observed ??= page.identity;
-                    current.entries = page.entries;
-                    current.index = 0;
-                    current.more = page.more;
-                    current.after = page.next;
-                }
+                encodeRequest('filesystem_stat', { path });
+                yield* walkFrom({
+                    version: 1,
+                    root: path,
+                    pageSize,
+                    stack: [{ path, identity: null, after: null }],
+                }, pageSize, signal);
+            },
+            resumeWalk: async function* (failure, { pageSize, signal } = {}) {
+                const token = exactWalkResume(failure instanceof FileWalkOperationError ? failure.resume : failure);
+                const resumedPageSize = pageSize ?? token.pageSize;
+                exactFilesystemPageSize(resumedPageSize);
+                if (resumedPageSize > token.pageSize)
+                    throw new RangeError('filesystem walk recovery cannot widen its page bound');
+                yield* walkFrom(token, resumedPageSize, signal);
             },
             read: async (path) => expect(await session.call('filesystem_read', { path }), 'contents'),
             readLink: async (path) => expect(await session.call('filesystem_read_link', { path }), 'contents'),
@@ -7229,6 +7306,7 @@ export const protocolCoverage = Object.freeze({
             'list',
             'listPage',
             'walk',
+            'resumeWalk',
             'read',
             'readLink',
             'readRange',

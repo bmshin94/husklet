@@ -384,6 +384,11 @@ test('embeddings indexer pages beyond a truncated inventory over fragmented Unix
                   revision: 6,
                   documents: {
                     'src/deleted.md': { identity: 'deleted-v1', digest: 'old', bytes: 3 },
+                    'src/unchanged.md': {
+                      identity: 'unchanged-v1',
+                      digest: 'retained',
+                      bytes: 9,
+                    },
                     'notes/retained.md': { identity: 'outside-v1', digest: 'keep', bytes: 4 },
                   },
                 }),
@@ -415,9 +420,15 @@ test('embeddings indexer pages beyond a truncated inventory over fragmented Unix
                 size: document.length,
                 identity: 'doc-v1',
               },
+              {
+                path: 'src/unchanged.md',
+                directory: false,
+                size: 9,
+                identity: 'unchanged-v1',
+              },
             ],
             identity: 'src-v1',
-            next: 'src/a.md',
+            next: 'src/unchanged.md',
             more: false,
           },
         });
@@ -457,6 +468,8 @@ test('embeddings indexer pages beyond a truncated inventory over fragmented Unix
           /"src\/a.md":\{"identity":"doc-v1","digest":"[0-9a-f]{64}","bytes":16\}/,
         );
         assert.doesNotMatch(checkpoint, /src\/deleted.md/);
+        assert.match(checkpoint, /src\/unchanged.md/);
+        assert.match(checkpoint, /"digest":"retained"/);
         assert.match(checkpoint, /notes\/retained.md/);
         respondFragmented(socket, frame, {
           reply: 'state_write',

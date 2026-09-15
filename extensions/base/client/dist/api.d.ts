@@ -672,6 +672,19 @@ export interface FileCursor {
     journal: string;
     revision: number;
 }
+export interface FileWalkResumeFrame {
+    readonly path: string;
+    readonly identity: string | null;
+    /** Last direct child already yielded to the consumer. */
+    readonly after: string | null;
+}
+/** JSON-persistable authority for continuing an interrupted recursive walk without duplicates. */
+export interface FileWalkResumeToken {
+    readonly version: 1;
+    readonly root: string;
+    readonly pageSize: number;
+    readonly stack: readonly FileWalkResumeFrame[];
+}
 export interface FileChange {
     revision: number;
     kind: 'create' | 'modify' | 'remove' | 'invalidate';
@@ -1186,6 +1199,11 @@ export declare class FileChunkOperationError extends Error {
     readonly maxBytes: number;
     readonly maxChunks: number;
     readonly resume: Readonly<FileChunkResume>;
+    readonly cause: unknown;
+}
+/** A recursive walk lost its session after preserving the exact per-directory continuation stack. */
+export declare class FileWalkOperationError extends Error {
+    readonly resume: Readonly<FileWalkResumeToken>;
     readonly cause: unknown;
 }
 export interface FileChunkResume {
@@ -2550,6 +2568,11 @@ export interface WorkspaceApi {
         /** Depth-first traversal with bounded pages and memory proportional to active directory depth. */
         /** Recursively walk with consumer-driven paging; yielded entries cannot redirect traversal. */
         walk(path: string, options?: {
+            pageSize?: number;
+            signal?: AbortSignal;
+        }): AsyncGenerator<FileEntry, void, void>;
+        /** Continue an interrupted walk after reconnect without replaying entries already yielded. */
+        resumeWalk(failure: FileWalkOperationError | FileWalkResumeToken, options?: {
             pageSize?: number;
             signal?: AbortSignal;
         }): AsyncGenerator<FileEntry, void, void>;

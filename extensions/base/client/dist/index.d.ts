@@ -375,6 +375,11 @@ export declare class FileChunkOperationError extends Error {
     readonly resume: any;
     constructor(path: any, identity: any, offset: any, total: any, deliveredBytes: any, deliveredChunks: any, maxBytes: any, maxChunks: any, cause: any);
 }
+/** A recursive walk lost its session after preserving the exact per-directory continuation stack. */
+export declare class FileWalkOperationError extends Error {
+    readonly resume: any;
+    constructor(resume: any, cause: any);
+}
 /** A bounded text read lost transport after an exact prefix had been acknowledged. */
 export declare class FileTextOperationError extends Error {
     readonly path: any;
