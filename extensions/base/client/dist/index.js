@@ -106,6 +106,35 @@ export class PostgresPageProtocolError extends Error {
         this.receivedCursor = receivedCursor;
     }
 }
+/** The host returned a PostgreSQL page whose bounded tabular shape is invalid. */
+export class PostgresPageShapeProtocolError extends Error {
+    reason;
+    page;
+    constructor(reason, page) {
+        super(`host returned an invalid PostgreSQL page: ${reason}`);
+        this.name = 'PostgresPageShapeProtocolError';
+        this.reason = reason;
+        this.page = page;
+    }
+}
+function validatePostgresPageShape(page, requestedCursor) {
+    if (!Array.isArray(page.columns) || page.columns.length > 256)
+        throw new PostgresPageShapeProtocolError('columns are not a bounded array', page);
+    if (page.columns.some((column) => typeof column !== 'string'))
+        throw new PostgresPageShapeProtocolError('a column name is not text', page);
+    if (!Array.isArray(page.rows))
+        throw new PostgresPageShapeProtocolError('rows are not an array', page);
+    if (page.rows.some((row) => !Array.isArray(row) ||
+        row.length !== page.columns.length ||
+        row.some((cell) => cell !== null && typeof cell !== 'string')))
+        throw new PostgresPageShapeProtocolError('a row does not match the declared columns', page);
+    if (!Number.isInteger(page.bytes) || page.bytes < 0 || page.bytes > 0xffff_ffff)
+        throw new PostgresPageShapeProtocolError('byte count is not an unsigned 32-bit integer', page);
+    const next = page.next_cursor ?? null;
+    if ((next !== null && (typeof next !== 'string' || next.length === 0)) ||
+        next === requestedCursor)
+        throw new PostgresPageShapeProtocolError('next cursor does not advance', page);
+}
 /** The host returned database state for another lease or query. */
 export class PostgresStateProtocolError extends Error {
     expectedLease;
@@ -4789,6 +4818,7 @@ export function workspace(session, { signal } = {}) {
                 if (page.lease !== lease || page.query !== query || receivedCursor !== requestedCursor) {
                     throw new PostgresPageProtocolError(lease, query, requestedCursor, page.lease, page.query, receivedCursor);
                 }
+                validatePostgresPageShape(page, requestedCursor);
                 return page;
             },
             cancel: async (lease, query) => {

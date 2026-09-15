@@ -1116,6 +1116,11 @@ export declare class PostgresPageProtocolError extends Error {
     readonly receivedQuery: PostgresQueryId;
     readonly receivedCursor: PostgresCursor | null;
 }
+/** The host returned a PostgreSQL page whose bounded tabular shape is invalid. */
+export declare class PostgresPageShapeProtocolError extends Error {
+    readonly reason: string;
+    readonly page: Readonly<PostgresPage>;
+}
 /** The host returned database state for another lease or query. */
 export declare class PostgresStateProtocolError extends Error {
     readonly expectedLease: PostgresLeaseId;
