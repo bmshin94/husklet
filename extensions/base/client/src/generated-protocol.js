@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:ab00dccce68567e3
+// Protocol artifact fnv1a64:92d50c980d9158c1
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -266,6 +266,16 @@ export const PROTOCOL_CAPABILITIES = Object.freeze([
     "executes": false,
     "mutates": true,
     "wire": "credentials:write"
+  },
+  {
+    "executes": false,
+    "mutates": false,
+    "wire": "postgres:read"
+  },
+  {
+    "executes": false,
+    "mutates": true,
+    "wire": "postgres:write"
   },
   {
     "executes": false,
@@ -629,13 +639,13 @@ export const PROTOCOL_REQUEST_CAPABILITIES = Object.freeze({
   "credential_read": "credentials:read",
   "credential_set": "credentials:write",
   "credential_remove": "credentials:write",
-  "postgres_open_once": "credentials:use",
-  "postgres_query_start_once": "credentials:use",
-  "postgres_query_status": "credentials:use",
-  "postgres_query_page": "credentials:use",
-  "postgres_query_cancel": "credentials:use",
-  "postgres_query_close": "credentials:use",
-  "postgres_lease_close": "credentials:use",
+  "postgres_open_once": "postgres:read",
+  "postgres_query_start_once": "postgres:write",
+  "postgres_query_status": "postgres:read",
+  "postgres_query_page": "postgres:read",
+  "postgres_query_cancel": "postgres:read",
+  "postgres_query_close": "postgres:read",
+  "postgres_lease_close": "postgres:read",
   "interface_open_tab": "interface:render",
   "interface_split": "interface:render",
   "interface_withdraw": "interface:render",
@@ -1005,6 +1015,18 @@ const definitions = {
       },
       {
         "name": "credentials:write",
+        "payload": {
+          "kind": "unit"
+        }
+      },
+      {
+        "name": "postgres:read",
+        "payload": {
+          "kind": "unit"
+        }
+      },
+      {
+        "name": "postgres:write",
         "payload": {
           "kind": "unit"
         }

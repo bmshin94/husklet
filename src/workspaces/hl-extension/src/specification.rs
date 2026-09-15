@@ -295,12 +295,12 @@ fn request_capability(request: &str) -> Capability {
         "credential_read" => Capability::CredentialRead,
         "credential_set" | "credential_remove" => Capability::CredentialWrite,
         "postgres_open_once"
-        | "postgres_query_start_once"
         | "postgres_query_status"
         | "postgres_query_page"
         | "postgres_query_cancel"
         | "postgres_query_close"
-        | "postgres_lease_close" => Capability::CredentialUse,
+        | "postgres_lease_close" => Capability::PostgresRead,
+        "postgres_query_start_once" => Capability::PostgresWrite,
         "interface_open_tab"
         | "interface_split"
         | "interface_withdraw"

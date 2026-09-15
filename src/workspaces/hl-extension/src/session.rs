@@ -90,8 +90,14 @@ struct CommandInputState {
 
 #[derive(Clone, Eq, PartialEq)]
 enum CommandInputOperation {
-    Write { offset: u64, digest: [u8; 32], committed: u32 },
-    Close { offset: u64 },
+    Write {
+        offset: u64,
+        digest: [u8; 32],
+        committed: u32,
+    },
+    Close {
+        offset: u64,
+    },
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -1199,12 +1205,10 @@ impl Session {
                             });
                         }
                         if let Some(id) = record.id {
-                            return Ok(Reply::ContainerCreateOnce(
-                                crate::port::ContainerCreateOnceReceipt {
-                                    token: token.clone(),
-                                    id,
-                                },
-                            ));
+                            return Ok(Reply::ContainerCreateOnce(crate::port::ContainerCreateOnceReceipt {
+                                token: token.clone(),
+                                id,
+                            }));
                         }
                         let matches = port.reconcile_spec_once(spec, &self.extension_identity, token)?;
                         if matches.len() != 1 {
@@ -1222,12 +1226,10 @@ impl Session {
                 services
                     .state
                     .commit_container_creation(&self.extension_identity, token, spec, &id)?;
-                Ok(Reply::ContainerCreateOnce(
-                    crate::port::ContainerCreateOnceReceipt {
-                        token: token.clone(),
-                        id,
-                    },
-                ))
+                Ok(Reply::ContainerCreateOnce(crate::port::ContainerCreateOnceReceipt {
+                    token: token.clone(),
+                    id,
+                }))
             }
             Request::ContainerStart { id, generation } => {
                 let target = self.resolve_mutation_container(id, services.containers)?;
@@ -2028,13 +2030,7 @@ impl Session {
             owned.command_starts.insert(operation.clone(), committed);
             return Ok(Reply::TerminalCommandStart(crate::port::TerminalCommandStart {
                 operation: operation.clone(),
-                command: terminal_command_summary(
-                    execution,
-                    &self.extension_identity,
-                    slot,
-                    *generation,
-                    *revision,
-                ),
+                command: terminal_command_summary(execution, &self.extension_identity, slot, *generation, *revision),
             }));
         }
 
@@ -2194,7 +2190,10 @@ impl Session {
                 }
                 if input.offset != *offset {
                     return Err(Failure::Conflict {
-                        detail: format!("terminal command input offset must be {}, received {offset}", input.offset),
+                        detail: format!(
+                            "terminal command input offset must be {}, received {offset}",
+                            input.offset
+                        ),
                     });
                 }
                 if input.operations.len() >= COMMAND_INPUT_OPERATIONS {
@@ -2209,9 +2208,12 @@ impl Session {
                     });
                 }
                 services.control.execution_write(id, contents)?;
-                input.offset = input.offset.checked_add(u64::from(committed)).ok_or_else(|| Failure::Conflict {
-                    detail: "terminal command input offset overflowed".into(),
-                })?;
+                input.offset = input
+                    .offset
+                    .checked_add(u64::from(committed))
+                    .ok_or_else(|| Failure::Conflict {
+                        detail: "terminal command input offset overflowed".into(),
+                    })?;
                 input.operations.insert(operation.clone(), asked);
                 Ok(Reply::TerminalCommandInput(crate::port::TerminalCommandInput {
                     id: id.clone(),
@@ -2248,7 +2250,10 @@ impl Session {
                 }
                 if input.offset != *offset {
                     return Err(Failure::Conflict {
-                        detail: format!("terminal command input offset must be {}, received {offset}", input.offset),
+                        detail: format!(
+                            "terminal command input offset must be {}, received {offset}",
+                            input.offset
+                        ),
                     });
                 }
                 if input.operations.len() >= COMMAND_INPUT_OPERATIONS {
@@ -2357,7 +2362,11 @@ impl Session {
                     .owned_executions
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let Some(state) = owned.pane_input_writers.iter_mut().find(|state| state.writer == *writer) else {
+                let Some(state) = owned
+                    .pane_input_writers
+                    .iter_mut()
+                    .find(|state| state.writer == *writer)
+                else {
                     return Err(Failure::Conflict {
                         detail: "terminal input writer is unknown or expired; open a new writer and do not replay these bytes".into(),
                     });
@@ -2370,7 +2379,9 @@ impl Session {
                     };
                     if previous != &asked {
                         return Err(Failure::Conflict {
-                            detail: "terminal pane input sequence was already used for a different pane, cursor, or bytes".into(),
+                            detail:
+                                "terminal pane input sequence was already used for a different pane, cursor, or bytes"
+                                    .into(),
                         });
                     }
                     return Ok(Reply::TerminalPaneInput(crate::port::TerminalPaneInput {
@@ -2704,7 +2715,7 @@ impl Session {
 
     fn postgres(&self, request: &Request, services: &Services<'_>) -> Result<Reply, Failure> {
         let installation = self.peer.authority().installation().ok_or_else(|| Failure::Denied {
-            capability: Capability::CredentialUse.as_str().into(),
+            capability: request.capability().as_str().into(),
             detail: "database authority requires an authenticated installation".into(),
         })?;
         let broker = services.postgres.ok_or_else(|| Failure::Unavailable {
@@ -2712,6 +2723,10 @@ impl Session {
         })?;
         match request {
             Request::PostgresOpenOnce { operation, connection } => {
+                // Connecting consumes secret material as well as database-read
+                // authority. Keep the second check here: a request has one
+                // primary capability, but neither grant implies the other.
+                self.peer.authority().permit(Capability::CredentialUse)?;
                 connection.authorize(&self.containers, &self.networks, &self.credentials)?;
                 broker
                     .open_once(installation, operation, connection)

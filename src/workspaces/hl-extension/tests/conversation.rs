@@ -13,6 +13,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::io::Write as _;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use hl_extension::port::{
     ContainerControl, ContainerCreateSpec, ContainerInventory, ContainerSummary, ContainerVolumeMount, Division, Entry,
@@ -755,6 +756,110 @@ fn services(host: &Host) -> Services<'_> {
         notifications: host,
         postgres: None,
     }
+}
+
+#[derive(Default)]
+struct PostgresProbe(AtomicUsize);
+
+impl PostgresProbe {
+    fn called<T>(&self) -> Result<T, HostError> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        Err(HostError::Failed("postgres probe reached".into()))
+    }
+}
+
+impl hl_extension::PostgresBroker for PostgresProbe {
+    fn open_once(
+        &self,
+        _: &hl_rpc::InstallationIdentity,
+        _: &hl_extension::QueryOperationToken,
+        _: &hl_extension::PostgresConnection,
+    ) -> Result<hl_extension::PostgresOpenOutcome, HostError> {
+        self.called()
+    }
+    fn start_once(
+        &self,
+        _: &hl_rpc::InstallationIdentity,
+        _: &hl_extension::PostgresLeaseId,
+        _: &hl_extension::PostgresQuery,
+    ) -> Result<hl_extension::PostgresStartOutcome, HostError> {
+        self.called()
+    }
+    fn status(
+        &self,
+        _: &hl_rpc::InstallationIdentity,
+        _: &hl_extension::PostgresLeaseId,
+        _: &hl_extension::PostgresQueryId,
+    ) -> Result<hl_extension::PostgresQueryState, HostError> {
+        self.called()
+    }
+    fn page(
+        &self,
+        _: &hl_rpc::InstallationIdentity,
+        _: &hl_extension::PostgresLeaseId,
+        _: &hl_extension::PostgresQueryId,
+        _: Option<&hl_extension::PostgresCursor>,
+    ) -> Result<hl_extension::PostgresPage, HostError> {
+        self.called()
+    }
+    fn cancel(
+        &self,
+        _: &hl_rpc::InstallationIdentity,
+        _: &hl_extension::PostgresLeaseId,
+        _: &hl_extension::PostgresQueryId,
+    ) -> Result<hl_extension::PostgresQueryState, HostError> {
+        self.called()
+    }
+    fn close_query(
+        &self,
+        _: &hl_rpc::InstallationIdentity,
+        _: &hl_extension::PostgresLeaseId,
+        _: &hl_extension::PostgresQueryId,
+    ) -> Result<(), HostError> {
+        self.called()
+    }
+    fn close_lease(
+        &self,
+        _: &hl_rpc::InstallationIdentity,
+        _: &hl_extension::PostgresLeaseId,
+    ) -> Result<(), HostError> {
+        self.called()
+    }
+}
+
+#[test]
+fn read_only_postgres_authority_refuses_arbitrary_sql_over_a_real_socket() {
+    let (host_end, extension_end) = connected_pair();
+    let mut extension = hl_extension::Wire::new(extension_end);
+    let mut host_wire = hl_extension::Wire::new(host_end);
+    let request = Request::PostgresQueryStartOnce {
+        lease: hl_extension::PostgresLeaseId::new("lease").unwrap(),
+        query: hl_extension::PostgresQuery::new(
+            hl_extension::QueryOperationToken::new("adversarial-operation").unwrap(),
+            "COMMIT; SET TRANSACTION READ WRITE; DELETE FROM customers",
+            10,
+            1024,
+        )
+        .unwrap(),
+    };
+    extension.send(&codec::request(&request).unwrap()).unwrap();
+    let decoded = codec::read_request(&host_wire.receive().unwrap()).unwrap();
+    let postgres = PostgresProbe::default();
+    let host = Host::new();
+    let mut host_services = services(&host);
+    host_services.postgres = Some(&postgres);
+    let failure = Session::new(Authority::new(
+        ExtensionName::new("postgres-browser").unwrap(),
+        Grant::new([Capability::PostgresRead, Capability::CredentialUse]),
+        Vec::new(),
+    ))
+    .dispatch(&decoded, &host_services)
+    .expect_err("read-only database authority must not submit SQL");
+    assert!(matches!(
+        failure,
+        Failure::Denied { capability, .. } if capability == "postgres:write"
+    ));
+    assert_eq!(postgres.0.load(Ordering::Relaxed), 0, "broker must not be reached");
 }
 
 /// Records what the adapter was told to draw, so a tree that was populated

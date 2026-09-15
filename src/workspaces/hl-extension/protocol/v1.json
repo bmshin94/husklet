@@ -267,6 +267,16 @@
     {
       "executes": false,
       "mutates": false,
+      "wire": "postgres:read"
+    },
+    {
+      "executes": false,
+      "mutates": true,
+      "wire": "postgres:write"
+    },
+    {
+      "executes": false,
+      "mutates": false,
       "wire": "interface:render"
     },
     {
@@ -634,6 +644,18 @@
         },
         {
           "name": "credentials:write",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
+          "name": "postgres:read",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
+          "name": "postgres:write",
           "payload": {
             "kind": "unit"
           }
@@ -10010,31 +10032,31 @@
       "request": "credential_remove"
     },
     {
-      "capability": "credentials:use",
+      "capability": "postgres:read",
       "request": "postgres_open_once"
     },
     {
-      "capability": "credentials:use",
+      "capability": "postgres:write",
       "request": "postgres_query_start_once"
     },
     {
-      "capability": "credentials:use",
+      "capability": "postgres:read",
       "request": "postgres_query_status"
     },
     {
-      "capability": "credentials:use",
+      "capability": "postgres:read",
       "request": "postgres_query_page"
     },
     {
-      "capability": "credentials:use",
+      "capability": "postgres:read",
       "request": "postgres_query_cancel"
     },
     {
-      "capability": "credentials:use",
+      "capability": "postgres:read",
       "request": "postgres_query_close"
     },
     {
-      "capability": "credentials:use",
+      "capability": "postgres:read",
       "request": "postgres_lease_close"
     },
     {
@@ -16390,7 +16412,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:1b56153fdcfebbb5",
+  "source_fingerprint": "fnv1a64:57a14595e8fa8c19",
   "specification_version": 1,
   "topics": [
     {

@@ -814,12 +814,12 @@ impl Request {
             Self::CredentialRead { .. } => Capability::CredentialRead,
             Self::CredentialSet { .. } | Self::CredentialRemove { .. } => Capability::CredentialWrite,
             Self::PostgresOpenOnce { .. }
-            | Self::PostgresQueryStartOnce { .. }
             | Self::PostgresQueryStatus { .. }
             | Self::PostgresQueryPage { .. }
             | Self::PostgresQueryCancel { .. }
             | Self::PostgresQueryClose { .. }
-            | Self::PostgresLeaseClose { .. } => Capability::CredentialUse,
+            | Self::PostgresLeaseClose { .. } => Capability::PostgresRead,
+            Self::PostgresQueryStartOnce { .. } => Capability::PostgresWrite,
             Self::InterfaceOpenTab { .. }
             | Self::InterfaceSplit { .. }
             | Self::InterfaceWithdraw { .. }

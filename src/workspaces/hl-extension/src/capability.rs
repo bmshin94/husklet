@@ -152,6 +152,14 @@ pub enum Capability {
     /// Replaces or removes one named credential through revision compare-and-swap.
     #[serde(rename = "credentials:write")]
     CredentialWrite,
+    /// Opens and observes host-owned PostgreSQL connections and result pages.
+    /// This never authorizes submitting SQL.
+    #[serde(rename = "postgres:read")]
+    PostgresRead,
+    /// Submits arbitrary PostgreSQL statements. Because SQL classification is
+    /// not a security boundary, even a `SELECT` requires this capability.
+    #[serde(rename = "postgres:write")]
+    PostgresWrite,
     #[serde(rename = "interface:render")]
     Interface,
     /// Publishes bounded user-visible notifications outside an extension surface.
@@ -214,6 +222,8 @@ impl Capability {
             Self::CredentialExposeToExecution => "credentials:expose-to-execution",
             Self::CredentialUse => "credentials:use",
             Self::CredentialWrite => "credentials:write",
+            Self::PostgresRead => "postgres:read",
+            Self::PostgresWrite => "postgres:write",
             Self::Interface => "interface:render",
             Self::NotificationPublish => "notifications:publish",
         }
@@ -258,6 +268,7 @@ impl Capability {
                 | Self::PreferenceWrite
                 | Self::CredentialWrite
                 | Self::CredentialUse
+                | Self::PostgresWrite
                 | Self::NotificationPublish
         )
     }
@@ -330,6 +341,8 @@ impl Capability {
         Self::CredentialExposeToExecution,
         Self::CredentialUse,
         Self::CredentialWrite,
+        Self::PostgresRead,
+        Self::PostgresWrite,
         Self::Interface,
         Self::NotificationPublish,
     ];

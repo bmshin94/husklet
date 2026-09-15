@@ -6,6 +6,7 @@
 //! could be written.
 
 use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use hl_extension::port::{
     ContainerControl, ContainerInventory, ContainerOutput, ContainerSummary, DirectoryPage, Division, Entry,
@@ -1605,6 +1606,91 @@ fn services_with_state<'a>(host: &'a Host, state: &'a dyn ExtensionStateStore) -
     services
 }
 
+#[derive(Default)]
+struct PostgresProbe(AtomicUsize);
+
+impl PostgresProbe {
+    fn reached(&self) -> usize {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    fn called<T>(&self) -> Result<T, HostError> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        Err(HostError::Failed("postgres probe reached".into()))
+    }
+}
+
+impl hl_extension::PostgresBroker for PostgresProbe {
+    fn open_once(
+        &self,
+        _installation: &hl_rpc::InstallationIdentity,
+        _operation: &hl_extension::QueryOperationToken,
+        _connection: &hl_extension::PostgresConnection,
+    ) -> Result<hl_extension::PostgresOpenOutcome, HostError> {
+        self.called()
+    }
+
+    fn start_once(
+        &self,
+        _installation: &hl_rpc::InstallationIdentity,
+        _lease: &hl_extension::PostgresLeaseId,
+        _query: &hl_extension::PostgresQuery,
+    ) -> Result<hl_extension::PostgresStartOutcome, HostError> {
+        self.called()
+    }
+
+    fn status(
+        &self,
+        _installation: &hl_rpc::InstallationIdentity,
+        _lease: &hl_extension::PostgresLeaseId,
+        _query: &hl_extension::PostgresQueryId,
+    ) -> Result<hl_extension::PostgresQueryState, HostError> {
+        self.called()
+    }
+
+    fn page(
+        &self,
+        _installation: &hl_rpc::InstallationIdentity,
+        _lease: &hl_extension::PostgresLeaseId,
+        _query: &hl_extension::PostgresQueryId,
+        _cursor: Option<&hl_extension::PostgresCursor>,
+    ) -> Result<hl_extension::PostgresPage, HostError> {
+        self.called()
+    }
+
+    fn cancel(
+        &self,
+        _installation: &hl_rpc::InstallationIdentity,
+        _lease: &hl_extension::PostgresLeaseId,
+        _query: &hl_extension::PostgresQueryId,
+    ) -> Result<hl_extension::PostgresQueryState, HostError> {
+        self.called()
+    }
+
+    fn close_query(
+        &self,
+        _installation: &hl_rpc::InstallationIdentity,
+        _lease: &hl_extension::PostgresLeaseId,
+        _query: &hl_extension::PostgresQueryId,
+    ) -> Result<(), HostError> {
+        self.called()
+    }
+
+    fn close_lease(
+        &self,
+        _installation: &hl_rpc::InstallationIdentity,
+        _lease: &hl_extension::PostgresLeaseId,
+    ) -> Result<(), HostError> {
+        self.called()
+    }
+}
+
+fn services_with_postgres<'a>(host: &'a Host, postgres: &'a dyn hl_extension::PostgresBroker) -> Services<'a> {
+    let mut services = services(host);
+    services.postgres = Some(postgres);
+    services
+}
+
 fn session(capabilities: &[Capability], roots: &[&str]) -> Session {
     let roots: Vec<_> = roots
         .iter()
@@ -1679,6 +1765,59 @@ fn workspace_configuration() -> WorkspaceConfiguration {
         postgres: None,
         execution_lifetime: "persisted".into(),
         terminal: WorkspaceTerminal::default(),
+    }
+}
+
+#[test]
+fn postgres_sql_requires_write_and_open_requires_both_read_and_secret_use() {
+    let host = Host::new();
+    let postgres = PostgresProbe::default();
+    let services = services_with_postgres(&host, &postgres);
+    let open = Request::PostgresOpenOnce {
+        operation: hl_extension::QueryOperationToken::new("open-operation").unwrap(),
+        connection: hl_extension::PostgresConnection {
+            container_id: "a".repeat(64),
+            container_generation: 1,
+            network: "db".into(),
+            port: 5432,
+            database: "app".into(),
+            user: "reader".into(),
+            credential_keys: vec!["postgres.password".into()],
+        },
+    };
+
+    for capabilities in [vec![Capability::CredentialUse], vec![Capability::PostgresRead]] {
+        let failure = session(&capabilities, &[])
+            .dispatch(&open, &services)
+            .expect_err("one half of the connection authority must not be sufficient");
+        assert!(matches!(failure, Failure::Denied { .. }));
+        assert_eq!(postgres.reached(), 0, "denial must precede the database broker");
+    }
+
+    for statement in [
+        "SELECT * FROM customers",
+        "DELETE FROM customers",
+        "COMMIT; DELETE FROM customers",
+        "SET TRANSACTION READ WRITE",
+    ] {
+        let request = Request::PostgresQueryStartOnce {
+            lease: hl_extension::PostgresLeaseId::new("lease").unwrap(),
+            query: hl_extension::PostgresQuery::new(
+                hl_extension::QueryOperationToken::new(format!("operation-{statement}")).unwrap(),
+                statement,
+                10,
+                1024,
+            )
+            .unwrap(),
+        };
+        let failure = session(&[Capability::PostgresRead, Capability::CredentialUse], &[])
+            .dispatch(&request, &services)
+            .expect_err("read authority must never submit caller-controlled SQL");
+        assert!(matches!(
+            failure,
+            Failure::Denied { capability, .. } if capability == "postgres:write"
+        ));
+        assert_eq!(postgres.reached(), 0, "SQL denial must precede the database broker");
     }
 }
 
@@ -2539,7 +2678,7 @@ fn all_calls() -> Vec<(Request, Capability)> {
                     credential_keys: vec!["postgres.password".into()],
                 },
             },
-            Capability::CredentialUse,
+            Capability::PostgresRead,
         ),
         (
             Request::PostgresQueryStartOnce {
@@ -2552,14 +2691,14 @@ fn all_calls() -> Vec<(Request, Capability)> {
                 )
                 .unwrap(),
             },
-            Capability::CredentialUse,
+            Capability::PostgresWrite,
         ),
         (
             Request::PostgresQueryStatus {
                 lease: hl_extension::PostgresLeaseId::new("lease").unwrap(),
                 query: hl_extension::PostgresQueryId::new("query").unwrap(),
             },
-            Capability::CredentialUse,
+            Capability::PostgresRead,
         ),
         (
             Request::PostgresQueryPage {
@@ -2567,27 +2706,27 @@ fn all_calls() -> Vec<(Request, Capability)> {
                 query: hl_extension::PostgresQueryId::new("query").unwrap(),
                 cursor: None,
             },
-            Capability::CredentialUse,
+            Capability::PostgresRead,
         ),
         (
             Request::PostgresQueryCancel {
                 lease: hl_extension::PostgresLeaseId::new("lease").unwrap(),
                 query: hl_extension::PostgresQueryId::new("query").unwrap(),
             },
-            Capability::CredentialUse,
+            Capability::PostgresRead,
         ),
         (
             Request::PostgresQueryClose {
                 lease: hl_extension::PostgresLeaseId::new("lease").unwrap(),
                 query: hl_extension::PostgresQueryId::new("query").unwrap(),
             },
-            Capability::CredentialUse,
+            Capability::PostgresRead,
         ),
         (
             Request::PostgresLeaseClose {
                 lease: hl_extension::PostgresLeaseId::new("lease").unwrap(),
             },
-            Capability::CredentialUse,
+            Capability::PostgresRead,
         ),
         (
             Request::ContainerExecCredential {
