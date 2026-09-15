@@ -5075,9 +5075,20 @@ export function workspace(session, { signal } = {}) {
             !Array.isArray(resume.cursors) ||
             (resume.columns !== null && !Array.isArray(resume.columns)) ||
             !Number.isSafeInteger(resume.pages) ||
-            !Number.isSafeInteger(resume.maxPages))
+            resume.pages < 0 ||
+            !Number.isSafeInteger(resume.maxPages) ||
+            resume.maxPages < 1 ||
+            resume.maxPages > 1_000_000 ||
+            resume.pages > resume.maxPages)
             throw new TypeError('postgres page recovery requires a version 1 resume token');
-        return postgresPages(resume.lease, resume.query, { ...resume, signal: options.signal });
+        const maxPages = options.maxPages ?? resume.maxPages;
+        if (!Number.isSafeInteger(maxPages) || maxPages < resume.pages || maxPages > resume.maxPages)
+            throw new RangeError('postgres page recovery cannot widen or reset its retained page bound');
+        return postgresPages(resume.lease, resume.query, {
+            ...resume,
+            maxPages,
+            signal: options.signal,
+        });
     };
     const watch = async (topic, snapshot, listener, label) => {
         if (typeof listener !== 'function')

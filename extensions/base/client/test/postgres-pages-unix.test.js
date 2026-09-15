@@ -193,6 +193,33 @@ test('PostgreSQL pages resume exactly after reconnect and reject cross-page drif
     const bounded = workspace(second).postgres.pages('lease-1', 'query-bounded', { maxPages: 1 });
     await bounded.next();
     await assert.rejects(bounded.next(), /exceeded its 1 page limit/);
+    const beforeRecoveryValidation = requested.length;
+    const retained = {
+      version: 1,
+      lease: 'lease-1',
+      query: 'query-bounded',
+      cursor: null,
+      columns: null,
+      cursors: [],
+      pages: 0,
+      maxPages: 3,
+    };
+    assert.throws(
+      () => workspace(second).postgres.resumePages(retained, { maxPages: 4 }),
+      /cannot widen or reset/,
+    );
+    assert.throws(
+      () => workspace(second).postgres.resumePages({ ...retained, pages: -1 }),
+      /version 1 resume token/,
+    );
+    assert.equal(
+      requested.length,
+      beforeRecoveryValidation,
+      'invalid recovery budgets fail before another database request',
+    );
+    const tightened = workspace(second).postgres.resumePages(retained, { maxPages: 1 });
+    assert.deepEqual((await tightened.next()).value.rows, [['1']]);
+    await assert.rejects(tightened.next(), /exceeded its 1 page limit/);
     await second.close();
   } finally {
     for (const peer of peers) peer.destroy();

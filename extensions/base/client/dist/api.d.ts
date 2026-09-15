@@ -2811,10 +2811,14 @@ export interface WorkspaceApi {
         page(lease: PostgresLeaseId, query: PostgresQueryId, cursor?: PostgresCursor): Promise<PostgresPage>;
         /** Iterate bounded pages while rejecting schema changes and cursor cycles. */
         pages(lease: PostgresLeaseId, query: PostgresQueryId, options?: {
+            /** Total pages permitted for this stream, including empty pages; defaults to 4,096. */
+            maxPages?: number;
             signal?: AbortSignal;
         }): AsyncGenerator<PostgresPage, void, void>;
         /** Continue a page iterator from the exact cursor preserved after lost transport. */
         resumePages(recovery: PostgresPagesOperationError | PostgresPagesResumeToken, options?: {
+            /** May tighten, but never widen or reset, the retained cross-reconnect ceiling. */
+            maxPages?: number;
             signal?: AbortSignal;
         }): AsyncGenerator<PostgresPage, void, void>;
         cancel(lease: PostgresLeaseId, query: PostgresQueryId): Promise<PostgresQueryState>;

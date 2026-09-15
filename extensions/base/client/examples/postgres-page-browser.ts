@@ -24,10 +24,12 @@ type Configuration = {
   passwordCredential: string;
   statement: string;
   maxRows?: number;
+  maxPages?: number;
 };
 
 const configuration = JSON.parse(process.argv[2] ?? 'null') as Configuration | null;
 const maxRows = configuration?.maxRows ?? 1_000_000;
+const maxPages = configuration?.maxPages ?? 4_096;
 if (
   !configuration?.path ||
   !configuration.openOperation ||
@@ -41,7 +43,10 @@ if (
   !configuration.statement ||
   !Number.isSafeInteger(maxRows) ||
   maxRows < 1 ||
-  maxRows > 1_000_000
+  maxRows > 1_000_000 ||
+  !Number.isSafeInteger(maxPages) ||
+  maxPages < 1 ||
+  maxPages > 1_000_000
 ) {
   throw new TypeError('invalid PostgreSQL browser configuration');
 }
@@ -99,7 +104,7 @@ const started = await retryAfterDisconnect(() => host.postgres.startOnce(opened.
 let rowCount = 0;
 let columns: string[] = [];
 const preview: Array<Array<string | null>> = [];
-let pages = host.postgres.pages(opened.lease, started.query);
+let pages = host.postgres.pages(opened.lease, started.query, { maxPages });
 let incomplete = true;
 try {
   while (incomplete && rowCount < maxRows) {
@@ -112,7 +117,7 @@ try {
       await session.close().catch(() => {});
       session = await connect({ path: configuration.path, pendingLimit: 4, timeout: 5_000 });
       host = workspace(session);
-      pages = host.postgres.resumePages(recovery);
+      pages = host.postgres.resumePages(recovery, { maxPages });
       continue;
     }
     if (item.done) {

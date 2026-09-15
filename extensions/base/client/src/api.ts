@@ -2839,12 +2839,20 @@ export interface WorkspaceApi {
     pages(
       lease: PostgresLeaseId,
       query: PostgresQueryId,
-      options?: { signal?: AbortSignal },
+      options?: {
+        /** Total pages permitted for this stream, including empty pages; defaults to 4,096. */
+        maxPages?: number;
+        signal?: AbortSignal;
+      },
     ): AsyncGenerator<PostgresPage, void, void>;
     /** Continue a page iterator from the exact cursor preserved after lost transport. */
     resumePages(
       recovery: PostgresPagesOperationError | PostgresPagesResumeToken,
-      options?: { signal?: AbortSignal },
+      options?: {
+        /** May tighten, but never widen or reset, the retained cross-reconnect ceiling. */
+        maxPages?: number;
+        signal?: AbortSignal;
+      },
     ): AsyncGenerator<PostgresPage, void, void>;
     cancel(lease: PostgresLeaseId, query: PostgresQueryId): Promise<PostgresQueryState>;
     /** Preserve exact cancellation authority when the state receipt is lost. */
