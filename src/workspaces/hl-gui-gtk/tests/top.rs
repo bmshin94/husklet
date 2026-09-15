@@ -409,14 +409,12 @@ mod unix {
                     "{fixture}/{name} compact section chooser used only {chooser_bounds:?} of its {width}px row"
                 );
                 assert_eq!(chooser.tooltip_text().as_deref(), Some("Workspace section"));
-                assert!(!has_label(&root, "Section"), "compact navigation retained its overlapping label");
-                assert!(chooser.grab_focus(), "compact section chooser is keyboard reachable");
-                assert_compact_chooser_pixels(
-                    &window,
-                    &root,
-                    width,
-                    &format!("{fixture}/{name}/{width_name}"),
+                assert!(
+                    !has_label(&root, "Section"),
+                    "compact navigation retained its overlapping label"
                 );
+                assert!(chooser.grab_focus(), "compact section chooser is keyboard reachable");
+                assert_compact_chooser_pixels(&window, &root, width, &format!("{fixture}/{name}/{width_name}"));
             }
             if fixture == "populated" {
                 let refresh_context = match name {
@@ -3959,7 +3957,7 @@ mod unix {
         drain_extension_renders(wire, tree, surface);
 
         let review_root = surface.widget().clone().upcast::<gtk::Widget>();
-        assert!(has_label(&review_root, "No access selected · 19 requested"));
+        assert!(has_label(&review_root, "No access selected · 21 requested"));
         assert!(has_label(&review_root, "Unverified publisher"));
         assert!(has_label(&review_root, "Community"));
         let identity = find_expander(&review_root, "Package identity");
@@ -4667,7 +4665,7 @@ mod unix {
                 let status = find_label(
                     root,
                     if state == "update-required" {
-                        "No access selected · 19 requested"
+                        "No access selected · 21 requested"
                     } else {
                         "Review decision · 9/19 selected"
                     },
