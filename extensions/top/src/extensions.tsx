@@ -681,9 +681,33 @@ export function Extensions({
   const installedSnapshot = React.useRef<ExtensionSummary[]>([]);
   const catalogueEpoch = React.useRef(0);
   const workspaceIdentityEpoch = React.useRef(0);
+  const acquisitionEpoch = React.useRef(0);
   const lifecycleInFlight = React.useRef(false);
   const acquisitionInFlight = React.useRef(false);
   const openingInFlight = React.useRef('');
+
+  React.useEffect(() => {
+    // Acquisition jobs and their reviewed grants belong to one workspace API.
+    // A replacement connection must never inherit a candidate (or an async
+    // completion) from the workspace it replaced.
+    ++acquisitionEpoch.current;
+    acquisitionInFlight.current = false;
+    cancelling.current = false;
+    cancelledJob.current = '';
+    candidateKey.current = '';
+    setAcquisition(null);
+    setCatalogueExpectation(null);
+    setGranted([]);
+    setGrantedContainers({ selectors: [], create: false });
+    setGrantedImages({ read: [], use: [], pull: [], remove: [], prune_all_unused: false });
+    setGrantedNetworks({ selectors: [], create: false });
+    setGrantedVolumes({ selectors: [], create: false });
+    setGrantedFilesystem(emptyFilesystemGrant());
+    setGrantedWorkspaceEnvironment({ read: [], write: [] });
+    setGrantedCredentials({ read: [], write: [], expose_to_execution: [] });
+    setBusy('');
+    setError('');
+  }, [api]);
 
   const selectMode = (next: ExtensionMode) => {
     if (next === mode) return;
@@ -809,6 +833,7 @@ export function Extensions({
     const wanted = (suggested ?? reference).trim();
     if (!wanted || busy || acquisitionInFlight.current) return;
     acquisitionInFlight.current = true;
+    const epoch = ++acquisitionEpoch.current;
     setReference(wanted);
     setCatalogueExpectation(expected);
     setBusy('inspect');
@@ -822,8 +847,10 @@ export function Extensions({
       const started = await api.extensions.startAcquisition(wanted, {
         refresh: expected !== null,
       });
+      if (acquisitionEpoch.current !== epoch) return;
       cancelledJob.current = '';
       let status = await api.extensions.acquisition(started.job);
+      if (acquisitionEpoch.current !== epoch) return;
       while (true) {
         if (!isInstalledCandidateUnchanged(status.candidate)) setAcquisition(status);
         if (status.candidate && !isInstalledCandidateUnchanged(status.candidate)) {
@@ -860,6 +887,7 @@ export function Extensions({
           // to the host-owned job for however long the registry operation needs.
           timeoutMs: 1_000,
         });
+        if (acquisitionEpoch.current !== epoch) return;
         if (changed.changed) status = changed.status;
       }
       if (isInstalledCandidateUnchanged(status.candidate)) {
@@ -870,10 +898,12 @@ export function Extensions({
         });
       }
     } catch (cause) {
-      setError(acquisitionConnectionFailure(cause));
+      if (acquisitionEpoch.current === epoch) setError(acquisitionConnectionFailure(cause));
     } finally {
-      acquisitionInFlight.current = false;
-      setBusy('');
+      if (acquisitionEpoch.current === epoch) {
+        acquisitionInFlight.current = false;
+        setBusy('');
+      }
     }
   };
   const publish = async () => {

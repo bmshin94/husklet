@@ -231,6 +231,166 @@ test('digest-pinned same-version review rejects a substituted image over real Un
   }
 });
 
+test('workspace replacement drops a fragmented acquisition reply from the old Unix socket', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'husklet-extension-replacement-'));
+  const socketPath = join(directory, 'old-workspace.sock');
+  const oldReference = 'registry.example/old-workspace:1';
+  const newReference = 'registry.example/new-workspace:1';
+  let releaseOldStatus;
+  const oldStatusMayReply = new Promise((resolve) => {
+    releaseOldStatus = resolve;
+  });
+  let oldStatusRequested;
+  const oldCalls = [];
+  const sawOldStatus = new Promise((resolve) => {
+    oldStatusRequested = resolve;
+  });
+  const server = net.createServer((socket) => {
+    const reader = new Reader();
+    let fragmenting = false;
+    const deferredFrames = [];
+    socket.write(
+      encode({
+        channel: 0,
+        kind: KIND.open,
+        payload: {
+          protocol: 1,
+          extension: 'old-workspace',
+          granted: ['extensions:read', 'extensions:acquire'],
+        },
+      }),
+    );
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        const call = frame.payload?.call;
+        oldCalls.push(call);
+        if (!call) continue;
+        if (fragmenting) {
+          deferredFrames.push(frame);
+          continue;
+        }
+        let payload;
+        if (call === 'extension_list') payload = { reply: 'extensions', with: [] };
+        else if (call === 'extension_catalogue') {
+          payload = { reply: 'extension_catalogue', with: { entries: [], complete: true } };
+        } else if (call === 'extension_acquisition_start') {
+          payload = { reply: 'extension_acquisition_job', with: { job: 'old-job' } };
+        } else if (call === 'extension_acquisition_status') {
+          oldStatusRequested();
+          void oldStatusMayReply.then(() => {
+            fragmenting = true;
+            const response = encode({
+              channel: frame.channel,
+              kind: KIND.response,
+              payload: {
+                reply: 'extension_acquisition',
+                with: {
+                  job: 'old-job',
+                  reference: oldReference,
+                  revision: 1,
+                  state: 'ready',
+                  progress: null,
+                  candidate: {
+                    name: 'old-workspace-tool',
+                    version: '1.0.0',
+                    image_digest: `sha256:${'a'.repeat(64)}`,
+                    installed_image_digest: null,
+                    requested: [],
+                    required: [],
+                  },
+                  error: null,
+                },
+              },
+            });
+            socket.write(response.subarray(0, 3));
+            setImmediate(() => {
+              socket.write(response.subarray(3, 11));
+              setImmediate(() => {
+                socket.write(response.subarray(11));
+                fragmenting = false;
+                for (const deferred of deferredFrames.splice(0)) {
+                  socket.write(
+                    encode({
+                      channel: deferred.channel,
+                      kind: KIND.response,
+                      payload: { reply: 'done' },
+                    }),
+                  );
+                }
+              });
+            });
+          });
+          continue;
+        } else payload = { reply: 'done' };
+        socket.write(encode({ channel: frame.channel, kind: KIND.response, payload }));
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+
+  let session;
+  let stage;
+  try {
+    session = await connect({ path: socketPath });
+    stage = host();
+    stage.render(h(Extensions, { api: workspace(session), initialReference: oldReference }));
+    await until(() => labelled(stage, 'Inspect'));
+    await new Promise((resolve) => setImmediate(resolve));
+    invokeByLabel(stage, 'Inspect');
+    await Promise.race([
+      sawOldStatus,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`old workspace did not receive acquisition status: ${oldCalls}`)),
+          2_000,
+        ),
+      ),
+    ]);
+
+    const replacementApi = {
+      extensions: {
+        list: async () => [],
+        catalogue: async () => ({ entries: [], complete: true }),
+        startAcquisition: async () => ({ job: 'new-job' }),
+        acquisition: async () => ({
+          job: 'new-job',
+          reference: newReference,
+          revision: 1,
+          state: 'ready',
+          progress: null,
+          candidate: {
+            name: 'new-workspace-tool',
+            version: '1.0.0',
+            image_digest: `sha256:${'b'.repeat(64)}`,
+            installed_image_digest: null,
+            requested: [],
+            required: [],
+          },
+          error: null,
+        }),
+        waitForAcquisition: async () => new Promise(() => {}),
+      },
+      watchExtensions: async () => () => {},
+    };
+    stage.render(h(Extensions, { api: replacementApi, initialReference: oldReference }));
+    await new Promise((resolve) => setImmediate(resolve));
+    releaseOldStatus();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    assert.equal(labelled(stage, 'Review old-workspace-tool'), undefined);
+    assert.equal(enabledByLabel(stage, 'Inspect'), true);
+    change(stage, 'registry.example/extension:version', newReference);
+    invokeByLabel(stage, 'Inspect');
+    await until(() => labelled(stage, 'Review new-workspace-tool'));
+  } finally {
+    stage?.render(null);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await session?.close();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 function labelled(stage, label) {
   return stage.frames
     .flatMap((frame) => frame.patches)
@@ -277,6 +437,17 @@ function invokeByLabel(stage, label) {
       stage.surface.dispatch({ trigger: 'Invoke', node, id: `${node}:Invoke`, value: null }),
     ),
   );
+}
+
+function change(stage, placeholder, value) {
+  const node = stage.frames
+    .flatMap((frame) => frame.patches)
+    .filter(
+      (patch) => patch.SetProp?.prop === 'Placeholder' && patch.SetProp.value?.Text === placeholder,
+    )
+    .at(-1)?.SetProp.id;
+  assert.notEqual(node, undefined);
+  assert.ok(stage.surface.dispatch({ trigger: 'Change', node, id: `${node}:Change`, value }));
 }
 
 function latestSwitchValues(stage) {
