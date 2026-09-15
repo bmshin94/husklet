@@ -1416,7 +1416,17 @@ export function Extensions({
             </ToggleButtonGroup>
           </>
         ) : (
-          <Text label="Extension catalogue · Discover" color="text-dim" />
+          <>
+            <Text label="Extension catalogue · Discover" color="text-dim" />
+            {acquisition.candidate ? (
+              <CardHeader
+                label={`Review ${acquisition.candidate.name}`}
+                detail={`${acquisition.candidate.installed_image_digest ? 'Update' : 'Install'} extension · version ${acquisition.candidate.version}`}
+                align="start"
+                width="fill"
+              />
+            ) : null}
+          </>
         )}
         {error && <RecoveryState operation="Extension change" error={error} />}
         {notice && (
@@ -2908,16 +2918,6 @@ export function Extensions({
   );
   return (
     <Column grow gap={0}>
-      {acquisition?.candidate ? (
-        <Container pad={{ top: 2, end: 4, bottom: 1, start: 4 }} width={PAGE_WIDTH}>
-          <CardHeader
-            label={`Review ${acquisition.candidate.name}`}
-            detail={`${acquisition.candidate.installed_image_digest ? 'Update' : 'Install'} extension · version ${acquisition.candidate.version}`}
-            align="start"
-            width="fill"
-          />
-        </Container>
-      ) : null}
       {content}
       {acquisition?.candidate ? (
         <Column gap={0} grow={false} height={{ step: 17 }}>

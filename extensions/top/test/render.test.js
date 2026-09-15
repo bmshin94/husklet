@@ -2591,6 +2591,10 @@ for (const updating of [false, true]) {
     invoke(stage, 'Inspect');
     await settled();
     await settled();
+    assert.ok(
+      ancestorTags(stage, 'Review image-tool').includes('Scroll'),
+      'the review identity belongs inside the Extensions document after its page title',
+    );
     assert.equal(
       taggedProperty(stage, 'Exact grants · 0/10 selected', 'Expander', 'Expanded')?.Flag,
       false,
