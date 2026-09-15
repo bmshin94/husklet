@@ -34,6 +34,7 @@ import {
 type Change = { value?: unknown; expanded?: boolean };
 type Numbers = { cpus: string; memory: string; scrollback: string; fontSize: string };
 const CONTROL_WIDTH = { chars: 56 } as const;
+const TERMINAL_CONTROL_WIDTH = { chars: 36 } as const;
 const PAGE_WIDTH = { maximum: { chars: 110 } } as const;
 
 export function Workspace({ api }: { api: WorkspaceApi }) {
@@ -396,25 +397,40 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
                   expanded={expanded}
                   onExpand={setExpanded}
                 >
-                  {field(
+                  {terminalControl(
                     'Font family',
-                    configuration.terminal.font_family ?? '',
-                    'Host default',
-                    (event) => terminal('font_family', nullable(event.value)),
+                    <Entry
+                      value={configuration.terminal.font_family ?? ''}
+                      placeholder="Host default"
+                      width={TERMINAL_CONTROL_WIDTH}
+                      align="start"
+                      onChange={(event: Change) => terminal('font_family', nullable(event.value))}
+                    />,
+                    configuration.terminal.font_family === null,
+                    () => terminal('font_family', null),
                   )}
-                  {field('Font size', numbers.fontSize, 'Host default', (event) =>
-                    numeric('fontSize', event.value),
+                  {terminalControl(
+                    'Font size',
+                    <Entry
+                      value={numbers.fontSize}
+                      placeholder="Host default"
+                      width={TERMINAL_CONTROL_WIDTH}
+                      align="start"
+                      onChange={(event: Change) => numeric('fontSize', event.value)}
+                    />,
+                    numbers.fontSize === '',
+                    () => numeric('fontSize', ''),
                   )}
-                  {colorField('Foreground', configuration.terminal.foreground, (value) =>
+                  {colorField('Foreground', configuration.terminal.foreground, '#eeeeec', (value) =>
                     terminal('foreground', value),
                   )}
-                  {colorField('Background', configuration.terminal.background, (value) =>
+                  {colorField('Background', configuration.terminal.background, '#1e1e1e', (value) =>
                     terminal('background', value),
                   )}
-                  <FormControl gap={1}>
-                    <FormLabel label="Cursor shape" />
+                  {terminalControl(
+                    'Cursor shape',
                     <Select
-                      width={CONTROL_WIDTH}
+                      width={TERMINAL_CONTROL_WIDTH}
                       align="start"
                       value={configuration.terminal.cursor_shape ?? ''}
                       choices={[
@@ -424,27 +440,32 @@ export function Workspace({ api }: { api: WorkspaceApi }) {
                         { value: 'underline', label: 'Underline' },
                       ]}
                       onChange={(event: Change) => terminal('cursor_shape', nullable(event.value))}
-                    />
-                  </FormControl>
-                  <Row gap={1} align="center" wrap>
-                    <FormControlLabel label="Cursor blink" gap={2}>
-                      <Switch
-                        checked={configuration.terminal.cursor_blink ?? false}
-                        onToggle={(event: Change) => terminal('cursor_blink', Boolean(event.value))}
-                      />
-                    </FormControlLabel>
-                    <IconButton
-                      icon="edit-clear-symbolic"
-                      label="Reset cursor blink"
-                      tooltip="Use the host default for cursor blink"
-                      variant="ghost"
-                      enabled={configuration.terminal.cursor_blink !== null}
-                      onInvoke={() => terminal('cursor_blink', null)}
-                    />
-                  </Row>
-                  {configuration.terminal.cursor_blink === null ? (
-                    <Text label="Cursor blink uses the host default." color="text-dim" />
-                  ) : null}
+                    />,
+                    configuration.terminal.cursor_shape === null,
+                    () => terminal('cursor_shape', null),
+                  )}
+                  {terminalControl(
+                    'Cursor blink',
+                    <Select
+                      width={TERMINAL_CONTROL_WIDTH}
+                      align="start"
+                      value={
+                        configuration.terminal.cursor_blink === null
+                          ? ''
+                          : String(configuration.terminal.cursor_blink)
+                      }
+                      choices={[
+                        { value: '', label: 'Host default' },
+                        { value: 'true', label: 'On' },
+                        { value: 'false', label: 'Off' },
+                      ]}
+                      onChange={(event: Change) =>
+                        terminal('cursor_blink', event.value === '' ? null : event.value === 'true')
+                      }
+                    />,
+                    configuration.terminal.cursor_blink === null,
+                    () => terminal('cursor_blink', null),
+                  )}
                 </SettingsGroup>
                 <SettingsGroup
                   name="environment"
@@ -679,26 +700,48 @@ function field(
     </FormControl>
   );
 }
-function colorField(label: string, value: string | null, onChange: (value: string | null) => void) {
+function colorField(
+  label: string,
+  value: string | null,
+  fallback: string,
+  onChange: (value: string | null) => void,
+) {
+  return terminalControl(
+    label,
+    <Row gap={2} align="center" width={TERMINAL_CONTROL_WIDTH}>
+      <ColorPicker
+        value={value ?? fallback}
+        align="start"
+        tooltip={`Choose ${label.toLowerCase()} color`}
+        onChange={(event: Change) => onChange(nullable(event.value))}
+      />
+      <Text label={value ?? fallback} color="text-dim" />
+    </Row>,
+    value === null,
+    () => onChange(null),
+  );
+}
+function terminalControl(
+  label: string,
+  control: React.ReactNode,
+  hostDefault: boolean,
+  reset: () => void,
+) {
   return (
-    <Column gap={1}>
-      <Text label={label} />
-      <Row gap={1} align="center" wrap>
-        <ColorPicker
-          value={value ?? '#000000'}
-          onChange={(event: Change) => onChange(nullable(event.value))}
-        />
-        <IconButton
-          icon="edit-clear-symbolic"
-          label={`Reset ${label.toLowerCase()}`}
+    <FormControl gap={1} width="fill">
+      <FormLabel label={label} />
+      <Row gap={2} align="center" wrap width="fill">
+        {control}
+        <Button
+          label="Host default"
           tooltip={`Use the host default for ${label.toLowerCase()}`}
-          variant="ghost"
-          enabled={value !== null}
-          onInvoke={() => onChange(null)}
+          size="small"
+          variant="outline"
+          enabled={!hostDefault}
+          onInvoke={reset}
         />
       </Row>
-      {value === null && <Text label="Host default" color="text-dim" />}
-    </Column>
+    </FormControl>
   );
 }
 function nullable(value: unknown): string | null {

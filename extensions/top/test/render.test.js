@@ -972,6 +972,25 @@ test('Top owns workspace settings and extension management in the same tab', asy
     Length: 'Fill',
   });
   assert.deepEqual(ancestorTags(stage, 'Cursor shape').slice(0, 1), ['FormControl']);
+  for (const [label, tag] of [
+    ['Font family', 'Entry'],
+    ['Font size', 'Entry'],
+    ['Foreground', 'ColorPicker'],
+    ['Background', 'ColorPicker'],
+    ['Cursor shape', 'Select'],
+    ['Cursor blink', 'Select'],
+  ]) {
+    assert.deepEqual(
+      ancestorTags(stage, label).slice(0, 1),
+      ['FormControl'],
+      `${label} retains its labelled form-control boundary`,
+    );
+    const control = formControlField(stage, label, tag);
+    if (tag !== 'ColorPicker')
+      assert.deepEqual(latestProperty(stage, control, 'Width'), { Length: { Chars: 36 } });
+  }
+  assert.ok(labelled(stage, '#eeeeec'), 'foreground keeps a visible host-default swatch value');
+  assert.ok(labelled(stage, '#1e1e1e'), 'background keeps a visible host-default swatch value');
   const cursorShape = formControlField(stage, 'Cursor shape', 'Select');
   assert.deepEqual(latestProperty(stage, cursorShape, 'Value'), { Text: '' });
   assert.ok(
@@ -985,6 +1004,19 @@ test('Top owns workspace settings and extension management in the same tab', asy
   );
   await settled();
   assert.deepEqual(latestProperty(stage, cursorShape, 'Value'), { Text: 'ibeam' });
+  const cursorBlink = formControlField(stage, 'Cursor blink', 'Select');
+  assert.deepEqual(latestProperty(stage, cursorBlink, 'Value'), { Text: 'false' });
+  assert.ok(
+    stage.surface.dispatch({
+      trigger: 'Change',
+      node: cursorBlink,
+      id: `${cursorBlink}:Change`,
+      value: '',
+    }),
+    'cursor blink keeps host-default state in the aligned control row',
+  );
+  await settled();
+  assert.deepEqual(latestProperty(stage, cursorBlink, 'Value'), { Text: '' });
   expand(stage, 'Resources & connectivity');
   await settled();
   assert.ok(labelled(stage, 'Storage directory'));
@@ -9803,10 +9835,12 @@ function formControlField(stage, label, tag) {
   while (parents.has(control) && tags.get(control) !== 'FormControl')
     control = parents.get(control);
   assert.equal(tags.get(control), 'FormControl', `${label} belongs to a FormControl`);
-  const field = [...parents]
-    .filter(([, parent]) => parent === control)
-    .map(([child]) => child)
-    .find((child) => tags.get(child) === tag);
+  const descendants = [control];
+  for (let index = 0; index < descendants.length; index += 1) {
+    const parent = descendants[index];
+    descendants.push(...[...parents].filter(([, held]) => held === parent).map(([child]) => child));
+  }
+  const field = descendants.find((child) => tags.get(child) === tag);
   assert.notEqual(field, undefined, `${label} names its ${tag}`);
   return field;
 }
