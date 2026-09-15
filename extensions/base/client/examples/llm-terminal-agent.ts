@@ -121,6 +121,8 @@ try {
             cancelTimeoutMs: 1_000,
           });
         } catch (cause) {
+          // The deadline also interrupts a fragmented in-flight request. That closes the
+          // ambiguous ordered connection, so recover on a fresh one by immutable identity.
           const resumedSession = await connect({
             path: configuration.path,
             pendingLimit: 8,

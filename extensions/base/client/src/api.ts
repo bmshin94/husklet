@@ -2215,7 +2215,9 @@ export interface WorkspaceApi {
     recoverCommandInput(failure: TerminalCommandInputOperationError): Promise<TerminalCommandInput>;
     /**
      * Run, collect bounded UTF-8 output, and return authoritative process completion.
-     * Abort interrupts idle output polling immediately before cancelling the owned command.
+     * Abort interrupts in-flight protocol calls and idle output polling immediately before
+     * cancelling the owned command. If abort closes an ambiguous ordered connection, recover
+     * the frozen error token on a new session to cancel by immutable command identity.
      * Post-start failures throw `TerminalCommandOperationError`, preserving the immutable
      * command and last completely consumed output cursor for reconnect-safe recovery.
      */

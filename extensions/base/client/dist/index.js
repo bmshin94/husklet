@@ -3460,6 +3460,7 @@ export function workspace(session, { signal } = {}) {
                 let after = 0;
                 let phase = 'start';
                 let pages = 0;
+                const scoped = abortSignal ? api.withSignal(abortSignal) : api;
                 const abort = async () => {
                     if (owned?.running) {
                         owned = await api.terminal.commandCancel(owned, {
@@ -3471,7 +3472,7 @@ export function workspace(session, { signal } = {}) {
                 try {
                     if (abortSignal?.aborted)
                         throw abortSignal.reason ?? new DOMException('Aborted', 'AbortError');
-                    owned = await api.terminal.commandStart(pane, argv, {
+                    owned = await scoped.terminal.commandStart(pane, argv, {
                         operation,
                         workingDirectory,
                         stdin: input !== undefined,
@@ -3479,8 +3480,8 @@ export function workspace(session, { signal } = {}) {
                     if (input !== undefined) {
                         phase = 'input';
                         const contents = exactExecutionInput(input);
-                        await api.terminal.commandWrite(owned, contents, { offset: 0 });
-                        await api.terminal.commandCloseInput(owned, { offset: contents.byteLength });
+                        await scoped.terminal.commandWrite(owned, contents, { offset: 0 });
+                        await scoped.terminal.commandCloseInput(owned, { offset: contents.byteLength });
                     }
                     for (;;) {
                         if (pages >= maxPages)
@@ -3488,7 +3489,7 @@ export function workspace(session, { signal } = {}) {
                         phase = 'output';
                         if (abortSignal?.aborted)
                             throw abortSignal.reason ?? new DOMException('Aborted', 'AbortError');
-                        const page = await api.terminal.commandOutput(owned, { after, limit: pageLimit });
+                        const page = await scoped.terminal.commandOutput(owned, { after, limit: pageLimit });
                         pages += 1;
                         if (page.output.gap) {
                             throw new ExecutionOutputGapError(owned.id, after, page.output.next);
@@ -3515,7 +3516,7 @@ export function workspace(session, { signal } = {}) {
                         }
                     }
                     phase = 'wait';
-                    owned = await api.terminal.commandWait(owned);
+                    owned = await scoped.terminal.commandWait(owned);
                     phase = 'decode';
                     const decode = (parts) => {
                         const bytes = new Uint8Array(parts.reduce((sum, part) => sum + part.byteLength, 0));

@@ -451,6 +451,9 @@ test('aborting idle command polling immediately cancels the exact supervised com
     });
     while (!calls.some(({ call }) => call === 'terminal_command_output'))
       await new Promise((resolve) => setImmediate(resolve));
+    // This scenario covers cancellation from the idle poll interval; the next test
+    // deliberately aborts while the ordered output request itself is still pending.
+    await new Promise((resolve) => setTimeout(resolve, 20));
     controller.abort('agent deadline');
     await assert.rejects(operation, TerminalCommandOperationError);
     assert(Date.now() - started < 1_000, 'abort must not wait for the 60 second poll interval');
@@ -460,6 +463,120 @@ test('aborting idle command polling immediately cancels the exact supervised com
     });
     await session.close();
   } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('aborting a fragmented in-flight output request exposes reconnect-safe command cancellation', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-command-inflight-abort-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const connections = new Set();
+  const calls = [];
+  let accepted = 0;
+  const server = net.createServer((socket) => {
+    accepted += 1;
+    const connection = accepted;
+    connections.add(socket);
+    socket.on('close', () => connections.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.kind !== KIND.request) continue;
+        calls.push({ connection, ...frame.payload });
+        if (frame.payload.call === 'terminal_command_start') {
+          fragmented(socket, {
+            channel: frame.channel,
+            kind: KIND.response,
+            payload: {
+              reply: 'terminal_command_start',
+              with: { operation: frame.payload.with.operation, command: running },
+            },
+          });
+        } else if (frame.payload.call === 'terminal_command_output') {
+          // Retain the reply indefinitely. Abort must tear down this ambiguous ordered connection.
+        } else if (frame.payload.call === 'terminal_command_cancel') {
+          fragmented(socket, {
+            channel: frame.channel,
+            kind: KIND.response,
+            payload: {
+              reply: 'terminal_command',
+              with: { ...running, running: false, exit_code: 130, pid: 0 },
+            },
+          });
+        } else if (frame.payload.call === 'workspace_info') {
+          fragmented(socket, {
+            channel: frame.channel,
+            kind: KIND.response,
+            payload: {
+              reply: 'workspace',
+              with: { name: 'agent', architecture: 'amd64', image: 'alpine' },
+            },
+          });
+        } else {
+          throw new Error(`unexpected ${frame.payload.call}`);
+        }
+      }
+    });
+    fragmented(socket, {
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: {
+        protocol: 1,
+        peer: `terminal-command-inflight-abort-${connection}`,
+        granted: ['terminals:process-control', 'terminals:output', 'workspaces:read'],
+      },
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const first = await connect({ path: socketPath, timeout: 2_000 });
+    const cancellation = new AbortController();
+    const operation = workspace(first).terminal.commandText(pane, {
+      command: running.command,
+      maxBytes: 64,
+      signal: cancellation.signal,
+      cancelSignal: 'SIGINT',
+      cancelTimeoutMs: 321,
+    });
+    while (!calls.some(({ call }) => call === 'terminal_command_output'))
+      await new Promise((resolve) => setImmediate(resolve));
+    const started = Date.now();
+    cancellation.abort('agent deadline');
+    let resume;
+    await assert.rejects(operation, (error) => {
+      assert(error instanceof TerminalCommandOperationError);
+      assert.equal(error.phase, 'output');
+      assert.equal(error.command.id, id);
+      assert.equal(error.after, 0);
+      assert.equal(error.cause.name, 'AbortError');
+      resume = JSON.parse(JSON.stringify(error.resume));
+      return true;
+    });
+    assert(Date.now() - started < 1_000, 'abort must interrupt the withheld output reply');
+    assert.equal(accepted, 1);
+
+    const resumed = await connect({ path: socketPath });
+    await assert.rejects(
+      workspace(resumed).terminal.resumeCommandText(resume, {
+        signal: cancellation.signal,
+        cancelSignal: 'SIGINT',
+        cancelTimeoutMs: 321,
+      }),
+      (error) =>
+        error instanceof TerminalCommandOperationError &&
+        error.command.running === false &&
+        error.command.exit_code === 130,
+    );
+    assert.deepEqual(calls.at(-1), {
+      connection: 2,
+      call: 'terminal_command_cancel',
+      with: { id, owner, ...pane, signal: 'SIGINT', timeout_ms: 321 },
+    });
+    assert.equal((await workspace(resumed).info()).name, 'agent');
+    await resumed.close();
+  } finally {
+    for (const connection of connections) connection.destroy();
     await new Promise((resolve) => server.close(resolve));
     await rm(directory, { recursive: true, force: true });
   }
