@@ -366,6 +366,17 @@ pub(crate) fn model(widget: &gtk::Widget, source: SourceId) -> Option<Rows> {
     Some(rows)
 }
 
+/// Retires the row model when a collection no longer names a producer source.
+///
+/// Keeping the model would leave the last producer's rows visible even though
+/// its route has gone, and a later binding would momentarily present data that
+/// belongs to neither the current description nor the replacement source.
+pub(crate) fn unbind(widget: &gtk::Widget) {
+    if let Some(view) = component::table::columns(widget) {
+        view.set_model(gtk::SelectionModel::NONE);
+    }
+}
+
 /// Delivers a window to the table bound to its source.
 pub(crate) fn present(widget: &gtk::Widget, window: &RowWindow) {
     let Some(rows) = model(widget, window.source) else {

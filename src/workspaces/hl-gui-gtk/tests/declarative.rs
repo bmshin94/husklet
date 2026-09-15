@@ -435,10 +435,32 @@ fn rebinding_a_table_retires_its_previous_source() {
             second,
             "{tag:?} model follows the new sort/filter source"
         );
-        session.render(&Element::column().key("empty"));
+        session.render(
+            &Element::new(tag)
+                .key("records")
+                .prop(Prop::Schema, PropValue::Schema(vec![Column::new("id", "ID")])),
+        );
         assert!(
             matches!(
                 session.surface.resize(second, hl_gui::Version::new(3), 100_000),
+                Err(Failure::Unbound(source)) if source == second
+            ),
+            "clearing {tag:?}'s source retires its route"
+        );
+        let view = session
+            .tagged(tag)
+            .expect("source-cleared component survives")
+            .downcast::<gtk::ScrolledWindow>()
+            .expect("table viewport")
+            .child()
+            .and_downcast::<gtk::ColumnView>()
+            .expect("column view");
+        assert!(view.model().is_none(), "clearing {tag:?}'s source removes stale rows");
+        session.render(&table(second));
+        session.render(&Element::column().key("empty"));
+        assert!(
+            matches!(
+                session.surface.resize(second, hl_gui::Version::new(4), 100_000),
                 Err(Failure::Unbound(source)) if source == second
             ),
             "removed {tag:?} retires its source route"

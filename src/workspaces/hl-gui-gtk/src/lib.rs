@@ -11,10 +11,10 @@ mod component;
 mod event;
 mod prop;
 mod registry;
-#[cfg(test)]
-mod test_support;
 pub mod rows;
 pub mod style;
+#[cfg(test)]
+mod test_support;
 mod text;
 
 pub use event::Reports;
@@ -238,11 +238,17 @@ impl Renderer for Surface {
                 Ok(())
             }
             Patch::ClearProp { id, prop } => {
+                if *prop == Prop::Source {
+                    self.sources.retain(|_, node| *node != *id);
+                }
                 let _mute = (*prop == Prop::Expanded)
                     .then(|| self.bindings.mute(*id, hl_gui::Trigger::Expand))
                     .flatten();
                 let (widget, node) = self.describe(*id, tree)?;
                 prop::clear(widget, node, *prop, &self.reports);
+                if *prop == Prop::Source {
+                    collection::unbind(widget);
+                }
                 Ok(())
             }
             Patch::SetHandler { id, handler } => {
