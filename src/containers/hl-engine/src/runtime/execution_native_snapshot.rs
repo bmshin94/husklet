@@ -101,20 +101,17 @@ pub(crate) fn capture_stopped_native(
     pid: libc::pid_t,
     deadline: Instant,
 ) -> Result<NativeSnapshotObjects, CompositionError> {
-    let thread = capture_until(pid, deadline).map_err(|error| {
-        if error.kind() == io::ErrorKind::TimedOut {
-            CompositionError::DeadlineExceeded
-        } else {
-            CompositionError::RuntimeConstruction
-        }
-    })?;
-    let registers = thread.registers.encode().to_vec();
-    let xstate = thread.xstate.encode();
-    let memory = capture_stopped_memory(pid, deadline)
-        .and_then(|image| {
-            image
+    // One attachment spans the thread state and the memory image.  Capturing
+    // them under two separate attachments detached in between, and detaching a
+    // group-stopped tracee makes it briefly runnable while it re-enters group
+    // stop -- during which `capture_stopped_memory`'s one-shot "is it stopped"
+    // admission fails.  See `capture_thread_and_memory_until`.
+    let (thread, memory) = capture_thread_and_memory_until(pid, deadline)
+        .and_then(|(thread, image)| {
+            let memory = image
                 .encode()
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{error:?}")))
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{error:?}")))?;
+            Ok((thread, memory))
         })
         .map_err(|error| {
             if error.kind() == io::ErrorKind::TimedOut {
@@ -123,6 +120,8 @@ pub(crate) fn capture_stopped_native(
                 CompositionError::RuntimeConstruction
             }
         })?;
+    let registers = thread.registers.encode().to_vec();
+    let xstate = thread.xstate.encode();
     if Instant::now() >= deadline {
         return Err(CompositionError::DeadlineExceeded);
     }
@@ -1282,12 +1281,49 @@ pub(super) struct NativeThreadState {
 
 #[cfg(target_arch = "x86_64")]
 pub(super) fn capture(pid: libc::pid_t) -> io::Result<NativeThreadState> {
-    capture_with_until(pid, Instant::now() + STOP_DEADLINE, || Ok(()))
+    capture_with_until(pid, Instant::now() + STOP_DEADLINE, || Ok(()), || Ok(())).map(|(thread, ())| thread)
 }
 
 #[cfg(target_arch = "x86_64")]
 fn capture_until(pid: libc::pid_t, deadline: Instant) -> io::Result<NativeThreadState> {
-    capture_with_until(pid, deadline, || Ok(()))
+    capture_with_until(pid, deadline, || Ok(()), || Ok(())).map(|(thread, ())| thread)
+}
+
+/// Captures the architectural thread state and the memory image under a
+/// **single** ptrace attachment.
+///
+/// The two halves used to be captured under two separate attachments, which
+/// meant `PTRACE_DETACH` ran between them.  Detaching a tracee that was in
+/// group-stop does not leave it stopped instantaneously: the kernel re-arms
+/// `JOBCTL_STOP_PENDING` and wakes the task so it can re-enter group stop, so
+/// there is a window in which `/proc/<pid>/status` reports a runnable state.
+/// `capture_stopped_memory` admits its target by reading exactly that field,
+/// once, with no retry and without consulting the deadline -- so whenever the
+/// tracee had not been scheduled back into its stop yet, capture failed with
+/// `RuntimeConstruction` no matter how much of the budget was left.  That is
+/// why the failure was contention-sensitive rather than deadline-sensitive.
+///
+/// Holding one attachment across both halves removes the window rather than
+/// polling around it, and buys a correctness property the split never had: the
+/// registers and the memory image now come from the same frozen instant.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn capture_thread_and_memory_until(
+    pid: libc::pid_t,
+    deadline: Instant,
+) -> io::Result<(NativeThreadState, NativeMemoryImage)> {
+    // While attached the tracee sits in ptrace-stop, which `process_is_stopped`
+    // recognises as `t`, so the memory half's admission check still applies.
+    capture_with_until(pid, deadline, || Ok(()), || capture_stopped_memory(pid, deadline))
+}
+
+#[cfg(all(target_os = "linux", not(target_arch = "x86_64")))]
+fn capture_thread_and_memory_until(
+    pid: libc::pid_t,
+    deadline: Instant,
+) -> io::Result<(NativeThreadState, NativeMemoryImage)> {
+    let thread = capture_until(pid, deadline)?;
+    let memory = capture_stopped_memory(pid, deadline)?;
+    Ok((thread, memory))
 }
 
 #[cfg(not(target_arch = "x86_64"))]
@@ -1312,15 +1348,19 @@ pub(super) fn capture(_pid: libc::pid_t) -> io::Result<NativeThreadState> {
 
 #[cfg(target_arch = "x86_64")]
 fn capture_with(pid: libc::pid_t, after_stop: impl FnOnce() -> io::Result<()>) -> io::Result<NativeThreadState> {
-    capture_with_until(pid, Instant::now() + STOP_DEADLINE, after_stop)
+    capture_with_until(pid, Instant::now() + STOP_DEADLINE, after_stop, || Ok(())).map(|(thread, ())| thread)
 }
 
+/// `after_stop` runs as soon as the stop has been *observed*; `while_attached`
+/// runs after the architectural state has been read and before the tracee is
+/// detached, so anything it captures is guaranteed to come from the same stop.
 #[cfg(target_arch = "x86_64")]
-fn capture_with_until(
+fn capture_with_until<T>(
     pid: libc::pid_t,
     deadline: Instant,
     after_stop: impl FnOnce() -> io::Result<()>,
-) -> io::Result<NativeThreadState> {
+    while_attached: impl FnOnce() -> io::Result<T>,
+) -> io::Result<(NativeThreadState, T)> {
     if pid <= 1 || pid == unsafe { libc::getpid() } {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -1370,11 +1410,16 @@ fn capture_with_until(
     let registers = unsafe { std::ptr::read_unaligned((&raw const raw).cast::<[u64; REGISTER_COUNT]>()) };
     check_deadline(deadline)?;
     let xstate = capture_xstate(pid)?;
+    // Still attached: the tracee cannot leave this stop underneath the caller.
+    let attached = while_attached()?;
     drop(guard);
-    Ok(NativeThreadState {
-        registers: X86RegisterRecord { signal_mask, registers },
-        xstate,
-    })
+    Ok((
+        NativeThreadState {
+            registers: X86RegisterRecord { signal_mask, registers },
+            xstate,
+        },
+        attached,
+    ))
 }
 
 /// Reads the whole extended processor state through `NT_X86_XSTATE`.
@@ -1656,20 +1701,37 @@ mod tests {
         pid
     }
 
+    /// Runs one live-capture test alone in a child process.
+    ///
+    /// The child's output goes to a *file*, deliberately not to the pipes
+    /// `Command::output()` would create.  Several fixtures in this module fork a
+    /// child that never execs and parks in `pause()`, and such a child inherits
+    /// every descriptor that was open at fork time -- including the write ends of
+    /// those pipes.  If the isolated run then panics before it reaps its fixture,
+    /// the leaked fixture holds the pipe open indefinitely, `output()` blocks
+    /// waiting for an EOF that can never arrive, and a clean test failure becomes
+    /// an unkillable hang (which also strands every other descriptor the fixture
+    /// inherited, the shared box lock among them).  A file has no EOF to wait for:
+    /// `status()` returns as soon as the child itself exits, so the isolated run
+    /// always reports its real result.
     fn isolated_live_capture(test: &str) -> bool {
         const CHILD: &str = "HL_ENGINE_NATIVE_SNAPSHOT_CHILD";
         if std::env::var_os(CHILD).is_some() {
             return false;
         }
-        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        let log = tempfile::NamedTempFile::new().expect("isolated capture log");
+        let status = std::process::Command::new(std::env::current_exe().expect("test executable"))
             .args(["--exact", test, "--nocapture", "--test-threads=1"])
             .env(CHILD, "1")
-            .output()
+            .stdin(Stdio::null())
+            .stdout(log.reopen().expect("isolated capture stdout"))
+            .stderr(log.reopen().expect("isolated capture stderr"))
+            .status()
             .expect("spawn isolated native snapshot test");
         assert!(
-            output.status.success(),
+            status.success(),
             "isolated native snapshot test failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            std::fs::read_to_string(log.path()).unwrap_or_default()
         );
         true
     }
@@ -2456,7 +2518,18 @@ mod tests {
             spawn_fp_restore_child(TEST, rendezvous.path(), role.path(), result.path());
         let image = capture_stopped_native(original_leaf, Instant::now() + Duration::from_secs(10)).unwrap();
         assert_eq!(unsafe { libc::kill(original_leaf, libc::SIGKILL) }, 0);
-        assert_eq!(unsafe { libc::kill(original_leaf, libc::SIGCONT) }, 0);
+        // SIGKILL already terminates a group-stopped task, so this SIGCONT only
+        // nudges the harness's blocking `waitpid` along -- and it races that
+        // reap.  Once the real parent has collected the leaf the pid is gone, so
+        // ESRCH here means the kill worked, not that anything went wrong.  The
+        // sibling fresh-exec test kills without a SIGCONT for the same reason.
+        if unsafe { libc::kill(original_leaf, libc::SIGCONT) } != 0 {
+            assert_eq!(
+                io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH),
+                "SIGCONT after SIGKILL may only fail because the leaf was already reaped"
+            );
+        }
         assert!(
             original.wait().unwrap().success(),
             "original harness must reap its leaf"
