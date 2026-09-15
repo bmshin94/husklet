@@ -149,6 +149,17 @@ export class PostgresCloseOperationError extends Error {
         this.cause = cause;
     }
 }
+/** PostgreSQL cancellation may have committed before its state receipt was lost. */
+export class PostgresCancelOperationError extends Error {
+    recovery;
+    cause;
+    constructor(recovery, cause) {
+        super(`postgres query cancellation may have committed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+        this.name = 'PostgresCancelOperationError';
+        this.recovery = Object.freeze({ ...recovery });
+        this.cause = cause;
+    }
+}
 /** A credential CAS write may have committed before its revision reply was lost. */
 export class CredentialSetOperationError extends Error {
     key;
@@ -4807,6 +4818,27 @@ export function workspace(session, { signal } = {}) {
             throw new PostgresCloseOperationError(recovery, cause);
         }
         return recovery;
+    };
+    api.postgres.cancelRecoverable = async (lease, query) => {
+        const recovery = { version: 1, lease, query };
+        try {
+            return { ...recovery, state: await api.postgres.cancel(lease, query) };
+        }
+        catch (cause) {
+            if (cause instanceof ExtensionError || cause instanceof PostgresStateProtocolError)
+                throw cause;
+            throw new PostgresCancelOperationError(recovery, cause);
+        }
+    };
+    api.postgres.recoverCancel = async (candidate) => {
+        const recovery = candidate instanceof PostgresCancelOperationError ? candidate.recovery : candidate;
+        if (recovery?.version !== 1) {
+            throw new TypeError('postgres cancel recovery requires a version 1 token');
+        }
+        return {
+            ...recovery,
+            state: await api.postgres.cancel(recovery.lease, recovery.query),
+        };
     };
     api.postgres.closeLeaseRecoverable = async (lease, { operation: asked } = {}) => {
         const operation = terminalInputOperation(asked);

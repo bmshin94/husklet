@@ -62,6 +62,12 @@ export declare class PostgresCloseOperationError extends Error {
     readonly cause: any;
     constructor(recovery: any, cause: any);
 }
+/** PostgreSQL cancellation may have committed before its state receipt was lost. */
+export declare class PostgresCancelOperationError extends Error {
+    readonly recovery: any;
+    readonly cause: any;
+    constructor(recovery: any, cause: any);
+}
 /** A credential CAS write may have committed before its revision reply was lost. */
 export declare class CredentialSetOperationError extends Error {
     readonly key: any;

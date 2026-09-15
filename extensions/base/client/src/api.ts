@@ -1154,6 +1154,16 @@ export declare class PostgresCloseOperationError extends Error {
   readonly recovery: Readonly<PostgresCloseRecoveryToken>;
   readonly cause: unknown;
 }
+export type PostgresCancelRecoveryToken = {
+  version: 1;
+  lease: PostgresLeaseId;
+  query: PostgresQueryId;
+};
+/** PostgreSQL cancellation may have committed before its state receipt was lost. */
+export declare class PostgresCancelOperationError extends Error {
+  readonly recovery: Readonly<PostgresCancelRecoveryToken>;
+  readonly cause: unknown;
+}
 
 export type TerminalCommandResumeToken = {
   version: 1;
@@ -2762,6 +2772,15 @@ export interface WorkspaceApi {
       cursor?: PostgresCursor,
     ): Promise<PostgresPage>;
     cancel(lease: PostgresLeaseId, query: PostgresQueryId): Promise<PostgresQueryState>;
+    /** Preserve exact cancellation authority when the state receipt is lost. */
+    cancelRecoverable(
+      lease: PostgresLeaseId,
+      query: PostgresQueryId,
+    ): Promise<PostgresCancelRecoveryToken & { state: PostgresQueryState }>;
+    /** Repeat cancellation only for the immutable lease/query captured by a failed attempt. */
+    recoverCancel(
+      recovery: PostgresCancelOperationError | PostgresCancelRecoveryToken,
+    ): Promise<PostgresCancelRecoveryToken & { state: PostgresQueryState }>;
     closeQuery(lease: PostgresLeaseId, query: PostgresQueryId): Promise<void>;
     closeQueryOnce(
       operation: QueryOperationToken,
