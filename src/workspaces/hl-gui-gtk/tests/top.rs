@@ -897,7 +897,10 @@ mod unix {
                 );
             }
             if fixture == "populated" && name == "extensions" {
-                let cards = widgets_with_class(&root, "hl-card");
+                let cards = widgets_with_class(&root, "hl-card")
+                    .into_iter()
+                    .filter(|card| card.is_mapped())
+                    .collect::<Vec<_>>();
                 if width == 600 {
                     assert!(
                         cards.windows(2).all(|pair| {
@@ -907,13 +910,16 @@ mod unix {
                         "600px Installed cards did not form one full-width row each"
                     );
                 } else {
-                    let healthy = cards.iter().filter(|card| card.width() < width / 2).collect::<Vec<_>>();
-                    let first_y = healthy
-                        .first()
-                        .expect("Installed renders healthy cards")
+                    let first_healthy = ancestor_with_class(&find_mapped_labelled(&root, "disabled-linter"), "hl-card")
+                        .expect("Installed renders healthy cards");
+                    let first_y = first_healthy
                         .compute_bounds(&root)
                         .expect("healthy card belongs to root")
                         .y();
+                    let healthy = cards
+                        .iter()
+                        .filter(|card| card.compute_bounds(&root).is_some_and(|bounds| bounds.y() >= first_y))
+                        .collect::<Vec<_>>();
                     assert_eq!(
                         healthy
                             .iter()
@@ -961,7 +967,7 @@ mod unix {
                     Some("go-down-symbolic")
                 );
                 if !catalogue_empty {
-                    let installed_title = find_label(&root, "Developer Tool 01");
+                    let installed_title = find_mapped_labelled(&root, "Developer Tool 01");
                     let installed_card = ancestor_with_class(installed_title.upcast_ref(), "hl-card")
                         .expect("installed catalogue title belongs to its card");
                     assert!(
@@ -996,10 +1002,9 @@ mod unix {
                         "{width_name} installed identity metadata is not compact: title={title_bounds:?}, identity={identity_bounds:?}"
                     );
                     assert!(
-                        publisher_bounds.y() >= title_bounds.y() - 2.0
-                            && publisher_bounds.y() + publisher_bounds.height()
-                                <= identity_bounds.y() + identity_bounds.height() + 2.0,
-                        "{width_name} installed publisher trust is detached from its compact identity block: title={title_bounds:?}, identity={identity_bounds:?}, publisher={publisher_bounds:?}"
+                        publisher_bounds.x() >= title_bounds.x() - 1.0
+                            && publisher_bounds.y() <= identity_bounds.y() + identity_bounds.height() + 4.0,
+                        "{width_name} installed publisher trust is detached from its compact identity and trust block: title={title_bounds:?}, identity={identity_bounds:?}, publisher={publisher_bounds:?}"
                     );
                 }
                 let pagination_bounds = pagination
@@ -6056,7 +6061,7 @@ mod unix {
         let healthy = ancestor_with_class(&find_mapped_labelled(root, "disabled-linter"), "hl-card")
             .expect("healthy installed extension belongs to a card");
         let mut attention_cards = vec![("fault", first.clone())];
-        if let Some(action) = find_button_optional(root, "Review update") {
+        if let Some(action) = find_mapped_button_optional(root, "Review update") {
             let card = ancestor_with_class(action.upcast_ref(), "hl-card")
                 .expect("update-required extension action belongs to a card");
             let open = find_tooltip_button(&card, "Open Developer dashboard");
@@ -6064,19 +6069,38 @@ mod unix {
             attention_cards.push(("update", card));
         }
         for (label, card) in &attention_cards {
-            let section_width = card.parent().expect("attention card belongs to its section").width();
-            assert!(
-                (card.width() - section_width).abs() <= 4,
-                "{case} {label} attention card is not full section width: card={}px section={section_width}px",
-                card.width(),
-            );
+            if width == 600 {
+                assert!(
+                    card.width() >= width - 40,
+                    "{case} narrow {label} attention card is not full content width: card={}px window={width}px",
+                    card.width(),
+                );
+            } else {
+                assert!(
+                    card.width() < (width - 192) / 2,
+                    "{case} wide {label} attention card still consumes half the content width: card={}px window={width}px",
+                    card.width(),
+                );
+            }
             assert!(
                 vertical_end(root, card) <= vertical_end(root, &healthy),
                 "{case} {label} attention card appears below healthy extensions"
             );
         }
+        if width > 600 && attention_cards.len() > 1 {
+            let first_top = vertical_end(root, &attention_cards[0].1) - attention_cards[0].1.height();
+            let update_top = vertical_end(root, &attention_cards[1].1) - attention_cards[1].1.height();
+            assert_eq!(
+                first_top, update_top,
+                "{case} attention cards waste a second desktop row"
+            );
+            assert!(
+                attention_cards[1].1.height() < attention_cards[0].1.height(),
+                "{case} update card inherited the fault diagnostic height"
+            );
+        }
         for label in ["Retry", "Review update", "Enable"] {
-            let Some(action) = find_button_optional(root, label) else {
+            let Some(action) = find_mapped_button_optional(root, label) else {
                 assert_eq!(label, "Review update", "{case} omitted required {label} action");
                 continue;
             };
@@ -6139,10 +6163,11 @@ mod unix {
                 "{case} healthy installed card exceeded the compact 190px budget: {}px",
                 healthy.height()
             );
+            let healthy_start = vertical_end(root, &healthy) - healthy.height();
             let healthy_cards = cards
                 .iter()
                 .filter(|card| card.is_mapped())
-                .filter(|card| card.width() < width / 2)
+                .filter(|card| vertical_end(root, card) - card.height() >= healthy_start)
                 .collect::<Vec<_>>();
             assert!(healthy_cards.len() >= 3, "{case} omitted the healthy grid");
             let mut rows = std::collections::BTreeMap::<i32, Vec<i32>>::new();
@@ -6299,21 +6324,24 @@ mod unix {
     }
 
     fn find_mapped_labelled(root: &gtk::Widget, wanted: &str) -> gtk::Widget {
-        if root.is_mapped()
-            && root
-                .downcast_ref::<gtk::Label>()
-                .is_some_and(|label| label.text() == wanted)
-        {
-            return root.clone();
-        }
-        let mut child = root.first_child();
-        while let Some(widget) = child {
-            if widget.is_mapped() && has_label(&widget, wanted) {
-                return find_mapped_labelled(&widget, wanted);
+        fn find(root: &gtk::Widget, wanted: &str) -> Option<gtk::Widget> {
+            if root.is_mapped()
+                && root
+                    .downcast_ref::<gtk::Label>()
+                    .is_some_and(|label| label.text() == wanted)
+            {
+                return Some(root.clone());
             }
-            child = widget.next_sibling();
+            let mut child = root.first_child();
+            while let Some(widget) = child {
+                if let Some(found) = find(&widget, wanted) {
+                    return Some(found);
+                }
+                child = widget.next_sibling();
+            }
+            None
         }
-        panic!("mapped label {wanted:?} was not rendered")
+        find(root, wanted).unwrap_or_else(|| panic!("mapped label {wanted:?} was not rendered"))
     }
 
     fn find_expander(root: &gtk::Widget, label: &str) -> gtk::Expander {
