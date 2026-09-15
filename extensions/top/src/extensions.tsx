@@ -718,12 +718,14 @@ export function Extensions({
       installedSnapshot.current = listing;
       setInstalled(listing);
       setInventoryState(listing.length === 0 ? 'empty' : 'ready');
+      return listing;
     } catch (cause) {
       if (inventoryEpoch.current !== epoch) return;
       installedSnapshot.current = [];
       setInstalled([]);
       setInventoryError(message(cause));
       setInventoryState('error');
+      return null;
     }
   }, [api]);
   const watchExtensions = api.watchExtensions;
@@ -909,10 +911,17 @@ export function Extensions({
       );
       setAcquisition(null);
       setReference('');
-      await reload();
-      if (result.changed) revealInstalled(result.extension.name);
+      const listing = await reload();
+      const confirmed =
+        result.changed &&
+        listing?.some(
+          (extension) =>
+            extension.name === result.extension.name &&
+            extension.image_digest === result.extension.image_digest,
+        );
+      if (result.changed && confirmed) revealInstalled(result.extension.name);
       setNotice(
-        result.changed
+        result.changed && confirmed
           ? {
               label: `${result.extension.name} ${
                 updating ? 'updated' : 'installed'
@@ -920,7 +929,9 @@ export function Extensions({
               uncertain: false,
             }
           : {
-              label: `${updating ? 'Update' : 'Install'} was accepted, but the resulting extension was not observed. Refresh before acting again.`,
+              label: result.changed
+                ? `${result.extension.name} ${updating ? 'updated' : 'installed'}, but installed extensions could not be verified. Refresh before acting again.`
+                : `${updating ? 'Update' : 'Install'} was accepted, but the resulting extension was not observed. Refresh before acting again.`,
               uncertain: true,
             },
       );

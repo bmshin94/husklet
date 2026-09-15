@@ -2556,6 +2556,7 @@ test('extension review calls out destructive image authority before consent', as
 for (const updating of [false, true]) {
   test(`extension ${updating ? 'update' : 'install'} keeps exact image consent tied to its action`, async () => {
     const calls = [];
+    let committed = [];
     const candidate = {
       name: 'image-tool',
       version: '2.0.0',
@@ -2582,7 +2583,7 @@ for (const updating of [false, true]) {
       h(Extensions, {
         api: {
           extensions: {
-            list: async () => [],
+            list: async () => committed,
             startAcquisition: async () => ({ job: 'image-consent' }),
             acquisition: async () => ({
               job: 'image-consent',
@@ -2595,7 +2596,9 @@ for (const updating of [false, true]) {
             }),
             [`${updating ? 'update' : 'install'}AndWait`]: async (...args) => {
               calls.push(args);
-              return { changed: true, extension: { ...candidate, status: 'running' } };
+              const extension = { ...candidate, status: 'running' };
+              committed = [extension];
+              return { changed: true, extension };
             },
           },
           watchExtensions: async () => () => {},
@@ -2663,6 +2666,70 @@ for (const updating of [false, true]) {
     });
   });
 }
+
+test('a successful install reply is not confirmed by a different inventory identity', async () => {
+  const digest = `sha256:${'a'.repeat(64)}`;
+  const candidate = {
+    name: 'inventory-gap',
+    version: '1.0.0',
+    image_digest: digest,
+    installed_image_digest: null,
+    requested: [],
+    required: [],
+  };
+  const stage = host();
+  stage.render(
+    h(Extensions, {
+      api: {
+        extensions: {
+          list: async () => [
+            {
+              name: 'other-extension',
+              image_digest: `sha256:${'b'.repeat(64)}`,
+              version: '1.0.0',
+              enabled: true,
+              status: 'duty',
+              pane_providers: [],
+            },
+          ],
+          startAcquisition: async () => ({ job: 'inventory-gap' }),
+          acquisition: async () => ({
+            job: 'inventory-gap',
+            reference: 'registry.example/inventory-gap:1',
+            revision: 1,
+            state: 'ready',
+            progress: null,
+            candidate,
+            error: null,
+          }),
+          installAndWait: async () => ({ changed: true, extension: candidate }),
+        },
+        watchExtensions: async () => () => {},
+      },
+    }),
+  );
+  await settled();
+  selectExtensionMode(stage, 'Discover');
+  await settled();
+  change(stage, 'registry.example/extension:version', 'registry.example/inventory-gap:1');
+  invoke(stage, 'Inspect');
+  await settled();
+  await settled();
+  invoke(stage, 'Install with selected access');
+  await settled();
+  await settled();
+
+  assert.ok(
+    labelled(
+      stage,
+      'inventory-gap installed, but installed extensions could not be verified. Refresh before acting again.',
+    ),
+  );
+  assert.equal(
+    labelled(stage, 'inventory-gap installed and confirmed in installed extensions.'),
+    undefined,
+  );
+});
 
 test('extension discovery distinguishes catalogue loading from a complete empty catalogue', async () => {
   let resolveCatalogue;
