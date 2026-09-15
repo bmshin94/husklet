@@ -128,9 +128,13 @@ test(
       const stage = host();
       stage.render(h(Executions, { api, resource, executionDetails: source }));
 
-      for (const control of ['Load output', 'Wait up to 5s', 'Terminate', 'Remove record']) {
+      for (const control of ['Load output', 'Wait up to 5s']) {
         assert.ok(labelled(stage, control), `${control} remains available`);
       }
+      invoke(stage, 'More actions');
+      await until(() => labelled(stage, 'Terminate'));
+      for (const control of ['Terminate', 'Remove record'])
+        assert.ok(labelled(stage, control), `${control} remains available`);
       invoke(stage, 'Details');
       await until(() => labelled(stage, 'Reading execution details…'));
       await until(() => lengths(mutations).length === 1);

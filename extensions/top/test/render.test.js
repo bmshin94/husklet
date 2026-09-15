@@ -7042,6 +7042,8 @@ test('container stop and kill cannot call the API before final confirmation', as
   const stage = host();
   stage.render(h(Containers, { api: controlled, resource }));
 
+  invoke(stage, 'More actions');
+  await settled();
   invoke(stage, 'Stop');
   assert.deepEqual(calls, [], 'opening stop confirmation performs no operation');
   assert.ok(labelled(stage, `Stop api with immutable ID ${immutable}?`));
@@ -7090,6 +7092,8 @@ test('container rename validates locally, retries failure, and preserves immutab
   };
   const stage = host();
   stage.render(h(Containers, { api: controlled, resource }));
+  await settled();
+  invoke(stage, 'More actions');
   await settled();
   const identity = labelled(stage, `Container ID · ${immutable.slice(0, 12)}`);
   assert.ok(identity, 'the rename surface keeps immutable identity compact');
@@ -8025,14 +8029,10 @@ test('container controls follow the real daemon lifecycle states', async () => {
   assert.deepEqual(taggedProperty(stage, 'More actions', 'Button', 'Icon'), {
     Text: 'view-more-symbolic',
   });
-  assert.deepEqual(ancestorProperty(stage, 'Container actions', 'CardContent', 'Visible'), {
-    Flag: false,
-  });
+  assert.equal(labelled(stage, 'Container actions'), undefined);
   invoke(stage, 'More actions');
   await settled();
-  assert.deepEqual(ancestorProperty(stage, 'Container actions', 'CardContent', 'Visible'), {
-    Flag: true,
-  });
+  assert.ok(labelled(stage, 'Container actions'));
   assert.ok(labelled(stage, 'Close actions'));
   assert.equal(taggedProperty(stage, 'Details', 'InlineButton', 'Variant')?.Variant, 'Outline');
   assert.equal(taggedProperty(stage, 'Details', 'InlineButton', 'Tone')?.Tone, 'Neutral');
@@ -8057,6 +8057,7 @@ test('container controls follow the real daemon lifecycle states', async () => {
 
   stage = host();
   stage.render(h(Containers, { api, resource: inventory('created') }));
+  invoke(stage, 'More actions');
   assert.equal(isEnabled(stage, 'Remove'), true, 'created containers are removable');
   assert.equal(isEnabled(stage, 'Start'), true, 'created containers are startable');
   assert.equal(taggedProperty(stage, 'Start', 'InlineButton', 'Variant')?.Variant, 'Filled');
@@ -8064,6 +8065,7 @@ test('container controls follow the real daemon lifecycle states', async () => {
 
   stage = host();
   stage.render(h(Containers, { api, resource: inventory('exited') }));
+  invoke(stage, 'More actions');
   assert.equal(isEnabled(stage, 'Remove'), true, 'exited containers are removable');
   assert.equal(isEnabled(stage, 'Start'), true, 'exited containers are restartable through start');
 
@@ -8074,6 +8076,7 @@ test('container controls follow the real daemon lifecycle states', async () => {
     undefined,
     'paused containers omit an invalid remove action',
   );
+  invoke(stage, 'More actions');
   assert.equal(isEnabled(stage, 'Restart'), true, 'paused containers can be restarted');
   assert.equal(isEnabled(stage, 'Stop'), true, 'paused containers can be stopped');
 
@@ -8084,6 +8087,7 @@ test('container controls follow the real daemon lifecycle states', async () => {
     undefined,
     'a restarting container cannot be started twice',
   );
+  invoke(stage, 'More actions');
   assert.equal(isEnabled(stage, 'Stop'), true, 'a restart loop can be stopped');
 });
 
@@ -8133,6 +8137,7 @@ test('container lifecycle controls report only observation-backed completion', a
   assert.deepEqual(calls, [['start', id, 7], ['reload']]);
 
   render('running');
+  invoke(stage, 'More actions');
   invoke(stage, 'Restart');
   await settled();
   await settled();
@@ -8152,6 +8157,7 @@ test('container lifecycle controls report only observation-backed completion', a
   assert.deepEqual(calls.slice(-2), [['stop', id, 7], ['reload']]);
 
   render('exited', 8);
+  await settled();
   invoke(stage, 'Remove');
   invoke(stage, 'Confirm remove');
   await settled();
@@ -8174,6 +8180,7 @@ test('restart refuses a container without an observed generation', async () => {
       },
     }),
   );
+  invoke(stage, 'More actions');
   invoke(stage, 'Restart');
   await settled();
   await settled();
@@ -8528,6 +8535,8 @@ test('finished execution cleanup requires explicit destructive confirmation', as
   await settled();
   await settled();
   assert.ok(labelled(stage, 'Captured output is complete (EOF).'));
+  invoke(stage, 'More actions');
+  await settled();
   invoke(stage, 'Remove record');
   assert.deepEqual(calls, []);
   assert.equal(isDestructive(stage, 'Confirm removal'), true);
@@ -8576,6 +8585,8 @@ test('running execution termination is cursor-bound, confirmed and reports obser
   };
   const stage = host();
   stage.render(h(Executions, { api: controlled, resource }));
+  invoke(stage, 'More actions');
+  await settled();
   invoke(stage, 'Terminate');
   assert.deepEqual(calls, [], 'opening the prompt cannot signal the process');
   assert.ok(labelled(stage, 'Send SIGTERM to execution execution-full-identity?'));
@@ -8627,6 +8638,8 @@ test('execution termination distinguishes an unobserved transition from completi
       resource: { data: [item], loading: false, error: null, reload: async () => {} },
     }),
   );
+  invoke(stage, 'More actions');
+  await settled();
   invoke(stage, 'Terminate');
   invoke(stage, 'Confirm SIGTERM');
   await settled();

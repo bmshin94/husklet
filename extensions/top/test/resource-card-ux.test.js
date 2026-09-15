@@ -423,12 +423,13 @@ test('execution output has an observable loading state and explicit empty result
   assert.ok(textProperty(stage, 'No stderr captured (EOF).'));
   assert.ok(labelled(stage, 'More actions'));
   assert.deepEqual(property(stage, 'More actions', 'Variant'), { Variant: 'Ghost' });
+  assert.equal(labelled(stage, 'Remove record'), undefined);
+  invoke(stage, 'More actions');
+  await settled();
   assert.ok(
     ancestorTags(stage, 'Remove record').includes('CardContent'),
     'secondary actions live in the card-width panel rather than the summary row',
   );
-  invoke(stage, 'More actions');
-  await settled();
   assert.ok(labelled(stage, 'Close actions'));
 });
 

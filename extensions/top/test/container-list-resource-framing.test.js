@@ -129,6 +129,8 @@ test(
       await until(() => labelled(stage, 'Reading containers…'));
       await until(() => labelled(stage, 'stale-worker'));
       assert.ok(labelled(stage, 'Start'));
+      invoke(stage, 'More actions');
+      await until(() => labelled(stage, 'Remove'));
       invoke(stage, 'Remove');
       assert.ok(labelled(stage, `Remove inactive container stale-worker with immutable ID ${id}?`));
 
@@ -176,6 +178,8 @@ test(
         labelled(stage, 'Start'),
         'ready state restores lifecycle controls for current inventory',
       );
+      invoke(stage, 'More actions');
+      await until(() => labelled(stage, 'Remove'));
       invoke(stage, 'Remove');
       assert.ok(
         labelled(stage, `Remove inactive container current-worker with immutable ID ${id}?`),

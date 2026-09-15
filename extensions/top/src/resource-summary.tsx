@@ -154,8 +154,8 @@ export function ResourceSummary({
           </Row>
         </Responsive>
       </CardContent>
-      {overflow ? (
-        <CardContent visible={overflowOpen} width="fill" align="start" pad={2}>
+      {overflow && overflowOpen ? (
+        <CardContent width="fill" align="start" pad={2}>
           <Column gap={1} width="fill">
             {overflow.content}
           </Column>

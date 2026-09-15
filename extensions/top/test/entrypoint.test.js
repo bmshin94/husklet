@@ -674,6 +674,17 @@ test(
           requests.filter((request) => request.call === 'interface_render_at').length >
           imageRenders,
       );
+      const beforeContainerActions = requests.filter(
+        (request) => request.call === 'interface_render_at',
+      ).length;
+      peer.write(
+        encode({ channel: 32, kind: KIND.event, payload: invocation(requests, 'More actions') }),
+      );
+      await until(
+        () =>
+          requests.filter((request) => request.call === 'interface_render_at').length >
+          beforeContainerActions,
+      );
       peer.write(
         encode({ channel: 33, kind: KIND.event, payload: invocation(requests, 'Edit name') }),
       );
@@ -1145,6 +1156,17 @@ test(
         requests.filter((request) => request.call === 'interface_render_at').length >
           beforeExecutions,
       );
+      const beforeExecutionActions = requests.filter(
+        (request) => request.call === 'interface_render_at',
+      ).length;
+      peer.write(
+        encode({ channel: 33, kind: KIND.event, payload: invocation(requests, 'More actions') }),
+      );
+      await until(
+        () =>
+          requests.filter((request) => request.call === 'interface_render_at').length >
+          beforeExecutionActions,
+      );
       peer.write(
         encode({ channel: 34, kind: KIND.event, payload: invocation(requests, 'Terminate') }),
       );
@@ -1182,6 +1204,17 @@ test(
         encode({ channel: 15, kind: KIND.event, payload: invocation(requests, 'Load output') }),
       );
       await until(() => calls.includes('execution_logs'));
+      const beforeCleanupActions = requests.filter(
+        (request) => request.call === 'interface_render_at',
+      ).length;
+      peer.write(
+        encode({ channel: 48, kind: KIND.event, payload: invocation(requests, 'More actions') }),
+      );
+      await until(
+        () =>
+          requests.filter((request) => request.call === 'interface_render_at').length >
+          beforeCleanupActions,
+      );
       peer.write(
         encode({ channel: 16, kind: KIND.event, payload: invocation(requests, 'Remove record') }),
       );

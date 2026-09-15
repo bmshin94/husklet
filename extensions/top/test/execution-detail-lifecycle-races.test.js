@@ -145,6 +145,8 @@ test(
       await until(() => textValue(stage, 'generation-1'));
       invoke(stage, 'Details');
       await until(() => calls.includes('execution_inspect'));
+      invoke(stage, 'More actions');
+      await until(() => labelled(stage, 'Terminate'));
       invoke(stage, 'Terminate');
       assert.ok(labelled(stage, `Send SIGTERM to execution ${id}?`));
       const start = stage.frames.length;
