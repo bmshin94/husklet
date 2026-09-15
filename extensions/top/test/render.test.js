@@ -2732,6 +2732,91 @@ test('a successful install reply is not confirmed by a different inventory ident
   );
 });
 
+test('a retired install reply cannot overwrite its replacement workspace', async () => {
+  const digest = `sha256:${'a'.repeat(64)}`;
+  const candidate = {
+    name: 'old-workspace-tool',
+    version: '1.0.0',
+    image_digest: digest,
+    installed_image_digest: null,
+    requested: [],
+    required: [],
+  };
+  let finishInstall;
+  let oldInventoryReads = 0;
+  const install = new Promise((resolve) => {
+    finishInstall = resolve;
+  });
+  const oldApi = {
+    extensions: {
+      list: async () => {
+        oldInventoryReads += 1;
+        return [];
+      },
+      startAcquisition: async () => ({ job: 'old-install' }),
+      acquisition: async () => ({
+        job: 'old-install',
+        reference: 'registry.example/old-workspace-tool:1',
+        revision: 1,
+        state: 'ready',
+        progress: null,
+        candidate,
+        error: null,
+      }),
+      installAndWait: () => install,
+    },
+    watchExtensions: async () => () => {},
+  };
+  const newApi = {
+    extensions: {
+      list: async () => [],
+      startAcquisition: async () => ({ job: 'new-install' }),
+      acquisition: async () => ({
+        job: 'new-install',
+        reference: 'registry.example/new-workspace-tool:1',
+        revision: 1,
+        state: 'ready',
+        progress: null,
+        candidate: {
+          ...candidate,
+          name: 'new-workspace-tool',
+          image_digest: `sha256:${'b'.repeat(64)}`,
+        },
+        error: null,
+      }),
+    },
+    watchExtensions: async () => () => {},
+  };
+  const stage = host();
+  stage.render(h(Extensions, { api: oldApi }));
+  await settled();
+  selectExtensionMode(stage, 'Discover');
+  await settled();
+  change(stage, 'registry.example/extension:version', 'registry.example/old-workspace-tool:1');
+  invoke(stage, 'Inspect');
+  await settled();
+  await settled();
+  invoke(stage, 'Install with selected access');
+  await settled();
+
+  stage.render(h(Extensions, { api: newApi }));
+  await settled();
+  finishInstall({ changed: true, extension: candidate });
+  await settled();
+  await settled();
+
+  assert.equal(oldInventoryReads, 1, 'the retired install never reloads its old inventory');
+  assert.equal(
+    labelled(stage, 'old-workspace-tool installed and confirmed in installed extensions.'),
+    undefined,
+  );
+  change(stage, 'registry.example/extension:version', 'registry.example/new-workspace-tool:1');
+  invoke(stage, 'Inspect');
+  await settled();
+  await settled();
+  assert.ok(labelled(stage, 'Review new-workspace-tool'));
+});
+
 test('extension discovery distinguishes catalogue loading from a complete empty catalogue', async () => {
   let resolveCatalogue;
   const catalogue = new Promise((resolve) => {

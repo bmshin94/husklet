@@ -941,6 +941,8 @@ export function Extensions({
       busy
     )
       return;
+    const epoch = acquisitionEpoch.current;
+    const isCurrent = () => acquisitionEpoch.current === epoch;
     const updating = Boolean(acquisition.candidate.installed_image_digest);
     const reviewed = acquisition.candidate;
     setBusy(updating ? 'update' : 'install');
@@ -961,9 +963,11 @@ export function Extensions({
           credentials: grantedCredentials,
         },
       );
+      if (!isCurrent()) return;
       setAcquisition(null);
       setReference('');
       const listing = await reload();
+      if (!isCurrent()) return;
       const confirmed =
         result.changed &&
         listing?.some(
@@ -988,8 +992,10 @@ export function Extensions({
             },
       );
     } catch (cause) {
+      if (!isCurrent()) return;
       try {
         let status = await api.extensions.acquisition(acquisition.job);
+        if (!isCurrent()) return;
         if (status.state === 'committing') {
           setAcquisition(status);
           setError('');
@@ -1003,6 +1009,7 @@ export function Extensions({
             const changed = await api.extensions.waitForAcquisition(status.job, status.revision, {
               timeoutMs: Math.min(1_000, remaining),
             });
+            if (!isCurrent()) return;
             if (!changed.changed) continue;
             status = changed.status;
             setAcquisition(status);
@@ -1019,7 +1026,9 @@ export function Extensions({
           let listing: Awaited<ReturnType<typeof api.extensions.list>>;
           try {
             listing = await api.extensions.list();
+            if (!isCurrent()) return;
           } catch (verificationCause) {
+            if (!isCurrent()) return;
             setError(
               `${reviewed.name} reports ${status.state}, but installed extensions could not be verified. ${message(verificationCause)}`,
             );
@@ -1054,6 +1063,7 @@ export function Extensions({
             try {
               const reconciliationEpoch = ++inventoryEpoch.current;
               const listing = await api.extensions.list();
+              if (!isCurrent()) return;
               const authoritative =
                 inventoryEpoch.current === reconciliationEpoch
                   ? listing
@@ -1073,6 +1083,7 @@ export function Extensions({
                 uncertain: false,
               });
             } catch (refreshCause) {
+              if (!isCurrent()) return;
               setAcquisition(status);
               setError(
                 `${reviewed.name} changed while this review was open, but current installed state could not be refreshed. Keep this review open, refresh extensions, then inspect the image again. ${message(refreshCause)}`,
@@ -1089,6 +1100,7 @@ export function Extensions({
           setError(message(cause));
         }
       } catch (statusCause) {
+        if (!isCurrent()) return;
         // Acquisition jobs belong to the workspace service process, while an
         // installed extension is durable. A restart can therefore erase the
         // job immediately after the commit crossed the socket. Reconcile the
@@ -1105,6 +1117,7 @@ export function Extensions({
         try {
           const reconciliationEpoch = ++inventoryEpoch.current;
           const listing = await api.extensions.list();
+          if (!isCurrent()) return;
           if (inventoryEpoch.current === reconciliationEpoch) {
             installedSnapshot.current = listing;
             setInstalled(listing);
@@ -1132,13 +1145,14 @@ export function Extensions({
             );
           }
         } catch (verificationCause) {
+          if (!isCurrent()) return;
           setError(
             `${message(cause)} Current installed state could not be verified after ${interruption}: ${message(verificationCause)}`,
           );
         }
       }
     } finally {
-      setBusy('');
+      if (isCurrent()) setBusy('');
     }
   };
   const dismissReview = () => {
