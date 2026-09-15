@@ -764,8 +764,8 @@ mod unix {
                 );
                 assert_eq!(
                     remove_variable.height(),
-                    36,
-                    "{width_name} remove environment variable must remain a compact row action"
+                    44,
+                    "{width_name} remove environment variable must keep a reliable compact hit target"
                 );
                 let name_bounds = name_entry
                     .compute_bounds(&root)
