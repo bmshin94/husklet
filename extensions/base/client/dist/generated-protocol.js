@@ -1,5 +1,5 @@
 // Generated from Rust hl-extension protocol/v1.json. Do not edit.
-// Protocol artifact fnv1a64:961416dc0494e291
+// Protocol artifact fnv1a64:b6d800d60708f722
 export const PROTOCOL_SPECIFICATION_VERSION = 1;
 export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_BOUNDS = Object.freeze({
@@ -30,7 +30,17 @@ export const PROTOCOL_CAPABILITIES = Object.freeze([
   {
     "executes": true,
     "mutates": true,
-    "wire": "workspaces:control"
+    "wire": "workspaces:create"
+  },
+  {
+    "executes": true,
+    "mutates": true,
+    "wire": "workspaces:lifecycle"
+  },
+  {
+    "executes": false,
+    "mutates": true,
+    "wire": "workspaces:remove"
   },
   {
     "executes": false,
@@ -516,13 +526,13 @@ export const PROTOCOL_REQUEST_CAPABILITIES = Object.freeze({
   "workspace_info": "workspaces:read",
   "workspace_list": "workspaces:read",
   "workspace_inspect": "workspaces:read",
-  "workspace_create": "workspaces:control",
+  "workspace_create": "workspaces:create",
   "workspace_update": "workspaces:configure",
   "workspace_environment_patch": "workspace-environment:write",
-  "workspace_delete": "workspaces:control",
-  "workspace_start": "workspaces:control",
-  "workspace_stop": "workspaces:control",
-  "workspace_restart": "workspaces:control",
+  "workspace_delete": "workspaces:remove",
+  "workspace_start": "workspaces:lifecycle",
+  "workspace_stop": "workspaces:lifecycle",
+  "workspace_restart": "workspaces:lifecycle",
   "extension_list": "extensions:read",
   "extension_catalogue": "extensions:read",
   "extension_inspect": "extensions:read",
@@ -740,7 +750,19 @@ const definitions = {
         }
       },
       {
-        "name": "workspaces:control",
+        "name": "workspaces:create",
+        "payload": {
+          "kind": "unit"
+        }
+      },
+      {
+        "name": "workspaces:lifecycle",
+        "payload": {
+          "kind": "unit"
+        }
+      },
+      {
+        "name": "workspaces:remove",
         "payload": {
           "kind": "unit"
         }

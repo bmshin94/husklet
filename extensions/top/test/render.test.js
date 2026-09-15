@@ -60,7 +60,9 @@ test('every host capability has explicit consent language and workspace lifecycl
     assert.ok(capabilityLabel(wire), `missing consent language for ${wire}`);
   }
   assert.equal(capabilityLabel('workspaces:configure'), 'Modify workspace settings');
-  assert.equal(capabilityLabel('workspaces:control'), 'Create, start, stop, and delete workspaces');
+  assert.equal(capabilityLabel('workspaces:create'), 'Create workspaces');
+  assert.equal(capabilityLabel('workspaces:lifecycle'), 'Start, stop, and restart workspaces');
+  assert.equal(capabilityLabel('workspaces:remove'), 'Permanently delete workspaces');
   assert.equal(capabilityLabel('extensions:acquire'), 'Inspect and download extension images');
   assert.equal(capabilityLabel('extensions:install'), 'Install new extensions');
   assert.equal(capabilityLabel('extensions:update'), 'Replace installed extensions');

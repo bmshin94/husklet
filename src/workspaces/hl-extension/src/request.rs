@@ -715,11 +715,11 @@ impl Request {
         match self {
             Self::WorkspaceInfo | Self::WorkspaceList | Self::WorkspaceInspect { .. } => Capability::WorkspaceRead,
             Self::WorkspaceUpdate { .. } => Capability::WorkspaceConfigure,
-            Self::WorkspaceCreate { .. }
-            | Self::WorkspaceDelete { .. }
-            | Self::WorkspaceStart { .. }
-            | Self::WorkspaceStop { .. }
-            | Self::WorkspaceRestart { .. } => Capability::WorkspaceControl,
+            Self::WorkspaceCreate { .. } => Capability::WorkspaceCreate,
+            Self::WorkspaceDelete { .. } => Capability::WorkspaceRemove,
+            Self::WorkspaceStart { .. } | Self::WorkspaceStop { .. } | Self::WorkspaceRestart { .. } => {
+                Capability::WorkspaceLifecycle
+            }
             Self::WorkspaceEnvironmentPatch { .. } => Capability::WorkspaceEnvironmentWrite,
             Self::ExtensionList | Self::ExtensionCatalogue | Self::ExtensionInspect { .. } => Capability::ExtensionRead,
             Self::ExtensionEnable { .. } | Self::ExtensionDisable { .. } | Self::ExtensionRetry { .. } => {
@@ -1250,7 +1250,7 @@ mod tests {
                 generation: "0123456789abcdef0123456789abcdef".into(),
             }
             .capability(),
-            Capability::WorkspaceControl
+            Capability::WorkspaceRemove
         );
     }
 

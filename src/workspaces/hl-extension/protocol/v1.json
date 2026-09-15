@@ -27,7 +27,17 @@
     {
       "executes": true,
       "mutates": true,
-      "wire": "workspaces:control"
+      "wire": "workspaces:create"
+    },
+    {
+      "executes": true,
+      "mutates": true,
+      "wire": "workspaces:lifecycle"
+    },
+    {
+      "executes": false,
+      "mutates": true,
+      "wire": "workspaces:remove"
     },
     {
       "executes": false,
@@ -361,7 +371,19 @@
           }
         },
         {
-          "name": "workspaces:control",
+          "name": "workspaces:create",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
+          "name": "workspaces:lifecycle",
+          "payload": {
+            "kind": "unit"
+          }
+        },
+        {
+          "name": "workspaces:remove",
           "payload": {
             "kind": "unit"
           }
@@ -9666,7 +9688,7 @@
       "request": "workspace_inspect"
     },
     {
-      "capability": "workspaces:control",
+      "capability": "workspaces:create",
       "request": "workspace_create"
     },
     {
@@ -9678,19 +9700,19 @@
       "request": "workspace_environment_patch"
     },
     {
-      "capability": "workspaces:control",
+      "capability": "workspaces:remove",
       "request": "workspace_delete"
     },
     {
-      "capability": "workspaces:control",
+      "capability": "workspaces:lifecycle",
       "request": "workspace_start"
     },
     {
-      "capability": "workspaces:control",
+      "capability": "workspaces:lifecycle",
       "request": "workspace_stop"
     },
     {
-      "capability": "workspaces:control",
+      "capability": "workspaces:lifecycle",
       "request": "workspace_restart"
     },
     {
@@ -16696,7 +16718,7 @@
       ]
     }
   },
-  "source_fingerprint": "fnv1a64:cb8690274fe919bb",
+  "source_fingerprint": "fnv1a64:5e5f80d23933a9a7",
   "specification_version": 1,
   "topics": [
     {

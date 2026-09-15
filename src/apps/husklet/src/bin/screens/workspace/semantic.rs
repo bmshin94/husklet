@@ -205,7 +205,7 @@ impl Registry {
         let entries = self.entries.borrow();
         let entry = entries.get(&node).ok_or(Refusal::Absent(node))?;
         if entry.path.starts_with("settings/") {
-            Ok(hl_extension::Capability::WorkspaceControl)
+            Ok(hl_extension::Capability::WorkspaceConfigure)
         } else if entry.path.starts_with("extensions/") && entry.path.ends_with("/Remove") {
             Ok(hl_extension::Capability::ExtensionRemove)
         } else if entry.path.starts_with("extensions/") {
@@ -499,7 +499,7 @@ mod tests {
         );
         assert_eq!(
             registry.requirement(settings),
-            Ok(hl_extension::Capability::WorkspaceControl)
+            Ok(hl_extension::Capability::WorkspaceConfigure)
         );
         assert_eq!(
             registry.requirement(extension_control),

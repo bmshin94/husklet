@@ -86,13 +86,13 @@ const initial = boundedExtensions([
     version: '1.4.0',
     digest: 'sha256:top-generation-14',
     status: 'running',
-    grants: ['workspaces:read', 'workspaces:control', 'containers:read'],
+    grants: ['workspaces:read', 'workspaces:lifecycle', 'containers:read'],
     update: {
       version: '1.5.0',
       digest: 'sha256:top-generation-15',
       requested: [
         'workspaces:read',
-        'workspaces:control',
+        'workspaces:lifecycle',
         'containers:read',
         'containers:lifecycle',
       ],

@@ -205,8 +205,9 @@ observe-then-switch workflow.
 version really supports. Its image inventory includes the implemented bounded
 list/inspect and pull calls plus digest-bound removal and confirmed prune
 authority; callers do not need to infer those operations from TypeScript alone.
-Workspace creation, configuration and lifecycle are
-available under the explicit `workspaces:control` grant. A running workspace
+Workspace creation, configuration, lifecycle, and removal use independent
+`workspaces:create`, `workspaces:configure`, `workspaces:lifecycle`, and
+`workspaces:remove` grants. A running workspace
 must be stopped before it is updated, and an extension cannot stop, restart or
 delete the workspace hosting it. Names under `unavailable` deliberately are not
 callable methods. `Session.onEvent` is

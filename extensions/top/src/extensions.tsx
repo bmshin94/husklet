@@ -1426,7 +1426,9 @@ export function Extensions({
     requestedImages.remove.length > 0 || requestedImages.prune_all_unused
       ? 'Image removal can delete named images or every unused workspace image.'
       : null,
-    acquisition?.candidate?.requested.includes('workspaces:control')
+    acquisition?.candidate?.requested.some((capability) =>
+      ['workspaces:create', 'workspaces:lifecycle', 'workspaces:remove'].includes(capability),
+    )
       ? 'Workspace lifecycle access can create or delete workspaces and start or stop workloads.'
       : null,
   ]
@@ -3401,7 +3403,9 @@ export function capabilityLabel(capability: ExtensionCapability): string {
   const known: Record<ExtensionCapability, string> = {
     'workspaces:read': 'View workspace settings',
     'workspaces:configure': 'Modify workspace settings',
-    'workspaces:control': 'Create, start, stop, and delete workspaces',
+    'workspaces:create': 'Create workspaces',
+    'workspaces:lifecycle': 'Start, stop, and restart workspaces',
+    'workspaces:remove': 'Permanently delete workspaces',
     'workspaces:events': 'Observe workspace lifecycle',
     'workspace-environment:read': 'Read selected workspace environment values',
     'workspace-environment:write': 'Change selected workspace environment values',

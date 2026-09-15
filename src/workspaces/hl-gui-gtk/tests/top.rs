@@ -16,11 +16,11 @@ mod unix {
         NetworkEndpointInventory, NetworkInventory, NetworkKind, NetworkSummary, PaneText, TerminalLifecycle,
     };
     use hl_extension::{
-        codec, Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
-        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, InspectablePane, PaneInventory, PaneKind,
-        PaneProvider, PreferenceValue, RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire,
+        Capability, ChannelId, ExtensionName, ExtensionPreferences, ExtensionSummary, FilesystemGrant,
+        FilesystemSelector, Frame, Grant, Hello, ImageGrant, ImageSelector, InspectablePane, PROTOCOL, PaneInventory,
+        PaneKind, PaneProvider, PreferenceValue, RelativePath, Reply, Request, Snapshot, VolumeGrant, Welcome, Wire,
         WorkspaceConfiguration, WorkspaceEnvironmentGrant, WorkspaceEnvironmentSelector, WorkspaceInfo,
-        WorkspaceTerminal, PROTOCOL,
+        WorkspaceTerminal, codec,
     };
     use hl_gui::{Renderer as _, SourceMutation, Theme, Tree};
     use hl_gui_gtk::Surface;
@@ -3900,7 +3900,9 @@ mod unix {
                                 Capability::FilesystemRead,
                                 Capability::ImageRemove,
                                 Capability::Interface,
-                                Capability::WorkspaceControl,
+                                Capability::WorkspaceCreate,
+                                Capability::WorkspaceLifecycle,
+                                Capability::WorkspaceRemove,
                                 Capability::WorkspaceEnvironmentRead,
                                 Capability::VolumeWrite,
                             ]),
@@ -4295,7 +4297,9 @@ mod unix {
                                 Capability::FilesystemRead,
                                 Capability::ImageRemove,
                                 Capability::Interface,
-                                Capability::WorkspaceControl,
+                                Capability::WorkspaceCreate,
+                                Capability::WorkspaceLifecycle,
+                                Capability::WorkspaceRemove,
                                 Capability::WorkspaceEnvironmentRead,
                                 Capability::VolumeWrite,
                             ]),

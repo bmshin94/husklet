@@ -17,9 +17,15 @@ pub enum Capability {
     /// Changing workspace configuration without granting lifecycle control.
     #[serde(rename = "workspaces:configure")]
     WorkspaceConfigure,
-    /// Creating, starting, stopping, or deleting workspaces.
-    #[serde(rename = "workspaces:control")]
-    WorkspaceControl,
+    /// Creates a workspace from an explicitly reviewed configuration.
+    #[serde(rename = "workspaces:create")]
+    WorkspaceCreate,
+    /// Starts, stops, or restarts a workspace without granting deletion.
+    #[serde(rename = "workspaces:lifecycle")]
+    WorkspaceLifecycle,
+    /// Permanently deletes a workspace and its local state.
+    #[serde(rename = "workspaces:remove")]
+    WorkspaceRemove,
     /// Observing keyboard, focus, and pointer activity across the workspace window.
     #[serde(rename = "workspaces:events")]
     WorkspaceEvents,
@@ -174,7 +180,9 @@ impl Capability {
         match self {
             Self::WorkspaceRead => "workspaces:read",
             Self::WorkspaceConfigure => "workspaces:configure",
-            Self::WorkspaceControl => "workspaces:control",
+            Self::WorkspaceCreate => "workspaces:create",
+            Self::WorkspaceLifecycle => "workspaces:lifecycle",
+            Self::WorkspaceRemove => "workspaces:remove",
             Self::WorkspaceEvents => "workspaces:events",
             Self::WorkspaceEnvironmentRead => "workspace-environment:read",
             Self::WorkspaceEnvironmentWrite => "workspace-environment:write",
@@ -236,7 +244,9 @@ impl Capability {
         matches!(
             self,
             Self::WorkspaceConfigure
-                | Self::WorkspaceControl
+                | Self::WorkspaceCreate
+                | Self::WorkspaceLifecycle
+                | Self::WorkspaceRemove
                 | Self::WorkspaceEnvironmentWrite
                 | Self::ContainerCreate
                 | Self::ContainerExecute
@@ -279,7 +289,8 @@ impl Capability {
     pub const fn executes(self) -> bool {
         matches!(
             self,
-            Self::WorkspaceControl
+            Self::WorkspaceCreate
+                | Self::WorkspaceLifecycle
                 | Self::ContainerCreate
                 | Self::ContainerExecute
                 | Self::ContainerInput
@@ -293,7 +304,9 @@ impl Capability {
     pub const ALL: &'static [Self] = &[
         Self::WorkspaceRead,
         Self::WorkspaceConfigure,
-        Self::WorkspaceControl,
+        Self::WorkspaceCreate,
+        Self::WorkspaceLifecycle,
+        Self::WorkspaceRemove,
         Self::WorkspaceEvents,
         Self::WorkspaceEnvironmentRead,
         Self::WorkspaceEnvironmentWrite,
@@ -404,7 +417,9 @@ mod tests {
     fn execution_grants_are_identified_for_the_consent_prompt() {
         assert!(Grant::new([Capability::ContainerExecute]).executes());
         assert!(!Grant::new([Capability::ContainerLifecycle]).executes());
-        assert!(Grant::new([Capability::WorkspaceControl]).executes());
+        assert!(Grant::new([Capability::WorkspaceCreate]).executes());
+        assert!(Grant::new([Capability::WorkspaceLifecycle]).executes());
+        assert!(!Grant::new([Capability::WorkspaceRemove]).executes());
         assert!(Grant::new([Capability::TerminalInput]).executes());
         assert!(Grant::new([Capability::TerminalProcessControl]).executes());
         assert!(!Grant::new([Capability::TerminalLayoutControl]).executes());

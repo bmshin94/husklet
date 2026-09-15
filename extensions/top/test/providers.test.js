@@ -23,7 +23,9 @@ test('Top requests the complete workspace management and pane authority it exerc
   for (const capability of [
     'workspaces:read',
     'workspaces:configure',
-    'workspaces:control',
+    'workspaces:create',
+    'workspaces:lifecycle',
+    'workspaces:remove',
     'extensions:read',
     'extensions:control',
     'extensions:acquire',
