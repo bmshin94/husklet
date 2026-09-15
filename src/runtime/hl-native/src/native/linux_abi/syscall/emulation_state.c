@@ -69,7 +69,31 @@ static struct {
 } g_flkcomp[256];
 
 static int g_nflkcomp;
+
+// ---- host-delegated flock(2) leases (Linux host) --------------------------------------------------
+// On Linux hl_flock hands the guest's flock(2) straight to the host kernel, which then owns and
+// enforces it (see hl_flock).  Nothing in the engine would otherwise know the lock exists -- and the
+// CHECKPOINT admission gate (ckpt_refuse_uncaptured_file_locks) refuses a capture by scanning the
+// shared broker table, which only the companion route ever wrote.  A capture admitted while the guest
+// holds a flock is SILENT DATA LOSS: the image carries no lock section and the restore reopens the
+// file by path, so the restored guest believes it still holds an interlock that any other process can
+// now take.  This table gives each process the bookkeeping it needs to publish a broker record for
+// every host-enforced lease it holds, and to retire it again on LOCK_UN and on last close -- exactly
+// the visibility the fcntl record-lock arm already has.  The host kernel stays the SOLE enforcer;
+// these records are marked host_enforced and take no part in broker conflict resolution.
+static struct {
+    uint64_t device, object;
+    uint8_t mode; // LOCK_SH / LOCK_EX, for the refusal diagnostic
+    int refs;     // guest fds in THIS process currently holding a host-delegated flock on this file
+} g_flkhost[256];
+
+static int g_nflkhost;
+
 static int flock_broker_apply(const hl_linux_fd_snapshot *source, uint64_t device, uint64_t object, int operation);
+static int flock_host_lease_find(uint64_t device, uint64_t object);
+static int flock_host_lease_record(int fd, uint64_t device, uint64_t object, int base);
+static void flock_host_lease_release(int fd, uint64_t device, uint64_t object);
+static int ofd_surviving_alias(int fd);
 
 static int flock_companion_find(uint64_t device, uint64_t object) {
     for (int i = 0; i < g_nflkcomp; i++)
@@ -132,7 +156,31 @@ static int hl_flock(int fd, int op) {
     // exists only for a non-Linux (macOS) host, where flock and fcntl share one per-vnode lock list; it routes
     // both descriptors to a single process-local fcntl lock and so cannot observe an intra-process cross-fd
     // flock conflict. Delegate straight to the host on Linux, where the kernel enforces the correct model.
-    return flock(fd, op);
+    //
+    // Delegating does NOT mean the engine can forget the lock. The checkpoint admission gate refuses a
+    // capture by scanning the shared broker table, so a lease that never reaches that table is admitted,
+    // committed, and dropped on restore WITHOUT a diagnostic -- the exact silent-data-loss shape the fcntl
+    // record-lock arm already refuses. So register every successful host-enforced lease (and retire it on
+    // LOCK_UN) for admission VISIBILITY only: the host kernel remains the sole enforcer.
+    int base = op & ~LOCK_NB;
+    struct stat identity;
+    int identified = fd >= 0 && fd < HL_NFD && fstat(fd, &identity) == 0;
+    int result = flock(fd, op);
+    if (result != 0 || !identified) return result;
+    uint64_t device = (uint64_t)identity.st_dev, object = (uint64_t)identity.st_ino;
+    if (base == LOCK_UN) {
+        flock_host_lease_release(fd, device, object);
+        return 0;
+    }
+    if (base != LOCK_SH && base != LOCK_EX) return 0; // the host already rejected anything else
+    if (flock_host_lease_record(fd, device, object, base) == 0) return 0;
+    // The lease cannot be made visible to the admission gate, and a lock the gate cannot see is a lock a
+    // capture would silently drop. Fail closed: give the lock back rather than hold an invisible one.
+    // flock_host_lease_record only fails for a file this process did not already hold a lease on, so this
+    // unlock cannot discard an older lease on this open file description.
+    (void)flock(fd, LOCK_UN);
+    errno = ENOLCK;
+    return -1;
 #else
     int idx = flock_companion(fd);
     if (idx < 0) return -1;
@@ -232,10 +280,28 @@ static void flock_on_close_identity(int fd, uint64_t device, uint64_t object) {
 // this process is gone (flock is released on the last close of the file).
 static void flock_on_close(int fd) {
     if (fd < 0 || fd >= HL_NFD || !g_flock_type[fd]) return;
-    g_flock_type[fd] = 0;
     struct stat st;
-    if (fstat(fd, &st) < 0) return;
-    int idx = flock_companion_find((uint64_t)st.st_dev, (uint64_t)st.st_ino);
+    if (fstat(fd, &st) < 0) {
+        g_flock_type[fd] = 0;
+        return;
+    }
+    uint64_t device = (uint64_t)st.st_dev, object = (uint64_t)st.st_ino;
+    if (flock_host_lease_find(device, object) >= 0) {
+        // A host-delegated lease (Linux) belongs to the OPEN FILE DESCRIPTION, so it SURVIVES this close
+        // whenever a dup alias keeps that description alive. Move the per-fd reference onto the surviving
+        // alias rather than retiring the lease, or the admission gate would stop seeing a lock the kernel
+        // is still enforcing. Runs before the real close(), so the alias probe sees a live descriptor.
+        int alias = ofd_surviving_alias(fd);
+        if (alias >= 0 && alias < HL_NFD && alias != fd && !g_flock_type[alias]) {
+            g_flock_type[alias] = g_flock_type[fd];
+            g_flock_type[fd] = 0;
+            return;
+        }
+        flock_host_lease_release(fd, device, object);
+        return;
+    }
+    g_flock_type[fd] = 0;
+    int idx = flock_companion_find(device, object);
     if (idx < 0) return;
     if (--g_flkcomp[idx].refs <= 0) {
         g_flkcomp[idx].refs = 0;
@@ -277,6 +343,10 @@ struct flock_broker_record {
     int32_t holders[FLOCK_HOLDERS_MAX];
     uint8_t mode;
     uint8_t active;
+    // 1 == the HOST kernel owns and enforces this lease (the Linux hl_flock delegate); the record exists
+    // only so the checkpoint admission gate can see the lock, and is therefore invisible to
+    // flock_broker_apply's conflict resolution, which arbitrates the companion-file leases it owns.
+    uint8_t host_enforced;
 };
 
 struct poslk_rec {
@@ -451,8 +521,8 @@ static int flock_broker_apply(const hl_linux_fd_snapshot *source, uint64_t devic
                 own = record;
                 continue;
             }
-            if (record->device == device && record->object == object && record->mode != 0 && base != LOCK_UN &&
-                (base == LOCK_EX || record->mode == LOCK_EX))
+            if (!record->host_enforced && record->device == device && record->object == object &&
+                record->mode != 0 && base != LOCK_UN && (base == LOCK_EX || record->mode == LOCK_EX))
                 conflict = 1;
         }
         if (!conflict && base == LOCK_UN) {
@@ -511,8 +581,120 @@ static void flock_broker_detach(const hl_linux_fd_snapshot *source) {
     poslk_unlock();
 }
 
+// ---- host-delegated lease bookkeeping (see g_flkhost) ---------------------------------------------
+
+static int flock_host_lease_find(uint64_t device, uint64_t object) {
+    for (int index = 0; index < g_nflkhost; ++index)
+        if (g_flkhost[index].device == device && g_flkhost[index].object == object) return index;
+    return -1;
+}
+
+// Publish "this process holds a host-enforced flock on (device,object)" in the shared broker table, which
+// is the only table ckpt_refuse_uncaptured_file_locks scans. One record per file, holders[] naming every
+// process that holds it -- a fork child shares the open file description and so joins the same record.
+static int flock_host_broker_publish(uint64_t device, uint64_t object, int base) {
+    if (g_poslk == NULL) return -1;
+    int32_t me = poslk_mypid();
+    int failed = 1;
+    poslk_lock();
+    struct flock_broker_record *own = NULL, *free_record = NULL;
+    for (int index = 0; index < FLOCK_BROKER_MAX; ++index) {
+        struct flock_broker_record *record = &g_poslk->flock[index];
+        if (!record->active) {
+            if (free_record == NULL) free_record = record;
+            continue;
+        }
+        if (record->host_enforced && record->device == device && record->object == object) {
+            own = record;
+            break;
+        }
+    }
+    if (own == NULL && free_record != NULL) {
+        memset(free_record, 0, sizeof *free_record);
+        free_record->active = 1;
+        free_record->host_enforced = 1;
+        free_record->device = device;
+        free_record->object = object;
+        own = free_record;
+    }
+    if (own != NULL && flock_holder_add(own, me) == 0) {
+        own->mode = (uint8_t)base;
+        failed = 0;
+    }
+    poslk_unlock();
+    return failed ? -1 : 0;
+}
+
+// Retire this process from a host-enforced record; the record goes when its last holder does.
+static void flock_host_broker_retire(uint64_t device, uint64_t object) {
+    if (g_poslk == NULL) return;
+    int32_t me = poslk_mypid();
+    poslk_lock();
+    for (int index = 0; index < FLOCK_BROKER_MAX; ++index) {
+        struct flock_broker_record *record = &g_poslk->flock[index];
+        if (!record->active || !record->host_enforced) continue;
+        if (record->device != device || record->object != object) continue;
+        int holder = flock_holder_find(record, me);
+        if (holder >= 0) record->holders[holder] = 0;
+        if (!flock_has_holders(record)) memset(record, 0, sizeof *record);
+        break;
+    }
+    poslk_unlock();
+}
+
+// Record a successful host-delegated flock(2) against `fd`. 0 on success, -1 (errno set) when the lease
+// cannot be made visible to the admission gate -- which can only happen for a file this process was not
+// already holding, so the caller's fail-closed unlock never discards an older lease.
+static int flock_host_lease_record(int fd, uint64_t device, uint64_t object, int base) {
+    if (poslk_init() != 0) {
+        errno = ENOLCK;
+        return -1;
+    }
+    int index = flock_host_lease_find(device, object);
+    if (index < 0 && g_nflkhost >= (int)(sizeof g_flkhost / sizeof g_flkhost[0])) {
+        errno = ENOLCK;
+        return -1;
+    }
+    if (flock_host_broker_publish(device, object, base) != 0) {
+        errno = ENOLCK;
+        return -1;
+    }
+    if (index < 0) {
+        index = g_nflkhost++;
+        g_flkhost[index].device = device;
+        g_flkhost[index].object = object;
+        g_flkhost[index].refs = 0;
+    }
+    g_flkhost[index].mode = (uint8_t)base;
+    if (fd >= 0 && fd < HL_NFD) {
+        if (!g_flock_type[fd]) g_flkhost[index].refs++;
+        g_flock_type[fd] = (uint8_t)base;
+    }
+    return 0;
+}
+
+// Drop `fd`'s reference to a host-delegated lease (LOCK_UN, or the last close of the description); the
+// broker record is retired once no descriptor in this process holds the file any more.
+static void flock_host_lease_release(int fd, uint64_t device, uint64_t object) {
+    if (fd < 0 || fd >= HL_NFD || !g_flock_type[fd]) return;
+    g_flock_type[fd] = 0;
+    int index = flock_host_lease_find(device, object);
+    if (index < 0) return;
+    if (--g_flkhost[index].refs > 0) return;
+    flock_host_broker_retire(device, object);
+    --g_nflkhost;
+    if (index != g_nflkhost) g_flkhost[index] = g_flkhost[g_nflkhost];
+    memset(&g_flkhost[g_nflkhost], 0, sizeof g_flkhost[g_nflkhost]);
+}
+
 static void flock_broker_after_fork(void) {
-    if (g_poslk == NULL || g_linux_box == NULL) return;
+    if (g_poslk == NULL) return;
+    // A fork child shares every OPEN FILE DESCRIPTION, so it holds its parent's host-delegated flock(2)
+    // leases too, and the forked image already carries g_flkhost/g_flock_type. Join each broker record so
+    // the CHILD's own admission gate refuses a capture while it holds an inherited lock.
+    for (int index = 0; index < g_nflkhost; ++index)
+        (void)flock_host_broker_publish(g_flkhost[index].device, g_flkhost[index].object, g_flkhost[index].mode);
+    if (g_linux_box == NULL) return;
     poslk_lock();
     // The per-fd scan only ever calls flock_holder_add on ACTIVE broker records: with no active record
     // anywhere in the container it is a pure no-op. Skip the full fd_capacity walk (an inherited flock is
@@ -836,6 +1018,15 @@ static void poslk_on_exit(void) {
     poslk_lock();
     for (int i = 0; i < g_poslk->hi; i++)
         if (g_poslk->rec[i].owner == me) g_poslk->rec[i].owner = 0;
+    // The kernel releases this process's host-delegated flock(2) leases at exit, so its broker records
+    // must go with them -- otherwise a recycled pid would inherit a refusal for a lock nobody holds.
+    for (int i = 0; i < FLOCK_BROKER_MAX; i++) {
+        struct flock_broker_record *record = &g_poslk->flock[i];
+        if (!record->active || !record->host_enforced) continue;
+        int holder = flock_holder_find(record, me);
+        if (holder >= 0) record->holders[holder] = 0;
+        if (!flock_has_holders(record)) memset(record, 0, sizeof *record);
+    }
     poslk_unlock();
 }
 

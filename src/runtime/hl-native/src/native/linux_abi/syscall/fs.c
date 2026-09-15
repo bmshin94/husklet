@@ -995,9 +995,12 @@ static void fd_reset_emul(int fd) {
         nl_close(fd); // tear down a netlink socket's socketpair peer
         // (eventfd counter/cslot/sema teardown is handled refcounted in the g_eventfd_peer block above so a
         // surviving dup keeps the shared counter; do NOT unconditionally zero the shared slot here.)
+        // BEFORE ep_fd_reset, which clears this fd's OFD group id: flock(2) ownership is scoped to the OPEN
+        // FILE DESCRIPTION, so the close hook needs that id to tell "the lock dies with this fd" from "a dup
+        // alias still holds it" (see flock_on_close). Reset first and every dup'd flock looks released.
+        flock_on_close(fd);
         ep_close_rehome(fd); // if this watched fd's OFD survives via a dup, re-home its epoll knote (before reset)
         ep_fd_reset(fd);
-        flock_on_close(fd);
         poslk_on_close(fd); // POSIX drops all this process's fcntl record locks when any fd closes
         ptm_clear(fd);      // drop this fd's cached pty-master termios/winsize (see ptm cache below)
 #if !defined(__linux__)
