@@ -19,7 +19,7 @@ use std::time::Instant;
 /// The one place the `native-x86` image format version lives.  Bumping it here
 /// is a compile error until every other carrier of the version moves with it:
 /// see the `const` block below.
-const NATIVE_FORMAT_VERSION: u16 = 2;
+const NATIVE_FORMAT_VERSION: u16 = 3;
 
 const MAGIC: &[u8; 8] = b"HLNXREG\0";
 const VERSION: u16 = NATIVE_FORMAT_VERSION;
@@ -39,7 +39,7 @@ const STOP_DEADLINE: Duration = Duration::from_secs(2);
 #[cfg(target_os = "linux")]
 const ABORT_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 
-pub(crate) const REGISTER_OBJECT: &str = "native/registers.x86-v2";
+pub(crate) const REGISTER_OBJECT: &str = "native/registers.x86-v3";
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub(crate) fn pin_native_process(pid: libc::pid_t) -> io::Result<OwnedFd> {
@@ -52,14 +52,28 @@ pub(crate) fn pin_native_process(pid: libc::pid_t) -> io::Result<OwnedFd> {
         Ok(unsafe { OwnedFd::from_raw_fd(descriptor as libc::c_int) })
     }
 }
-pub(crate) const MEMORY_OBJECT: &str = "native/memory.x86-v2";
+pub(crate) const MEMORY_OBJECT: &str = "native/memory.x86-v3";
 /// Extended processor state -- x87, SSE, AVX and AVX-512 -- as its own object.
 /// The XSAVE area is variable length and host dependent, so it does not belong
 /// in the fixed-size register record; giving it a manifest slot buys it the same
 /// declared size and SHA-256 digest every other object already gets.
-pub(crate) const XSTATE_OBJECT: &str = "native/xstate.x86-v2";
-const MANIFEST_MAGIC: &[u8; 16] = b"HLNATIVE-X86-V2\0";
-const MANIFEST_SIZE: usize = 232;
+pub(crate) const XSTATE_OBJECT: &str = "native/xstate.x86-v3";
+/// Kernel-side per-process state that has no home in a register file: the
+/// working directory, umask, `comm`, the signal *dispositions* (which signals
+/// are caught and which are ignored), every resource limit, the CPU affinity
+/// mask, the personality word, `no_new_privs`, the seccomp mode and filter
+/// count, the x86 thread features (CET/shadow stack), and the debug registers.
+///
+/// Before this object none of that state was captured and none of it was
+/// refused: the capture reported success and the restore silently handed the
+/// guest whatever the *fresh* process happened to hold.  Each field here is
+/// either applied to the restore target (the three that have a cross-process
+/// setter) or compared against it and refused on divergence.  Nothing in this
+/// record is ever zero filled, truncated or reconstructed.
+pub(crate) const PROCSTATE_OBJECT: &str = "native/procstate.x86-v3";
+
+const MANIFEST_MAGIC: &[u8; 16] = b"HLNATIVE-X86-V3\0";
+const MANIFEST_SIZE: usize = 304;
 const MANIFEST_SLOT: usize = 72;
 
 /// Four places used to carry the format version independently -- `VERSION`, the
@@ -75,8 +89,11 @@ const _: () = {
     assert!(trailing_format_version(REGISTER_OBJECT) == NATIVE_FORMAT_VERSION);
     assert!(trailing_format_version(MEMORY_OBJECT) == NATIVE_FORMAT_VERSION);
     assert!(trailing_format_version(XSTATE_OBJECT) == NATIVE_FORMAT_VERSION);
+    assert!(trailing_format_version(PROCSTATE_OBJECT) == NATIVE_FORMAT_VERSION);
+    assert!(PROCSTATE_VERSION == NATIVE_FORMAT_VERSION);
     assert!(crate::runtime::checkpoint::image_envelope::NATIVE_X86_PAYLOAD_VERSION == NATIVE_FORMAT_VERSION as u32);
-    assert!(MANIFEST_SIZE == 16 + 3 * MANIFEST_SLOT);
+    assert!(MANIFEST_SIZE == 16 + 4 * MANIFEST_SLOT);
+    assert!(NATIVE_OBJECTS.len() == 4);
 };
 
 const fn ascii_format_version(digit: u8) -> u16 {
@@ -93,7 +110,571 @@ pub(crate) struct NativeSnapshotObjects {
     pub(crate) registers: Vec<u8>,
     pub(crate) memory: Vec<u8>,
     pub(crate) xstate: Vec<u8>,
+    pub(crate) procstate: Vec<u8>,
     pub(crate) manifest: Vec<u8>,
+}
+
+// ---------------------------------------------------------------------------
+// Kernel-side process state: capture, admission and application.
+// ---------------------------------------------------------------------------
+
+const PROCSTATE_MAGIC: &[u8; 8] = b"HLNXPRC\0";
+const PROCSTATE_VERSION: u16 = NATIVE_FORMAT_VERSION;
+/// `RLIMIT_NLIMITS` on Linux.  Fixed, not probed: a kernel that grew a
+/// seventeenth limit would make the extra one invisible, so the decoder pins
+/// the count and a future widening is a format version bump.
+const RLIMIT_COUNT: usize = 16;
+/// 1024 CPUs.  `sched_getaffinity` refuses a mask smaller than the host needs,
+/// so a bigger machine refuses the capture instead of silently truncating.
+const AFFINITY_WORDS: usize = 16;
+const COMM_BYTES: usize = 16;
+/// DR0, DR1, DR2, DR3, DR6, DR7.  DR4/DR5 are architectural aliases of DR6/DR7.
+const DEBUG_REGISTER_COUNT: usize = 6;
+const DEBUG_REGISTER_INDEX: [usize; DEBUG_REGISTER_COUNT] = [0, 1, 2, 3, 6, 7];
+const THREAD_FEATURE_BYTES: usize = 64;
+/// The three x86 GDT TLS slots, `GDT_ENTRY_TLS_MIN..=GDT_ENTRY_TLS_MAX`.
+/// A 64-bit glibc puts the thread pointer in `fs_base` and leaves these empty,
+/// but `set_thread_area`/`modify_ldt` still work in a 64-bit process, and a
+/// descriptor the guest installed has nowhere else in the image to live.
+const THREAD_AREA_MIN: u32 = 12;
+const THREAD_AREA_COUNT: usize = 3;
+/// `struct user_desc`: entry_number, base_addr, limit, then the flag word.
+const THREAD_AREA_BYTES: usize = 16;
+/// `PTRACE_GET_THREAD_AREA`.  Not in `libc`'s x86-64 constant set, and the
+/// numeric value is part of the stable ptrace ABI.
+const PTRACE_GET_THREAD_AREA: libc::c_uint = 25;
+const PROCSTATE_FIXED: usize = 680;
+const PROCSTATE_FLAG_THREAD_FEATURES: u32 = 1;
+
+/// `user_regs_struct` word indices.  `fs_base`/`gs_base` are the two that move
+/// TLS, which is why they are named here rather than spelled as literals.
+const REGISTER_FS_BASE: usize = 21;
+const REGISTER_GS_BASE: usize = 22;
+
+const _: () = {
+    assert!(
+        PROCSTATE_FIXED
+            == 72
+                + DEBUG_REGISTER_COUNT * 8
+                + RLIMIT_COUNT * 16
+                + AFFINITY_WORDS * 8
+                + 2 * THREAD_FEATURE_BYTES
+                + THREAD_AREA_COUNT * THREAD_AREA_BYTES
+    );
+    assert!(REGISTER_FS_BASE < REGISTER_COUNT && REGISTER_GS_BASE < REGISTER_COUNT);
+};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct NativeProcessState {
+    pub(super) cwd: Vec<u8>,
+    pub(super) comm: [u8; COMM_BYTES],
+    pub(super) umask: u32,
+    pub(super) personality: u32,
+    pub(super) no_new_privs: u32,
+    pub(super) seccomp_mode: u32,
+    pub(super) seccomp_filters: u32,
+    pub(super) flags: u32,
+    pub(super) signals_ignored: u64,
+    pub(super) signals_caught: u64,
+    pub(super) debug_registers: [u64; DEBUG_REGISTER_COUNT],
+    pub(super) rlimits: [(u64, u64); RLIMIT_COUNT],
+    pub(super) affinity: [u64; AFFINITY_WORDS],
+    pub(super) thread_features: [u8; THREAD_FEATURE_BYTES],
+    pub(super) thread_features_locked: [u8; THREAD_FEATURE_BYTES],
+    pub(super) thread_areas: [[u8; THREAD_AREA_BYTES]; THREAD_AREA_COUNT],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum InvalidProcessState {
+    Size,
+    Magic,
+    Version,
+    DeclaredSize,
+    Reserved,
+    CwdLength,
+}
+
+/// Every way a fresh process can fail to be the process the image describes.
+///
+/// One variant per field so the refusal names the state that diverged rather
+/// than saying "process state mismatch": the operator has to be able to tell a
+/// changed working directory from a changed seccomp filter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ProcessStateMismatch {
+    Cwd,
+    Umask,
+    Comm,
+    SignalsIgnored,
+    SignalsCaught,
+    Personality,
+    NoNewPrivs,
+    SeccompMode,
+    SeccompFilters,
+    ThreadFeatures,
+    ThreadFeaturesLocked,
+    ThreadArea,
+}
+
+impl NativeProcessState {
+    pub(super) fn encode(&self) -> Vec<u8> {
+        let mut out = vec![0_u8; PROCSTATE_FIXED + self.cwd.len()];
+        out[..8].copy_from_slice(PROCSTATE_MAGIC);
+        out[8..10].copy_from_slice(&PROCSTATE_VERSION.to_le_bytes());
+        let declared = out.len() as u32;
+        out[12..16].copy_from_slice(&declared.to_le_bytes());
+        out[16..20].copy_from_slice(&self.umask.to_le_bytes());
+        out[20..24].copy_from_slice(&self.personality.to_le_bytes());
+        out[24..28].copy_from_slice(&self.no_new_privs.to_le_bytes());
+        out[28..32].copy_from_slice(&self.seccomp_mode.to_le_bytes());
+        out[32..36].copy_from_slice(&self.seccomp_filters.to_le_bytes());
+        out[36..40].copy_from_slice(&self.flags.to_le_bytes());
+        out[40..48].copy_from_slice(&self.signals_ignored.to_le_bytes());
+        out[48..56].copy_from_slice(&self.signals_caught.to_le_bytes());
+        out[56..72].copy_from_slice(&self.comm);
+        let mut at = 72;
+        for value in self.debug_registers {
+            out[at..at + 8].copy_from_slice(&value.to_le_bytes());
+            at += 8;
+        }
+        for (soft, hard) in self.rlimits {
+            out[at..at + 8].copy_from_slice(&soft.to_le_bytes());
+            out[at + 8..at + 16].copy_from_slice(&hard.to_le_bytes());
+            at += 16;
+        }
+        for value in self.affinity {
+            out[at..at + 8].copy_from_slice(&value.to_le_bytes());
+            at += 8;
+        }
+        out[at..at + THREAD_FEATURE_BYTES].copy_from_slice(&self.thread_features);
+        at += THREAD_FEATURE_BYTES;
+        out[at..at + THREAD_FEATURE_BYTES].copy_from_slice(&self.thread_features_locked);
+        at += THREAD_FEATURE_BYTES;
+        for entry in &self.thread_areas {
+            out[at..at + THREAD_AREA_BYTES].copy_from_slice(entry);
+            at += THREAD_AREA_BYTES;
+        }
+        debug_assert_eq!(at, PROCSTATE_FIXED);
+        out[PROCSTATE_FIXED..].copy_from_slice(&self.cwd);
+        out
+    }
+
+    pub(super) fn decode(bytes: &[u8]) -> Result<Self, InvalidProcessState> {
+        if bytes.len() < PROCSTATE_FIXED || bytes.len() > PROCSTATE_FIXED + MAX_PATH_BYTES {
+            return Err(InvalidProcessState::Size);
+        }
+        if &bytes[..8] != PROCSTATE_MAGIC {
+            return Err(InvalidProcessState::Magic);
+        }
+        if u16::from_le_bytes(bytes[8..10].try_into().expect("fixed field")) != PROCSTATE_VERSION {
+            return Err(InvalidProcessState::Version);
+        }
+        if bytes[10..12].iter().any(|byte| *byte != 0) {
+            return Err(InvalidProcessState::Reserved);
+        }
+        if u32::from_le_bytes(bytes[12..16].try_into().expect("fixed field")) as usize != bytes.len() {
+            return Err(InvalidProcessState::DeclaredSize);
+        }
+        let cwd = bytes[PROCSTATE_FIXED..].to_vec();
+        if cwd.contains(&0) {
+            return Err(InvalidProcessState::CwdLength);
+        }
+        let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().expect("fixed field"));
+        let long = |at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().expect("fixed field"));
+        let mut at = 72;
+        let mut debug_registers = [0_u64; DEBUG_REGISTER_COUNT];
+        for value in &mut debug_registers {
+            *value = long(at);
+            at += 8;
+        }
+        let mut rlimits = [(0_u64, 0_u64); RLIMIT_COUNT];
+        for value in &mut rlimits {
+            *value = (long(at), long(at + 8));
+            at += 16;
+        }
+        let mut affinity = [0_u64; AFFINITY_WORDS];
+        for value in &mut affinity {
+            *value = long(at);
+            at += 8;
+        }
+        let mut thread_features = [0_u8; THREAD_FEATURE_BYTES];
+        thread_features.copy_from_slice(&bytes[at..at + THREAD_FEATURE_BYTES]);
+        at += THREAD_FEATURE_BYTES;
+        let mut thread_features_locked = [0_u8; THREAD_FEATURE_BYTES];
+        thread_features_locked.copy_from_slice(&bytes[at..at + THREAD_FEATURE_BYTES]);
+        at += THREAD_FEATURE_BYTES;
+        let mut thread_areas = [[0_u8; THREAD_AREA_BYTES]; THREAD_AREA_COUNT];
+        for entry in &mut thread_areas {
+            entry.copy_from_slice(&bytes[at..at + THREAD_AREA_BYTES]);
+            at += THREAD_AREA_BYTES;
+        }
+        let mut comm = [0_u8; COMM_BYTES];
+        comm.copy_from_slice(&bytes[56..72]);
+        Ok(Self {
+            cwd,
+            comm,
+            umask: word(16),
+            personality: word(20),
+            no_new_privs: word(24),
+            seccomp_mode: word(28),
+            seccomp_filters: word(32),
+            flags: word(36),
+            signals_ignored: long(40),
+            signals_caught: long(48),
+            debug_registers,
+            rlimits,
+            affinity,
+            thread_features,
+            thread_features_locked,
+            thread_areas,
+        })
+    }
+
+    /// Decides, **before any mutation**, whether the fresh process can carry
+    /// this image's kernel-side state.
+    ///
+    /// The three fields with a cross-process setter -- resource limits, CPU
+    /// affinity and the debug registers -- are deliberately *not* compared:
+    /// `apply` installs them, so a difference there is expected and corrected.
+    /// Every other field has no setter reachable from outside the process
+    /// (measured: `write` to `/proc/<pid>/comm` returns `EINVAL` for a process
+    /// outside the caller's thread group, and there is no `chdir`, `umask`,
+    /// `sigaction`, `personality`, `prctl` or `seccomp` that names another
+    /// task), so the only honest options are "the fresh process already agrees"
+    /// or "refuse".  Fabricating the difference away is the silent wrong
+    /// restore this record exists to end.
+    pub(super) fn admits(&self, local: &Self) -> Result<(), ProcessStateMismatch> {
+        if self.cwd != local.cwd {
+            return Err(ProcessStateMismatch::Cwd);
+        }
+        if self.umask != local.umask {
+            return Err(ProcessStateMismatch::Umask);
+        }
+        if self.comm != local.comm {
+            return Err(ProcessStateMismatch::Comm);
+        }
+        if self.signals_ignored != local.signals_ignored {
+            return Err(ProcessStateMismatch::SignalsIgnored);
+        }
+        if self.signals_caught != local.signals_caught {
+            return Err(ProcessStateMismatch::SignalsCaught);
+        }
+        if self.personality != local.personality {
+            return Err(ProcessStateMismatch::Personality);
+        }
+        if self.no_new_privs != local.no_new_privs {
+            return Err(ProcessStateMismatch::NoNewPrivs);
+        }
+        if self.seccomp_mode != local.seccomp_mode {
+            return Err(ProcessStateMismatch::SeccompMode);
+        }
+        if self.seccomp_filters != local.seccomp_filters {
+            return Err(ProcessStateMismatch::SeccompFilters);
+        }
+        if self.flags & PROCSTATE_FLAG_THREAD_FEATURES != local.flags & PROCSTATE_FLAG_THREAD_FEATURES
+            || self.thread_features != local.thread_features
+        {
+            return Err(ProcessStateMismatch::ThreadFeatures);
+        }
+        if self.thread_features_locked != local.thread_features_locked {
+            return Err(ProcessStateMismatch::ThreadFeaturesLocked);
+        }
+        if self.thread_areas != local.thread_areas {
+            return Err(ProcessStateMismatch::ThreadArea);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn proc_status_fields(pid: libc::pid_t) -> io::Result<(u32, u64, u64, u32, u32, u32, u32, [u8; THREAD_FEATURE_BYTES], [u8; THREAD_FEATURE_BYTES])> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status"))?;
+    let mut umask = None;
+    let mut ignored = None;
+    let mut caught = None;
+    let mut no_new_privs = None;
+    let mut seccomp_mode = None;
+    let mut seccomp_filters = None;
+    let mut features = None;
+    let mut locked = None;
+    fn text(value: &str) -> io::Result<[u8; THREAD_FEATURE_BYTES]> {
+        let value = value.trim().as_bytes();
+        if value.len() > THREAD_FEATURE_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "x86 thread-feature list exceeds the image field",
+            ));
+        }
+        let mut field = [0_u8; THREAD_FEATURE_BYTES];
+        field[..value.len()].copy_from_slice(value);
+        Ok(field)
+    }
+    // A duplicated field is a malformed `status`; taking the first or the last
+    // silently would let a crafted value through, so both refuse.  A free
+    // function rather than a closure: each call site carries a different `T`.
+    fn once<T>(slot: &mut Option<T>, parsed: Option<T>) -> io::Result<()> {
+        if slot.is_some() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "duplicate /proc status field"));
+        }
+        *slot = Some(parsed.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "unparsable /proc status field"))?);
+        Ok(())
+    }
+    for line in status.lines() {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        match name {
+            "Umask" => once(&mut umask, u32::from_str_radix(value, 8).ok())?,
+            "SigIgn" => once(&mut ignored, u64::from_str_radix(value, 16).ok())?,
+            "SigCgt" => once(&mut caught, u64::from_str_radix(value, 16).ok())?,
+            "NoNewPrivs" => once(&mut no_new_privs, value.parse::<u32>().ok())?,
+            "Seccomp" => once(&mut seccomp_mode, value.parse::<u32>().ok())?,
+            "Seccomp_filters" => once(&mut seccomp_filters, value.parse::<u32>().ok())?,
+            "x86_Thread_features" => once(&mut features, Some(text(value)?))?,
+            "x86_Thread_features_locked" => once(&mut locked, Some(text(value)?))?,
+            _ => {}
+        }
+    }
+    fn required<T>(slot: Option<T>) -> io::Result<T> {
+        slot.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing /proc status field"))
+    }
+    Ok((
+        required(umask)?,
+        required(ignored)?,
+        required(caught)?,
+        required(no_new_privs)?,
+        required(seccomp_mode)?,
+        required(seccomp_filters)?,
+        u32::from(features.is_some() || locked.is_some()) * PROCSTATE_FLAG_THREAD_FEATURES,
+        features.unwrap_or([0; THREAD_FEATURE_BYTES]),
+        locked.unwrap_or([0; THREAD_FEATURE_BYTES]),
+    ))
+}
+
+/// Reads every kernel-side field the register file has no slot for.
+///
+/// Called with the target already ptrace-stopped, so nothing here can change
+/// underneath the read.  All of it is read-only: no syscall is injected into
+/// the tracee and no byte of its memory is touched, which is what keeps an
+/// aborted capture non-mutating.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub(super) fn capture_process_state(pid: libc::pid_t) -> io::Result<NativeProcessState> {
+    let cwd = std::fs::read_link(format!("/proc/{pid}/cwd"))?
+        .into_os_string()
+        .into_encoded_bytes();
+    if cwd.is_empty() || cwd.len() > MAX_PATH_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "implausible working-directory path length",
+        ));
+    }
+    let raw_comm = std::fs::read(format!("/proc/{pid}/comm"))?;
+    let raw_comm = raw_comm.strip_suffix(b"\n").unwrap_or(&raw_comm);
+    if raw_comm.len() >= COMM_BYTES {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "implausible comm length"));
+    }
+    let mut comm = [0_u8; COMM_BYTES];
+    comm[..raw_comm.len()].copy_from_slice(raw_comm);
+    let personality = std::fs::read_to_string(format!("/proc/{pid}/personality"))?;
+    let personality = u32::from_str_radix(personality.trim(), 16)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "unparsable /proc personality"))?;
+    let (umask, signals_ignored, signals_caught, no_new_privs, seccomp_mode, seccomp_filters, flags, thread_features, thread_features_locked) =
+        proc_status_fields(pid)?;
+
+    let mut rlimits = [(0_u64, 0_u64); RLIMIT_COUNT];
+    for (resource, slot) in rlimits.iter_mut().enumerate() {
+        let mut limit: libc::rlimit64 = unsafe { std::mem::zeroed() };
+        // SAFETY: prlimit64 reads only scalars plus the one out-parameter below, which is a live local.
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_prlimit64,
+                pid,
+                resource as libc::c_uint,
+                std::ptr::null::<libc::rlimit64>(),
+                &raw mut limit,
+            )
+        };
+        if result != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        *slot = (limit.rlim_cur, limit.rlim_max);
+    }
+
+    let mut affinity = [0_u64; AFFINITY_WORDS];
+    // SAFETY: the kernel writes at most `size` bytes into the live local mask below.
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_sched_getaffinity,
+            pid,
+            std::mem::size_of_val(&affinity),
+            (&raw mut affinity).cast::<libc::c_void>(),
+        )
+    };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let mut debug_registers = [0_u64; DEBUG_REGISTER_COUNT];
+    for (slot, index) in debug_registers.iter_mut().zip(DEBUG_REGISTER_INDEX) {
+        *slot = peek_debug_register(pid, index)?;
+    }
+
+    // `PTRACE_GET_THREAD_AREA` is read-only and works on another task (measured
+    // on this host: rc=0 for entries 12, 13 and 14).  There is no setter this
+    // restore can reach that installs a descriptor without also risking EINVAL
+    // on an empty one, so these are compared rather than applied.
+    let mut thread_areas = [[0_u8; THREAD_AREA_BYTES]; THREAD_AREA_COUNT];
+    for (index, slot) in thread_areas.iter_mut().enumerate() {
+        let entry = THREAD_AREA_MIN + index as u32;
+        let mut descriptor = [0_u8; THREAD_AREA_BYTES];
+        // SAFETY: the kernel writes exactly one `struct user_desc` into the live local below.
+        if unsafe {
+            libc::ptrace(
+                PTRACE_GET_THREAD_AREA,
+                pid,
+                entry as usize,
+                descriptor.as_mut_ptr(),
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        *slot = descriptor;
+    }
+
+    Ok(NativeProcessState {
+        cwd,
+        comm,
+        umask,
+        personality,
+        no_new_privs,
+        seccomp_mode,
+        seccomp_filters,
+        flags,
+        signals_ignored,
+        signals_caught,
+        debug_registers,
+        rlimits,
+        affinity,
+        thread_features,
+        thread_features_locked,
+        thread_areas,
+    })
+}
+
+/// `offsetof(struct user, u_debugreg)` on x86-64.
+///
+/// `struct user` is not in `libc`, so the offset is spelled out rather than
+/// derived; the const assertion below pins the layout it assumes.
+const USER_DEBUGREG_OFFSET: usize = 848;
+const _: () = {
+    // struct user = user_regs_struct (27*8) + int u_fpvalid (+pad) + user_fpregs_struct (512)
+    // + int u_tsize/u_dsize/u_ssize as unsigned long (3*8) + start_code/start_stack (2*8)
+    // + long signal + int reserved(+pad) + regs pointer + fpstate pointer + magic + comm[32].
+    assert!(USER_DEBUGREG_OFFSET == 27 * 8 + 8 + 512 + 3 * 8 + 2 * 8 + 8 + 8 + 8 + 8 + 8 + 32);
+};
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn peek_debug_register(pid: libc::pid_t, index: usize) -> io::Result<u64> {
+    let at = USER_DEBUGREG_OFFSET + index * std::mem::size_of::<libc::c_ulong>();
+    // PTRACE_PEEKUSER returns the word in the return value, so -1 is ambiguous
+    // with a legitimate all-ones word; `errno` is the only authority.
+    unsafe { *libc::__errno_location() = 0 };
+    // SAFETY: ptrace consumes only scalars here and writes nothing through a caller pointer.
+    let value = unsafe { libc::ptrace(libc::PTRACE_PEEKUSER, pid, at, 0) };
+    let error = io::Error::last_os_error();
+    if value == -1 && error.raw_os_error() != Some(0) {
+        return Err(error);
+    }
+    Ok(value as u64)
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn poke_debug_register(pid: libc::pid_t, index: usize, value: u64) -> io::Result<()> {
+    let at = USER_DEBUGREG_OFFSET + index * std::mem::size_of::<libc::c_ulong>();
+    // SAFETY: ptrace consumes only scalars here and writes nothing through a caller pointer.
+    if unsafe { libc::ptrace(libc::PTRACE_POKEUSER, pid, at, value as libc::c_ulong) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Installs the three kinds of state that *do* have a cross-process setter.
+///
+/// Measured, not assumed: `prlimit64(pid, ...)`, `sched_setaffinity(pid, ...)`
+/// and `PTRACE_POKEUSER` all take effect on another task, while a `write` to
+/// `/proc/<pid>/comm` fails `EINVAL` and no setter exists at all for `chdir`,
+/// `umask`, `sigaction`, `personality` or `seccomp`.  That split is exactly the
+/// split between this function and `NativeProcessState::admits`.
+///
+/// Ordering: the debug registers are written while the restore is still
+/// attached, because `PTRACE_POKEUSER` needs the tracee stopped; DR7 is written
+/// last so no breakpoint arms against a half-written address register.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn apply_process_state(pid: libc::pid_t, state: &NativeProcessState) -> io::Result<()> {
+    for (resource, (soft, hard)) in state.rlimits.iter().copied().enumerate() {
+        let limit = libc::rlimit64 {
+            rlim_cur: soft,
+            rlim_max: hard,
+        };
+        // SAFETY: prlimit64 reads the one live local below and writes nothing back.
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_prlimit64,
+                pid,
+                resource as libc::c_uint,
+                &raw const limit,
+                std::ptr::null_mut::<libc::rlimit64>(),
+            )
+        };
+        if result != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "native restore could not install resource limit {resource}: {}",
+                    io::Error::last_os_error()
+                ),
+            ));
+        }
+    }
+    // SAFETY: the kernel reads `size` bytes from the live local mask.
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_sched_setaffinity,
+            pid,
+            std::mem::size_of_val(&state.affinity),
+            (&raw const state.affinity).cast::<libc::c_void>(),
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "native restore could not install the CPU affinity mask: {}",
+                io::Error::last_os_error()
+            ),
+        ));
+    }
+    let mut control = None;
+    for (value, index) in state.debug_registers.iter().copied().zip(DEBUG_REGISTER_INDEX) {
+        if index == 7 {
+            control = Some(value);
+            continue;
+        }
+        poke_debug_register(pid, index, value)?;
+    }
+    if let Some(value) = control {
+        poke_debug_register(pid, 7, value)?;
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", not(target_arch = "x86_64")))]
+pub(super) fn capture_process_state(_pid: libc::pid_t) -> io::Result<NativeProcessState> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "native process-state capture requires a Linux x86-64 host",
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -106,12 +687,18 @@ pub(crate) fn capture_stopped_native(
     // group-stopped tracee makes it briefly runnable while it re-enters group
     // stop -- during which `capture_stopped_memory`'s one-shot "is it stopped"
     // admission fails.  See `capture_thread_and_memory_until`.
-    let (thread, memory) = capture_thread_and_memory_until(pid, deadline)
-        .and_then(|(thread, image)| {
+    let (thread, memory, procstate) = capture_thread_and_memory_until(pid, deadline)
+        .and_then(|(thread, image, process)| {
             let memory = image
                 .encode()
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{error:?}")))?;
-            Ok((thread, memory))
+            // Refuse to publish a record we cannot decode back, exactly as the
+            // xstate half already does.
+            let procstate = process.encode();
+            NativeProcessState::decode(&procstate).map_err(|error| {
+                io::Error::new(io::ErrorKind::InvalidData, format!("invalid process-state capture: {error:?}"))
+            })?;
+            Ok((thread, memory, procstate))
         })
         .map_err(|error| {
             if error.kind() == io::ErrorKind::TimedOut {
@@ -125,11 +712,12 @@ pub(crate) fn capture_stopped_native(
     if Instant::now() >= deadline {
         return Err(CompositionError::DeadlineExceeded);
     }
-    let manifest = native_manifest(&registers, &memory, &xstate);
+    let manifest = native_manifest(&registers, &memory, &xstate, &procstate);
     validate_native_objects(&manifest, |name| match name {
         REGISTER_OBJECT => Some(registers.clone()),
         MEMORY_OBJECT => Some(memory.clone()),
         XSTATE_OBJECT => Some(xstate.clone()),
+        PROCSTATE_OBJECT => Some(procstate.clone()),
         _ => None,
     })
     .map_err(|_| CompositionError::RuntimeConstruction)?;
@@ -137,6 +725,7 @@ pub(crate) fn capture_stopped_native(
         registers,
         memory,
         xstate,
+        procstate,
         manifest,
     })
 }
@@ -153,6 +742,7 @@ pub(crate) struct PreparedNativeRestore {
     registers: X86RegisterRecord,
     xstate: X86XstateRecord,
     image: NativeMemoryImage,
+    process: NativeProcessState,
     guard: TraceGuard,
 }
 
@@ -163,6 +753,7 @@ pub(crate) fn prepare_native_restore(
     registers: &[u8],
     memory: &[u8],
     xstate: &[u8],
+    procstate: &[u8],
     deadline: Instant,
 ) -> io::Result<PreparedNativeRestore> {
     let registers = X86RegisterRecord::decode(registers)
@@ -171,6 +762,9 @@ pub(crate) fn prepare_native_restore(
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("invalid memory image: {error:?}")))?;
     let xstate = X86XstateRecord::decode(xstate)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("invalid xstate image: {error:?}")))?;
+    let process = NativeProcessState::decode(procstate).map_err(|error| {
+        io::Error::new(io::ErrorKind::InvalidData, format!("invalid process-state image: {error:?}"))
+    })?;
     if pid <= 1 || pid == unsafe { libc::getpid() } || !process_incarnation_matches(pid, pidfd.as_raw_fd())? {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -228,12 +822,47 @@ pub(crate) fn prepare_native_restore(
         )
     })?;
 
+    // Kernel-side process state, decided before any mutation.  `apply` installs
+    // the three fields that have a cross-process setter; everything else has
+    // none, so the fresh process must already agree or this refuses.
+    check_deadline(deadline)?;
+    let local = capture_process_state(pid)?;
+    process.admits(&local).map_err(|mismatch| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("native process-state mismatch: {mismatch:?}"),
+        )
+    })?;
+
+    // The TLS-pointer ordering trap.  `fs_base` is restored verbatim with the
+    // rest of `NT_PRSTATUS`, so installing an image whose `fs_base` differs
+    // from the fresh process's *moves* the thread pointer -- while the kernel
+    // keeps its own pointers into the old TLS block: the rseq registration
+    // (glibc >= 2.35 registers one per thread), the robust futex list head, and
+    // `clear_child_tid`.  None of the three is readable or settable from
+    // another process, so a moved `fs_base` silently strands all of them.  This
+    // refuses instead, before anything is written.
+    let live = read_task_registers(pid)?;
+    for (index, name) in [(REGISTER_FS_BASE, "fs_base"), (REGISTER_GS_BASE, "gs_base")] {
+        if registers.registers[index] != live[index] {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!(
+                    "native restore would move {name} from {:#x} to {:#x}, stranding the kernel's \
+                     rseq, robust-list and clear_child_tid pointers in the old thread-local block",
+                    live[index], registers.registers[index]
+                ),
+            ));
+        }
+    }
+
     Ok(PreparedNativeRestore {
         pid,
         _pidfd: pidfd,
         registers,
         xstate,
         image,
+        process,
         guard,
     })
 }
@@ -246,6 +875,7 @@ pub(crate) fn complete_native_restore(prepared: PreparedNativeRestore, deadline:
         registers,
         xstate,
         image,
+        process,
         guard,
     } = prepared;
     if !process_incarnation_matches(pid, _pidfd.as_raw_fd())? {
@@ -298,9 +928,40 @@ pub(crate) fn complete_native_restore(prepared: PreparedNativeRestore, deadline:
         std::mem::size_of_val(&registers.signal_mask),
         (&raw const registers.signal_mask) as usize,
     )?;
+    // Still attached: `PTRACE_POKEUSER` needs the tracee stopped, and the
+    // resource limits and affinity mask are installed here rather than in
+    // `prepare` so that a refusal stays non-mutating.
+    apply_process_state(pid, &process)?;
     check_deadline(deadline)?;
     drop(guard);
     Ok(())
+}
+
+/// Reads the live `NT_PRSTATUS` word array of an already-stopped tracee.
+///
+/// Separate from `capture_with_until` on purpose: this one neither attaches nor
+/// detaches, because the restore path already owns the attachment and a second
+/// seize would fail.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn read_task_registers(pid: libc::pid_t) -> io::Result<[u64; REGISTER_COUNT]> {
+    let mut raw: libc::user_regs_struct = unsafe { std::mem::zeroed() };
+    let mut iov = libc::iovec {
+        iov_base: (&raw mut raw).cast(),
+        iov_len: std::mem::size_of_val(&raw),
+    };
+    ptrace(
+        libc::PTRACE_GETREGSET,
+        pid,
+        libc::NT_PRSTATUS as usize,
+        (&raw mut iov) as usize,
+    )?;
+    if iov.iov_len != std::mem::size_of_val(&raw) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "short x86-64 NT_PRSTATUS register set",
+        ));
+    }
+    Ok(unsafe { std::ptr::read_unaligned((&raw const raw).cast::<[u64; REGISTER_COUNT]>()) })
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -346,12 +1007,12 @@ const fn manifest_slot(index: usize) -> (usize, usize, usize) {
     (at, at + 32, at + 40)
 }
 
-const NATIVE_OBJECTS: [&str; 3] = [REGISTER_OBJECT, MEMORY_OBJECT, XSTATE_OBJECT];
+const NATIVE_OBJECTS: [&str; 4] = [REGISTER_OBJECT, MEMORY_OBJECT, XSTATE_OBJECT, PROCSTATE_OBJECT];
 
-fn native_manifest(registers: &[u8], memory: &[u8], xstate: &[u8]) -> Vec<u8> {
+fn native_manifest(registers: &[u8], memory: &[u8], xstate: &[u8], procstate: &[u8]) -> Vec<u8> {
     let mut out = vec![0; MANIFEST_SIZE];
     out[..16].copy_from_slice(MANIFEST_MAGIC);
-    for (index, bytes) in [registers, memory, xstate].into_iter().enumerate() {
+    for (index, bytes) in [registers, memory, xstate, procstate].into_iter().enumerate() {
         let (name_at, size_at, digest_at) = manifest_slot(index);
         out[name_at..name_at + 32].copy_from_slice(&object_name(NATIVE_OBJECTS[index]));
         out[size_at..size_at + 8].copy_from_slice(&(bytes.len() as u64).to_le_bytes());
@@ -391,6 +1052,7 @@ pub(crate) fn validate_native_objects(
     X86RegisterRecord::decode(&objects[0]).map_err(|_| InvalidNativeImage::Registers)?;
     NativeMemoryImage::decode(&objects[1]).map_err(|_| InvalidNativeImage::Memory)?;
     X86XstateRecord::decode(&objects[2]).map_err(|_| InvalidNativeImage::Xstate)?;
+    NativeProcessState::decode(&objects[3]).map_err(|_| InvalidNativeImage::ProcessState)?;
     Ok(())
 }
 
@@ -402,6 +1064,7 @@ pub(crate) enum InvalidNativeImage {
     Registers,
     Memory,
     Xstate,
+    ProcessState,
 }
 
 /// Atomically stages a complete stopped-process image.  `commit_until` is the only publication
@@ -430,6 +1093,7 @@ pub(super) fn publish_stopped_native(
         sink.put_until(transaction, REGISTER_OBJECT, &image.registers, deadline)?;
         sink.put_until(transaction, MEMORY_OBJECT, &image.memory, deadline)?;
         sink.put_until(transaction, XSTATE_OBJECT, &image.xstate, deadline)?;
+        sink.put_until(transaction, PROCSTATE_OBJECT, &image.procstate, deadline)?;
         sink.put_until(
             transaction,
             crate::runtime::checkpoint::image_envelope::OBJECT,
@@ -1311,20 +1975,29 @@ fn capture_until(pid: libc::pid_t, deadline: Instant) -> io::Result<NativeThread
 fn capture_thread_and_memory_until(
     pid: libc::pid_t,
     deadline: Instant,
-) -> io::Result<(NativeThreadState, NativeMemoryImage)> {
+) -> io::Result<(NativeThreadState, NativeMemoryImage, NativeProcessState)> {
     // While attached the tracee sits in ptrace-stop, which `process_is_stopped`
     // recognises as `t`, so the memory half's admission check still applies.
-    capture_with_until(pid, deadline, || Ok(()), || capture_stopped_memory(pid, deadline))
+    // The kernel-side process state is read inside the same `while_attached`
+    // hook for the same reason the memory image is: a cwd, umask or disposition
+    // read after the detach would describe a process that had started running
+    // again, and the image would then pair registers from one instant with
+    // process state from another.
+    capture_with_until(pid, deadline, || Ok(()), || {
+        Ok((capture_stopped_memory(pid, deadline)?, capture_process_state(pid)?))
+    })
+    .map(|(thread, (memory, process))| (thread, memory, process))
 }
 
 #[cfg(all(target_os = "linux", not(target_arch = "x86_64")))]
 fn capture_thread_and_memory_until(
     pid: libc::pid_t,
     deadline: Instant,
-) -> io::Result<(NativeThreadState, NativeMemoryImage)> {
+) -> io::Result<(NativeThreadState, NativeMemoryImage, NativeProcessState)> {
     let thread = capture_until(pid, deadline)?;
     let memory = capture_stopped_memory(pid, deadline)?;
-    Ok((thread, memory))
+    let process = capture_process_state(pid)?;
+    Ok((thread, memory, process))
 }
 
 #[cfg(not(target_arch = "x86_64"))]
@@ -1824,7 +2497,8 @@ mod tests {
         let sink = AtomicSink::default();
         publish_stopped_native(&sink, pid, Instant::now() + Duration::from_secs(10)).unwrap();
         let state = sink.state.lock().unwrap();
-        assert_eq!(state.0.len(), 5);
+        assert_eq!(state.0.len(), 6);
+        assert!(state.0.contains_key(PROCSTATE_OBJECT), "the generation must carry the process state");
         assert_eq!(
             crate::runtime::checkpoint::image_envelope::Reader::decode(&state.0["IMAGE"]),
             Ok(crate::runtime::checkpoint::image_envelope::Reader::NativeX86),
@@ -1833,12 +2507,15 @@ mod tests {
             validate_native_objects(&state.0["MANIFEST"], |name| state.0.get(name).cloned()),
             Ok(())
         );
-        let mut tampered = state.0.clone();
-        tampered.get_mut(MEMORY_OBJECT).unwrap()[0] ^= 1;
-        assert_eq!(
-            validate_native_objects(&state.0["MANIFEST"], |name| tampered.get(name).cloned()),
-            Err(InvalidNativeImage::Digest)
-        );
+        for object in [MEMORY_OBJECT, PROCSTATE_OBJECT] {
+            let mut tampered = state.0.clone();
+            tampered.get_mut(object).unwrap()[0] ^= 1;
+            assert_eq!(
+                validate_native_objects(&state.0["MANIFEST"], |name| tampered.get(name).cloned()),
+                Err(InvalidNativeImage::Digest),
+                "{object}"
+            );
+        }
         assert_eq!(
             validate_native_objects(&state.0["MANIFEST"], |name| (name != REGISTER_OBJECT)
                 .then(|| state.0[name].clone())),
@@ -1939,6 +2616,7 @@ mod tests {
             &image.registers,
             &image.memory,
             &image.xstate,
+            &image.procstate,
             Instant::now() + Duration::from_secs(10),
         )
         .unwrap();
@@ -2011,7 +2689,7 @@ mod tests {
     };
 
     /// Slots the two incarnations are *built* to disagree on.
-    const REGFID_DISCRIMINATING: [(&str, usize); 9] = [
+    const REGFID_DISCRIMINATING: [(&str, usize); 8] = [
         ("r15", REG_R15),
         ("r14", REG_R14),
         ("r13", REG_R13),
@@ -2020,7 +2698,6 @@ mod tests {
         ("rbx", REG_RBX),
         ("rip", REG_RIP),
         ("rsp", REG_RSP),
-        ("fs_base", REG_FS_BASE),
     ];
 
     /// Signals the fixture blocks, selected bit by bit from its pid.
@@ -2078,13 +2755,19 @@ hl_regfidelity_park:
         add rcx, 2
         and rcx, 15
 
-        // fs_base <- tls_pad + slot * 64.  Nothing below may touch the TLS.
+        // fs_base <- tls_pad.  Nothing below may touch the TLS.
+        //
+        // Deliberately *not* index derived, unlike rip and rsp below.  The
+        // restore refuses an image whose fs_base differs from the fresh
+        // process's, because installing it would move the thread pointer while
+        // the kernel keeps its own rseq, robust-list and clear_child_tid
+        // pointers aimed at the old block.  A fixture that parked two
+        // incarnations on different thread pointers was therefore asserting a
+        // restore the product no longer performs; the refusal itself is covered
+        // by `native_restore_refuses_to_move_the_thread_pointer_out_from_under_the_kernel`.
         mov r8, rdi
         mov r9, rcx
-        mov rsi, rcx
-        shl rsi, 6
-        lea rdx, [rip + hl_regfidelity_tls_pad]
-        add rsi, rdx
+        lea rsi, [rip + hl_regfidelity_tls_pad]
         mov eax, 158                    // SYS_arch_prctl
         mov edi, 0x1002                 // ARCH_SET_FS
         syscall
@@ -2263,8 +2946,24 @@ hl_regfidelity_tls_pad:
 
     /// Spawns one incarnation and returns its harness plus the **leaf** pid.
     fn spawn_regfid_child(test: &str, rendezvous: &Path, index: u64) -> (Child, libc::pid_t) {
+        spawn_regfid_child_at(test, rendezvous, index, None)
+    }
+
+    /// As `spawn_regfid_child`, but the incarnation may be given a working
+    /// directory of its own.  `cwd` is the one field of the kernel-side process
+    /// state that a parent can arm from outside, which is what makes a real
+    /// capture-versus-restore divergence measurable rather than synthetic.
+    fn spawn_regfid_child_at(
+        test: &str,
+        rendezvous: &Path,
+        index: u64,
+        cwd: Option<&Path>,
+    ) -> (Child, libc::pid_t) {
         std::fs::write(rendezvous, b"").expect("clear rendezvous");
         let mut command = Command::new(std::env::current_exe().expect("test executable"));
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
+        }
         command
             .args(["--exact", test, "--nocapture", "--test-threads=1"])
             .env(REGFID_CHILD, "1")
@@ -2378,6 +3077,14 @@ hl_regfidelity_tls_pad:
             );
         }
         assert_eq!(before.registers[REG_CS], captured.registers[REG_CS], "cs must match");
+        // `fs_base` is on the equality side on purpose, and it is the strongest
+        // positive in this bracket: both incarnations repoint it away from glibc's
+        // TLS to the *same* fixture pad, so it is neither a default nor a value a
+        // plain exec produces -- and the restore refuses to move it.
+        assert_eq!(
+            before.registers[REG_FS_BASE], captured.registers[REG_FS_BASE],
+            "both incarnations must park on the same thread pointer"
+        );
         assert_eq!(before.registers[REG_SS], captured.registers[REG_SS], "ss must match");
         assert_eq!(
             before.registers[REG_ORIG_RAX], captured.registers[REG_ORIG_RAX],
@@ -2396,6 +3103,7 @@ hl_regfidelity_tls_pad:
             &image.registers,
             &image.memory,
             &image.xstate,
+            &image.procstate,
             Instant::now() + Duration::from_secs(10),
         )
         .unwrap();
@@ -2478,6 +3186,7 @@ hl_regfidelity_tls_pad:
             &image.registers,
             &image.memory,
             &image.xstate,
+            &image.procstate,
             Instant::now() + Duration::from_secs(10),
         )
         .err()
@@ -2490,6 +3199,413 @@ hl_regfidelity_tls_pad:
             assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
         }
         assert_eq!(harness.wait().unwrap().code(), Some(6), "harness must reap its leaf");
+    }
+
+
+    // ---------------------------------------------------------------------
+    // Kernel-side process state.
+    //
+    // The register file, the signal mask, the XSAVE area and private memory
+    // were the complete carried set.  Eight other kinds of per-process state
+    // were neither captured nor refused, so a restore reported success and
+    // silently handed the guest whatever the *fresh* process happened to hold.
+    //
+    // Which of them can be carried is a measured property of the kernel, not a
+    // preference: `prlimit64`, `sched_setaffinity` and `PTRACE_POKEUSER` all
+    // act on another task, so those three are installed; a `write` to
+    // `/proc/<pid>/comm` returns `EINVAL` outside the caller's thread group and
+    // there is no `chdir`, `umask`, `sigaction`, `personality` or `seccomp`
+    // that names another task, so those are compared and refused instead.
+    // ---------------------------------------------------------------------
+
+    /// Runs `body` with `pid` seized and interrupted, restoring its group stop.
+    fn attach_and<T>(pid: libc::pid_t, body: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+        ptrace(libc::PTRACE_SEIZE, pid, 0, 0)?;
+        let mut guard = TraceGuard {
+            pid,
+            was_group_stopped: false,
+            ptrace_stopped: false,
+        };
+        ptrace(libc::PTRACE_INTERRUPT, pid, 0, 0)?;
+        guard.was_group_stopped = wait_for_ptrace_stop_until(pid, Instant::now() + Duration::from_secs(10))?;
+        guard.ptrace_stopped = true;
+        let outcome = body();
+        drop(guard);
+        outcome
+    }
+
+    fn kernel_state(pid: libc::pid_t) -> NativeProcessState {
+        let state = attach_and(pid, || capture_process_state(pid)).expect("read kernel process state");
+        wait_until_stopped(pid);
+        state
+    }
+
+    const ARMED_NOFILE: u64 = 64;
+    const ARMED_DEBUG: [u64; 4] = [0x0000_1000, 0x0000_2000, 0x0000_3000, 0x0000_4000];
+
+    /// Arms the three fields that *do* have a cross-process setter, using those
+    /// setters.  Arming them from outside is the point: it is the same API the
+    /// restore uses, so a failure here is a failure of the mechanism under test
+    /// rather than of the fixture.
+    fn arm_settable_state(pid: libc::pid_t) {
+        let limit = libc::rlimit64 {
+            rlim_cur: ARMED_NOFILE,
+            rlim_max: ARMED_NOFILE,
+        };
+        let set = unsafe {
+            libc::syscall(
+                libc::SYS_prlimit64,
+                pid,
+                libc::RLIMIT_NOFILE as libc::c_uint,
+                &raw const limit,
+                std::ptr::null_mut::<libc::rlimit64>(),
+            )
+        };
+        assert_eq!(set, 0, "arm RLIMIT_NOFILE: {}", io::Error::last_os_error());
+
+        let mut mask = [0_u64; AFFINITY_WORDS];
+        mask[0] = 0b10;
+        let set = unsafe {
+            libc::syscall(
+                libc::SYS_sched_setaffinity,
+                pid,
+                std::mem::size_of_val(&mask),
+                (&raw const mask).cast::<libc::c_void>(),
+            )
+        };
+        assert_eq!(set, 0, "arm CPU affinity: {}", io::Error::last_os_error());
+
+        attach_and(pid, || {
+            for (index, value) in ARMED_DEBUG.into_iter().enumerate() {
+                poke_debug_register(pid, index, value)?;
+            }
+            Ok(())
+        })
+        .expect("arm debug registers");
+        wait_until_stopped(pid);
+    }
+
+    #[test]
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    fn native_image_carries_and_reinstalls_the_kernel_state_the_register_file_has_no_slot_for() {
+        const TEST: &str = "runtime::execution::native_snapshot::tests::native_image_carries_and_reinstalls_the_kernel_state_the_register_file_has_no_slot_for";
+        if let Some(rendezvous) = std::env::var_os(REGFID_RENDEZVOUS)
+            && std::env::var_os(REGFID_CHILD).is_some()
+        {
+            regfid_child(Path::new(&rendezvous));
+        }
+        if isolated_live_capture(TEST) {
+            return;
+        }
+        assert!(
+            std::thread::available_parallelism().map(std::num::NonZeroUsize::get).unwrap_or(1) >= 2,
+            "the affinity arm needs a second CPU to be a discriminator"
+        );
+
+        let captured_rendezvous = tempfile::NamedTempFile::new().unwrap();
+        let (mut captured, captured_leaf) = spawn_regfid_child(TEST, captured_rendezvous.path(), 0);
+        arm_settable_state(captured_leaf);
+        let image = capture_stopped_native(captured_leaf, Instant::now() + Duration::from_secs(10))
+            .expect("armed leaf must be admitted");
+        let armed = NativeProcessState::decode(&image.procstate).expect("image carries a decodable process state");
+
+        // The image records what was armed, not a default.
+        assert_eq!(armed.rlimits[libc::RLIMIT_NOFILE as usize], (ARMED_NOFILE, ARMED_NOFILE));
+        assert_eq!(armed.affinity[0], 0b10);
+        assert_eq!(&armed.debug_registers[..4], &ARMED_DEBUG);
+
+        let replacement_rendezvous = tempfile::NamedTempFile::new().unwrap();
+        let (mut replacement, replacement_leaf) = spawn_regfid_child(TEST, replacement_rendezvous.path(), 0);
+        let fresh = kernel_state(replacement_leaf);
+
+        // Non-vacuity bracket.  Every field asserted after the restore is first
+        // shown to differ in the fresh process, so post-restore equality cannot
+        // be satisfied by a replacement that already agreed.  Deliberately
+        // *not* `assert_ne!` on the whole record: that would pass on any single
+        // difference and say nothing about the individual fields.
+        assert_ne!(
+            fresh.rlimits[libc::RLIMIT_NOFILE as usize], armed.rlimits[libc::RLIMIT_NOFILE as usize],
+            "fresh process already carried the captured RLIMIT_NOFILE"
+        );
+        assert_ne!(fresh.affinity[0], armed.affinity[0], "fresh process already carried the captured affinity");
+        assert_ne!(
+            &fresh.debug_registers[..4], &armed.debug_registers[..4],
+            "fresh process already carried the captured debug registers"
+        );
+
+        let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, replacement_leaf, 0) } as RawFd;
+        assert!(pidfd >= 0, "pidfd_open replacement leaf");
+        let prepared = prepare_native_restore(
+            replacement_leaf,
+            unsafe { OwnedFd::from_raw_fd(pidfd) },
+            &image.registers,
+            &image.memory,
+            &image.xstate,
+            &image.procstate,
+            Instant::now() + Duration::from_secs(10),
+        )
+        .expect("an otherwise identical fresh leaf must be admitted");
+        complete_native_restore(prepared, Instant::now() + Duration::from_secs(10)).expect("complete restore");
+
+        let restored = kernel_state(replacement_leaf);
+        assert_eq!(
+            restored.rlimits[libc::RLIMIT_NOFILE as usize], armed.rlimits[libc::RLIMIT_NOFILE as usize],
+            "restore dropped RLIMIT_NOFILE"
+        );
+        assert_eq!(restored.affinity, armed.affinity, "restore dropped the CPU affinity mask");
+        assert_eq!(
+            restored.debug_registers, armed.debug_registers,
+            "restore dropped the debug registers"
+        );
+
+        for leaf in [captured_leaf, replacement_leaf] {
+            assert_eq!(unsafe { libc::kill(leaf, libc::SIGKILL) }, 0);
+            unsafe { libc::kill(leaf, libc::SIGCONT) };
+        }
+        captured.wait().unwrap();
+        replacement.wait().unwrap();
+    }
+
+    #[test]
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    fn native_restore_refuses_every_kernel_state_field_a_fresh_process_cannot_reproduce() {
+        const TEST: &str = "runtime::execution::native_snapshot::tests::native_restore_refuses_every_kernel_state_field_a_fresh_process_cannot_reproduce";
+        if let Some(rendezvous) = std::env::var_os(REGFID_RENDEZVOUS)
+            && std::env::var_os(REGFID_CHILD).is_some()
+        {
+            regfid_child(Path::new(&rendezvous));
+        }
+        if isolated_live_capture(TEST) {
+            return;
+        }
+
+        let rendezvous = tempfile::NamedTempFile::new().unwrap();
+        let (mut harness, leaf) = spawn_regfid_child(TEST, rendezvous.path(), 0);
+        let image = capture_stopped_native(leaf, Instant::now() + Duration::from_secs(10)).expect("capture leaf");
+        let captured = NativeProcessState::decode(&image.procstate).expect("decode process state");
+
+        // Positive bracket first: the unmodified image restores onto the very
+        // process it came from.  Without this, every refusal below would also
+        // be produced by a path that refuses unconditionally.
+        let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, leaf, 0) } as RawFd;
+        assert!(pidfd >= 0, "pidfd_open leaf");
+        let prepared = prepare_native_restore(
+            leaf,
+            unsafe { OwnedFd::from_raw_fd(pidfd) },
+            &image.registers,
+            &image.memory,
+            &image.xstate,
+            &image.procstate,
+            Instant::now() + Duration::from_secs(10),
+        )
+        .expect("an unmodified image must be admitted by its own source process");
+        drop(prepared);
+        wait_until_stopped(leaf);
+
+        // One divergence at a time, each naming its own field.  A single
+        // "process state differs" refusal would be useless to an operator.
+        let mutations: [(&str, fn(&mut NativeProcessState)); 12] = [
+            ("Cwd", |state| state.cwd.extend_from_slice(b"/elsewhere")),
+            ("Umask", |state| state.umask ^= 0o077),
+            ("Comm", |state| state.comm[0] ^= 0x20),
+            ("SignalsIgnored", |state| state.signals_ignored ^= 1 << 20),
+            ("SignalsCaught", |state| state.signals_caught ^= 1 << 21),
+            ("Personality", |state| state.personality ^= 0x0004_0000),
+            ("NoNewPrivs", |state| state.no_new_privs ^= 1),
+            ("SeccompMode", |state| state.seccomp_mode ^= 2),
+            ("SeccompFilters", |state| state.seccomp_filters ^= 1),
+            ("ThreadFeatures", |state| state.thread_features[0] ^= b'x'),
+            ("ThreadFeaturesLocked", |state| state.thread_features_locked[0] ^= b'x'),
+            ("ThreadArea", |state| state.thread_areas[1][4] ^= 0x40),
+        ];
+        for (name, mutate) in mutations {
+            let mut diverged = captured.clone();
+            mutate(&mut diverged);
+            let encoded = diverged.encode();
+            assert_ne!(encoded, image.procstate, "mutation {name} did not change the record");
+            let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, leaf, 0) } as RawFd;
+            assert!(pidfd >= 0, "pidfd_open leaf for {name}");
+            let refused = prepare_native_restore(
+                leaf,
+                unsafe { OwnedFd::from_raw_fd(pidfd) },
+                &image.registers,
+                &image.memory,
+                &image.xstate,
+                &encoded,
+                Instant::now() + Duration::from_secs(10),
+            )
+            .err()
+            .unwrap_or_else(|| panic!("a diverged {name} must be refused before mutation"));
+            assert_eq!(refused.kind(), io::ErrorKind::Unsupported, "{name}");
+            assert_eq!(refused.to_string(), format!("native process-state mismatch: {name}"));
+            wait_until_stopped(leaf);
+        }
+
+        assert_eq!(unsafe { libc::kill(leaf, libc::SIGKILL) }, 0);
+        unsafe { libc::kill(leaf, libc::SIGCONT) };
+        harness.wait().unwrap();
+    }
+
+    /// The ordering trap: `fs_base` is restored verbatim with `NT_PRSTATUS`, and
+    /// the kernel keeps its own pointers into the thread-local block -- the rseq
+    /// registration, the robust futex list head and `clear_child_tid`.  None of
+    /// the three is readable or settable from another process, so an image whose
+    /// `fs_base` differs from the fresh process's would move TLS out from under
+    /// all of them and leave the kernel writing into the old block.
+    ///
+    /// Measured on this host: three independent `ADDR_NO_RANDOMIZE` execs of the
+    /// same binary all reported `fs_base=0x7ffff7fb5740`, while two execs without
+    /// it reported `0x728ede54e740` and `0x7ba3ca10d740`.  That is why the happy
+    /// path works today and why it is an unenforced accident rather than a
+    /// property -- which is what this refusal converts it into.
+    #[test]
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    fn native_restore_refuses_to_move_the_thread_pointer_out_from_under_the_kernel() {
+        const TEST: &str = "runtime::execution::native_snapshot::tests::native_restore_refuses_to_move_the_thread_pointer_out_from_under_the_kernel";
+        if let Some(rendezvous) = std::env::var_os(REGFID_RENDEZVOUS)
+            && std::env::var_os(REGFID_CHILD).is_some()
+        {
+            regfid_child(Path::new(&rendezvous));
+        }
+        if isolated_live_capture(TEST) {
+            return;
+        }
+
+        let rendezvous = tempfile::NamedTempFile::new().unwrap();
+        let (mut harness, leaf) = spawn_regfid_child(TEST, rendezvous.path(), 0);
+        let image = capture_stopped_native(leaf, Instant::now() + Duration::from_secs(10)).expect("capture leaf");
+        let mut record = X86RegisterRecord::decode(&image.registers).expect("decode registers");
+        let live = record.registers[REGISTER_FS_BASE];
+        assert_ne!(live, 0, "the fixture must carry a real thread pointer");
+
+        for (index, name) in [(REGISTER_FS_BASE, "fs_base"), (REGISTER_GS_BASE, "gs_base")] {
+            let mut moved = record.clone();
+            moved.registers[index] = record.registers[index].wrapping_add(0x1000);
+            let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, leaf, 0) } as RawFd;
+            assert!(pidfd >= 0, "pidfd_open leaf for {name}");
+            let refused = prepare_native_restore(
+                leaf,
+                unsafe { OwnedFd::from_raw_fd(pidfd) },
+                &moved.encode(),
+                &image.memory,
+                &image.xstate,
+                &image.procstate,
+                Instant::now() + Duration::from_secs(10),
+            )
+            .err()
+            .unwrap_or_else(|| panic!("a moved {name} must be refused before mutation"));
+            assert_eq!(refused.kind(), io::ErrorKind::Unsupported, "{name}");
+            assert!(
+                refused.to_string().starts_with(&format!("native restore would move {name} from ")),
+                "{name}: {refused}"
+            );
+            assert!(
+                refused.to_string().contains("rseq, robust-list and clear_child_tid"),
+                "the refusal must name what would be stranded: {refused}"
+            );
+            wait_until_stopped(leaf);
+        }
+
+        // Positive bracket: the unmoved thread pointer is admitted by the same
+        // call, so the refusals above are a property of the moved value.
+        record.registers[REGISTER_FS_BASE] = live;
+        let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, leaf, 0) } as RawFd;
+        assert!(pidfd >= 0, "pidfd_open leaf");
+        let prepared = prepare_native_restore(
+            leaf,
+            unsafe { OwnedFd::from_raw_fd(pidfd) },
+            &record.encode(),
+            &image.memory,
+            &image.xstate,
+            &image.procstate,
+            Instant::now() + Duration::from_secs(10),
+        )
+        .expect("an unmoved thread pointer must be admitted");
+        drop(prepared);
+        wait_until_stopped(leaf);
+
+        assert_eq!(unsafe { libc::kill(leaf, libc::SIGKILL) }, 0);
+        unsafe { libc::kill(leaf, libc::SIGCONT) };
+        harness.wait().unwrap();
+    }
+
+
+    /// The working directory, measured end to end rather than asserted.
+    ///
+    /// A capture whose guest had chdir'd used to be admitted, the restore used
+    /// to report success, and the restored process used to keep the *fresh*
+    /// process's directory -- so every relative path the guest resolved after
+    /// the restore resolved somewhere else.  Nothing installs a working
+    /// directory into another process (there is no cross-process `chdir`), so
+    /// the only honest outcomes are "the fresh process already agrees" and
+    /// "refuse".
+    ///
+    /// The `Ok` arm below is the measurement: it is unreachable while the
+    /// admission stands, and when the admission is removed it fails while
+    /// printing the captured directory next to the one the guest actually got.
+    #[test]
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    fn a_restore_into_a_process_with_another_working_directory_refuses_instead_of_silently_relocating_the_guest() {
+        const TEST: &str = "runtime::execution::native_snapshot::tests::a_restore_into_a_process_with_another_working_directory_refuses_instead_of_silently_relocating_the_guest";
+        if let Some(rendezvous) = std::env::var_os(REGFID_RENDEZVOUS)
+            && std::env::var_os(REGFID_CHILD).is_some()
+        {
+            regfid_child(Path::new(&rendezvous));
+        }
+        if isolated_live_capture(TEST) {
+            return;
+        }
+
+        let captured_rendezvous = tempfile::NamedTempFile::new().unwrap();
+        let (mut captured, captured_leaf) = spawn_regfid_child(TEST, captured_rendezvous.path(), 0);
+        let image = capture_stopped_native(captured_leaf, Instant::now() + Duration::from_secs(10))
+            .expect("capture leaf");
+        let armed = NativeProcessState::decode(&image.procstate).expect("decode process state");
+
+        let replacement_rendezvous = tempfile::NamedTempFile::new().unwrap();
+        let (mut replacement, replacement_leaf) =
+            spawn_regfid_child_at(TEST, replacement_rendezvous.path(), 0, Some(Path::new("/")));
+        let fresh = kernel_state(replacement_leaf);
+        // The divergence has to exist before the refusal means anything.
+        assert_eq!(fresh.cwd, b"/", "the replacement must sit in a different directory");
+        assert_ne!(fresh.cwd, armed.cwd, "capture and replacement must differ");
+
+        let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, replacement_leaf, 0) } as RawFd;
+        assert!(pidfd >= 0, "pidfd_open replacement leaf");
+        match prepare_native_restore(
+            replacement_leaf,
+            unsafe { OwnedFd::from_raw_fd(pidfd) },
+            &image.registers,
+            &image.memory,
+            &image.xstate,
+            &image.procstate,
+            Instant::now() + Duration::from_secs(10),
+        ) {
+            Err(refused) => {
+                assert_eq!(refused.kind(), io::ErrorKind::Unsupported);
+                assert_eq!(refused.to_string(), "native process-state mismatch: Cwd");
+            }
+            Ok(prepared) => {
+                complete_native_restore(prepared, Instant::now() + Duration::from_secs(10))
+                    .expect("complete restore");
+                let after = kernel_state(replacement_leaf);
+                panic!(
+                    "restore reported success: the image carries cwd={:?} but the restored process has cwd={:?}",
+                    String::from_utf8_lossy(&armed.cwd),
+                    String::from_utf8_lossy(&after.cwd)
+                );
+            }
+        }
+        wait_until_stopped(replacement_leaf);
+        // A refusal before mutation leaves the target exactly as it was.
+        assert_eq!(kernel_state(replacement_leaf).cwd, fresh.cwd);
+
+        for leaf in [captured_leaf, replacement_leaf] {
+            assert_eq!(unsafe { libc::kill(leaf, libc::SIGKILL) }, 0);
+            unsafe { libc::kill(leaf, libc::SIGCONT) };
+        }
+        captured.wait().unwrap();
+        replacement.wait().unwrap();
     }
 
     fn count_tasks(pid: libc::pid_t) -> usize {
@@ -3227,6 +4343,7 @@ hl_regfidelity_tls_pad:
             &image.registers,
             &image.memory,
             &foreign,
+            &image.procstate,
             Instant::now() + Duration::from_secs(10),
         )
         .err()
@@ -3243,6 +4360,7 @@ hl_regfidelity_tls_pad:
             &image.registers,
             &image.memory,
             &image.xstate,
+            &image.procstate,
             Instant::now() + Duration::from_secs(10),
         )
         .unwrap();
@@ -3367,7 +4485,7 @@ hl_regfidelity_tls_pad:
         };
         let encoded = record.encode();
         assert_eq!(&encoded[..8], b"HLNXREG\0");
-        assert_eq!(&encoded[8..10], &2_u16.to_le_bytes());
+        assert_eq!(&encoded[8..10], &3_u16.to_le_bytes());
         assert_eq!(&encoded[10..12], &62_u16.to_le_bytes());
         assert_eq!(&encoded[12..16], &256_u32.to_le_bytes());
         assert_eq!(X86RegisterRecord::decode(&encoded), Ok(record));
@@ -3403,7 +4521,7 @@ hl_regfidelity_tls_pad:
         let encoded = record.encode();
         assert_eq!(encoded.len(), XSTATE_HEADER_SIZE + XSTATE_MIN_AREA);
         assert_eq!(&encoded[..8], b"HLNXXST\0");
-        assert_eq!(&encoded[8..10], &2_u16.to_le_bytes());
+        assert_eq!(&encoded[8..10], &3_u16.to_le_bytes());
         assert_eq!(&encoded[10..12], &62_u16.to_le_bytes());
         assert_eq!(&encoded[12..16], &(encoded.len() as u32).to_le_bytes());
         assert_eq!(&encoded[16..24], &0b111_u64.to_le_bytes());
@@ -3480,22 +4598,25 @@ hl_regfidelity_tls_pad:
     fn every_carrier_of_the_native_format_version_moves_together() {
         assert_eq!(VERSION, NATIVE_FORMAT_VERSION);
         assert_eq!(XSTATE_VERSION, NATIVE_FORMAT_VERSION);
-        assert!(MANIFEST_MAGIC.ends_with(b"-V2\0"));
+        assert!(MANIFEST_MAGIC.ends_with(b"-V3\0"));
         for name in NATIVE_OBJECTS {
-            assert!(name.ends_with("-v2"), "{name} must carry the format version");
+            assert!(name.ends_with("-v3"), "{name} must carry the format version");
         }
         assert_eq!(
             crate::runtime::checkpoint::image_envelope::NATIVE_X86_PAYLOAD_VERSION,
             u32::from(NATIVE_FORMAT_VERSION)
         );
-        // A version-one manifest is still rejected byte for byte, which is the
-        // only reason an image predating the xstate object cannot be half read.
-        let mut stale = native_manifest(b"registers", b"memory", b"xstate");
-        stale[..16].copy_from_slice(b"HLNATIVE-X86-V1\0");
-        assert_eq!(
-            validate_native_objects(&stale, |_| Some(Vec::new())),
-            Err(InvalidNativeImage::Manifest)
-        );
+        // Every superseded manifest is still rejected byte for byte, which is
+        // the only reason an image predating the xstate object -- or predating
+        // the process-state object -- cannot be half read.
+        for superseded in [b"HLNATIVE-X86-V1\0", b"HLNATIVE-X86-V2\0"] {
+            let mut stale = native_manifest(b"registers", b"memory", b"xstate", b"procstate");
+            stale[..16].copy_from_slice(superseded);
+            assert_eq!(
+                validate_native_objects(&stale, |_| Some(Vec::new())),
+                Err(InvalidNativeImage::Manifest)
+            );
+        }
     }
 
     #[test]

@@ -1552,9 +1552,10 @@ fn checkpoint_restores_a_fresh_process_after_terminating_the_original(explicit: 
             [
                 "IMAGE",
                 "MANIFEST",
-                "native/memory.x86-v2",
-                "native/registers.x86-v2",
-                "native/xstate.x86-v2"
+                "native/memory.x86-v3",
+                "native/procstate.x86-v3",
+                "native/registers.x86-v3",
+                "native/xstate.x86-v3"
             ]
         );
         assert_eq!(&objects["IMAGE"][..8], b"HLIMAGE\0");
