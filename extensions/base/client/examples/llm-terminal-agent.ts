@@ -130,16 +130,23 @@ try {
             if (cause instanceof TerminalCommandStartProtocolError) throw cause;
             if (cause instanceof TerminalCommandStartOperationError) {
               const command = await resumedTerminal.recoverCommandStart(cause);
-              result = await resumedTerminal.resumeCommandText({
-                version: 1,
-                command,
-                after: 0,
-                stdout: [],
-                stderr: [],
-                maxBytes: 1024 * 1024,
-              });
+              result = await resumedTerminal.resumeCommandText(
+                {
+                  version: 1,
+                  command,
+                  after: 0,
+                  stdout: [],
+                  stderr: [],
+                  maxBytes: 1024 * 1024,
+                },
+                { signal: cancellation.signal, cancelSignal: 'SIGINT', cancelTimeoutMs: 1_000 },
+              );
             } else if (cause instanceof TerminalCommandOperationError) {
-              result = await resumedTerminal.resumeCommandText(cause.resume);
+              result = await resumedTerminal.resumeCommandText(cause.resume, {
+                signal: cancellation.signal,
+                cancelSignal: 'SIGINT',
+                cancelTimeoutMs: 1_000,
+              });
             } else {
               throw cause;
             }

@@ -2151,12 +2151,17 @@ export interface WorkspaceApi {
             stdout: string;
             stderr: string;
         }>;
-        /** Resume from the error's frozen token without widening its original aggregate byte ceiling. */
+        /**
+         * Resume from the error's frozen token without widening its original aggregate byte ceiling.
+         * Abort cancels the recovered owned command before returning an operation error.
+         */
         resumeCommandText(resume: Readonly<TerminalCommandResumeToken>, options?: {
             maxPages?: number;
             pageLimit?: number;
             pollIntervalMs?: number;
             signal?: AbortSignal;
+            cancelSignal?: string;
+            cancelTimeoutMs?: number;
         }): Promise<{
             command: TerminalCommand;
             stdout: string;

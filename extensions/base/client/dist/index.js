@@ -3431,7 +3431,7 @@ export function workspace(session, { signal } = {}) {
                     throw cause;
                 }
             },
-            resumeCommandText: async (resume, { maxPages = 4_096, pageLimit = 16, pollIntervalMs = 25, signal, } = {}) => {
+            resumeCommandText: async (resume, { maxPages = 4_096, pageLimit = 16, pollIntervalMs = 25, signal, cancelSignal = 'SIGTERM', cancelTimeoutMs = 5_000, } = {}) => {
                 if (resume?.version !== 1 ||
                     !Number.isSafeInteger(resume.after) ||
                     resume.after < 0 ||
@@ -3465,6 +3465,7 @@ export function workspace(session, { signal } = {}) {
                     throw new RangeError('terminal command initial output exceeds maxBytes');
                 let cursor = after;
                 let phase = 'output';
+                let owned = command;
                 try {
                     for (let pageNumber = 0; pageNumber < maxPages; pageNumber += 1) {
                         requireOutputActive(signal);
@@ -3486,7 +3487,7 @@ export function workspace(session, { signal } = {}) {
                         cursor = page.output.next;
                         if (page.output.eof) {
                             phase = 'wait';
-                            const completed = await scoped.terminal.commandWait(command);
+                            const completed = await scoped.terminal.commandWait(owned);
                             if (completed.running)
                                 throw new Error('terminal command output ended before the command completed');
                             phase = 'decode';
@@ -3503,7 +3504,18 @@ export function workspace(session, { signal } = {}) {
                     throw new RangeError('terminal command resume exceeded maxPages');
                 }
                 catch (cause) {
-                    throw new TerminalCommandOperationError(command, phase, cursor, cause, {
+                    try {
+                        if (owned.running) {
+                            owned = await api.terminal.commandCancel(owned, {
+                                signal: cancelSignal,
+                                timeoutMs: cancelTimeoutMs,
+                            });
+                        }
+                    }
+                    catch {
+                        // Preserve the recovery failure and its last completely consumed cursor.
+                    }
+                    throw new TerminalCommandOperationError(owned, phase, cursor, cause, {
                         stdout: Object.freeze(bytes.stdout),
                         stderr: Object.freeze(bytes.stderr),
                     }, maxBytes);

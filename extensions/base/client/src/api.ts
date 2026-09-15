@@ -2197,7 +2197,10 @@ export interface WorkspaceApi {
         cancelTimeoutMs?: number;
       },
     ): Promise<{ command: TerminalCommand; stdout: string; stderr: string }>;
-    /** Resume from the error's frozen token without widening its original aggregate byte ceiling. */
+    /**
+     * Resume from the error's frozen token without widening its original aggregate byte ceiling.
+     * Abort cancels the recovered owned command before returning an operation error.
+     */
     resumeCommandText(
       resume: Readonly<TerminalCommandResumeToken>,
       options?: {
@@ -2205,6 +2208,8 @@ export interface WorkspaceApi {
         pageLimit?: number;
         pollIntervalMs?: number;
         signal?: AbortSignal;
+        cancelSignal?: string;
+        cancelTimeoutMs?: number;
       },
     ): Promise<{ command: TerminalCommand; stdout: string; stderr: string }>;
     /** Arm and read before CAS spawn, then return a later bounded terminal screen revision. */

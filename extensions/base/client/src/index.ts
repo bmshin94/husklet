@@ -4378,11 +4378,15 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           pageLimit = 16,
           pollIntervalMs = 25,
           signal,
+          cancelSignal = 'SIGTERM',
+          cancelTimeoutMs = 5_000,
         }: {
           maxPages?: number;
           pageLimit?: number;
           pollIntervalMs?: number;
           signal?: AbortSignal;
+          cancelSignal?: string;
+          cancelTimeoutMs?: number;
         } = {},
       ) => {
         if (
@@ -4422,6 +4426,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           throw new RangeError('terminal command initial output exceeds maxBytes');
         let cursor = after;
         let phase = 'output';
+        let owned = command;
         try {
           for (let pageNumber = 0; pageNumber < maxPages; pageNumber += 1) {
             requireOutputActive(signal);
@@ -4442,7 +4447,7 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
             cursor = page.output.next;
             if (page.output.eof) {
               phase = 'wait';
-              const completed = await scoped.terminal.commandWait(command);
+              const completed = await scoped.terminal.commandWait(owned);
               if (completed.running)
                 throw new Error('terminal command output ended before the command completed');
               phase = 'decode';
@@ -4458,8 +4463,18 @@ export function workspace(session: ClientSession, { signal }: CallOptions = {}):
           }
           throw new RangeError('terminal command resume exceeded maxPages');
         } catch (cause) {
+          try {
+            if (owned.running) {
+              owned = await api.terminal.commandCancel(owned, {
+                signal: cancelSignal,
+                timeoutMs: cancelTimeoutMs,
+              });
+            }
+          } catch {
+            // Preserve the recovery failure and its last completely consumed cursor.
+          }
           throw new TerminalCommandOperationError(
-            command,
+            owned,
             phase,
             cursor,
             cause,

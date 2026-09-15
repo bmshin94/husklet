@@ -376,7 +376,11 @@ test('lost supervised input reply carries one exact retry across a fragmented re
       committed: 0,
       closed: true,
     });
-    assert.deepEqual(received[3], received[2], 'reconnect must replay only the exact EOF operation');
+    assert.deepEqual(
+      received[3],
+      received[2],
+      'reconnect must replay only the exact EOF operation',
+    );
     fourth.close();
   } finally {
     await new Promise((resolve) => server.close(resolve));
@@ -957,6 +961,87 @@ test('repeated Unix disconnects cannot widen a supervised command output budget'
         error.cause instanceof RangeError,
     );
     await third.close();
+  } finally {
+    for (const connection of connections) connection.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('an aborted Unix recovery cancels its exact supervised command before returning', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'husklet-command-abort-resume-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const connections = new Set();
+  const requests = [];
+  const server = net.createServer((socket) => {
+    connections.add(socket);
+    socket.on('close', () => connections.delete(socket));
+    const reader = new Reader();
+    socket.on('data', (chunk) => {
+      for (const frame of reader.take(chunk)) {
+        if (frame.kind !== KIND.request) continue;
+        requests.push(frame.payload);
+        assert.equal(frame.payload.call, 'terminal_command_cancel');
+        assert.deepEqual(frame.payload.with, {
+          id,
+          owner,
+          ...pane,
+          signal: 'SIGINT',
+          timeout_ms: 321,
+        });
+        fragmented(socket, {
+          channel: frame.channel,
+          kind: KIND.response,
+          payload: {
+            reply: 'terminal_command',
+            with: { ...running, running: false, exit_code: 130, pid: 0 },
+          },
+        });
+      }
+    });
+    fragmented(socket, {
+      channel: CONTROL,
+      kind: KIND.open,
+      payload: {
+        protocol: 1,
+        peer: 'aborted-recovery',
+        granted: ['terminals:process-control', 'terminals:output'],
+      },
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  try {
+    const session = await connect({ path: socketPath });
+    const cancellation = new AbortController();
+    cancellation.abort('agent deadline');
+    await assert.rejects(
+      workspace(session).terminal.resumeCommandText(
+        {
+          version: 1,
+          command: running,
+          after: 0,
+          stdout: [],
+          stderr: [],
+          maxBytes: 1024,
+        },
+        {
+          signal: cancellation.signal,
+          cancelSignal: 'SIGINT',
+          cancelTimeoutMs: 321,
+        },
+      ),
+      (error) => {
+        assert(error instanceof TerminalCommandOperationError);
+        assert.equal(error.cause.name, 'AbortError');
+        assert.equal(error.cause.cause, 'agent deadline');
+        assert.equal(error.command.running, false);
+        assert.equal(error.command.exit_code, 130);
+        assert.equal(error.after, 0);
+        return true;
+      },
+    );
+    assert.equal(requests.length, 1);
+    await session.close();
   } finally {
     for (const connection of connections) connection.destroy();
     await new Promise((resolve) => server.close(resolve));
