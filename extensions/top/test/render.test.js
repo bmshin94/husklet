@@ -4699,7 +4699,7 @@ test('Top is visibly required and offers no self-disable or self-removal trap', 
   assert.equal(labelled(stage, 'Remove'), undefined);
   assert.equal(labelled(stage, 'More'), undefined);
   assert.equal(labelled(stage, 'Review update'), undefined);
-  assert.equal(labelled(stage, 'Check for changes'), undefined);
+  assert.equal(labelled(stage, 'Check current image'), undefined);
   assert.ok(labelled(stage, 'Built-in'));
   assert.ok(
     labelled(stage, 'Top is managed by Husklet and stays available for workspace recovery.'),

@@ -2975,7 +2975,7 @@ export function Extensions({
                                           ) : null}
                                           {!builtIn && !update && catalogueEntry ? (
                                             <Button
-                                              label="Check for changes"
+                                              label="Check current image"
                                               tooltip={`Check ${extension.name} image for changes`}
                                               size="small"
                                               variant="ghost"

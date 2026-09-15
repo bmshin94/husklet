@@ -2053,7 +2053,7 @@ mod unix {
                     "{width_name} managed Top Open is keyboard reachable"
                 );
                 assert!(open.has_css_class("size-small"));
-                for impossible in ["Disable", "More actions", "Review update", "Check for changes"] {
+                for impossible in ["Disable", "More actions", "Review update", "Check current image"] {
                     assert!(
                         !has_label(&card, impossible),
                         "{width_name} managed Top exposed impossible {impossible:?} action"
@@ -2106,7 +2106,7 @@ mod unix {
                 unreachable!()
             };
             assert_eq!(value, hl_gui::PropValue::Text("storybook".into()));
-            apply_until(&mut wire, &mut tree, &mut surface, "Check for changes", |request| {
+            apply_until(&mut wire, &mut tree, &mut surface, "Check current image", |request| {
                 panic!("unexpected installed image-check render request: {request:?}")
             });
             let filtered_root = surface.widget().clone().upcast::<gtk::Widget>();
@@ -2118,7 +2118,7 @@ mod unix {
                 filtered_root.allocate(width, 1_600, -1, None);
                 window.queue_draw();
                 settle_frame();
-                let check = find_button(&filtered_root, "Check for changes");
+                let check = find_button(&filtered_root, "Check current image");
                 let card = ancestor_with_class(check.upcast_ref(), "hl-card")
                     .expect("image check action belongs to the installed extension card");
                 if width == 600 {
@@ -3584,7 +3584,7 @@ mod unix {
     ) {
         let first_party_reference = format!("ghcr.io/husklet/storybook:0.4.0@sha256:{}", "a".repeat(64));
         let root = surface.widget().clone().upcast::<gtk::Widget>();
-        find_button(&root, "Check for changes").emit_clicked();
+        find_button(&root, "Check current image").emit_clicked();
         settle_toolkit();
         send_report(surface, wire, 101, |event| {
             matches!(event, hl_gui::Event::Invoke { .. })
@@ -3770,7 +3770,7 @@ mod unix {
             wire,
             tree,
             surface,
-            "Check for changes",
+            "Check current image",
             |request| panic!("unexpected first-party recovery return call: {request:?}"),
             || None,
         );
