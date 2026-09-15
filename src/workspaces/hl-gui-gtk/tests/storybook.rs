@@ -1584,6 +1584,30 @@ mod unix {
             // changes state and reports once without installing a synthetic handler.
             for expected in [true, false] {
                 controlled.emit_by_name::<()>("activate", &[]);
+                if expected {
+                    assert!(
+                        !gtk::Settings::default()
+                            .expect("display owns settings")
+                            .is_gtk_enable_animations(),
+                        "Expander construction left GTK reveal animation enabled"
+                    );
+                    allocate(&root, realized_window.width(), 1_600);
+                    let summary = controlled
+                        .label_widget()
+                        .expect("expanded disclosure retains its summary");
+                    let body = controlled.child().expect("expanded disclosure retains its body");
+                    let summary_bounds = summary
+                        .compute_bounds(&controlled)
+                        .expect("summary belongs to the disclosure");
+                    let body_bounds = body
+                        .compute_bounds(&controlled)
+                        .expect("body belongs to the disclosure");
+                    assert!(
+                        body_bounds.y() >= summary_bounds.y() + summary_bounds.height(),
+                        "the first expanded frame overlapped its summary: summary={summary_bounds:?}, body={body_bounds:?}"
+                    );
+                    capture_story(&realized_window, "Expander immediate expanded");
+                }
                 settle_toolkit();
                 allocate(&root, realized_window.width(), 1_600);
                 realized_window.queue_draw();

@@ -91,7 +91,7 @@ export function ExpanderWorkbench() {
 
       <DocumentationSection title="Behavior">
         <Text
-          label="Keep the summary short and stable as the disclosure changes. Enter or Space toggles the focused summary; onExpand reports the resulting state once so a controlled Expander can render it back."
+          label="Keep the summary short and stable as the disclosure changes. Details appear atomically below it without a transient reflow. Enter or Space toggles the focused summary; onExpand reports the resulting state once so a controlled Expander can render it back."
           wrap
         />
         <FieldSpecimen

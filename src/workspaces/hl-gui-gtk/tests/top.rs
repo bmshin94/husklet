@@ -531,7 +531,7 @@ mod unix {
                 assert!(!find_button(&card, "Details").has_css_class("tone-accent"));
                 let secondary = find_button(&card, "More actions");
                 assert!(secondary.has_css_class("variant-ghost"));
-                assert!(secondary.has_css_class("size-small"));
+                assert_inline_action(&secondary, width_name, "container More actions");
                 assert_eq!(
                     secondary.height(),
                     44,
@@ -1509,7 +1509,7 @@ mod unix {
                 );
                 let secondary = find_button(&card, "More actions");
                 assert!(secondary.has_css_class("variant-ghost"));
-                assert!(secondary.has_css_class("size-small"));
+                assert_inline_action(&secondary, width_name, "execution More actions");
                 assert_eq!(
                     secondary.height(),
                     44,

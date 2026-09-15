@@ -32,6 +32,13 @@ pub(crate) fn widget(tag: Tag) -> gtk::Widget {
 
 /// One compact control row remains clickable even before it reveals a body.
 fn disclosure() -> gtk::Expander {
+    // GTK exposes expander reveal animation only as an application setting.
+    // In a retained, remotely patched tree that transition can paint the old
+    // and new allocations in one frame, placing details across the summary.
+    // Atomic disclosure layout is more important than ornamental motion.
+    if let Some(settings) = gtk::Settings::default() {
+        settings.set_gtk_enable_animations(false);
+    }
     let widget = gtk::Expander::new(None);
     widget.set_size_request(-1, 28);
     widget

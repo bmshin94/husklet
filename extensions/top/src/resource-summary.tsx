@@ -5,6 +5,7 @@ import {
   CardContent,
   CardHeader,
   Column,
+  InlineButton,
   InlineMessage,
   Responsive,
   Row,
@@ -120,12 +121,10 @@ export function ResourceSummary({
     />
   ) : null;
   const overflowTrigger = overflow ? (
-    <Button
+    <InlineButton
       label={overflowOpen ? 'Close actions' : overflow.label}
       tooltip={overflow.tooltip}
-      icon="view-more-symbolic"
       variant="ghost"
-      size="small"
       onInvoke={() => setOverflowOpen((open) => !open)}
     />
   ) : null;

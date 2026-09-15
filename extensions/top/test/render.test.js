@@ -8036,11 +8036,13 @@ test('container controls follow the real daemon lifecycle states', async () => {
   });
   assert.equal(taggedProperty(stage, 'Refresh', 'Button', 'Size')?.ControlSize, 'Small');
   assert.equal(labelled(stage, 'Remove'), undefined, 'running cards omit an invalid remove action');
-  assert.equal(taggedProperty(stage, 'More actions', 'Button', 'Variant')?.Variant, 'Ghost');
-  assert.equal(taggedProperty(stage, 'More actions', 'Button', 'Size')?.ControlSize, 'Small');
-  assert.deepEqual(taggedProperty(stage, 'More actions', 'Button', 'Icon'), {
-    Text: 'view-more-symbolic',
-  });
+  assert.equal(taggedProperty(stage, 'More actions', 'InlineButton', 'Variant')?.Variant, 'Ghost');
+  assert.equal(taggedProperty(stage, 'More actions', 'InlineButton', 'Size'), undefined);
+  assert.equal(
+    taggedProperty(stage, 'More actions', 'InlineButton', 'Icon'),
+    undefined,
+    'text-labelled overflow does not masquerade as an unexplained ellipsis menu',
+  );
   assert.equal(labelled(stage, 'Container actions'), undefined);
   invoke(stage, 'More actions');
   await settled();
