@@ -4634,12 +4634,11 @@ mod unix {
                 let footer = update
                     .parent()
                     .and_then(|actions| actions.parent())
-                    .and_then(|row| row.parent())
                     .expect("decision row belongs to its fixed footer");
                 let footer_bounds = footer.compute_bounds(root).expect("fixed footer belongs to root");
                 assert!(
-                    (48.0..=60.0).contains(&footer_bounds.height()),
-                    "{width_name} {state} footer does not stay within one compact row: {footer_bounds:?}"
+                    (68.0..=84.0).contains(&footer_bounds.height()),
+                    "{width_name} {state} footer lost its deliberate compact composition: {footer_bounds:?}"
                 );
                 assert!(
                     (footer_bounds.y() + footer_bounds.height() - 800.0).abs() <= 1.0,
@@ -4676,6 +4675,14 @@ mod unix {
                 let status_bounds = status
                     .compute_bounds(root)
                     .expect("decision status belongs to review footer");
+                assert!(
+                    status_bounds.y() + status_bounds.height() <= update_bounds.y(),
+                    "{width_name} {state} decision summary competes with its actions: status={status_bounds:?}, update={update_bounds:?}"
+                );
+                assert!(
+                    update_bounds.width() >= 180.0 && cancel_bounds.width() >= 96.0,
+                    "{width_name} {state} long review labels lost usable action width: update={update_bounds:?}, cancel={cancel_bounds:?}"
+                );
                 let rows = widgets_with_class(root, "hl-form-control-label");
                 if state == "update-required" {
                     assert!(
@@ -4710,14 +4717,6 @@ mod unix {
                         "{width_name} {state} last complete permission row lacks footer clearance: end={last_whole}, footer={footer_top}"
                     );
                 }
-                assert!(
-                    (status_bounds.y() - update_bounds.y()).abs() <= 2.0,
-                    "{width_name} decision status and action are not one row: status={status_bounds:?}, action={update_bounds:?}"
-                );
-                assert!(
-                    status_bounds.x() + status_bounds.width() + 8.0 <= update_bounds.x(),
-                    "{width_name} decision status crowds its actions: status={status_bounds:?}, action={update_bounds:?}"
-                );
             }
             if state == "update-success" {
                 assert!(

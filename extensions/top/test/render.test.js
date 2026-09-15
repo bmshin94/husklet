@@ -3603,12 +3603,17 @@ for (const updating of [false, true]) {
     );
     assert.equal(
       ancestorTags(stage, commitLabel).filter((tag) => tag === 'Row').length,
-      2,
-      'decision actions retain their group inside the shared compact footer row',
+      1,
+      'decision actions retain one compact semantic group',
     );
     assert.ok(
+      sharedAncestor(stage, ['Review decision · 8/13 selected', commitLabel], 'Column'),
+      'status and actions share the fixed decision footer',
+    );
+    assert.equal(
       sharedAncestor(stage, ['Review decision · 8/13 selected', commitLabel], 'Row'),
-      'status and actions share the compact footer row',
+      undefined,
+      'the decision summary stays above rather than competing with the actions',
     );
     assert.deepEqual(taggedProperty(stage, commitLabel, 'Button', 'Size'), {
       ControlSize: 'Small',

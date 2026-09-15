@@ -3024,13 +3024,8 @@ export function Extensions({
         <Column gap={0} grow={false}>
           <Spacer height={1} />
           <Separator orientation="horizontal" />
-          <Row
-            gap={2}
-            pad={{ top: 1, end: 2, bottom: 1, start: 2 }}
-            align="center"
-            width="fill"
-            wrap
-          >
+          <Column gap={0} width="fill">
+            <Spacer height={1} />
             <Text
               label={
                 requestedPermissionCount > 0 && grantedPermissionCount === 0
@@ -3039,7 +3034,6 @@ export function Extensions({
               }
               color="text-dim"
               wrap={false}
-              grow
             />
             <ReviewActions
               busy={busy}
@@ -3052,7 +3046,8 @@ export function Extensions({
               onPublish={publish}
               onCancel={dismissReview}
             />
-          </Row>
+            <Spacer height={1} />
+          </Column>
         </Column>
       ) : null}
     </Column>
@@ -3073,7 +3068,7 @@ function ReviewActions({
   onCancel: () => void;
 }) {
   return (
-    <Row gap={1} align="center" justify="end">
+    <Row gap={1} align="center" justify="end" width="fill">
       <Button
         label={
           busy === 'update'
