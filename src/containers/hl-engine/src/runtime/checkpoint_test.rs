@@ -2530,6 +2530,101 @@ fn refusal_settlement_requires_every_live_peer_to_resume_or_end() {
     );
 }
 
+/// A DECIDED refusal that nobody settles is still a refusal when its settle window closes.
+///
+/// The settle is the second half of what a refusal owes -- giving the frozen tree back -- and a
+/// coordinator that can perform it does. But two refusing paths in this engine cannot, by
+/// construction, and both were measured reporting `WaitFailed` at this base:
+///
+///   - the translated coordinator's sealed-member count mismatch, which runs after its own dump
+///     through the `_Noreturn` `ckpt_coordinator_refuse`, so the process that decided is gone before
+///     anything could latch;
+///   - the native supervisor's phase-1 admission refusal, which notifies the decision, thaws the
+///     domain itself and returns, and never latches either.
+///
+/// In both the host held a latched generation and the refusing domain's own words, and reported the
+/// caller a timeout. This pins the label: what the settle window closing decides is whether the tree
+/// was handed back, NOT whether this capture was refused, so the lapse carries the decision.
+///
+/// The wake here is deliberately well past the capture deadline, so this arm turns on the recorded
+/// `lapsed` alone and not on the wake tie its sibling below covers.
+#[test]
+fn an_unsettled_decided_refusal_lapses_as_a_refusal_not_as_the_hosts_deadline() {
+    let server = Arc::new(Server::new(Arc::new(Store), Arc::new(Store)));
+    let deadline = std::time::Instant::now() + Duration::from_millis(50);
+    let capture = server.begin_capture(61, deadline).expect("capture admission");
+    let reason = "native phase-1 read-only admission rejected process state: descriptor domain (verdict -3)";
+    server.decide_refusal(61, reason.to_owned()).expect("refusal decision");
+
+    let settled = server
+        .wait_capture(capture, deadline + Duration::from_secs(2))
+        .expect("capture wait");
+    assert_eq!(
+        settled,
+        Some(Err(CaptureFailure::Refused)),
+        "a decided, recorded refusal that nobody settled was relabelled as the host's own deadline"
+    );
+    assert_eq!(
+        server.capture_refusal().as_deref(),
+        Some(reason),
+        "the refusing domain's own words did not survive the lapse"
+    );
+}
+
+/// The lapse wins a tie with the caller's wake, because that tie is the ordinary case.
+///
+/// `await_capture_completion` polls with `next_interrupt.min(deadline)`, so its LAST wake is exactly
+/// the capture deadline. Answering that wake with `Ok(None)` sent the caller into its own
+/// `now >= deadline` arm, which aborts and reports `CaptureFailure::Deadline` -- so the refusal above
+/// was correctly labelled on the server and then overwritten on the way out, and fixing only the
+/// label changed nothing observable. Both integration paths stayed at `WaitFailed` until this
+/// ordering changed, which is why it is bracketed separately.
+///
+/// Nothing waits any longer for it: the wake and the deadline are the same instant here.
+#[test]
+fn a_refusal_lapsing_exactly_at_the_callers_wake_is_answered_rather_than_deferred() {
+    let server = Arc::new(Server::new(Arc::new(Store), Arc::new(Store)));
+    let deadline = std::time::Instant::now() + Duration::from_millis(50);
+    let capture = server.begin_capture(62, deadline).expect("capture admission");
+    server
+        .decide_refusal(62, "the broker could not seal this capture's membership".to_owned())
+        .expect("refusal decision");
+
+    let settled = server.wait_capture(capture, deadline).expect("capture wait");
+    assert_eq!(
+        settled,
+        Some(Err(CaptureFailure::Refused)),
+        "a refusal lapsing at the caller's own wake was deferred back to the caller, which reads it \
+         as its own timeout"
+    );
+}
+
+/// The same for a refusal that reached `Refusing` by LATCHING rather than by announcing.
+///
+/// `ckpt_stream_capture_refused` is best effort -- a fire-and-forget notify -- so a coordinator whose
+/// announcement was lost still names its reason on the `REFUSAL_LATCHED` round trip, and that is a
+/// decided refusal by the same argument. It carried the same `Deadline` lapse.
+#[test]
+fn an_unsettled_latched_refusal_lapses_as_a_refusal_too() {
+    let server = Arc::new(Server::new(Arc::new(Store), Arc::new(Store)));
+    let deadline = std::time::Instant::now() + Duration::from_millis(50);
+    let capture = server.begin_capture(63, deadline).expect("capture admission");
+    let reason = "guest fd 10 is a pipe -- shared pipe restore is not yet supported";
+    assert!(
+        server.refusal_latched(63, 71, Some(reason)),
+        "the reason-carrying latch did not enter the refusing phase"
+    );
+
+    assert_eq!(
+        server
+            .wait_capture(capture, deadline + Duration::from_secs(2))
+            .expect("capture wait"),
+        Some(Err(CaptureFailure::Refused)),
+        "a latched refusal nobody settled was relabelled as the host's own deadline"
+    );
+    assert_eq!(server.capture_refusal().as_deref(), Some(reason));
+}
+
 #[test]
 fn refusing_generation_timeout_is_terminal_and_not_a_capture_refusal() {
     let store = Arc::new(TransactionStore::default());

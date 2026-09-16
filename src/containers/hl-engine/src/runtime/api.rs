@@ -331,6 +331,16 @@ impl Engine {
     pub fn capture_checkpoint_until(&self, deadline: std::time::Instant) -> Result<(), EngineError> {
         self.backend.capture_checkpoint_until(deadline)
     }
+    /// Why the engine refused the last capture, in the refusing domain's own words.
+    ///
+    /// `Err(EngineError::CaptureRefused)` says a decision was taken rather than that something broke;
+    /// this says which domain took it and on what, so a caller can report the cause instead of only
+    /// that there was one. `None` when no capture of this engine was refused.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn checkpoint_refusal(&self) -> Option<String> {
+        self.backend.checkpoint_refusal()
+    }
     pub fn resize_terminal(&self, rows: u16, columns: u16) -> Result<(), EngineError> {
         self.terminal
             .as_ref()

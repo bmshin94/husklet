@@ -526,6 +526,24 @@ fn publishes_capture_bytes(op: u32) -> bool {
 }
 
 impl Server {
+    /// Record that the engine has DECIDED to refuse this capture, and why.
+    ///
+    /// It lapses as `Refused`, not as `Deadline`. The decision is the terminal fact here and it has
+    /// already been taken and named; the settle that may follow adds the second half of a refusal --
+    /// giving the frozen tree back -- but it does not decide WHETHER this capture was refused. A
+    /// refusal whose settle never arrives still refused.
+    ///
+    /// Lapsing as `Deadline` made every unsettled decided refusal reach the caller as `WaitFailed`,
+    /// which is the one thing a refusal must never be confused with: a caller cannot tell a decision
+    /// the engine took and explained from the host giving up on an engine that never answered.
+    /// Measured on both paths at this base -- the translated coordinator's sealed-member count
+    /// mismatch, whose `_Noreturn` refusal is terminal by construction so nothing can ever settle it,
+    /// and the native supervisor's phase-1 admission refusal, which notifies and thaws without
+    /// latching -- both reported `WaitFailed` thirty seconds after a decision taken in well under one.
+    ///
+    /// This does not shorten the settle window and does not change what is refused: a coordinator that
+    /// IS coming to settle still settles, through the same `Refusing` phase, and reaches the same
+    /// `CaptureFailure::Refused`. Only the unsettled tail changes, and only in what it is called.
     pub(super) fn decide_refusal(&self, id: u64, reason: String) -> Result<(), ()> {
         let mut capture = self.capture_lock().map_err(|_| ())?;
         let deadline = match capture.phase {
@@ -537,7 +555,7 @@ impl Server {
             id,
             deadline,
             coordinator: None,
-            lapsed: CaptureFailure::Deadline,
+            lapsed: CaptureFailure::Refused,
         };
         self.refusal_resumed.lock().map_err(|_| ())?.clear();
         self.record_refusal(reason);
@@ -604,7 +622,7 @@ impl Server {
                     id,
                     deadline,
                     coordinator: Some(connection),
-                    lapsed: CaptureFailure::Deadline,
+                    lapsed: CaptureFailure::Refused,
                 };
                 drop(capture);
                 if let Ok(mut resumed) = self.refusal_resumed.lock() {

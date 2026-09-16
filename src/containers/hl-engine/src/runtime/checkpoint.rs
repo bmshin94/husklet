@@ -119,11 +119,14 @@ enum CapturePhase {
         id: u64,
         deadline: std::time::Instant,
         coordinator: Option<u64>,
-        /// What this capture failed as if the settle window closes without a settle. A refusal decided
-        /// by a coordinator that is still running lapses as `Deadline`; one entered from a group abort,
-        /// whose refusing process may already be gone, lapses as the `Failed` that abort used to report
-        /// immediately. Carried on the phase so a settle that never arrives cannot silently relabel the
-        /// failure it replaced.
+        /// What this capture failed as if the settle window closes without a settle. A refusal the
+        /// engine DECIDED and named (`decide_refusal`, `refusal_latched`) lapses as `Refused`, because
+        /// the decision is what made this capture terminal and an absent settle does not unmake it;
+        /// one entered from a bare group abort, which named nothing, lapses as the `Failed` that abort
+        /// used to report immediately. Carried on the phase so a settle that never arrives cannot
+        /// silently relabel the failure it replaced -- in either direction. It lapsed as `Deadline`
+        /// until 2026-09-16, which is how a decided, explained refusal reached the caller as the host
+        /// timing out on an engine that had in fact answered.
         lapsed: CaptureFailure,
     },
     Publishing {
@@ -654,7 +657,17 @@ impl Server {
                         .wait_timeout(capture, wait)
                         .map_err(|_| CaptureFailure::Poisoned)?;
                     capture = next;
-                    if timeout.timed_out() && std::time::Instant::now() >= wake {
+                    // The lapse above wins a tie with the caller's own wake, and that tie is the ORDINARY
+                    // case rather than a corner: `await_capture_completion` polls with
+                    // `next_interrupt.min(deadline)`, so its last wake IS this phase's deadline. Handing it
+                    // `Ok(None)` there sent it to its own `now >= deadline` arm, which aborts the capture
+                    // and reports `CaptureFailure::Deadline` -- and that is how a refusal this server had
+                    // already decided, latched and recorded a reason for reached the caller as the host
+                    // timing out. Falling through re-enters the match, sees `now >= deadline`, and settles
+                    // the capture under the refusal's own `lapsed`. Nothing waits any longer for it: the
+                    // deadline has passed either way, only its name changes.
+                    let settled = std::time::Instant::now();
+                    if timeout.timed_out() && settled >= wake && settled < deadline {
                         return Ok(None);
                     }
                 }

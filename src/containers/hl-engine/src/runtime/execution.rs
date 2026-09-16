@@ -1908,6 +1908,13 @@ impl GuestMachine for ProductionMachine {
             .map(|checkpoint| crate::composition::CheckpointChannel(Arc::clone(&checkpoint.transport)))
     }
 
+    #[cfg(unix)]
+    fn checkpoint_refusal(&self) -> Option<String> {
+        self.checkpoint
+            .as_ref()
+            .and_then(|checkpoint| checkpoint.server.capture_refusal())
+    }
+
     fn guest_pid(&self) -> Option<std::num::NonZeroI32> {
         self.current().ok().and_then(|engine| engine.guest_pid())
     }

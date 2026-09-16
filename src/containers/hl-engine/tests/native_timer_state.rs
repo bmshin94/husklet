@@ -325,6 +325,27 @@ struct Captured {
     stderr: String,
 }
 
+/// The gate arm each armed shape must be refused by, as the engine names it.
+///
+/// Pinned per variant rather than read back from whatever arrived: an assertion that accepts any
+/// domain would pass on a refusal taken by an earlier arm for an unrelated reason, which is the
+/// shape that lets a gate look discriminating while refusing everything.
+fn expected_refusal_domain(variant: &str) -> (&'static str, i32) {
+    match variant {
+        "armd" => ("unobservable-timer-or-altstack", -7),
+        // MEASURED, not assumed from the shape: `posx` arms its timer with
+        // `timer_create`, which is in the supervisor's notify set, so the sticky
+        // taint is marked and arm -7 refuses before the direct `/proc/<pid>/timers`
+        // read at arm -8 is ever reached.  The engine's own diagnostic agrees --
+        // `phase=admission pid=... verdict=-7` on every run of this arm.  Writing
+        // -8 here because that is the arm the variant was built for would be an
+        // expectation contradicting the measurement.
+        "posx" => ("unobservable-timer-or-altstack", -7),
+        "tfdt" => ("descriptor", -3),
+        other => panic!("{other}: no refusal is expected for this variant"),
+    }
+}
+
 /// Launches `variant`, waits for its park, and asks for a capture.  Returns the
 /// committed store on success and the engine's own refusal text on refusal.
 fn capture(executable: &Path, variant: &str) -> Result<Captured, String> {
@@ -374,17 +395,45 @@ fn capture(executable: &Path, variant: &str) -> Result<Captured, String> {
             // bounded so that a hung tree reports failure instead of quietly
             // scoring as a clean refusal.
             //
-            // The TYPE is deliberately not asserted, and the reason is measured
-            // rather than assumed.  A native phase-1 admission refusal still
-            // reaches the caller as a deadline (`WaitFailed`) instead of the
-            // typed `CaptureRefused` the translated path now produces.  That is
-            // not something these arms introduced: the `tfdt` arm in this very
-            // test is refused by the DESCRIPTOR gate, which long predates them,
-            // and it degrades identically in the same run.  So it is a
-            // refusal-typing gap in the native phase-1 path, shared by every arm
-            // from -2 to -8, and it is left to the lane that owns that path.
-            // What matters for safety is asserted below and does hold: nothing is
-            // published, and the workload survives.
+            // The TYPE is asserted too, and it is a third thing a refusal owes: a
+            // caller has to be able to tell a decision the engine took and
+            // explained from the host giving up on an engine that never answered.
+            // Every arm here reached the caller as `WaitFailed` -- a deadline --
+            // until the refusal lapse was labelled and ordered correctly; the
+            // supervisor had notified its decision within a second and the host
+            // then reported a thirty-second timeout over it.  The `tfdt` arm is
+            // the control for that claim: it is refused by the DESCRIPTOR gate
+            // (verdict -3), which long predates the taint arms, and it degraded
+            // identically, so this is the shared phase-1 typing and not something
+            // one arm introduced.
+            //
+            // Every failure below tears the engine down BEFORE it panics.  A bare
+            // `assert!` here leaves a frozen-then-thawed guest tree alive with the
+            // engine still owning it, and the test binary then blocks forever in
+            // the engine's own drop -- measured at 15 minutes with no output, which
+            // is a hang reported as nothing at all rather than as a failed
+            // assertion.  The existing aftermath assertions below do the same, for
+            // the same reason.
+            let refusal = engine.checkpoint_refusal();
+            // The DOMAIN that refused, not merely that something did.  The verdict
+            // number and the domain name are the diagnostic contract
+            // `hl_native_checkpoint_refusal_domain` exists to keep; a typed error
+            // that names nothing would leave an operator exactly where an anonymous
+            // failure did.
+            let (domain, verdict) = expected_refusal_domain(variant);
+            let expected =
+                format!("native phase-1 read-only admission rejected process state: {domain} domain (verdict {verdict})");
+            if error != hl_engine::engine::EngineError::CaptureRefused || refusal.as_deref() != Some(expected.as_str())
+            {
+                let _ = engine.destroy();
+                panic!(
+                    "{variant}: a phase-1 admission refusal must reach the caller as a typed \
+                     CaptureRefused naming the gate arm that took it, so a caller can tell a decision \
+                     the engine explained from the host timing out on one that never answered. \
+                     got error={error:?} refusal={refusal:?}, wanted CaptureRefused {expected:?}. \
+                     stderr={stderr}"
+                );
+            }
             assert_eq!(
                 store.commits.load(std::sync::atomic::Ordering::Acquire),
                 0,

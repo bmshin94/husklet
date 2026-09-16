@@ -312,6 +312,16 @@ pub trait GuestMachine: Send + Sync {
     fn capture_checkpoint_until(&self, _deadline: std::time::Instant) -> Result<(), EngineError> {
         Err(EngineError::Unsupported)
     }
+    /// Why the engine refused the last capture, in the refusing domain's own words.
+    ///
+    /// `EngineError::CaptureRefused` says a decision was taken; this says which domain took it and
+    /// on what. Without it the cause existed only behind `hl-log`, which product launches leave
+    /// disabled, so an operator holding a refusal had a typed error naming nothing -- the same shape
+    /// that made `report_capture_failure` print unconditionally.
+    #[cfg(unix)]
+    fn checkpoint_refusal(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Constructs all runtime domains for one engine.
@@ -405,6 +415,11 @@ impl<M: GuestMachine> MachineLauncher<M> {
 
     fn capture_checkpoint_until(&self, deadline: std::time::Instant) -> Result<(), EngineError> {
         self.machine.capture_checkpoint_until(deadline)
+    }
+
+    #[cfg(unix)]
+    fn checkpoint_refusal(&self) -> Option<String> {
+        self.machine.checkpoint_refusal()
     }
 }
 
@@ -503,6 +518,13 @@ impl<M: GuestMachine + 'static, W: Workspace> EngineBackend<M, W> {
     /// Returns lifecycle, storage, synchronization, or deadline failures.
     pub fn capture_checkpoint_until(&self, deadline: std::time::Instant) -> Result<(), EngineError> {
         self.engine.launcher().capture_checkpoint_until(deadline)
+    }
+
+    /// Why the engine refused the last capture, or `None` when none was refused.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn checkpoint_refusal(&self) -> Option<String> {
+        self.engine.launcher().checkpoint_refusal()
     }
 
     pub fn destroy(&self) -> Result<Option<EngineExit>, EngineError> {
