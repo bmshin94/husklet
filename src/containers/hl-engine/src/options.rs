@@ -395,6 +395,11 @@ const DEFINITIONS: &[Definition] = &[
         "widen the supervised terminal ioctl surface and project a devpts for pty-spawning guests",
         Flag
     ),
+    launch!(
+        "HL_NATIVE_CKPT_CARRY_ALTSTACK",
+        "carry the guest alternate signal stack across a native checkpoint instead of refusing it",
+        Flag
+    ),
     launch!("HL_UID", "initial guest user identity", Integer),
     launch!("HL_ULIMITS", "serialized Linux resource limits", Records),
     launch!(

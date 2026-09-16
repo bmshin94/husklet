@@ -1016,6 +1016,39 @@ projection_failed: {
     }
 }
 
+/* The one option in this file that widens what a capture will admit, and it is off unless asked for.
+ *
+ * Unset, everything below behaves exactly as it did: `sigaltstack` is notified, the domain is
+ * tainted on the first arming call, and gate arm -7 refuses the capture.  Set, the supervisor stops
+ * watching `sigaltstack` at all -- because the capture no longer needs to know that the guest
+ * ASKED.  It reads the kernel's own answer instead, by injecting `sigaltstack(NULL, &old)` into the
+ * frozen task and carrying what comes back, which is an observation of the live state rather than a
+ * hypothesis about it.  The interval timers and POSIX timers keep tainting under both settings:
+ * they arm an expiry that runs down afterwards, the kernel publishes no remaining value, and a
+ * carry could only re-arm the original duration.  This option does not touch them.
+ *
+ * Disarming the notification is not an optimisation, it is a requirement.  The supervisor is
+ * blocked in the snapshot channel call for the whole capture, so a `sigaltstack` notification
+ * raised by the INJECTED syscall would wait for an answer that cannot come until the capture
+ * finishes -- and the capture cannot finish until the injected syscall returns. */
+static int hl_native_supervised_carry_altstack(const hl_options *options) {
+    return hl_native_supervised_flag(options, "HL_NATIVE_CKPT_CARRY_ALTSTACK");
+}
+
+/* Turns one `HL_NATIVE_NOTIFY(number)` arm into a dead comparison, in place.
+ *
+ * The three programs below are C initialisers, so an arm cannot be compiled out per launch; this
+ * rewrites the compared syscall number to one the kernel can never deliver, leaving the program
+ * length, every jump offset and every other arm exactly as they were.  Matching the RET that
+ * follows is what keeps it from disarming an unrelated comparison that happens to share a
+ * constant. */
+static void hl_native_supervised_disarm_notification(struct sock_filter *program, size_t count, int number) {
+    for (size_t index = 0; index + 1 < count; ++index)
+        if (program[index].code == (BPF_JMP | BPF_JEQ | BPF_K) && program[index].k == (unsigned int)number &&
+            program[index + 1].code == (BPF_RET | BPF_K) && program[index + 1].k == SECCOMP_RET_USER_NOTIF)
+            program[index].k = 0xFFFFFFFFu;
+}
+
 static int hl_native_supervised_create_listener(const hl_options *options) {
 #define HL_NATIVE_NOTIFY(number) \
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, (number), 0, 1), \
@@ -1177,6 +1210,17 @@ static int hl_native_supervised_create_listener(const hl_options *options) {
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
     };
 #undef HL_NATIVE_NOTIFY
+#ifdef SYS_sigaltstack
+    if (hl_native_supervised_carry_altstack(options)) {
+        hl_native_supervised_disarm_notification(instructions, sizeof instructions / sizeof instructions[0],
+                                                 SYS_sigaltstack);
+        hl_native_supervised_disarm_notification(selective, sizeof selective / sizeof selective[0],
+                                                 SYS_sigaltstack);
+        hl_native_supervised_disarm_notification(restore_selective,
+                                                 sizeof restore_selective / sizeof restore_selective[0],
+                                                 SYS_sigaltstack);
+    }
+#endif
     int refusal = hl_options_get(options, "HL_NATIVE_SUPERVISED_REFUSE") != NULL;
     int restore = hl_options_get(options, "HL_RESTORE") != NULL;
     struct sock_fprog program =
@@ -1610,12 +1654,24 @@ static int hl_native_checkpoint_signals_admissible(const char *proc_root, pid_t 
  * descriptor gate already refuses every descriptor above 2 that the supervisor did not declare
  * private.  That refusal is asserted by execution rather than assumed. */
 static _Atomic int hl_native_checkpoint_state_taint;
+/* Set once per supervised domain, from the launch options, before the first notification is read.
+ * It is the only thing that removes a flavour from the taint set, and it removes exactly one. */
+static _Atomic int hl_native_checkpoint_carry_altstack;
 
 static int hl_native_checkpoint_taints_state(int number, const __u64 *arguments) {
     switch (number) {
 #ifdef SYS_sigaltstack
-        /* A NULL `new` is a pure query and leaves the alternate stack exactly as it was. */
-        case SYS_sigaltstack: return arguments[0] != 0;
+        /* A NULL `new` is a pure query and leaves the alternate stack exactly as it was.
+         *
+         * Under the carry option this flavour leaves the taint set entirely, and the reason is not
+         * that it stopped mattering.  It is that the taint records that the guest ASKED, which is a
+         * hypothesis about the kernel's state -- the notification is answered CONTINUE, so the
+         * syscall's return value is never seen, and a `sigaltstack` that failed EFAULT, EINVAL or
+         * EPERM leaves the OLD stack installed.  The capture replaces the hypothesis with the
+         * kernel's own answer, so the record it keeps does not need this one. */
+        case SYS_sigaltstack:
+            return arguments[0] != 0 &&
+                   !atomic_load_explicit(&hl_native_checkpoint_carry_altstack, memory_order_acquire);
 #endif
 #ifdef SYS_setitimer
         /* A NULL `new_value` cannot arm a timer; `getitimer` is a different number and is absent. */
@@ -1709,6 +1765,7 @@ static int hl_native_checkpoint_phase1_test(void);
 static int hl_native_checkpoint_empty_fds_test(void);
 static int hl_native_checkpoint_domain_freeze_test(void);
 static int hl_native_checkpoint_taint_test(void);
+static int hl_native_checkpoint_disarm_test(void);
 static int hl_native_checkpoint_taint_set_test(int marked);
 HL_API int hl_native_checkpoint_admission_test(const char *proc_root, int process,
                                                const int *private_fds, size_t private_count) {
@@ -1717,6 +1774,7 @@ HL_API int hl_native_checkpoint_admission_test(const char *proc_root, int proces
     if (strcmp(proc_root, "empty-fds:test") == 0) return hl_native_checkpoint_empty_fds_test();
     if (strcmp(proc_root, "domain-freeze:test") == 0) return hl_native_checkpoint_domain_freeze_test();
     if (strcmp(proc_root, "taint:test") == 0) return hl_native_checkpoint_taint_test();
+    if (strcmp(proc_root, "disarm:test") == 0) return hl_native_checkpoint_disarm_test();
     if (strcmp(proc_root, "taint:set") == 0) return hl_native_checkpoint_taint_set_test(1);
     if (strcmp(proc_root, "taint:clear") == 0) return hl_native_checkpoint_taint_set_test(0);
     return hl_native_checkpoint_admissible_at(proc_root, (pid_t)process, private_fds, private_count);
@@ -1989,14 +2047,21 @@ static int hl_native_supervised_checkpoint_phase1(pid_t workload, uint32_t gener
     }
     int captured = 0;
     if (registered && domain.count == 1) {
-        uint64_t process = (uint64_t)domain.members[0].pid;
+        /* pid, then the capture directives this supervisor is the authority for.  Bit 0 is the
+         * alternate-stack carry: the taint arm above is disarmed exactly when it is set, so the two
+         * decisions cannot drift apart -- whoever admitted the guest also tells the capture why it
+         * was admitted, in the same message. */
+        uint64_t snapshot[2] = {(uint64_t)domain.members[0].pid,
+                                hl_native_supervised_carry_altstack(options) ? 1u : 0u};
+        uint64_t process = snapshot[0];
         if (hl_options_get(options, "HL_C_DIAGNOSTICS") != NULL)
-            fprintf(stderr, "[hl-native-checkpoint]\tphase=native_snapshot_request pid=%llu generation=%u\n",
-                    (unsigned long long)process, generation);
+            fprintf(stderr,
+                    "[hl-native-checkpoint]\tphase=native_snapshot_request pid=%llu generation=%u directives=%llu\n",
+                    (unsigned long long)process, generation, (unsigned long long)snapshot[1]);
         hl_ckpt_request request = {
-            .op = HL_CKPT_OP_NATIVE_SNAPSHOT, .length = sizeof(process), .generation = generation};
+            .op = HL_CKPT_OP_NATIVE_SNAPSHOT, .length = sizeof(snapshot), .generation = generation};
         hl_ckpt_reply reply = {0};
-        captured = hl_ckpt_channel_call(&request, NULL, &process, &reply, NULL, 0) == 0 &&
+        captured = hl_ckpt_channel_call(&request, NULL, snapshot, &reply, NULL, 0) == 0 &&
                    reply.status == HL_CKPT_STATUS_OK;
         if (hl_options_get(options, "HL_C_DIAGNOSTICS") != NULL)
             fprintf(stderr, "[hl-native-checkpoint]\tphase=native_snapshot_reply captured=%d status=%d\n",
@@ -2060,6 +2125,7 @@ static int hl_native_checkpoint_taint_test(void) {
     __u64 arguments[6];
     memset(arguments, 0, sizeof arguments);
     int step = 10;
+    atomic_store_explicit(&hl_native_checkpoint_carry_altstack, 0, memory_order_release);
 #ifdef SYS_sigaltstack
     arguments[0] = 0;
     if (hl_native_checkpoint_taints_state(SYS_sigaltstack, arguments)) return step;
@@ -2067,6 +2133,23 @@ static int hl_native_checkpoint_taint_test(void) {
     arguments[0] = 0x1000;
     if (!hl_native_checkpoint_taints_state(SYS_sigaltstack, arguments)) return step;
     ++step;
+    /* The carry option removes this flavour and ONLY this flavour.  Asserted here rather than
+     * reasoned about, because a carry that silently kept tainting would look exactly like a carry
+     * that worked until a Rust guest was actually offered to the gate. */
+    atomic_store_explicit(&hl_native_checkpoint_carry_altstack, 1, memory_order_release);
+    if (hl_native_checkpoint_taints_state(SYS_sigaltstack, arguments)) return step;
+    ++step;
+#ifdef SYS_setitimer
+    arguments[1] = 0x1000;
+    if (!hl_native_checkpoint_taints_state(SYS_setitimer, arguments)) return step;
+    ++step;
+    arguments[1] = 0;
+#endif
+#ifdef SYS_timer_create
+    if (!hl_native_checkpoint_taints_state(SYS_timer_create, arguments)) return step;
+    ++step;
+#endif
+    atomic_store_explicit(&hl_native_checkpoint_carry_altstack, 0, memory_order_release);
     arguments[0] = 0;
 #endif
 #ifdef SYS_setitimer
@@ -2093,6 +2176,34 @@ static int hl_native_checkpoint_taint_test(void) {
 #endif
     /* A syscall outside the set must never mark, or the arm would refuse every capture there is. */
     if (hl_native_checkpoint_taints_state(SYS_getpid, arguments)) return step;
+    return 0;
+}
+
+/* The filter rewrite, checked on a real program rather than by inspection.
+ *
+ * Three properties, because getting any one of them wrong is silent: the named arm stops matching
+ * its syscall, every OTHER notified arm still matches, and the program length is unchanged (a
+ * shortened program would shift jump offsets and quietly change which syscalls are notified). */
+static int hl_native_checkpoint_disarm_test(void) {
+#ifdef SYS_sigaltstack
+    struct sock_filter program[] = {
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_sigaltstack, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_USER_NOTIF),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_getpid, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_USER_NOTIF),
+        /* Same constant, different verdict: a rewrite keyed on the number alone would take it. */
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_sigaltstack, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+    };
+    size_t count = sizeof program / sizeof program[0];
+    hl_native_supervised_disarm_notification(program, count, SYS_sigaltstack);
+    if (program[1].k != 0xFFFFFFFFu) return 60;
+    if (program[3].k != (unsigned int)SYS_getpid) return 61;
+    if (program[5].k != (unsigned int)SYS_sigaltstack) return 62;
+    if (count != 8) return 63;
+#endif
     return 0;
 }
 
@@ -2259,6 +2370,8 @@ static int hl_native_supervised_wait(int listener, int leader_pidfd, pid_t leade
      * nothing that ran before them; making that explicit here rather than relying on the supervisor
      * being a fresh process keeps the scope a property of the code. */
     atomic_store_explicit(&hl_native_checkpoint_state_taint, 0, memory_order_release);
+    atomic_store_explicit(&hl_native_checkpoint_carry_altstack,
+                          hl_native_supervised_carry_altstack(options), memory_order_release);
     int refused_number, refused_error;
     if (hl_native_supervised_refusal(options, &refused_number, &refused_error) != 0) return 70;
     struct seccomp_notif_sizes sizes = {0};
@@ -2385,11 +2498,17 @@ static int hl_native_supervised_wait(int listener, int leader_pidfd, pid_t leade
             if (restore_workload <= 0) {
                 free(request); free(response); return 70;
             }
-            uint64_t process = (uint64_t)restore_workload;
+            /* Same pid-plus-directives shape as the capture request.  The restore needs the carry
+             * bit for the same reason the capture does and for one more: the injected `sigaltstack`
+             * that installs the image's alternate stack runs under THIS launch's filter, so a
+             * restore of a carrying image under a supervisor that still notifies `sigaltstack` is
+             * refused before any memory is written rather than discovered as a stall afterwards. */
+            uint64_t prepare_words[2] = {(uint64_t)restore_workload,
+                                         hl_native_supervised_carry_altstack(options) ? 1u : 0u};
             hl_ckpt_request prepare = {.op = HL_CKPT_OP_NATIVE_RESTORE_PREPARE,
-                                       .length = sizeof(process), .generation = trigger_seen};
+                                       .length = sizeof(prepare_words), .generation = trigger_seen};
             hl_ckpt_reply prepared = {0};
-            if (hl_ckpt_channel_call(&prepare, NULL, &process, &prepared, NULL, 0) != 0 ||
+            if (hl_ckpt_channel_call(&prepare, NULL, prepare_words, &prepared, NULL, 0) != 0 ||
                 prepared.status != HL_CKPT_STATUS_OK) {
                 free(request); free(response); return 70;
             }

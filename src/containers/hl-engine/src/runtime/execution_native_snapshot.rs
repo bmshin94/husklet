@@ -19,7 +19,7 @@ use std::time::Instant;
 /// The one place the `native-x86` image format version lives.  Bumping it here
 /// is a compile error until every other carrier of the version moves with it:
 /// see the `const` block below.
-const NATIVE_FORMAT_VERSION: u16 = 3;
+const NATIVE_FORMAT_VERSION: u16 = 4;
 
 const MAGIC: &[u8; 8] = b"HLNXREG\0";
 const VERSION: u16 = NATIVE_FORMAT_VERSION;
@@ -39,7 +39,7 @@ const STOP_DEADLINE: Duration = Duration::from_secs(2);
 #[cfg(target_os = "linux")]
 const ABORT_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 
-pub(crate) const REGISTER_OBJECT: &str = "native/registers.x86-v3";
+pub(crate) const REGISTER_OBJECT: &str = "native/registers.x86-v4";
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub(crate) fn pin_native_process(pid: libc::pid_t) -> io::Result<OwnedFd> {
@@ -52,12 +52,12 @@ pub(crate) fn pin_native_process(pid: libc::pid_t) -> io::Result<OwnedFd> {
         Ok(unsafe { OwnedFd::from_raw_fd(descriptor as libc::c_int) })
     }
 }
-pub(crate) const MEMORY_OBJECT: &str = "native/memory.x86-v3";
+pub(crate) const MEMORY_OBJECT: &str = "native/memory.x86-v4";
 /// Extended processor state -- x87, SSE, AVX and AVX-512 -- as its own object.
 /// The XSAVE area is variable length and host dependent, so it does not belong
 /// in the fixed-size register record; giving it a manifest slot buys it the same
 /// declared size and SHA-256 digest every other object already gets.
-pub(crate) const XSTATE_OBJECT: &str = "native/xstate.x86-v3";
+pub(crate) const XSTATE_OBJECT: &str = "native/xstate.x86-v4";
 /// Kernel-side per-process state that has no home in a register file: the
 /// working directory, umask, `comm`, the signal *dispositions* (which signals
 /// are caught and which are ignored), every resource limit, the CPU affinity
@@ -67,12 +67,22 @@ pub(crate) const XSTATE_OBJECT: &str = "native/xstate.x86-v3";
 /// Before this object none of that state was captured and none of it was
 /// refused: the capture reported success and the restore silently handed the
 /// guest whatever the *fresh* process happened to hold.  Each field here is
-/// either applied to the restore target (the three that have a cross-process
+/// either applied to the restore target (the four that have a cross-process
 /// setter) or compared against it and refused on divergence.  Nothing in this
 /// record is ever zero filled, truncated or reconstructed.
-pub(crate) const PROCSTATE_OBJECT: &str = "native/procstate.x86-v3";
+///
+/// `v4` adds the alternate signal stack.  It is the one field here that no
+/// reader outside the process can see at all -- the whole of `/proc/<pid>` is
+/// identical between a task holding one and a task holding none -- so it is not
+/// *read*, it is *asked for*: the capture injects `sigaltstack(NULL, &old)` into
+/// the frozen task and records the kernel's own answer.  That distinction is the
+/// reason the field exists rather than the supervisor's record of the guest
+/// having called `sigaltstack`, which is a hypothesis: the call is answered
+/// `CONTINUE`, its return value is never seen, and one that failed `EFAULT`,
+/// `EINVAL` or `EPERM` leaves the OLD stack installed.
+pub(crate) const PROCSTATE_OBJECT: &str = "native/procstate.x86-v4";
 
-const MANIFEST_MAGIC: &[u8; 16] = b"HLNATIVE-X86-V3\0";
+const MANIFEST_MAGIC: &[u8; 16] = b"HLNATIVE-X86-V4\0";
 const MANIFEST_SIZE: usize = 304;
 const MANIFEST_SLOT: usize = 72;
 
@@ -143,8 +153,22 @@ const THREAD_AREA_BYTES: usize = 16;
 /// `PTRACE_GET_THREAD_AREA`.  Not in `libc`'s x86-64 constant set, and the
 /// numeric value is part of the stable ptrace ABI.
 const PTRACE_GET_THREAD_AREA: libc::c_uint = 25;
-const PROCSTATE_FIXED: usize = 680;
+/// `stack_t` on x86-64: `void *ss_sp`, `int ss_flags` with four bytes of
+/// padding, `size_t ss_size`.  Spelled out rather than derived from a libc type
+/// because these bytes are written into and read out of *another* process.
+const STACK_T_BYTES: usize = 24;
+/// `ss_sp`, `ss_size`, `ss_flags` -- the record's own order, which is not the
+/// struct's; the struct layout lives in the two codec helpers below.
+const ALTSTACK_WORDS: usize = 3;
+const SS_ONSTACK: u32 = 1;
+const SS_DISABLE: u32 = 2;
+const PROCSTATE_FIXED: usize = 704;
 const PROCSTATE_FLAG_THREAD_FEATURES: u32 = 1;
+/// The alternate stack in this record is an OBSERVATION of the captured task,
+/// not a default.  Clear, it means the capture never asked -- which is what a
+/// capture taken without the carry option records, and the supervisor's taint
+/// arm is what keeps such an image honest by refusing any guest that armed one.
+const PROCSTATE_FLAG_ALTSTACK: u32 = 2;
 
 /// `user_regs_struct` word indices.  `fs_base`/`gs_base` are the two that move
 /// TLS, which is why they are named here rather than spelled as literals.
@@ -160,8 +184,38 @@ const _: () = {
                 + AFFINITY_WORDS * 8
                 + 2 * THREAD_FEATURE_BYTES
                 + THREAD_AREA_COUNT * THREAD_AREA_BYTES
+                + ALTSTACK_WORDS * 8
     );
     assert!(REGISTER_FS_BASE < REGISTER_COUNT && REGISTER_GS_BASE < REGISTER_COUNT);
+    assert!(PROCSTATE_FLAG_ALTSTACK != PROCSTATE_FLAG_THREAD_FEATURES);
+};
+
+/// `user_regs_struct` word indices used by the syscall injector.
+///
+/// Not asserted by comment: each one is pinned to `offset_of!` on the very
+/// struct `NT_PRSTATUS` fills, so a libc layout change is a compile error rather
+/// than a syscall injected with the arguments in the wrong registers.
+const REGISTER_RAX: usize = 10;
+const REGISTER_RDX: usize = 12;
+const REGISTER_RSI: usize = 13;
+const REGISTER_RDI: usize = 14;
+const REGISTER_ORIG_RAX: usize = 15;
+const REGISTER_RIP: usize = 16;
+const REGISTER_RSP: usize = 19;
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const _: () = {
+    use std::mem::offset_of;
+    assert!(offset_of!(libc::user_regs_struct, rax) == REGISTER_RAX * 8);
+    assert!(offset_of!(libc::user_regs_struct, rdx) == REGISTER_RDX * 8);
+    assert!(offset_of!(libc::user_regs_struct, rsi) == REGISTER_RSI * 8);
+    assert!(offset_of!(libc::user_regs_struct, rdi) == REGISTER_RDI * 8);
+    assert!(offset_of!(libc::user_regs_struct, orig_rax) == REGISTER_ORIG_RAX * 8);
+    assert!(offset_of!(libc::user_regs_struct, rip) == REGISTER_RIP * 8);
+    assert!(offset_of!(libc::user_regs_struct, rsp) == REGISTER_RSP * 8);
+    assert!(offset_of!(libc::user_regs_struct, fs_base) == REGISTER_FS_BASE * 8);
+    assert!(offset_of!(libc::user_regs_struct, gs_base) == REGISTER_GS_BASE * 8);
+    assert!(std::mem::size_of::<libc::user_regs_struct>() == REGISTER_COUNT * 8);
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -182,6 +236,9 @@ pub(super) struct NativeProcessState {
     pub(super) thread_features: [u8; THREAD_FEATURE_BYTES],
     pub(super) thread_features_locked: [u8; THREAD_FEATURE_BYTES],
     pub(super) thread_areas: [[u8; THREAD_AREA_BYTES]; THREAD_AREA_COUNT],
+    /// `ss_sp`, `ss_size`, `ss_flags`.  Meaningful only when
+    /// `PROCSTATE_FLAG_ALTSTACK` is set in `flags`.
+    pub(super) altstack: [u64; ALTSTACK_WORDS],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -253,6 +310,10 @@ impl NativeProcessState {
             out[at..at + THREAD_AREA_BYTES].copy_from_slice(entry);
             at += THREAD_AREA_BYTES;
         }
+        for value in self.altstack {
+            out[at..at + 8].copy_from_slice(&value.to_le_bytes());
+            at += 8;
+        }
         debug_assert_eq!(at, PROCSTATE_FIXED);
         out[PROCSTATE_FIXED..].copy_from_slice(&self.cwd);
         out
@@ -307,6 +368,11 @@ impl NativeProcessState {
             entry.copy_from_slice(&bytes[at..at + THREAD_AREA_BYTES]);
             at += THREAD_AREA_BYTES;
         }
+        let mut altstack = [0_u64; ALTSTACK_WORDS];
+        for value in &mut altstack {
+            *value = long(at);
+            at += 8;
+        }
         let mut comm = [0_u8; COMM_BYTES];
         comm.copy_from_slice(&bytes[56..72]);
         Ok(Self {
@@ -326,6 +392,7 @@ impl NativeProcessState {
             thread_features,
             thread_features_locked,
             thread_areas,
+            altstack,
         })
     }
 
@@ -342,6 +409,11 @@ impl NativeProcessState {
     /// task), so the only honest options are "the fresh process already agrees"
     /// or "refuse".  Fabricating the difference away is the silent wrong
     /// restore this record exists to end.
+    /// The captured alternate stack, and whether the capture actually looked.
+    pub(super) fn observed_alternate_stack(&self) -> Option<[u64; ALTSTACK_WORDS]> {
+        (self.flags & PROCSTATE_FLAG_ALTSTACK != 0).then_some(self.altstack)
+    }
+
     pub(super) fn admits(&self, local: &Self) -> Result<(), ProcessStateMismatch> {
         if self.cwd != local.cwd {
             return Err(ProcessStateMismatch::Cwd);
@@ -381,6 +453,11 @@ impl NativeProcessState {
         if self.thread_areas != local.thread_areas {
             return Err(ProcessStateMismatch::ThreadArea);
         }
+        // The alternate stack is deliberately NOT compared.  It is the fourth
+        // field with a cross-process setter -- not a syscall that names another
+        // task, which does not exist, but an injected `sigaltstack` the restore
+        // runs *in* the target -- so `install_alternate_stack` puts the captured
+        // one in place and a difference here is expected and corrected.
         Ok(())
     }
 }
@@ -559,6 +636,7 @@ pub(super) fn capture_process_state(pid: libc::pid_t) -> io::Result<NativeProces
         thread_features,
         thread_features_locked,
         thread_areas,
+        altstack: [0; ALTSTACK_WORDS],
     })
 }
 
@@ -595,6 +673,404 @@ fn poke_debug_register(pid: libc::pid_t, index: usize, value: u64) -> io::Result
     // SAFETY: ptrace consumes only scalars here and writes nothing through a caller pointer.
     if unsafe { libc::ptrace(libc::PTRACE_POKEUSER, pid, at, value as libc::c_ulong) } != 0 {
         return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+
+// ---------------------------------------------------------------------------
+// Syscall injection, and the alternate signal stack it exists for.
+// ---------------------------------------------------------------------------
+
+/// Bytes below `rsp` the injected syscall is allowed to borrow.
+///
+/// Comfortably past the 128-byte red zone, and the borrow is saved and put back
+/// byte for byte either way.
+const SCRATCH_BELOW_RSP: u64 = 1024;
+
+/// A place in `pid` where one syscall can be run, and the guest bytes it may use.
+///
+/// Both halves are *found*, never created.  Nothing is mapped, allocated or
+/// written into the tracee to make an injection possible: if the task is not
+/// already sitting on a `syscall` instruction with room below its stack pointer,
+/// this refuses and the caller refuses with it.  That is what keeps the
+/// primitive from being a second, quieter way of mutating a guest.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+struct InjectionSite {
+    /// Address of a `syscall` instruction already mapped in the tracee.
+    instruction: u64,
+    /// `STACK_T_BYTES` of writable guest memory inside the tracee's own stack
+    /// mapping, below its stack pointer.
+    scratch: u64,
+}
+
+/// The writable mapping containing `address`, as `[start, end)`.
+///
+/// Parsed here rather than through `parse_maps` because this needs two numbers
+/// and a permission bit, not a digested, root-relative record -- and because the
+/// only thing it is used for is to prove that the scratch address lies *inside*
+/// an existing VMA.  That proof is the point: a read below a stack VMA's start
+/// can make the kernel expand it, and a restore whose target grew a mapping no
+/// longer matches the image that admitted it.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn writable_range_containing(pid: libc::pid_t, address: u64) -> io::Result<(u64, u64)> {
+    for line in std::fs::read_to_string(format!("/proc/{pid}/maps"))?.lines() {
+        let Some((range, rest)) = line.split_once(' ') else { continue };
+        let Some((start, end)) = range.split_once('-') else { continue };
+        let (Ok(start), Ok(end)) = (u64::from_str_radix(start, 16), u64::from_str_radix(end, 16)) else {
+            continue;
+        };
+        if address < start || address >= end {
+            continue;
+        }
+        if rest.as_bytes().get(1) != Some(&b'w') {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("address {address:#x} of process {pid} is not in a writable mapping"),
+            ));
+        }
+        return Ok((start, end));
+    }
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        format!("address {address:#x} is in no mapping of process {pid}"),
+    ))
+}
+
+/// Finds an injection site in an already-stopped tracee, reading only.
+///
+/// The `syscall` instruction is not searched for and not planted: a task stopped
+/// *inside* a syscall has `rip` two bytes past the very instruction that entered
+/// it, and those two bytes are read back and required to be `0f 05` before they
+/// are used.  A task stopped anywhere else has no site and is refused, which is
+/// exactly the shape whose alternate stack this cannot honestly carry.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn injection_site(
+    pid: libc::pid_t,
+    registers: &[u64; REGISTER_COUNT],
+    memory: &std::fs::File,
+    deadline: Instant,
+) -> io::Result<InjectionSite> {
+    if registers[REGISTER_ORIG_RAX] == u64::MAX {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "native syscall injection needs a task stopped inside a syscall; this one is in user code",
+        ));
+    }
+    let instruction = registers[REGISTER_RIP].checked_sub(2).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "implausible instruction pointer in tracee")
+    })?;
+    let opcode = read_process_mem_exact(memory, instruction, 2, deadline)?;
+    if opcode != [0x0f, 0x05] {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "native syscall injection found {opcode:02x?} rather than a `syscall` instruction at {instruction:#x}"
+            ),
+        ));
+    }
+    let scratch = registers[REGISTER_RSP]
+        .checked_sub(SCRATCH_BELOW_RSP + STACK_T_BYTES as u64)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "implausible stack pointer in tracee"))?;
+    let (start, _) = writable_range_containing(pid, registers[REGISTER_RSP])?;
+    if scratch < start {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "no room below the tracee's stack pointer inside its own stack mapping",
+        ));
+    }
+    // Proves it is readable before anything is written there.
+    let _ = read_process_mem_exact(memory, scratch, STACK_T_BYTES, deadline)?;
+    Ok(InjectionSite { instruction, scratch })
+}
+
+/// Writes the full `NT_PRSTATUS` word array of an already-stopped tracee.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn write_task_registers(pid: libc::pid_t, registers: &[u64; REGISTER_COUNT]) -> io::Result<()> {
+    let mut raw: libc::user_regs_struct = unsafe { std::mem::zeroed() };
+    unsafe {
+        std::ptr::write_unaligned((&raw mut raw).cast::<[u64; REGISTER_COUNT]>(), *registers);
+    }
+    let mut iov = libc::iovec {
+        iov_base: (&raw mut raw).cast(),
+        iov_len: std::mem::size_of_val(&raw),
+    };
+    ptrace(
+        libc::PTRACE_SETREGSET,
+        pid,
+        libc::NT_PRSTATUS as usize,
+        (&raw mut iov) as usize,
+    )
+}
+
+/// Steps the tracee over exactly one instruction and waits for the `SIGTRAP`
+/// that ends the step.
+///
+/// Not a bare `PTRACE_SINGLESTEP`, because the tracee the capture path hands it
+/// is in **group-stop**: the domain freeze `SIGSTOP`s the guest before anything
+/// attaches, and a seized tracee restarted out of group-stop re-enters it
+/// without executing a single instruction.  Measured, not assumed -- the first
+/// version of this returned `signal 19 (event 128)`, which is `SIGSTOP` with
+/// `PTRACE_EVENT_STOP`, on every attempt.
+///
+/// So the group stop is lifted for the duration of the step and left to be
+/// re-established by the detach, which already injects `SIGSTOP` for exactly
+/// this case.  `SIGCONT` cannot let the tracee escape in the meantime: it wakes
+/// a task in `TASK_STOPPED`, and a ptrace-stopped tracee is in `TASK_TRACED`,
+/// which it does not touch.  It is sent at most once, only after a group-stop
+/// re-trap has proved it necessary, so the restore path -- whose target is not
+/// group-stopped at all -- never sees one.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn step_one_instruction(pid: libc::pid_t, deadline: Instant) -> io::Result<()> {
+    let mut continued = false;
+    for _ in 0..8 {
+        ptrace(libc::PTRACE_SINGLESTEP, pid, 0, 0)?;
+        let status = wait_for_step_stop(pid, deadline)?;
+        let signal = libc::WSTOPSIG(status);
+        let event = status >> 16;
+        // A single-step trap is `SIGTRAP` with NO event.  `SIGTRAP` *with*
+        // `PTRACE_EVENT_STOP` is the kernel's job-control trap wearing the same
+        // signal number -- `do_jobctl_trap` substitutes `SIGTRAP` once the group
+        // stop has been lifted -- and it means the tracee did not execute.  Read
+        // as success it produced exactly the bug this whole change exists to
+        // avoid: a syscall reported as having run, with its result read out of
+        // the register that still held its own number (measured: `rax=0x83`
+        // going in, `rax=0x83` coming out, `rip` unmoved).
+        if signal == libc::SIGTRAP && event == 0 {
+            return Ok(());
+        }
+        if event == libc::PTRACE_EVENT_STOP {
+            if !continued && matches!(signal, libc::SIGSTOP | libc::SIGTSTP | libc::SIGTTIN | libc::SIGTTOU) {
+                if unsafe { libc::kill(pid, libc::SIGCONT) } != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                continued = true;
+            }
+            continue;
+        }
+        // The `SIGCONT` above, arriving as a delivery stop because the guest
+        // catches it.  Suppressed rather than delivered: this process generated
+        // it, the guest never asked for it, and delivering it would be a signal
+        // the injection invented.  Nothing else is ever suppressed.
+        if signal == libc::SIGCONT && continued {
+            continue;
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            format!("an injected syscall stopped on signal {signal} (event {event}) instead of completing"),
+        ));
+    }
+    Err(io::Error::new(
+        io::ErrorKind::Interrupted,
+        "an injected syscall never reached its single-step trap",
+    ))
+}
+
+/// Waits for the next ptrace-stop of `pid` and returns its raw wait status.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn wait_for_step_stop(pid: libc::pid_t, deadline: Instant) -> io::Result<libc::c_int> {
+    loop {
+        check_deadline(deadline)?;
+        let mut status = 0;
+        let waited = unsafe { libc::waitpid(pid, &raw mut status, libc::__WALL | libc::WNOHANG) };
+        if waited < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        if waited == pid && (libc::WIFEXITED(status) || libc::WIFSIGNALED(status)) {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "tracee died during an injected syscall",
+            ));
+        }
+        if waited == pid && libc::WIFSTOPPED(status) {
+            return Ok(status);
+        }
+        std::thread::sleep(Duration::from_micros(200));
+    }
+}
+
+/// Runs exactly one syscall in an already-stopped tracee and puts every register back.
+///
+/// The registers are saved first and reinstalled last **whatever happens**,
+/// including on the failure paths, because the caller's contract with the guest
+/// is that an injection it did not ask to be visible leaves nothing behind.
+/// `orig_rax` is set to `-1` for the step: the task is being sent into a *new*
+/// syscall rather than resumed into its interrupted one, and leaving the old
+/// number there is what would let the kernel's restart machinery re-enter it.
+///
+/// Two conditions on the syscall, and both are properties of `sigaltstack`
+/// rather than of this function, so widening the primitive means rechecking
+/// them.  It must not set a `restart_block`: a tracee parked in a syscall that
+/// restarts through one (`clock_nanosleep`, `poll`, `futex` with a timeout)
+/// would have that block overwritten and resume its wait wrongly, and the block
+/// is kernel-side with no way to save and put back.  `sigaltstack` sets none.
+///
+/// And the syscall must not be one the supervisor notifies.  The supervisor is
+/// blocked in the capture or restore channel call for the whole of this, so a
+/// notification raised here waits for an answer that cannot arrive until this
+/// returns.  The deadline turns that into a refusal rather than a hang, but the
+/// filter is what keeps it from arising: see `hl_native_supervised_carry_altstack`.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn inject_syscall(
+    pid: libc::pid_t,
+    site: &InjectionSite,
+    number: u64,
+    arguments: [u64; 3],
+    deadline: Instant,
+) -> io::Result<i64> {
+    let saved = read_task_registers(pid)?;
+    let mut stepping = saved;
+    stepping[REGISTER_RIP] = site.instruction;
+    stepping[REGISTER_RAX] = number;
+    stepping[REGISTER_ORIG_RAX] = u64::MAX;
+    stepping[REGISTER_RDI] = arguments[0];
+    stepping[REGISTER_RSI] = arguments[1];
+    stepping[REGISTER_RDX] = arguments[2];
+    write_task_registers(pid, &stepping)?;
+    let stepped = step_one_instruction(pid, deadline).and_then(|()| read_task_registers(pid));
+    // Unconditional, and its failure outranks a successful step: a tracee left
+    // holding the injector's registers would resume into the wrong instruction.
+    write_task_registers(pid, &saved)?;
+    Ok(stepped?[REGISTER_RAX] as i64)
+}
+
+/// Encodes/decodes the `stack_t` the kernel reads and writes, in guest bytes.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn encode_stack_t(altstack: [u64; ALTSTACK_WORDS]) -> [u8; STACK_T_BYTES] {
+    let mut bytes = [0_u8; STACK_T_BYTES];
+    bytes[..8].copy_from_slice(&altstack[0].to_le_bytes());
+    bytes[8..12].copy_from_slice(&(altstack[2] as u32).to_le_bytes());
+    bytes[16..24].copy_from_slice(&altstack[1].to_le_bytes());
+    bytes
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn decode_stack_t(bytes: &[u8]) -> [u64; ALTSTACK_WORDS] {
+    let word = |at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().expect("fixed field"));
+    let flags = u32::from_le_bytes(bytes[8..12].try_into().expect("fixed field"));
+    [word(0), word(16), u64::from(flags)]
+}
+
+/// Asks the kernel what alternate signal stack the captured task actually holds.
+///
+/// This is the answer to the objection that sinks a carry built on the
+/// supervisor's notification record: that record says the guest *asked*, and an
+/// arming that failed leaves the old stack installed, so installing the record
+/// on restore would install a hypothesis.  Nothing here is a hypothesis.
+/// `sigaltstack(NULL, &old)` is a pure query -- it cannot change the alternate
+/// stack, and the kernel fills in the live one, including the `ss_size` it
+/// actually accepted and the `SS_ONSTACK` bit that no argument can set.
+///
+/// The one shape it cannot carry is a task captured while *executing* on its
+/// alternate stack: `sigaltstack` refuses to install `SS_ONSTACK`, so a restore
+/// could reproduce the stack but not the fact of being on it.  The kernel
+/// reports that bit directly, and the captured `rsp` is compared against the
+/// reported range as a second, independent look; either one refuses.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn observe_alternate_stack(
+    pid: libc::pid_t,
+    registers: &[u64; REGISTER_COUNT],
+    deadline: Instant,
+) -> io::Result<[u64; ALTSTACK_WORDS]> {
+    let memory = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(format!("/proc/{pid}/mem"))?;
+    let site = injection_site(pid, registers, &memory, deadline)?;
+    let borrowed = read_process_mem_exact(&memory, site.scratch, STACK_T_BYTES, deadline)?;
+    let queried = inject_syscall(pid, &site, libc::SYS_sigaltstack as u64, [0, site.scratch, 0], deadline);
+    let observed = queried.and_then(|result| {
+        if result != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("the injected sigaltstack query failed with {result}"),
+            ));
+        }
+        read_process_mem_exact(&memory, site.scratch, STACK_T_BYTES, deadline)
+    });
+    // The borrow is given back before the answer is judged, so a refusal below
+    // leaves the guest byte-identical to the image that was captured from it.
+    write_process_mem_exact(&memory, site.scratch, &borrowed, deadline)?;
+    let returned = read_process_mem_exact(&memory, site.scratch, STACK_T_BYTES, deadline)?;
+    if returned != borrowed {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "the bytes an injected syscall borrowed from the guest were not restored",
+        ));
+    }
+    let altstack = decode_stack_t(&observed?);
+    let flags = altstack[2] as u32;
+    if flags & SS_ONSTACK != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "the captured task is executing on its alternate signal stack, which `sigaltstack` \
+             cannot reinstall: SS_ONSTACK is reported by the kernel and refused by no argument",
+        ));
+    }
+    let stack_pointer = registers[REGISTER_RSP];
+    if flags & SS_DISABLE == 0
+        && altstack[0] != 0
+        && stack_pointer >= altstack[0]
+        && stack_pointer < altstack[0].saturating_add(altstack[1])
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "the captured stack pointer {stack_pointer:#x} is inside the alternate stack \
+                 [{:#x}, {:#x}), so the task is on it",
+                altstack[0],
+                altstack[0].saturating_add(altstack[1])
+            ),
+        ));
+    }
+    if flags & !SS_DISABLE != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("the kernel reported alternate-stack flags {flags:#x} this record cannot carry"),
+        ));
+    }
+    Ok(altstack)
+}
+
+/// Installs a captured alternate signal stack into the restore target.
+///
+/// There is no `process_sigaltstack(pid, ...)`: the alternate stack can only be
+/// installed by the task itself, so this is the half that needed the injector.
+/// A record whose flags carry `SS_DISABLE` is installed too, and installing it
+/// matters as much as installing an armed one -- the fresh target may have armed
+/// an alternate stack of its own on the way to the rendezvous (every Rust-std
+/// process does), and leaving that in place would restore a stack the image
+/// never held.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn install_alternate_stack(pid: libc::pid_t, altstack: [u64; ALTSTACK_WORDS], deadline: Instant) -> io::Result<()> {
+    let memory = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(format!("/proc/{pid}/mem"))?;
+    let registers = read_task_registers(pid)?;
+    let site = injection_site(pid, &registers, &memory, deadline)?;
+    let requested = if u32::try_from(altstack[2]).is_ok_and(|flags| flags & SS_DISABLE != 0) {
+        [0, 0, u64::from(SS_DISABLE)]
+    } else {
+        [altstack[0], altstack[1], 0]
+    };
+    let borrowed = read_process_mem_exact(&memory, site.scratch, STACK_T_BYTES, deadline)?;
+    write_process_mem_exact(&memory, site.scratch, &encode_stack_t(requested), deadline)?;
+    let installed = inject_syscall(pid, &site, libc::SYS_sigaltstack as u64, [site.scratch, 0, 0], deadline);
+    write_process_mem_exact(&memory, site.scratch, &borrowed, deadline)?;
+    if installed? != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!(
+                "the restore could not install the captured alternate signal stack \
+                 (ss_sp={:#x} ss_size={} ss_flags={:#x})",
+                requested[0], requested[1], requested[2]
+            ),
+        ));
     }
     Ok(())
 }
@@ -681,13 +1157,14 @@ pub(super) fn capture_process_state(_pid: libc::pid_t) -> io::Result<NativeProce
 pub(crate) fn capture_stopped_native(
     pid: libc::pid_t,
     deadline: Instant,
+    carry_alternate_stack: bool,
 ) -> Result<NativeSnapshotObjects, CompositionError> {
     // One attachment spans the thread state and the memory image.  Capturing
     // them under two separate attachments detached in between, and detaching a
     // group-stopped tracee makes it briefly runnable while it re-enters group
     // stop -- during which `capture_stopped_memory`'s one-shot "is it stopped"
     // admission fails.  See `capture_thread_and_memory_until`.
-    let (thread, memory, procstate) = capture_thread_and_memory_until(pid, deadline)
+    let (thread, memory, procstate) = capture_thread_and_memory_until(pid, deadline, carry_alternate_stack)
         .and_then(|(thread, image, process)| {
             let memory = image
                 .encode()
@@ -701,6 +1178,11 @@ pub(crate) fn capture_stopped_native(
             Ok((thread, memory, procstate))
         })
         .map_err(|error| {
+            // Named, not merely counted.  The capture can now fail for reasons
+            // that are decisions about the guest -- a task on its alternate
+            // stack, a task with no injection site -- and a caller that sees only
+            // `RuntimeConstruction` cannot tell those from a broken host.
+            hl_log::hl_error!(hl_log::tag::CHECKPOINT, "native checkpoint capture failed: {error}");
             if error.kind() == io::ErrorKind::TimedOut {
                 CompositionError::DeadlineExceeded
             } else {
@@ -754,6 +1236,7 @@ pub(crate) fn prepare_native_restore(
     memory: &[u8],
     xstate: &[u8],
     procstate: &[u8],
+    carry_alternate_stack: bool,
     deadline: Instant,
 ) -> io::Result<PreparedNativeRestore> {
     let registers = X86RegisterRecord::decode(registers)
@@ -856,6 +1339,36 @@ pub(crate) fn prepare_native_restore(
         }
     }
 
+    // The alternate stack, decided before any mutation.  Two things have to hold
+    // and neither of them can be established after the memory write: the
+    // restoring supervisor must have disarmed the `sigaltstack` notification --
+    // otherwise the injected syscall below would wait on a notification the
+    // supervisor cannot answer while it is blocked here -- and this target must
+    // have an injection site at all.  Both are refusals now rather than a failed
+    // restore later.
+    if let Some(altstack) = process.observed_alternate_stack() {
+        if !carry_alternate_stack {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "this image carries an alternate signal stack and the restore was launched without \
+                 HL_NATIVE_CKPT_CARRY_ALTSTACK, so the supervisor still notifies `sigaltstack` and \
+                 the restore cannot install it",
+            ));
+        }
+        let target = std::fs::File::open(format!("/proc/{pid}/mem"))?;
+        let live = read_task_registers(pid)?;
+        injection_site(pid, &live, &target, deadline).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "the restore target cannot be given the image's alternate signal stack \
+                     (ss_sp={:#x} ss_size={}): {error}",
+                    altstack[0], altstack[1]
+                ),
+            )
+        })?;
+    }
+
     Ok(PreparedNativeRestore {
         pid,
         _pidfd: pidfd,
@@ -893,6 +1406,18 @@ pub(crate) fn complete_native_restore(prepared: PreparedNativeRestore, deadline:
             continue;
         }
         write_process_mem_exact(&process_memory, mapping.start, &mapping.bytes, deadline)?;
+    }
+
+    // Between the memory write and the register install, and in that order for a
+    // reason on each side.  After the memory write, because the injection borrows
+    // guest bytes and the image must already have landed over them; before the
+    // register install, because the injection needs the target's OWN `rip` to
+    // find a `syscall` instruction it is already sitting on, and the captured
+    // registers would replace it with the image's.  `prepare` refused if this
+    // target had no site, so reaching here without one is a restore failure and
+    // is reported as one rather than skipped.
+    if let Some(altstack) = process.observed_alternate_stack() {
+        install_alternate_stack(pid, altstack, deadline)?;
     }
 
     let mut raw: libc::user_regs_struct = unsafe { std::mem::zeroed() };
@@ -1089,7 +1614,7 @@ pub(super) fn publish_stopped_native(
     }
     let transaction = sink.begin_until(deadline)?;
     let result = (|| {
-        let image = capture_stopped_native(pid, deadline)?;
+        let image = capture_stopped_native(pid, deadline, false)?;
         sink.put_until(transaction, REGISTER_OBJECT, &image.registers, deadline)?;
         sink.put_until(transaction, MEMORY_OBJECT, &image.memory, deadline)?;
         sink.put_until(transaction, XSTATE_OBJECT, &image.xstate, deadline)?;
@@ -1946,12 +2471,12 @@ pub(super) struct NativeThreadState {
 
 #[cfg(target_arch = "x86_64")]
 pub(super) fn capture(pid: libc::pid_t) -> io::Result<NativeThreadState> {
-    capture_with_until(pid, Instant::now() + STOP_DEADLINE, || Ok(()), || Ok(())).map(|(thread, ())| thread)
+    capture_with_until(pid, Instant::now() + STOP_DEADLINE, || Ok(()), |_| Ok(())).map(|(thread, ())| thread)
 }
 
 #[cfg(target_arch = "x86_64")]
 fn capture_until(pid: libc::pid_t, deadline: Instant) -> io::Result<NativeThreadState> {
-    capture_with_until(pid, deadline, || Ok(()), || Ok(())).map(|(thread, ())| thread)
+    capture_with_until(pid, deadline, || Ok(()), |_| Ok(())).map(|(thread, ())| thread)
 }
 
 /// Captures the architectural thread state and the memory image under a
@@ -1975,6 +2500,7 @@ fn capture_until(pid: libc::pid_t, deadline: Instant) -> io::Result<NativeThread
 fn capture_thread_and_memory_until(
     pid: libc::pid_t,
     deadline: Instant,
+    carry_alternate_stack: bool,
 ) -> io::Result<(NativeThreadState, NativeMemoryImage, NativeProcessState)> {
     // While attached the tracee sits in ptrace-stop, which `process_is_stopped`
     // recognises as `t`, so the memory half's admission check still applies.
@@ -1983,8 +2509,18 @@ fn capture_thread_and_memory_until(
     // read after the detach would describe a process that had started running
     // again, and the image would then pair registers from one instant with
     // process state from another.
-    capture_with_until(pid, deadline, || Ok(()), || {
-        Ok((capture_stopped_memory(pid, deadline)?, capture_process_state(pid)?))
+    capture_with_until(pid, deadline, || Ok(()), |registers| {
+        // Memory FIRST, then the injected query.  The injection borrows bytes
+        // below the guest's stack pointer and gives them back, but the image is
+        // already sealed by then, so the borrow cannot appear in it even for the
+        // instant it exists.
+        let memory = capture_stopped_memory(pid, deadline)?;
+        let mut process = capture_process_state(pid)?;
+        if carry_alternate_stack {
+            process.altstack = observe_alternate_stack(pid, registers, deadline)?;
+            process.flags |= PROCSTATE_FLAG_ALTSTACK;
+        }
+        Ok((memory, process))
     })
     .map(|(thread, (memory, process))| (thread, memory, process))
 }
@@ -1993,6 +2529,7 @@ fn capture_thread_and_memory_until(
 fn capture_thread_and_memory_until(
     pid: libc::pid_t,
     deadline: Instant,
+    _carry_alternate_stack: bool,
 ) -> io::Result<(NativeThreadState, NativeMemoryImage, NativeProcessState)> {
     let thread = capture_until(pid, deadline)?;
     let memory = capture_stopped_memory(pid, deadline)?;
@@ -2022,18 +2559,21 @@ pub(super) fn capture(_pid: libc::pid_t) -> io::Result<NativeThreadState> {
 
 #[cfg(target_arch = "x86_64")]
 fn capture_with(pid: libc::pid_t, after_stop: impl FnOnce() -> io::Result<()>) -> io::Result<NativeThreadState> {
-    capture_with_until(pid, Instant::now() + STOP_DEADLINE, after_stop, || Ok(())).map(|(thread, ())| thread)
+    capture_with_until(pid, Instant::now() + STOP_DEADLINE, after_stop, |_| Ok(())).map(|(thread, ())| thread)
 }
 
 /// `after_stop` runs as soon as the stop has been *observed*; `while_attached`
 /// runs after the architectural state has been read and before the tracee is
 /// detached, so anything it captures is guaranteed to come from the same stop.
+/// It is handed the architectural registers because the alternate-stack
+/// observation needs them -- to find an injection site, and to check the
+/// captured stack pointer against the alternate stack the kernel reports.
 #[cfg(target_arch = "x86_64")]
 fn capture_with_until<T>(
     pid: libc::pid_t,
     deadline: Instant,
     after_stop: impl FnOnce() -> io::Result<()>,
-    while_attached: impl FnOnce() -> io::Result<T>,
+    while_attached: impl FnOnce(&[u64; REGISTER_COUNT]) -> io::Result<T>,
 ) -> io::Result<(NativeThreadState, T)> {
     if pid <= 1 || pid == unsafe { libc::getpid() } {
         return Err(io::Error::new(
@@ -2086,7 +2626,7 @@ fn capture_with_until<T>(
     check_deadline(deadline)?;
     let xstate = capture_xstate(pid)?;
     // Still attached: the tracee cannot leave this stop underneath the caller.
-    let attached = while_attached()?;
+    let attached = while_attached(&registers)?;
     drop(guard);
     Ok((
         NativeThreadState {
@@ -2569,7 +3109,7 @@ mod tests {
         let rendezvous = tempfile::NamedTempFile::new().unwrap();
         let (mut original, original_pid, original_address) = spawn_fresh_exec_restore_child(TEST, rendezvous.path());
         let capture_started = Instant::now();
-        let image = capture_stopped_native(original_pid, Instant::now() + Duration::from_secs(10)).unwrap();
+        let image = capture_stopped_native(original_pid, Instant::now() + Duration::from_secs(10), false).unwrap();
         let capture_elapsed = capture_started.elapsed();
         assert_eq!(unsafe { libc::kill(original_pid, libc::SIGKILL) }, 0);
         if unsafe { libc::kill(original_pid, libc::SIGCONT) } != 0 {
@@ -2617,6 +3157,7 @@ mod tests {
             &image.memory,
             &image.xstate,
             &image.procstate,
+            false,
             Instant::now() + Duration::from_secs(10),
         )
         .unwrap();
@@ -3023,7 +3564,7 @@ hl_regfidelity_tls_pad:
 
         let rendezvous = tempfile::NamedTempFile::new().unwrap();
         let (mut original, original_pid) = spawn_regfid_child(TEST, rendezvous.path(), 0);
-        let image = capture_stopped_native(original_pid, Instant::now() + Duration::from_secs(10)).unwrap();
+        let image = capture_stopped_native(original_pid, Instant::now() + Duration::from_secs(10), false).unwrap();
         let captured = X86RegisterRecord::decode(&image.registers).unwrap();
 
         // The capture must hold the fixture's own state, or every later
@@ -3104,6 +3645,7 @@ hl_regfidelity_tls_pad:
             &image.memory,
             &image.xstate,
             &image.procstate,
+            false,
             Instant::now() + Duration::from_secs(10),
         )
         .unwrap();
@@ -3160,7 +3702,7 @@ hl_regfidelity_tls_pad:
         // same call, so "refused" below is a property of the target and not of
         // the fixture, the box, or a capture path that refuses everything.
         let deadline = Instant::now() + Duration::from_secs(10);
-        let image = capture_stopped_native(leaf, deadline).expect("single-threaded leaf must be admitted");
+        let image = capture_stopped_native(leaf, deadline, false).expect("single-threaded leaf must be admitted");
         assert_eq!(count_tasks(leaf), 1, "the leaf must be single threaded");
         wait_until_stopped(leaf);
 
@@ -3187,6 +3729,7 @@ hl_regfidelity_tls_pad:
             &image.memory,
             &image.xstate,
             &image.procstate,
+            false,
             Instant::now() + Duration::from_secs(10),
         )
         .err()
@@ -3232,6 +3775,400 @@ hl_regfidelity_tls_pad:
         let outcome = body();
         drop(guard);
         outcome
+    }
+
+    /// The `stack_t` this file writes into and reads out of *another* process,
+    /// pinned against the one libc declares rather than against a comment.
+    ///
+    /// Every other field in the process-state record is read through an
+    /// interface that parses it for us; this one is raw guest bytes in both
+    /// directions, so a wrong offset would install a plausible-looking alternate
+    /// stack at the wrong address and only show up as a guest that dies inside
+    /// its own signal handler.
+    #[test]
+    fn the_injected_stack_t_matches_the_kernel_abi() {
+        use std::mem::offset_of;
+        assert_eq!(std::mem::size_of::<libc::stack_t>(), STACK_T_BYTES);
+        assert_eq!(offset_of!(libc::stack_t, ss_sp), 0);
+        assert_eq!(offset_of!(libc::stack_t, ss_flags), 8);
+        assert_eq!(offset_of!(libc::stack_t, ss_size), 16);
+        assert_eq!(SS_ONSTACK, libc::SS_ONSTACK as u32);
+        assert_eq!(SS_DISABLE, libc::SS_DISABLE as u32);
+        let armed = [0x7fff_0000_1000_u64, 65536, 0];
+        assert_eq!(decode_stack_t(&encode_stack_t(armed)), armed);
+        let disabled = [0_u64, 0, u64::from(SS_DISABLE)];
+        assert_eq!(decode_stack_t(&encode_stack_t(disabled)), disabled);
+        // The four bytes of padding after `ss_flags` are never carried as data.
+        assert_eq!(&encode_stack_t(armed)[12..16], &[0, 0, 0, 0]);
+    }
+
+    fn blank_process_state() -> NativeProcessState {
+        NativeProcessState {
+            cwd: b"/".to_vec(),
+            comm: [0; COMM_BYTES],
+            umask: 0o022,
+            personality: 0,
+            no_new_privs: 1,
+            seccomp_mode: 2,
+            seccomp_filters: 1,
+            flags: 0,
+            signals_ignored: 0,
+            signals_caught: 0,
+            debug_registers: [0; DEBUG_REGISTER_COUNT],
+            rlimits: [(0, 0); RLIMIT_COUNT],
+            affinity: [0; AFFINITY_WORDS],
+            thread_features: [0; THREAD_FEATURE_BYTES],
+            thread_features_locked: [0; THREAD_FEATURE_BYTES],
+            thread_areas: [[0; THREAD_AREA_BYTES]; THREAD_AREA_COUNT],
+            altstack: [0; ALTSTACK_WORDS],
+        }
+    }
+
+    /// The record survives its own codec, and it distinguishes "this guest held
+    /// no alternate stack" from "this capture never asked".
+    ///
+    /// That distinction is the whole safety property: a restore that read an
+    /// unasked record as "none" would disable an alternate stack the guest was
+    /// holding, which is the silent wrong restore in the opposite direction.
+    #[test]
+    fn the_process_state_record_carries_an_observed_alternate_stack() {
+        let mut state = blank_process_state();
+        state.altstack = [0x7fff_dead_0000, 65536, 0];
+        assert_eq!(
+            state.observed_alternate_stack(),
+            None,
+            "an alternate stack must not be honoured unless the capture recorded observing it"
+        );
+        state.flags |= PROCSTATE_FLAG_ALTSTACK;
+        let decoded = NativeProcessState::decode(&state.encode()).expect("record decodes");
+        assert_eq!(decoded, state);
+        assert_eq!(decoded.observed_alternate_stack(), Some([0x7fff_dead_0000, 65536, 0]));
+        // And it is installed, not compared: two records differing only here
+        // still admit each other, because `install_alternate_stack` corrects it.
+        let mut other = decoded.clone();
+        other.altstack = [0, 0, u64::from(SS_DISABLE)];
+        assert_eq!(decoded.admits(&other), Ok(()));
+    }
+
+    /// Forks a leaf that optionally arms an alternate signal stack and then parks
+    /// in `pause` forever.
+    ///
+    /// Raw syscalls only, and nothing that allocates or takes a lock: this forks
+    /// out of a multi-threaded test harness, where libc's allocator may be held
+    /// by a thread that did not survive the fork.
+    fn spawn_altstack_leaf(arm: AltstackArm) -> libc::pid_t {
+        // SAFETY: the child below calls only async-signal-safe entry points.
+        unsafe {
+            let pid = libc::fork();
+            assert!(pid >= 0, "fork");
+            if pid == 0 {
+                let mut stack: libc::stack_t = std::mem::zeroed();
+                match arm {
+                    AltstackArm::Inherited => {}
+                    AltstackArm::Armed => {
+                        let region = libc::mmap(
+                            std::ptr::null_mut(),
+                            ALTSTACK_LEAF_BYTES,
+                            libc::PROT_READ | libc::PROT_WRITE,
+                            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                            -1,
+                            0,
+                        );
+                        if region == libc::MAP_FAILED {
+                            libc::_exit(70);
+                        }
+                        stack.ss_sp = region;
+                        stack.ss_size = ALTSTACK_LEAF_BYTES;
+                        stack.ss_flags = 0;
+                        if libc::sigaltstack(&raw const stack, std::ptr::null_mut()) != 0 {
+                            libc::_exit(71);
+                        }
+                    }
+                    AltstackArm::OnStack => {
+                        let region = libc::mmap(
+                            std::ptr::null_mut(),
+                            ALTSTACK_LEAF_BYTES,
+                            libc::PROT_READ | libc::PROT_WRITE,
+                            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                            -1,
+                            0,
+                        );
+                        if region == libc::MAP_FAILED {
+                            libc::_exit(73);
+                        }
+                        stack.ss_sp = region;
+                        stack.ss_size = ALTSTACK_LEAF_BYTES;
+                        stack.ss_flags = 0;
+                        if libc::sigaltstack(&raw const stack, std::ptr::null_mut()) != 0 {
+                            libc::_exit(74);
+                        }
+                        // Ours, not Rust std's -- std installs its own SIGSEGV
+                        // handler with SA_ONSTACK and aborts on a stack overflow,
+                        // which would end this leaf instead of parking it.
+                        let mut action: libc::sigaction = std::mem::zeroed();
+                        action.sa_sigaction = park_on_the_alternate_stack as *const () as usize;
+                        action.sa_flags = libc::SA_ONSTACK;
+                        if libc::sigaction(libc::SIGSEGV, &raw const action, std::ptr::null_mut()) != 0 {
+                            libc::_exit(75);
+                        }
+                        overflow_leaf_stack(0);
+                        libc::_exit(76);
+                    }
+                    AltstackArm::Disabled => {
+                        stack.ss_flags = SS_DISABLE as libc::c_int;
+                        if libc::sigaltstack(&raw const stack, std::ptr::null_mut()) != 0 {
+                            libc::_exit(72);
+                        }
+                    }
+                }
+                loop {
+                    libc::syscall(libc::SYS_pause);
+                }
+            }
+            pid
+        }
+    }
+
+    /// Parks forever without leaving the alternate stack, so the task is captured
+    /// with `SS_ONSTACK` genuinely set.
+    extern "C" fn park_on_the_alternate_stack(_signal: libc::c_int) {
+        loop {
+            unsafe { libc::syscall(libc::SYS_pause) };
+        }
+    }
+
+    static mut ALTSTACK_LEAF_DEPTH: u64 = 0;
+
+    /// Runs the leaf's ordinary stack into its guard page.  Tests build without
+    /// optimisation, so the plain recursion below really consumes a frame per
+    /// call; the volatile write keeps it from being elided even if that changes.
+    ///
+    /// The recursion has no base case on purpose -- the guard page is the base
+    /// case -- so the lint that would otherwise flag it is what this function is
+    /// for.
+    #[allow(unconditional_recursion)]
+    fn overflow_leaf_stack(depth: u64) -> u64 {
+        let pad = [depth as u8; 4096];
+        unsafe { std::ptr::write_volatile(&raw mut ALTSTACK_LEAF_DEPTH, depth) };
+        let deeper = overflow_leaf_stack(depth + 1);
+        u64::from(unsafe { std::ptr::read_volatile(&raw const pad[0]) }) + deeper
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum AltstackArm {
+        /// Whatever this test binary itself holds -- which is not nothing:
+        /// Rust's std arms an alternate stack at startup, and a fork inherits it.
+        Inherited,
+        Armed,
+        Disabled,
+        /// Armed, and then captured while *executing* on it.
+        OnStack,
+    }
+
+    const ALTSTACK_LEAF_BYTES: usize = 1 << 16;
+
+    /// The injected observation, on three real processes that differ in exactly
+    /// the thing being observed and in nothing else.
+    ///
+    /// One arm of this would prove nothing: a reader stuck at "armed" and a
+    /// reader stuck at "none" each pass half of it, and "none" is the answer the
+    /// restore acts on by *disabling* the target's own stack, so a false "none"
+    /// is as destructive as a false "armed".
+    ///
+    /// The `Inherited` arm is also the measurement that motivates the whole
+    /// change: this test binary is a Rust program, its std arms an alternate
+    /// stack at startup, and the forked leaf is observed still holding it.  That
+    /// is the state gate arm `-7` refuses, seen directly.
+    #[test]
+    fn an_injected_query_observes_the_live_alternate_stack_of_a_stopped_process() {
+        let mut seen = Vec::new();
+        for arm in [AltstackArm::Armed, AltstackArm::Inherited, AltstackArm::Disabled] {
+            let (leaf, observed) = observe_altstack_leaf(arm);
+            reap_leaf(leaf);
+            let observed = observed.unwrap_or_else(|error| panic!("the {arm:?} leaf must be observable: {error}"));
+            println!("ALTSTACK observed {arm:?} = {observed:?}");
+            seen.push(observed);
+        }
+        let [armed, inherited, disabled] = <[[u64; ALTSTACK_WORDS]; 3]>::try_from(seen.as_slice()).unwrap();
+        assert_ne!(armed[0], 0, "the armed leaf reported a null alternate stack: {armed:?}");
+        assert_eq!(armed[1], ALTSTACK_LEAF_BYTES as u64, "armed ss_size: {armed:?}");
+        assert_eq!(armed[2], 0, "an armed stack the task is not running on has no flags: {armed:?}");
+        assert_eq!(
+            disabled,
+            [0, 0, u64::from(SS_DISABLE)],
+            "a leaf that disabled its alternate stack must be observed as disabled, not as armed \
+             and not as unknown"
+        );
+        assert_ne!(inherited[0], 0, "a forked Rust process holds no alternate stack: {inherited:?}");
+        assert_eq!(inherited[2], 0, "the inherited stack reads as disabled: {inherited:?}");
+        assert_ne!(
+            inherited[0], armed[0],
+            "the inherited and the freshly armed stack are the same address, so this reads one \
+             value for both: {inherited:?} vs {armed:?}"
+        );
+    }
+
+    /// Arms the leaf, stops it, and asks the kernel what alternate stack it holds.
+    ///
+    /// The observation alone, not a whole capture.  These leaves are forks of the
+    /// test harness, so their address space is the harness's -- under a parallel
+    /// run that exceeds `MAX_CAPTURE_BYTES` and the capture refuses with
+    /// `native memory exceeds capture bound`, which has nothing to do with the
+    /// alternate stack and would read as this feature failing (measured: the
+    /// `Inherited` arm failed exactly this way under `-- native_snapshot`).  The
+    /// image-carrying half is exercised by the regfid leaf below, which is an
+    /// exec and therefore small.
+    fn observe_altstack_leaf(arm: AltstackArm) -> (libc::pid_t, io::Result<[u64; ALTSTACK_WORDS]>) {
+        let leaf = spawn_altstack_leaf(arm);
+        wait_until_parked_in_pause(leaf, arm);
+        assert_eq!(unsafe { libc::kill(leaf, libc::SIGSTOP) }, 0, "stop the {arm:?} leaf");
+        wait_until_stopped(leaf);
+        let observed = attach_and(leaf, || {
+            let registers = read_task_registers(leaf)?;
+            observe_alternate_stack(leaf, &registers, Instant::now() + Duration::from_secs(20))
+        });
+        (leaf, observed)
+    }
+
+    /// Waits for the leaf to actually be blocked in `pause(2)`.
+    ///
+    /// Not a sleep.  The injection needs a task stopped INSIDE a syscall for
+    /// there to be a `syscall` instruction under `rip` at all, and a fixed sleep
+    /// that is long enough on an idle box is not long enough on a loaded one:
+    /// measured, a 400 ms sleep left the leaf short of its park under a fully
+    /// parallel run and the capture refused for want of an injection site --
+    /// which reads exactly like the feature being broken.  `/proc/<pid>/syscall`
+    /// names the syscall a blocked task is inside, and 34 is `__NR_pause`.
+    fn wait_until_parked_in_pause(leaf: libc::pid_t, arm: AltstackArm) {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while Instant::now() < deadline {
+            if std::fs::read_to_string(format!("/proc/{leaf}/syscall")).is_ok_and(|text| text.starts_with("34 ")) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let state = std::fs::read_to_string(format!("/proc/{leaf}/syscall")).unwrap_or_else(|error| format!("<{error}>"));
+        reap_leaf(leaf);
+        panic!("the {arm:?} leaf never parked in pause; it is in {state:?}");
+    }
+
+    fn reap_leaf(leaf: libc::pid_t) {
+        unsafe {
+            libc::kill(leaf, libc::SIGKILL);
+            libc::waitpid(leaf, std::ptr::null_mut(), 0);
+        }
+    }
+
+    /// The one alternate-stack shape that cannot be carried, refused rather than
+    /// approximated.
+    ///
+    /// A task executing on its alternate stack holds a fact `sigaltstack` will
+    /// not let anything install: `SS_ONSTACK` is reported and is rejected as an
+    /// argument.  So a restore could rebuild the stack and still not rebuild the
+    /// task's relation to it, and the honest answer is to refuse the capture.
+    ///
+    /// The leaf really is on it -- it overflows its ordinary stack and parks
+    /// inside its own `SA_ONSTACK` handler, never returning -- and the arm above
+    /// is the control that says an otherwise identical armed leaf IS carried, so
+    /// this is not a gate that refuses everything.
+    #[test]
+    fn a_capture_refuses_a_task_executing_on_its_alternate_stack() {
+        let (leaf, observed) = observe_altstack_leaf(AltstackArm::OnStack);
+        reap_leaf(leaf);
+        // Pinned to the REASON, not to the fact that something failed: a leaf
+        // that had died, or never reached its handler, would also fail to be
+        // observed and would be indistinguishable from this otherwise.
+        let named = observed
+            .err()
+            .expect("the leaf is parked inside its own SA_ONSTACK handler and must not be carried");
+        println!("ALTSTACK onstack_observation = {named}");
+        assert_eq!(named.kind(), io::ErrorKind::Unsupported);
+        assert!(
+            named.to_string().contains("executing on its alternate signal stack"),
+            "the refusal must name SS_ONSTACK: {named}"
+        );
+    }
+
+    /// The restore's half of the option, decided before any mutation.
+    ///
+    /// An image that carries an alternate stack can only be installed by a
+    /// syscall injected into the target, and that injection deadlocks under a
+    /// supervisor that still notifies `sigaltstack` -- it is blocked in this very
+    /// channel call. So a restore launched without the option refuses the image
+    /// instead, and it refuses it in `prepare`, before a byte of the target's
+    /// memory has been written.  The second call is the control: the same image,
+    /// the same target, admitted once the launch says it disarmed the arm.
+    #[test]
+    fn a_restore_refuses_an_alternate_stack_image_it_was_not_launched_to_install() {
+        const TEST: &str = "runtime::execution::native_snapshot::tests::a_restore_refuses_an_alternate_stack_image_it_was_not_launched_to_install";
+        if let Some(rendezvous) = std::env::var_os(REGFID_RENDEZVOUS)
+            && std::env::var_os(REGFID_CHILD).is_some()
+        {
+            regfid_child(Path::new(&rendezvous));
+        }
+        // Re-run alone, in a fresh single-threaded process, exactly as the other
+        // image-carrying tests here do.  A capture takes the whole address space
+        // of its target, and under a parallel `libtest` that space is large
+        // enough to trip `MAX_CAPTURE_BYTES` -- a refusal about memory size that
+        // would read as this refusal failing.
+        if isolated_live_capture(TEST) {
+            return;
+        }
+        let rendezvous = tempfile::NamedTempFile::new().unwrap();
+        let (mut harness, leaf) = spawn_regfid_child(TEST, rendezvous.path(), 0);
+        // An exec of this binary, so its address space is small enough to carry
+        // -- and it is a Rust program, so its std armed an alternate stack at
+        // startup without being asked.  That is the state this whole change is
+        // about, captured from a real process rather than constructed.
+        let image = capture_stopped_native(leaf, Instant::now() + Duration::from_secs(20), true);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let image = image.expect("the regfid leaf must be capturable under the carry");
+            let carried = NativeProcessState::decode(&image.procstate)
+                .expect("decode process state")
+                .observed_alternate_stack()
+                .expect("a carrying capture must record its observation");
+            println!("ALTSTACK regfid_leaf_carried = {carried:?}");
+            assert_ne!(
+                carried[0], 0,
+                "a Rust process held no alternate stack, so the refusal below is about nothing"
+            );
+            wait_until_stopped(leaf);
+            for carry in [false, true] {
+                let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, leaf, 0) } as RawFd;
+                assert!(pidfd >= 0, "pidfd_open leaf (carry={carry})");
+                let prepared = prepare_native_restore(
+                    leaf,
+                    unsafe { OwnedFd::from_raw_fd(pidfd) },
+                    &image.registers,
+                    &image.memory,
+                    &image.xstate,
+                    &image.procstate,
+                    carry,
+                    Instant::now() + Duration::from_secs(20),
+                );
+                if carry {
+                    drop(prepared.expect("the image must be admitted once the launch says it disarmed the arm"));
+                } else {
+                    let error = prepared
+                        .err()
+                        .expect("an alternate-stack image must be refused when the launch did not disarm it");
+                    println!("ALTSTACK restore_refused = {error}");
+                    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+                    assert!(
+                        error.to_string().contains("HL_NATIVE_CKPT_CARRY_ALTSTACK"),
+                        "the refusal must name the option the restore was missing: {error}"
+                    );
+                }
+                wait_until_stopped(leaf);
+            }
+        }));
+        assert_eq!(unsafe { libc::kill(leaf, libc::SIGKILL) }, 0);
+        unsafe { libc::kill(leaf, libc::SIGCONT) };
+        let _ = harness.kill();
+        let _ = harness.wait();
+        if let Err(panic) = outcome {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     fn kernel_state(pid: libc::pid_t) -> NativeProcessState {
@@ -3305,7 +4242,7 @@ hl_regfidelity_tls_pad:
         let captured_rendezvous = tempfile::NamedTempFile::new().unwrap();
         let (mut captured, captured_leaf) = spawn_regfid_child(TEST, captured_rendezvous.path(), 0);
         arm_settable_state(captured_leaf);
-        let image = capture_stopped_native(captured_leaf, Instant::now() + Duration::from_secs(10))
+        let image = capture_stopped_native(captured_leaf, Instant::now() + Duration::from_secs(10), false)
             .expect("armed leaf must be admitted");
         let armed = NativeProcessState::decode(&image.procstate).expect("image carries a decodable process state");
 
@@ -3342,6 +4279,7 @@ hl_regfidelity_tls_pad:
             &image.memory,
             &image.xstate,
             &image.procstate,
+            false,
             Instant::now() + Duration::from_secs(10),
         )
         .expect("an otherwise identical fresh leaf must be admitted");
@@ -3381,7 +4319,7 @@ hl_regfidelity_tls_pad:
 
         let rendezvous = tempfile::NamedTempFile::new().unwrap();
         let (mut harness, leaf) = spawn_regfid_child(TEST, rendezvous.path(), 0);
-        let image = capture_stopped_native(leaf, Instant::now() + Duration::from_secs(10)).expect("capture leaf");
+        let image = capture_stopped_native(leaf, Instant::now() + Duration::from_secs(10), false).expect("capture leaf");
         let captured = NativeProcessState::decode(&image.procstate).expect("decode process state");
 
         // Positive bracket first: the unmodified image restores onto the very
@@ -3396,6 +4334,7 @@ hl_regfidelity_tls_pad:
             &image.memory,
             &image.xstate,
             &image.procstate,
+            false,
             Instant::now() + Duration::from_secs(10),
         )
         .expect("an unmodified image must be admitted by its own source process");
@@ -3432,6 +4371,7 @@ hl_regfidelity_tls_pad:
                 &image.memory,
                 &image.xstate,
                 &encoded,
+                false,
                 Instant::now() + Duration::from_secs(10),
             )
             .err()
@@ -3473,7 +4413,7 @@ hl_regfidelity_tls_pad:
 
         let rendezvous = tempfile::NamedTempFile::new().unwrap();
         let (mut harness, leaf) = spawn_regfid_child(TEST, rendezvous.path(), 0);
-        let image = capture_stopped_native(leaf, Instant::now() + Duration::from_secs(10)).expect("capture leaf");
+        let image = capture_stopped_native(leaf, Instant::now() + Duration::from_secs(10), false).expect("capture leaf");
         let mut record = X86RegisterRecord::decode(&image.registers).expect("decode registers");
         let live = record.registers[REGISTER_FS_BASE];
         assert_ne!(live, 0, "the fixture must carry a real thread pointer");
@@ -3490,6 +4430,7 @@ hl_regfidelity_tls_pad:
                 &image.memory,
                 &image.xstate,
                 &image.procstate,
+                false,
                 Instant::now() + Duration::from_secs(10),
             )
             .err()
@@ -3518,6 +4459,7 @@ hl_regfidelity_tls_pad:
             &image.memory,
             &image.xstate,
             &image.procstate,
+            false,
             Instant::now() + Duration::from_secs(10),
         )
         .expect("an unmoved thread pointer must be admitted");
@@ -3558,7 +4500,7 @@ hl_regfidelity_tls_pad:
 
         let captured_rendezvous = tempfile::NamedTempFile::new().unwrap();
         let (mut captured, captured_leaf) = spawn_regfid_child(TEST, captured_rendezvous.path(), 0);
-        let image = capture_stopped_native(captured_leaf, Instant::now() + Duration::from_secs(10))
+        let image = capture_stopped_native(captured_leaf, Instant::now() + Duration::from_secs(10), false)
             .expect("capture leaf");
         let armed = NativeProcessState::decode(&image.procstate).expect("decode process state");
 
@@ -3579,6 +4521,7 @@ hl_regfidelity_tls_pad:
             &image.memory,
             &image.xstate,
             &image.procstate,
+            false,
             Instant::now() + Duration::from_secs(10),
         ) {
             Err(refused) => {
@@ -4282,7 +5225,7 @@ hl_regfidelity_tls_pad:
         std::fs::write(role.path(), b"captured").unwrap();
         let (mut original, original_leaf, original_address) =
             spawn_fp_restore_child(TEST, rendezvous.path(), role.path(), result.path());
-        let image = capture_stopped_native(original_leaf, Instant::now() + Duration::from_secs(10)).unwrap();
+        let image = capture_stopped_native(original_leaf, Instant::now() + Duration::from_secs(10), false).unwrap();
         assert_eq!(unsafe { libc::kill(original_leaf, libc::SIGKILL) }, 0);
         // SIGKILL already terminates a group-stopped task, so this SIGCONT only
         // nudges the harness's blocking `waitpid` along -- and it races that
@@ -4344,6 +5287,7 @@ hl_regfidelity_tls_pad:
             &image.memory,
             &foreign,
             &image.procstate,
+            false,
             Instant::now() + Duration::from_secs(10),
         )
         .err()
@@ -4361,6 +5305,7 @@ hl_regfidelity_tls_pad:
             &image.memory,
             &image.xstate,
             &image.procstate,
+            false,
             Instant::now() + Duration::from_secs(10),
         )
         .unwrap();
@@ -4485,7 +5430,7 @@ hl_regfidelity_tls_pad:
         };
         let encoded = record.encode();
         assert_eq!(&encoded[..8], b"HLNXREG\0");
-        assert_eq!(&encoded[8..10], &3_u16.to_le_bytes());
+        assert_eq!(&encoded[8..10], &4_u16.to_le_bytes());
         assert_eq!(&encoded[10..12], &62_u16.to_le_bytes());
         assert_eq!(&encoded[12..16], &256_u32.to_le_bytes());
         assert_eq!(X86RegisterRecord::decode(&encoded), Ok(record));
@@ -4521,7 +5466,7 @@ hl_regfidelity_tls_pad:
         let encoded = record.encode();
         assert_eq!(encoded.len(), XSTATE_HEADER_SIZE + XSTATE_MIN_AREA);
         assert_eq!(&encoded[..8], b"HLNXXST\0");
-        assert_eq!(&encoded[8..10], &3_u16.to_le_bytes());
+        assert_eq!(&encoded[8..10], &4_u16.to_le_bytes());
         assert_eq!(&encoded[10..12], &62_u16.to_le_bytes());
         assert_eq!(&encoded[12..16], &(encoded.len() as u32).to_le_bytes());
         assert_eq!(&encoded[16..24], &0b111_u64.to_le_bytes());
@@ -4598,9 +5543,9 @@ hl_regfidelity_tls_pad:
     fn every_carrier_of_the_native_format_version_moves_together() {
         assert_eq!(VERSION, NATIVE_FORMAT_VERSION);
         assert_eq!(XSTATE_VERSION, NATIVE_FORMAT_VERSION);
-        assert!(MANIFEST_MAGIC.ends_with(b"-V3\0"));
+        assert!(MANIFEST_MAGIC.ends_with(b"-V4\0"));
         for name in NATIVE_OBJECTS {
-            assert!(name.ends_with("-v3"), "{name} must carry the format version");
+            assert!(name.ends_with("-v4"), "{name} must carry the format version");
         }
         assert_eq!(
             crate::runtime::checkpoint::image_envelope::NATIVE_X86_PAYLOAD_VERSION,
@@ -4609,7 +5554,7 @@ hl_regfidelity_tls_pad:
         // Every superseded manifest is still rejected byte for byte, which is
         // the only reason an image predating the xstate object -- or predating
         // the process-state object -- cannot be half read.
-        for superseded in [b"HLNATIVE-X86-V1\0", b"HLNATIVE-X86-V2\0"] {
+        for superseded in [b"HLNATIVE-X86-V1\0", b"HLNATIVE-X86-V2\0", b"HLNATIVE-X86-V3\0"] {
             let mut stale = native_manifest(b"registers", b"memory", b"xstate", b"procstate");
             stale[..16].copy_from_slice(superseded);
             assert_eq!(

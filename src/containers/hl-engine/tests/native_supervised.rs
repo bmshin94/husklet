@@ -1581,7 +1581,7 @@ fn claim_band_floor() -> std::os::fd::OwnedFd {
 /// basename of that -- the DECIMAL DESCRIPTOR NUMBER.  The descriptor is one the engine borrowed
 /// into its private band, so the guest's task name is an artifact of the engine's own descriptor
 /// table: whatever else the host process had open at the instant of the borrow.  The native
-/// checkpoint records `comm` in `native/procstate.x86-v3` and `NativeProcessState::admits` refuses
+/// checkpoint records `comm` in `native/procstate.x86-v4` and `NativeProcessState::admits` refuses
 /// a restore whose target disagrees -- correctly, since `comm` has no cross-process setter -- so a
 /// restore run with a different private-band occupancy than the capture is refused outright, the
 /// fresh guest is destroyed, and the caller gets a bare `CaptureFailed`.
@@ -1878,10 +1878,10 @@ fn checkpoint_restores_a_fresh_process_after_terminating_the_original(explicit: 
             [
                 "IMAGE",
                 "MANIFEST",
-                "native/memory.x86-v3",
-                "native/procstate.x86-v3",
-                "native/registers.x86-v3",
-                "native/xstate.x86-v3"
+                "native/memory.x86-v4",
+                "native/procstate.x86-v4",
+                "native/registers.x86-v4",
+                "native/xstate.x86-v4"
             ]
         );
         assert_eq!(&objects["IMAGE"][..8], b"HLIMAGE\0");

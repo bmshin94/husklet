@@ -357,19 +357,19 @@ impl Server {
     ) -> Result<(), ()> {
         let generation = u64::from(request.generation);
         if !encoded_name.is_empty()
-            || payload.len() != 8
             || connection.registered != Some(generation)
             || self.membership_scope() != Some(generation)
         {
             return Err(());
         }
         let peer = connection.peer.as_ref().ok_or(())?;
-        let raw = u64::from_ne_bytes(payload.try_into().map_err(|_| ())?);
+        let (raw, directives) = native_request_words(payload)?;
         let pid = libc::pid_t::try_from(raw).map_err(|_| ())?;
         if pid <= 1 || !native_descends_from(pid, peer.host_pid) {
             return Err(());
         }
-        self.commit_stopped_native(pid, generation).map_err(|failure| {
+        let carry = directives & NATIVE_DIRECTIVE_CARRY_ALTSTACK != 0;
+        self.commit_stopped_native(pid, generation, carry).map_err(|failure| {
             self.fail_as(
                 format!("native checkpoint capture failed for stopped process {pid}: {failure:?}"),
                 failure,
@@ -386,17 +386,18 @@ impl Server {
         payload: &[u8],
     ) -> Result<(), ()> {
         let generation = u64::from(request.generation);
-        if !encoded_name.is_empty() || payload.len() != 8 {
+        if !encoded_name.is_empty() {
             return Err(());
         }
         let peer = connection.peer.as_ref().ok_or(())?;
-        let raw = u64::from_ne_bytes(payload.try_into().map_err(|_| ())?);
+        let (raw, directives) = native_request_words(payload)?;
         let pid = libc::pid_t::try_from(raw).map_err(|_| ())?;
         let pidfd = crate::runtime::execution::native_snapshot::pin_native_process(pid).map_err(|_| ())?;
         if pid <= 1 || !native_descends_from(pid, peer.host_pid) {
             return Err(());
         }
-        let prepared = self.prepare_native_restore(pid, pidfd, generation).map_err(|failure| {
+        let carry = directives & NATIVE_DIRECTIVE_CARRY_ALTSTACK != 0;
+        let prepared = self.prepare_native_restore(pid, pidfd, generation, carry).map_err(|failure| {
             self.fail_as(
                 format!("native checkpoint restore failed for stopped process {pid}: {failure:?}"),
                 failure,
@@ -459,6 +460,32 @@ impl Server {
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+/// Bit 0 of the directive word: the supervisor disarmed the `sigaltstack`
+/// notification for this domain, so the capture may observe the guest's
+/// alternate stack by injection and the restore may install it.
+///
+/// It travels with the request rather than being read from this process's
+/// environment because the supervisor is the authority for it: the same option
+/// that removes `sigaltstack` from the taint set removes it from the seccomp
+/// filter, and a capture that believed one without the other would either refuse
+/// a guest it could carry or inject a syscall that deadlocks on a notification.
+pub(super) const NATIVE_DIRECTIVE_CARRY_ALTSTACK: u64 = 1;
+
+/// The `pid`, and the directives the supervisor sent with it.
+///
+/// Eight bytes is the shape every supervisor before the directive word sent, and
+/// it still means "no directives"; sixteen carries the word.  Any other length
+/// is refused rather than padded, so a truncated or overlong request cannot be
+/// read as a smaller one with the missing half defaulted.
+fn native_request_words(payload: &[u8]) -> Result<(u64, u64), ()> {
+    let word = |at: usize| u64::from_ne_bytes(payload[at..at + 8].try_into().expect("checked length"));
+    match payload.len() {
+        8 => Ok((word(0), 0)),
+        16 => Ok((word(0), word(8))),
+        _ => Err(()),
+    }
+}
+
 fn native_descends_from(mut pid: libc::pid_t, ancestor: u64) -> bool {
     for _ in 0..4096 {
         if u64::try_from(pid).ok() == Some(ancestor) {

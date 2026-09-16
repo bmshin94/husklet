@@ -22,6 +22,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <setjmp.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -44,6 +45,48 @@ static char g_altstack[65536];
  * in its report would be its own rather than the image's. */
 static volatile unsigned g_main_entries;
 static void wake_noop(int signal) { (void)signal; }
+
+/* The stack-overflow instrument.
+ *
+ * "The restored process has an alternate stack" is a weak claim; this is the strong one.  The guest
+ * runs its own stack into the guard page and the kernel has to deliver SIGSEGV -- which it can only
+ * do on an alternate stack, because there is no room left on the overflowing one.  A handler that
+ * runs at all therefore proves the alternate stack is live, of a size the kernel accepted, and at an
+ * address that is really mapped.  Without it the process dies on SIGSEGV instead of reporting.
+ *
+ * This is exactly the loss the refusal was put there to prevent: a Rust guest whose restore dropped
+ * its alternate stack would run its stack-overflow handler on the overflowing stack. */
+static sigjmp_buf g_overflow_return;
+static volatile unsigned g_overflow_handled;
+static volatile unsigned long g_overflow_depth;
+
+static void overflow_handler(int signal) {
+    (void)signal;
+    ++g_overflow_handled;
+    siglongjmp(g_overflow_return, 1);
+}
+
+/* Each call must really CONSUME STACK, which is a stronger requirement than "is recursive", and the
+   weaker shape was measured failing here rather than reasoned about.  Written as
+   `return pad[0] + recurse(depth + 1);` -- not a tail call, with the frame's address escaping
+   through a volatile pointer -- gcc -O2 still applied its accumulator transform and flattened the
+   whole thing into ONE frame: the guest spun at 100% CPU with a `[stack]` mapping that stayed at
+   132 KiB and never overflowed, and the probe hung instead of measuring.
+
+   What defeats the transform is a local that is live ACROSS the recursive call, so each level needs
+   its own frame that outlives the call it makes.  The asm barrier holds `pad` after the return. */
+static volatile char *g_overflow_frame;
+
+static unsigned long recurse(unsigned long depth) {
+    volatile char pad[4096];
+    pad[0] = (char)depth;
+    pad[sizeof pad - 1] = (char)depth;
+    g_overflow_frame = pad;
+    g_overflow_depth = depth;
+    unsigned long deeper = recurse(depth + 1);
+    __asm__ __volatile__("" : : "r"(&pad[0]) : "memory");
+    return (unsigned long)pad[0] + deeper;
+}
 
 /* Counts the entries the kernel publishes in /proc/self/timers, which is the
    POSIX-timer view another process can also read.  Opened only after the park,
@@ -76,8 +119,29 @@ int main(int argc, char **argv) {
     wake_action.sa_handler = wake_noop;
     if (sigaction(SIGUSR1, &wake_action, NULL) != 0) return 92;
 
+    /* Installed in EVERY variant, like the wake handler and for the same reason: the signal
+       disposition bitmasks are part of the process-state record and the restore refuses a target
+       whose masks differ, so a handler present in one variant and absent in another would make the
+       capture and the restore target incomparable rather than testing anything.  SA_ONSTACK with no
+       alternate stack armed is simply ignored by the kernel, so the free variant is unaffected. */
+    struct sigaction overflow_action;
+    memset(&overflow_action, 0, sizeof overflow_action);
+    overflow_action.sa_handler = overflow_handler;
+    overflow_action.sa_flags = SA_ONSTACK;
+    if (sigaction(SIGSEGV, &overflow_action, NULL) != 0) return 97;
+
     int timer_fd = -1;
-    if (strcmp(variant, "armd") == 0) {
+    if (strcmp(variant, "alts") == 0) {
+        /* Rust's std shape, and the whole of it: an alternate signal stack and nothing else.  Traced
+           on this host, a Rust-std process issues `sigaltstack(NULL, &old)` then
+           `sigaltstack({ss_sp=..., ss_flags=0}, NULL)` at startup and no setitimer, alarm or
+           timer_create at all, so this variant is what the narrowing actually refused. */
+        stack_t alternate;
+        memset(&alternate, 0, sizeof alternate);
+        alternate.ss_sp = g_altstack;
+        alternate.ss_size = sizeof g_altstack;
+        if (sigaltstack(&alternate, NULL) != 0) return 82;
+    } else if (strcmp(variant, "armd") == 0) {
         stack_t alternate;
         memset(&alternate, 0, sizeof alternate);
         alternate.ss_sp = g_altstack;
@@ -132,6 +196,19 @@ int main(int argc, char **argv) {
                           posix_timer_entries(),
                           fd_timer.it_value.tv_sec != 0 || fd_timer.it_value.tv_nsec != 0);
     if (length <= 0 || write(STDOUT_FILENO, g_report, (size_t)length) != length) return 91;
+
+    /* Only when the LIVE task really holds one -- a guest without an alternate stack that overflowed
+       its own would simply die, which measures nothing.  Keyed on what the kernel just reported
+       rather than on the variant, so a restored process runs it exactly when the image gave it a
+       stack to run it on. */
+    if ((alternate.ss_flags & SS_DISABLE) == 0 && alternate.ss_sp != NULL) {
+        if (sigsetjmp(g_overflow_return, 1) == 0) (void)recurse(0);
+        length = snprintf(g_report, sizeof g_report,
+                          "timerstate-overflow handled=%u depth=%lu sp_is_image=%d size=%zu\n",
+                          g_overflow_handled, g_overflow_depth, alternate.ss_sp == g_altstack,
+                          alternate.ss_size);
+        if (length <= 0 || write(STDOUT_FILENO, g_report, (size_t)length) != length) return 98;
+    }
 
     /* Deliberately after the park.  On the restore arm this runs under the
        supervisor's RESTORE filter, and on a control run under the ordinary one,

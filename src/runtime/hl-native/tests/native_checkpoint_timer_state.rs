@@ -224,6 +224,22 @@ fn the_taint_marks_only_syscalls_that_can_arm_state_no_scan_can_see() {
     );
 }
 
+/// The seccomp rewrite the carry option performs, on a real filter program.
+///
+/// Three properties at once, because each is silent on its own: the named arm
+/// stops matching its syscall, every other notified arm keeps matching, and the
+/// program length does not change -- a shortened program would shift every jump
+/// offset after it and quietly renotify a different set.
+#[test]
+fn the_carry_option_disarms_only_the_sigaltstack_notification() {
+    let _serial = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert_eq!(
+        classify(Path::new("disarm:test"), 0, &[]),
+        0,
+        "the notification rewrite failed at the step this number names"
+    );
+}
+
 /// Arm `-8`: a real parked process holding one armed POSIX timer refuses, and an
 /// otherwise identical one holding none still admits.
 ///

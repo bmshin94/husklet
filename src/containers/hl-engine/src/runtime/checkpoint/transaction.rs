@@ -33,6 +33,7 @@ impl Server {
         pid: libc::pid_t,
         pidfd: std::os::fd::OwnedFd,
         generation: u64,
+        carry_alternate_stack: bool,
     ) -> Result<crate::runtime::execution::native_snapshot::PreparedNativeRestore, CaptureFailure> {
         let deadline = {
             let capture = self.capture_lock()?;
@@ -70,7 +71,14 @@ impl Server {
         })
         .map_err(|_| CaptureFailure::InvalidImage)?;
         crate::runtime::execution::native_snapshot::prepare_native_restore(
-            pid, pidfd, &registers, &memory, &xstate, &procstate, deadline,
+            pid,
+            pidfd,
+            &registers,
+            &memory,
+            &xstate,
+            &procstate,
+            carry_alternate_stack,
+            deadline,
         )
         .map_err(|error| {
             hl_log::hl_error!(hl_log::tag::CHECKPOINT, "native checkpoint restore failed: {error}");
@@ -107,7 +115,12 @@ impl Server {
     }
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    pub(super) fn commit_stopped_native(&self, pid: libc::pid_t, generation: u64) -> Result<(), CaptureFailure> {
+    pub(super) fn commit_stopped_native(
+        &self,
+        pid: libc::pid_t,
+        generation: u64,
+        carry_alternate_stack: bool,
+    ) -> Result<(), CaptureFailure> {
         let deadline = {
             let capture = self.capture_lock()?;
             match capture.phase {
@@ -115,8 +128,9 @@ impl Server {
                 _ => return Err(CaptureFailure::Busy),
             }
         };
-        let image = crate::runtime::execution::native_snapshot::capture_stopped_native(pid, deadline)
-            .map_err(Self::publication_failure)?;
+        let image =
+            crate::runtime::execution::native_snapshot::capture_stopped_native(pid, deadline, carry_alternate_stack)
+                .map_err(Self::publication_failure)?;
         let transaction = self.transaction_token()?;
         self.sink
             .put_until(

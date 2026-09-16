@@ -127,7 +127,7 @@ fn fixture(directory: &Path) -> PathBuf {
     output
 }
 
-fn plan(executable: &Path, identity: &str, variant: &str, restore: bool) -> RuntimePlan {
+fn plan(executable: &Path, identity: &str, variant: &str, restore: bool, carry: bool) -> RuntimePlan {
     assert_eq!(variant.len(), 4, "variant tokens must be equal length");
     assert_eq!(identity.len(), 16, "identity tokens must be equal length");
     let mut options = Options::default();
@@ -135,6 +135,11 @@ fn plan(executable: &Path, identity: &str, variant: &str, restore: bool) -> Runt
     options.set("HL_C_DIAGNOSTICS", "1", true).unwrap();
     if restore {
         options.set("HL_RESTORE", "1", true).unwrap();
+    }
+    // Unset on every arm that predates the carry, so those arms keep measuring
+    // the behaviour they were written for.
+    if carry {
+        options.set("HL_NATIVE_CKPT_CARRY_ALTSTACK", "1", true).unwrap();
     }
     RuntimePlan {
         rootfs: Some(b"/".to_vec()),
@@ -190,12 +195,20 @@ fn control_report(executable: &Path, variant: &str) -> String {
     control_report_under(executable, variant, None)
 }
 
+/// The `timerstate ` line of a whole stdout capture.
+fn timerstate_line(text: &str) -> String {
+    text.lines()
+        .find(|line| line.starts_with("timerstate "))
+        .unwrap_or_else(|| panic!("no timerstate report in {text:?}"))
+        .to_owned()
+}
+
 /// `refuse` selects the supervisor's third BPF program (the refusal one), which
 /// is otherwise unreachable from these arms; the syscall number it names is not
 /// one the fixture issues, so the only thing it changes is which filter is built.
 fn control_report_under(executable: &Path, variant: &str, refuse: Option<&str>) -> String {
     let output = Arc::new(Output::default());
-    let mut plan = plan(executable, "0000000000000000", variant, false);
+    let mut plan = plan(executable, "0000000000000000", variant, false, false);
     if let Some(refuse) = refuse {
         plan.options.set("HL_NATIVE_SUPERVISED_REFUSE", refuse, true).unwrap();
     }
@@ -332,6 +345,12 @@ struct Captured {
 /// shape that lets a gate look discriminating while refusing everything.
 fn expected_refusal_domain(variant: &str) -> (&'static str, i32) {
     match variant {
+        // The narrowing itself: `alts` arms an alternate stack and NOTHING else,
+        // which is the Rust-std shape.  With the carry option unset it is refused
+        // here, exactly as it was before the carry existed; the carry test below
+        // runs the same variant with the option set and requires it to be
+        // admitted, committed and restored instead.
+        "alts" => ("unobservable-timer-or-altstack", -7),
         "armd" => ("unobservable-timer-or-altstack", -7),
         // MEASURED, not assumed from the shape: `posx` arms its timer with
         // `timer_create`, which is in the supervisor's notify set, so the sticky
@@ -348,12 +367,12 @@ fn expected_refusal_domain(variant: &str) -> (&'static str, i32) {
 
 /// Launches `variant`, waits for its park, and asks for a capture.  Returns the
 /// committed store on success and the engine's own refusal text on refusal.
-fn capture(executable: &Path, variant: &str) -> Result<Captured, String> {
+fn capture(executable: &Path, variant: &str, carry: bool) -> Result<Captured, String> {
     let store = Arc::new(Store::default());
     let output = Arc::new(Output::default());
     let engine = Engine::with_checkpoint(
         GuestIsa::X86_64,
-        plan(executable, "1111111111111111", variant, false),
+        plan(executable, "1111111111111111", variant, false, carry),
         StandardStreams::default().with_output(output.clone()),
         store.clone(),
         store.clone(),
@@ -489,11 +508,11 @@ fn capture(executable: &Path, variant: &str) -> Result<Captured, String> {
 
 /// Restores a committed image into a fresh process launched as `variant` and
 /// returns that process's own report of the live task's kernel state.
-fn restore_into(executable: &Path, captured: &Captured, variant: &str) -> String {
+fn restore_into(executable: &Path, captured: &Captured, variant: &str, carry: bool) -> String {
     let output = Arc::new(Output::default());
     let engine = Engine::with_checkpoint(
         GuestIsa::X86_64,
-        plan(executable, "2222222222222222", variant, true),
+        plan(executable, "2222222222222222", variant, true, carry),
         StandardStreams::default().with_output(output.clone()),
         captured.store.clone(),
         captured.store.clone(),
@@ -546,7 +565,10 @@ fn restore_into(executable: &Path, captured: &Captured, variant: &str) -> String
         "timerstate-late altstack=1 realtimer=4321",
         "a notified syscall did not take effect under the restore filter"
     );
-    report_of(&output)
+    // The WHOLE of the restored guest's stdout, not just its one-line report: the
+    // alternate-stack arm needs the overflow line too, and a caller that wants
+    // only the report says so with `timerstate_line`.
+    String::from_utf8_lossy(&output.stdout.lock().unwrap()).into_owned()
 }
 
 /// The whole cell, in one test.
@@ -599,8 +621,8 @@ fn native_checkpoint_refuses_every_timer_and_altstack_shape_the_image_cannot_car
     // The discriminating control: an unarmed guest of the very same fixture, with
     // the very same park, IS admitted, committed and restored.  Without this the
     // three refusals below would be consistent with a gate that refuses always.
-    let free = capture(&executable, "free").expect("an unarmed guest must still be capturable");
-    let restored = restore_into(&executable, &free, "free");
+    let free = capture(&executable, "free", false).expect("an unarmed guest must still be capturable");
+    let restored = timerstate_line(&restore_into(&executable, &free, "free", false));
     println!("TIMERSTATE free_restored = {restored}");
     assert!(
         restored.contains("identity=1111111111111111"),
@@ -613,13 +635,14 @@ fn native_checkpoint_refuses_every_timer_and_altstack_shape_the_image_cannot_car
 
     let mut admitted = Vec::new();
     for (variant, what) in [
+        ("alts", "sigaltstack alone, the Rust-std shape"),
         ("armd", "sigaltstack + setitimer"),
         ("posx", "a POSIX timer"),
         ("tfdt", "a timerfd"),
     ] {
-        match capture(&executable, variant) {
+        match capture(&executable, variant, false) {
             Ok(captured) => {
-                let restored = restore_into(&executable, &captured, "free");
+                let restored = timerstate_line(&restore_into(&executable, &captured, "free", false));
                 admitted.push(format!("{variant} ({what}) ADMITTED, restored as: {restored}"));
             }
             Err(refusal) => println!("TIMERSTATE {variant}_refused = {refusal}"),
@@ -632,3 +655,105 @@ fn native_checkpoint_refuses_every_timer_and_altstack_shape_the_image_cannot_car
     );
 }
 
+
+
+/// The narrowing, lifted -- and the lifting proved by a real stack overflow.
+///
+/// `alts` is the Rust-std shape and nothing else: one `sigaltstack`, no interval
+/// timer, no POSIX timer, no timerfd.  It is what arm `-7` actually refuses on
+/// this host, and the arm above requires it to go on being refused while the
+/// carry option is unset.  With the option set the same guest must instead be
+/// admitted, committed, restored -- and the restored process must be able to run
+/// its stack into the guard page and survive, which it can only do on an
+/// alternate stack the image gave it.
+///
+/// Three things make that a measurement rather than a coincidence, and the third
+/// is the one this area keeps being caught by:
+///
+///  * the restore target is launched as `free`, a variant that arms no alternate
+///    stack of its own, so an `altstack=1` in its report has no local source;
+///  * it carries the CAPTURED argv identity, so the memory image landed;
+///  * `mains=1` comes out of BSS, so `main` did not re-run.  A fresh exec of the
+///    same binary re-arms its own alternate stack, and a test that only asked
+///    "does the restored process have one" would pass on that alone.
+#[test]
+fn a_guest_holding_only_an_alternate_stack_is_carried_across_a_native_checkpoint() {
+    let work = TempDir::new().unwrap();
+    let executable = fixture(work.path());
+
+    // The fixture really arms one, and really survives an overflow when it does.
+    // Without this the restored reading below would have no known-good reference.
+    let control = control_report(&executable, "alts");
+    println!("ALTSTACK alts_control = {control}");
+    assert!(
+        control.contains(" mains=1 ") && control.ends_with("altstack=1 realtimer=0 posix=0 timerfd=0"),
+        "the alts control did not arm exactly one alternate stack and nothing else: {control}"
+    );
+
+    // The discriminating control for the option itself: identical guest, option
+    // unset, still refused by the arm that refused it before this work existed.
+    let refused = capture(&executable, "alts", false)
+        .err()
+        .expect("with HL_NATIVE_CKPT_CARRY_ALTSTACK unset an alternate stack must still refuse");
+    println!("ALTSTACK alts_refused_with_the_option_unset = {refused}");
+
+    let captured = capture(&executable, "alts", true)
+        .unwrap_or_else(|refusal| panic!("a guest holding only an alternate stack was refused even \
+             with the carry option set, so the narrowing is not lifted: {refusal}"));
+    let restored = restore_into(&executable, &captured, "free", true);
+    println!("ALTSTACK alts_restored = {restored:?}");
+
+    let report = timerstate_line(&restored);
+    assert!(
+        report.contains("identity=1111111111111111"),
+        "the restore did not carry captured guest memory: {report}"
+    );
+    assert!(
+        report.contains(" mains=1 "),
+        "the restored guest re-entered main, so its alternate stack is its own: {report}"
+    );
+    assert!(
+        report.ends_with("altstack=1 realtimer=0 posix=0 timerfd=0"),
+        "the restored guest -- launched as `free`, which arms nothing -- reports no alternate \
+         stack, so the image did not carry it: {report}"
+    );
+    let overflow = restored
+        .lines()
+        .find(|line| line.starts_with("timerstate-overflow "))
+        .unwrap_or_else(|| panic!("the restored guest never reached the overflow probe: {restored:?}"));
+    println!("ALTSTACK alts_restored_overflow = {overflow}");
+    assert_eq!(
+        overflow,
+        format!("timerstate-overflow handled=1 depth={} sp_is_image=1 size=65536", overflow_depth(overflow)),
+        "the restored guest did not take a stack overflow and survive it on the carried alternate \
+         stack: {overflow}"
+    );
+    assert!(
+        overflow_depth(overflow) > 16,
+        "the overflow probe returned after too few frames to have reached the guard page: {overflow}"
+    );
+
+    // The interval timers are NOT carried and must not become carried by this.
+    // Same option, same run shape, and they still refuse -- structurally, because
+    // the remaining value of an armed expiry depends on elapsed time the kernel
+    // publishes nowhere and a carry could only re-arm the original duration.
+    let mut widened = Vec::new();
+    for (variant, what) in [("armd", "sigaltstack + setitimer"), ("posx", "a POSIX timer")] {
+        match capture(&executable, variant, true) {
+            Ok(_) => widened.push(format!("{variant} ({what})")),
+            Err(refusal) => println!("ALTSTACK {variant}_still_refused_under_the_carry = {refusal}"),
+        }
+    }
+    assert!(
+        widened.is_empty(),
+        "the alternate-stack carry widened the admitted set to timer state it cannot carry: {widened:#?}"
+    );
+}
+
+/// The `depth=` field of an overflow line.
+fn overflow_depth(line: &str) -> u64 {
+    line.split_whitespace()
+        .find_map(|field| field.strip_prefix("depth="))
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| panic!("no depth field in {line:?}"))
+}

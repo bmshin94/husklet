@@ -14,7 +14,7 @@ const NATIVE_X86_KIND: u16 = 2;
 const TRANSLATED_MANIFEST_VERSION: u32 = 9;
 /// The `native-x86` payload revision.  Kept in step with
 /// `execution_native_snapshot::NATIVE_FORMAT_VERSION` by a `const` assert there.
-pub(crate) const NATIVE_X86_PAYLOAD_VERSION: u32 = 3;
+pub(crate) const NATIVE_X86_PAYLOAD_VERSION: u32 = 4;
 const MANIFEST: &[u8] = b"MANIFEST";
 
 /// The reader selected by a validated `IMAGE` object.
