@@ -78,25 +78,34 @@ fn restored_chains_preserve_fixed_edges_and_defer_dso_edges() {
     assert!(reload < chain && chain < fallback && fallback < cold && cold < irq);
 }
 
-#[cfg(feature = "native-test-hooks")]
+// These four drive `hl_x86_64_translit_displaced_test`, which is the SAME-ISA x86
+// transliterator's fixture entry point. That transliterator is reached through
+// `translator/guest/x86_64/interp.c`, which `target/x86_64.c` includes only on a NON-AArch64
+// host; an AArch64 host takes the x86->ARM64 JIT instead and the symbol resolves to the weak
+// `return -1` stub in `target/aarch64.c`. `HL_HOST_CPU_AARCH64` comes straight from the
+// `__aarch64__` compiler predefine, so no runner environment can change that. Asserting `== 0`
+// there asks a function the product deliberately defines as unavailable to succeed, and the
+// ARM64 job runs `-p hl-native --all-targets --features native-test-hooks`. Gate them on the
+// host the fixture exists on, the same way every sibling x86 test target already does.
+#[cfg(all(feature = "native-test-hooks", target_arch = "x86_64"))]
 #[test]
 fn jitdump_is_one_process_lifetime_stream_across_cache_generations() {
     assert_eq!(hl_native::x86_64_translit_displaced_test(217), 0);
 }
 
-#[cfg(feature = "native-test-hooks")]
+#[cfg(all(feature = "native-test-hooks", target_arch = "x86_64"))]
 #[test]
 fn forward_jcc_link_emits_only_a_live_state_jump() {
     assert_eq!(hl_native::x86_64_translit_displaced_test(233), 0);
 }
 
-#[cfg(feature = "native-test-hooks")]
+#[cfg(all(feature = "native-test-hooks", target_arch = "x86_64"))]
 #[test]
 fn x86_jcc_route_partitions_every_loaded_pair_and_irq_bypass() {
     assert_eq!(hl_native::x86_64_translit_displaced_test(236), 0);
 }
 
-#[cfg(feature = "native-test-hooks")]
+#[cfg(all(feature = "native-test-hooks", target_arch = "x86_64"))]
 #[test]
 fn x86_jcc_route_absence_preserves_the_established_shared_stub() {
     assert_eq!(hl_native::x86_64_translit_displaced_test(237), 0);

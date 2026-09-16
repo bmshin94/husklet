@@ -1515,11 +1515,21 @@ mod native_eligibility_tests {
             );
         }
 
-        // This arm executes on the native ARM64 Linux and macOS CI hosts. Those hosts have no
-        // native-supervised implementation: their real capability probe must remain closed before
-        // checkpoint policy can accidentally select an x86-only backend.
+        // THE ARCHITECTURE-DEPENDENT ARM, and the reason the CI steps that select this test by
+        // name are worth running on an ARM64 host at all. Everything above is a pure function of
+        // synthetic `NativeHostCapabilities`: it returns the same verdict on every host, so a step
+        // that ran only that much would be green on x86 for reasons that say nothing about ARM.
+        // This arm takes the host ISA from the REAL capability probe and then requires the
+        // checkpoint policy that is correct FOR THAT HOST, so the expected verdict genuinely
+        // differs between x86_64 and aarch64 and a policy that is wrong for the architecture it is
+        // running on fails here.
+        let probed = native_host_capabilities(&plan());
+
+        // No native-supervised implementation exists off Linux, so the real probe must stay closed
+        // before checkpoint policy can reach a backend of any architecture.
         #[cfg(not(target_os = "linux"))]
         {
+            assert_eq!(probed.host_isa, None, "a non-Linux host named a native host ISA");
             let actual = native_eligibility_for_request(
                 NativeSupervisedRequest::On,
                 crate::activation::GuestIsa::Aarch64,
@@ -1532,6 +1542,64 @@ mod native_eligibility_tests {
                 Err(NativeSupervisedRefusal::Host),
                 "non-Linux host admitted native ARM checkpoint composition",
             );
+        }
+
+        // No native supervisor is built for any other Linux architecture, so the probe must not name
+        // a host ISA there either: checkpoint policy keyed on one would select a backend that does
+        // not exist on the machine.
+        #[cfg(all(target_os = "linux", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
+        assert_eq!(
+            probed.host_isa, None,
+            "an unsupported Linux architecture named a native host ISA",
+        );
+
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            let host_isa = probed.host_isa.expect("the Linux capability probe named no host ISA");
+            let expected_isa = if cfg!(target_arch = "aarch64") {
+                crate::activation::GuestIsa::Aarch64
+            } else {
+                crate::activation::GuestIsa::X86_64
+            };
+            // The accident this whole step exists to catch: checkpoint eligibility is keyed on the
+            // probed host ISA, so a probe that misnames it selects a backend built for the other
+            // architecture while every synthetic assertion above stays green.
+            assert_eq!(
+                host_isa, expected_isa,
+                "the capability probe misreports this host's ISA, so checkpoint policy keyed on it \
+                 would select a backend built for the other architecture",
+            );
+
+            // Hold every other gate open so the checkpoint gate is the one that decides, and let
+            // the probed host ISA be the single real, architecture-derived input.
+            let mut probed_host = host();
+            probed_host.host_isa = probed.host_isa;
+            for intent in [
+                NativeCheckpointIntent::FreshCoordinator,
+                NativeCheckpointIntent::Restore,
+            ] {
+                let same_isa = native_eligibility(host_isa, &plan(), intent, probed_host);
+                if cfg!(target_arch = "aarch64") {
+                    assert_eq!(
+                        same_isa,
+                        Err(NativeSupervisedRefusal::Checkpoint),
+                        "this aarch64 host admitted the native checkpoint backend for {intent:?}",
+                    );
+                    assert_eq!(native_selection(NativeSupervisedRequest::Auto, same_isa), Ok(false));
+                    assert_eq!(
+                        native_eligibility(crate::activation::GuestIsa::X86_64, &plan(), intent, probed_host),
+                        Err(NativeSupervisedRefusal::GuestIsa),
+                        "this aarch64 host let an x86_64 guest reach the native checkpoint gate",
+                    );
+                } else {
+                    assert_eq!(
+                        same_isa,
+                        Ok(()),
+                        "this x86_64 host refused the native checkpoint backend for {intent:?}; the \
+                         refusal is meant to be architecture-specific, not universal",
+                    );
+                }
+            }
         }
     }
 }

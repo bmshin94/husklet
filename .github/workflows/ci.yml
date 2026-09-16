@@ -86,12 +86,28 @@ jobs:
           DYLD_LIBRARY_PATH="$native_directory" "$RUNNER_TEMP/hl-public-abi-c"
           DYLD_LIBRARY_PATH="$native_directory" "$RUNNER_TEMP/hl-public-abi-cxx"
 
+      # This step named `arm_and_non_linux_hosts_refuse_native_checkpoint_composition` until now.
+      # cb1d88192 renamed that test and updated only linux.yml, so for every run since, the filter
+      # here selected NO test: `cargo test --exact` reports `ok` for a target that ran nothing and
+      # the step was green without executing a single assertion. The name is corrected and the
+      # verdict is now required BY NAME so the same rot cannot return silently.
+      #
+      # This host is where the test's non-Linux arm actually runs: `native_host_capabilities`
+      # reports no native support off Linux, and the step proves that a checkpoint composition is
+      # refused there rather than reaching a backend of any architecture.
       - name: Test macOS ARM64 checkpoint backend policy
-        run: >-
-          nix --extra-experimental-features 'nix-command flakes' develop . --command
-          cargo test --locked -p hl-engine --lib
-          runtime::execution::native_eligibility_tests::arm_and_non_linux_hosts_refuse_native_checkpoint_composition
-          -- --exact
+        run: |
+          set -o pipefail
+          verdict=runtime::execution::native_eligibility_tests::arm_native_execution_is_admitted_but_every_checkpoint_role_stays_refused
+          .github/scripts/cargo-test-named.sh "macOS ARM64 checkpoint backend policy" \
+            nix --extra-experimental-features 'nix-command flakes' develop . --command \
+            cargo test --locked -p hl-engine --lib "$verdict" \
+            -- --exact 2>&1 | tee "$RUNNER_TEMP/macos-checkpoint-policy.log"
+          count=$(grep -Fxc "test $verdict ... ok" "$RUNNER_TEMP/macos-checkpoint-policy.log" || true)
+          if [ "$count" -ne 1 ]; then
+            echo "::error title=macOS ARM64 checkpoint backend policy verdict missing::test $verdict ... ok appeared $count times, expected exactly once. A filter that selects no test exits 0 and proves nothing."
+            exit 1
+          fi
 
   native-windows-amd64:
     name: Native surface / Windows AMD64

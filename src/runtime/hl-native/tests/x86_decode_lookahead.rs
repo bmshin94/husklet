@@ -1,3 +1,9 @@
+// Same-ISA x86 transliterator fixtures: `hl_x86_64_translit_displaced_test` is the weak
+// `return -1` stub from `target/aarch64.c` on an AArch64 host, because `target/x86_64.c`
+// includes `interp.c` -- which defines the real entry point -- only on a non-AArch64 host.
+// This is the crate-level gate every sibling x86 test target carries; it was omitted here.
+#![cfg(all(feature = "native-test-hooks", target_os = "linux", target_arch = "x86_64"))]
+
 #[test]
 fn admitted_direct_jmp_successor_is_decoded_once() {
     assert_eq!(

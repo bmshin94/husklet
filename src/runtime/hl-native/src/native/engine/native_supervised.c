@@ -1027,10 +1027,24 @@ projection_failed: {
  * they arm an expiry that runs down afterwards, the kernel publishes no remaining value, and a
  * carry could only re-arm the original duration.  This option does not touch them.
  *
- * Disarming the notification is not an optimisation, it is a requirement.  The supervisor is
- * blocked in the snapshot channel call for the whole capture, so a `sigaltstack` notification
- * raised by the INJECTED syscall would wait for an answer that cannot come until the capture
- * finishes -- and the capture cannot finish until the injected syscall returns. */
+ * Disarming the notification is not an optimisation, it is a requirement -- and it is a requirement
+ * for TWO independent reasons.  Only the first is about deadlock, and reading it as the whole story
+ * is what makes this site dangerous to touch.
+ *
+ * Deadlock: the supervisor is blocked in the snapshot channel call for the whole capture, so a
+ * `sigaltstack` notification raised by the INJECTED syscall would wait for an answer that cannot
+ * come until the capture finishes -- and the capture cannot finish until the injected syscall
+ * returns.
+ *
+ * The lift: the disarm, not the taint classifier, is what actually keeps gate arm -7 from refusing
+ * the capture.  A disarmed syscall raises no notification, so the GUEST's own `sigaltstack` calls
+ * never reach `hl_native_checkpoint_taints_state` and the taint is never set.  The carry arm inside
+ * that classifier is therefore redundant under this option rather than load-bearing: forcing the
+ * classifier to taint unconditionally leaves the flagship carry test green, because the classifier
+ * is not on the path at all.  Both are kept -- the classifier arm states the rule for any caller
+ * that does reach it -- but the redundancy runs one way only.  Reorder this disarm after the filter
+ * is installed, or delete it in the belief that the classifier covers the lift, and the tests stay
+ * green while the carry silently stops applying and every such capture is refused -7 again. */
 static int hl_native_supervised_carry_altstack(const hl_options *options) {
     return hl_native_supervised_flag(options, "HL_NATIVE_CKPT_CARRY_ALTSTACK");
 }

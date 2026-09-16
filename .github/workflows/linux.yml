@@ -742,12 +742,32 @@ jobs:
             }
           done
 
+      # A GREEN EXIT CODE IS NOT SUFFICIENT EVIDENCE FOR THIS STEP EITHER, and it used to be the
+      # only evidence it produced. `cargo test --exact` on a name that no longer exists runs zero
+      # tests and exits 0 -- which is exactly what this step's macOS twin in ci.yml did from
+      # cb1d88192 (the rename landed here and not there) until it was corrected. Require the
+      # verdict BY NAME so a rename, a `#[cfg]` or a filter typo fails the step instead of
+      # silently emptying it.
+      #
+      # The test itself was also arch-insensitive until it was fixed: its body was a pure function
+      # of synthetic `NativeHostCapabilities` and returned the same verdict on x86 as here, and its
+      # only arm that consulted the real host probe was `#[cfg(not(target_os = "linux"))]` --
+      # compiled out on this runner. It now takes the host ISA from the real capability probe and
+      # requires the checkpoint policy that is correct for THAT architecture, so running it here
+      # tests something that running it on AMD64 does not.
       - name: Test ARM64 checkpoint backend policy
-        run: >-
-          nix --extra-experimental-features 'nix-command flakes' develop . --command
-          cargo test --locked --offline -p hl-engine --lib
-          runtime::execution::native_eligibility_tests::arm_native_execution_is_admitted_but_every_checkpoint_role_stays_refused
-          -- --exact
+        run: |
+          set -o pipefail
+          verdict=runtime::execution::native_eligibility_tests::arm_native_execution_is_admitted_but_every_checkpoint_role_stays_refused
+          .github/scripts/cargo-test-named.sh "ARM64 checkpoint backend policy" \
+            nix --extra-experimental-features 'nix-command flakes' develop . --command \
+            cargo test --locked --offline -p hl-engine --lib "$verdict" \
+            -- --exact 2>&1 | tee "$RUNNER_TEMP/arm-checkpoint-policy.log"
+          count=$(grep -Fxc "test $verdict ... ok" "$RUNNER_TEMP/arm-checkpoint-policy.log" || true)
+          if [ "$count" -ne 1 ]; then
+            echo "::error title=ARM64 checkpoint backend policy verdict missing::test $verdict ... ok appeared $count times, expected exactly once. A filter that selects no test exits 0 and proves nothing about ARM64 checkpoint policy."
+            exit 1
+          fi
 
       # Configuration alone cannot prove that the same-ISA native supervisor executed the guest: a
       # translated fallback could produce the fixture's stdout and exit status too. This exact test
