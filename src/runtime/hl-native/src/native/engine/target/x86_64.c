@@ -2277,7 +2277,20 @@ int hl_run_linux_guest(const hl_host_services *host, hl_linux_abi *box, const ch
     hl_x86_emit_set_mt_ibtc(mtibtc_requested);
     translit_profile_options_refresh();
     const char *rdir = hl_option_get("HL_RESTORE");
-    if (rdir != NULL) return hl_vfs_cursor_state_finish(ckpt_restore_tree(rootfs));
+    if (rdir != NULL) {
+        /* CALIBRATE BEFORE RESTORE, for the same reason the launch path calibrates before
+           load_program: calibration selects emitted code, and a restore translates guest blocks just
+           like a launch does -- it simply reaches translation through ckpt_restore_tree and returns
+           from here, never running the s1_calibrate() below. On an AArch64 host that left
+           g_cal_base_ticks/g_cal_mono_ns/g_cal_real_ns/g_cal_mult all zero while the emitted inline
+           clock_gettime/gettimeofday arm was still emitted, so a RESTORED x86-64 guest read
+           0.000000000 from CLOCK_REALTIME and CLOCK_MONOTONIC and got rax=0 for it -- a wrong value
+           returned as success, which an absolute pthread_cond_timedwait deadline then turns into an
+           instant ETIMEDOUT against an already-true condition. Nothing here allocates or touches
+           guest memory, so it is safe ahead of the init memory rebuild ckpt_restore_tree does first. */
+        s1_calibrate();
+        return hl_vfs_cursor_state_finish(ckpt_restore_tree(rootfs));
+    }
     if (argc < 1 || !argv || !argv[0]) return hl_vfs_cursor_state_finish(2);
     // Persistent translated-code cache: enabled only by the centralized HL_PCACHE option.
     /* Diagnostic stubs embed fork-shared counter addresses. They are launch-private and deliberately have

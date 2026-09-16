@@ -1699,10 +1699,15 @@ static int emit_bus_thunk_site(uint64_t size, uint64_t rip) {
 // timespec/timeval WITHOUT entering service() -- the guest's clock_gettime/gettimeofday never
 // trap. ns = base_ns + ((ticks-base_ticks)*mult)>>FAST_SHIFT (Q30, overflow-safe 128-bit).
 static int g_fastsys = 1;         // HL_NOFASTSYS=1 selects the conservative path
-static int g_fastclk = 1;         // gates ONLY the clock_gettime/gettimeofday time arms. Auto-0 on
+static int g_fastclk;             // gates ONLY the clock_gettime/gettimeofday time arms. Auto-0 on
                                   // a host whose effective CNTVCT rate is decoupled from cntfrq_el0 (the
                                   // vDSO time math is then unsound); the W4F rt_sigprocmask/sched_yield
                                   // inline arms (no cntvct) stay on, so only the time arms fall to slow.
+                                  // DEFAULT OFF, and only s1_calibrate() below turns it on -- the arm it
+                                  // gates bakes g_cal_* in as immediates, so emitting it before the
+                                  // calibration ran computes 0 + ((ticks-0)*0)>>30 == 0 and hands the
+                                  // guest a zero timespec WITH rax=0, i.e. a wrong clock reported as
+                                  // success. An uncalibrated engine must take the real syscall instead.
 static uint64_t g_fast_count;     // # of guest time syscalls satisfied inline (written by emitted code)
 static uint64_t g_cal_base_ticks; // CNTVCT at calibration
 static uint64_t g_cal_mono_ns;    // CLOCK_MONOTONIC ns at calibration
@@ -1736,6 +1741,13 @@ static void s1_calibrate(void) {
     const hl_host_services *host = effective_host_services();
     g_fastsys = 1;
     g_fastclk = 1;
+    // The clock seam is reached through the effective host services, which a caller that has neither
+    // injected a host nor bound the native one does not have. Fall back rather than dereference it.
+    if (host == NULL || host->clock == NULL || host->clock->architectural_counter_hz == NULL) {
+        g_fastsys = 0;
+        g_fastclk = 0;
+        return;
+    }
     __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
     if (!freq) {
         g_fastsys = 0; // no readable counter frequency -> safe fallback

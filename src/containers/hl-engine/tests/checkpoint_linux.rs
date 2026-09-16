@@ -650,6 +650,23 @@ fn continuation_fixture(isa: GuestIsa, directory: &Path) -> PathBuf {
     output
 }
 
+fn restored_clock_fixture(isa: GuestIsa, directory: &Path) -> PathBuf {
+    let (compiler, name) = match isa {
+        GuestIsa::Aarch64 => ("aarch64-linux-gnu-gcc", "checkpoint-restored-clock-aarch64"),
+        GuestIsa::X86_64 => ("x86_64-linux-gnu-gcc", "checkpoint-restored-clock-x86_64"),
+    };
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/checkpoint/restored_clock.c");
+    let output = directory.join(name);
+    let status = std::process::Command::new(compiler)
+        .args(["-static", "-O2", "-o"])
+        .arg(&output)
+        .arg(source)
+        .status()
+        .unwrap_or_else(|error| panic!("cannot run {compiler}: {error}"));
+    assert!(status.success(), "{compiler} failed with {status}");
+    output
+}
+
 fn foreground_fixture(isa: GuestIsa, directory: &Path) -> PathBuf {
     let (compiler, name) = match isa {
         GuestIsa::Aarch64 => ("aarch64-linux-gnu-gcc", "checkpoint-foreground-aarch64"),
@@ -4791,6 +4808,138 @@ fn checkpoint_continuation_does_not_duplicate_read_or_wait_on_both_isas() {
             std::fs::read_to_string(&result).unwrap(),
             "read=1 byte=X second=0 wait=1 exit=37 duplicate=-1 errno=10\n",
             "{isa:?} duplicated an interrupted read or wait"
+        );
+    }
+}
+
+/// One reading of the guest clock, as the fixture reported it: the syscall return code and the
+/// timespec VALUE it left behind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ClockReading {
+    result: i32,
+    seconds: i64,
+    subseconds: i64,
+}
+
+impl ClockReading {
+    fn parse(field: &str, record: &str) -> ClockReading {
+        let value = record
+            .split_whitespace()
+            .find_map(|entry| entry.strip_prefix(field))
+            .unwrap_or_else(|| panic!("no {field} field in clock record {record:?}"));
+        let (result, timestamp) = value
+            .split_once(',')
+            .unwrap_or_else(|| panic!("malformed {field} field in clock record {record:?}"));
+        let (seconds, subseconds) = timestamp
+            .split_once('.')
+            .unwrap_or_else(|| panic!("malformed {field} timestamp in clock record {record:?}"));
+        ClockReading {
+            result: result.parse().unwrap(),
+            seconds: seconds.parse().unwrap(),
+            subseconds: subseconds.parse().unwrap(),
+        }
+    }
+}
+
+/// A restored guest's clock must report the TIME, not merely report success.
+///
+/// On an AArch64 host an x86-64 guest's `clock_gettime`/`gettimeofday` are answered inline by
+/// emitted host code that converts CNTVCT_EL0 with a calibration taken at launch; the restore
+/// path reaches translation without that calibration unless the engine takes it there too, and an
+/// uncalibrated conversion yields `0.000000000` returned as SUCCESS. That is invisible to any
+/// probe that checks only the return code -- an absolute `pthread_cond_timedwait` deadline built
+/// on it becomes "30 seconds after the epoch" and expires instantly on a condition that is
+/// already true -- so every assertion below is on the VALUE.
+#[test]
+fn restored_guest_clock_reports_the_time_on_both_isas() {
+    let fixtures = tempfile::tempdir().unwrap();
+    for isa in [GuestIsa::Aarch64, GuestIsa::X86_64] {
+        let executable = restored_clock_fixture(isa, fixtures.path());
+        let temporary = tempfile::tempdir().unwrap();
+        let ready = temporary.path().join("ready");
+        let release = temporary.path().join("release");
+        let result = temporary.path().join("result");
+        let store = Arc::new(Store::default());
+        let capture = Engine::with_checkpoint(
+            isa,
+            continuation_plan(&executable, &ready, &release, &result, false),
+            StandardStreams::default(),
+            store.clone(),
+            store.clone(),
+        )
+        .unwrap();
+        capture.start().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !ready.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(ready.exists(), "{isa:?} clock fixture did not publish its ready marker");
+        capture.capture_checkpoint_until(checkpoint_deadline()).unwrap();
+        assert_eq!(capture.wait().unwrap().guest_status, 0);
+
+        let restore = Engine::with_checkpoint(
+            isa,
+            continuation_plan(&executable, &ready, &release, &result, true),
+            StandardStreams::default(),
+            store.clone(),
+            store,
+        )
+        .unwrap();
+        restore.start().unwrap();
+        std::fs::write(&release, []).unwrap();
+        assert_eq!(restore.wait().unwrap().guest_status, 0);
+
+        let record = std::fs::read_to_string(&result).unwrap();
+        let record = record.trim_end();
+        let pre_real = ClockReading::parse("pre_real=", record);
+        let pre_mono = ClockReading::parse("pre_mono=", record);
+        let post_real = ClockReading::parse("post_real=", record);
+        let post_mono = ClockReading::parse("post_mono=", record);
+        let post_gtod = ClockReading::parse("post_gtod=", record);
+
+        for (name, reading) in [
+            ("pre_real", pre_real),
+            ("pre_mono", pre_mono),
+            ("post_real", post_real),
+            ("post_mono", post_mono),
+            ("post_gtod", post_gtod),
+        ] {
+            assert_eq!(reading.result, 0, "{isa:?} {name} failed: {record}");
+        }
+
+        // The VALUE assertions. A wall clock that reads zero is the epoch, not a time, and the
+        // engine cannot have been launched before the checkpoint image format existed.
+        let host_now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        for (name, reading) in [("pre_real", pre_real), ("post_real", post_real), ("post_gtod", post_gtod)] {
+            assert!(
+                (reading.seconds - host_now).abs() < 3600,
+                "{isa:?} {name} wall clock reads {}.{:09} seconds, which is not the current time \
+                 ({host_now}); a restored guest must read the clock, not a zero returned as success: {record}",
+                reading.seconds,
+                reading.subseconds
+            );
+        }
+        // CLOCK_MONOTONIC counts from the same host boot on both sides of the checkpoint, so the
+        // restored reading cannot precede the pre-checkpoint one. Zero fails this; so does any
+        // other unanchored conversion. This is an ordering of two captured values, not a budget.
+        assert!(
+            post_mono.seconds > 0,
+            "{isa:?} restored CLOCK_MONOTONIC reads {}.{:09}, i.e. the host booted at the instant \
+             of the read: {record}",
+            post_mono.seconds,
+            post_mono.subseconds
+        );
+        assert!(
+            (post_mono.seconds, post_mono.subseconds) >= (pre_mono.seconds, pre_mono.subseconds),
+            "{isa:?} restored CLOCK_MONOTONIC {}.{:09} precedes the pre-checkpoint reading {}.{:09} \
+             on the same host boot: {record}",
+            post_mono.seconds,
+            post_mono.subseconds,
+            pre_mono.seconds,
+            pre_mono.subseconds
         );
     }
 }
