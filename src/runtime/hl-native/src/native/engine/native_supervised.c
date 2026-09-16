@@ -152,6 +152,11 @@ static int hl_native_supervised_write_process_text(pid_t process, const char *na
     return hl_native_supervised_write_text(path, text);
 }
 
+/* The descriptor every native-supervised guest is executed through, and therefore -- see the relocation
+ * in `hl_native_supervised_run` -- the guest's task name.  Immediately above stdio: the exec'ing child
+ * holds nothing else, and the descriptor is close-on-exec so the guest starts with 0..2 alone. */
+#define HL_NATIVE_SUPERVISED_EXEC_DESCRIPTOR 3
+
 static int hl_native_supervised_close_except(int keep) {
 #ifdef SYS_close_range
     int first = keep > 3 ? (int)syscall(SYS_close_range, 3u, (unsigned int)keep - 1u, 0) : 0;
@@ -2567,6 +2572,40 @@ static int32_t hl_native_supervised_run(const hl_host_services *host, hl_linux_a
             if (hl_options_get(options, "HL_C_DIAGNOSTICS") != NULL)
                 fprintf(stderr, "[hl-native-supervised]\tprojector_errno=%d\n", errno);
             _exit(70);
+        }
+        /* Pin the descriptor the guest is executed through, because that descriptor NAMES the guest.
+         *
+         * The exec below is `execveat(executable, "", AT_EMPTY_PATH)`.  For an empty path Linux has no
+         * pathname to attribute the image to, so it synthesises `/dev/fd/<descriptor>` and, in
+         * `begin_new_exec`, sets the new task's `comm` to the basename of that -- the decimal
+         * descriptor number.  `executable` is a host descriptor the engine borrowed into its private
+         * band, whose number is simply the lowest free slot at the band floor when the borrow ran.  So
+         * without this the guest's task name is an artifact of the engine's own descriptor table:
+         * whatever else the host process had open at that instant, which differs between two engines
+         * sharing a process, between two processes with different `RLIMIT_NOFILE`, and between one
+         * launch and the next.
+         *
+         * That is guest-visible state -- `prctl(PR_GET_NAME)`, `/proc/self/comm`, `ps` -- and it is
+         * captured state: the native checkpoint records `comm` in its process-state object, and
+         * `NativeProcessState::admits` refuses a restore whose target disagrees, because `comm` has no
+         * cross-process setter and fabricating the difference away would be a silently wrong restore.
+         * A capture and a restore that drew different band slots therefore refused each other, killing
+         * the freshly launched guest, for a difference that says nothing about either process.
+         *
+         * `close_except` above has just left this child holding exactly {0,1,2,executable}, so the
+         * pinned slot is free by construction and the relocation needs no search.  The name is still a
+         * number -- the kernel offers no other name for an anonymous image -- but it is now the SAME
+         * number for every native-supervised guest on every host. */
+        if (executable != HL_NATIVE_SUPERVISED_EXEC_DESCRIPTOR) {
+            if (dup2(executable, HL_NATIVE_SUPERVISED_EXEC_DESCRIPTOR) != HL_NATIVE_SUPERVISED_EXEC_DESCRIPTOR)
+                _exit(70);
+            /* Deliberately NOT `hl_host_process_fd_private_remove`: that takes the private-fd fork
+             * mutex, which a sibling thread can have been holding at `clone3`, and this child would
+             * then block on it forever.  Nothing is leaked by skipping it -- the private registry is
+             * keyed on (pid, start time), so every entry this child inherited already belongs to the
+             * parent's identity and is invisible to the child. */
+            close(executable);
+            executable = HL_NATIVE_SUPERVISED_EXEC_DESCRIPTOR;
         }
         /* The generic lifecycle deliberately leaves native-supervised PTYs unattached. Claim this supplied
          * slave while setup is still trusted; the filtered workload then only inherits terminal authority. */

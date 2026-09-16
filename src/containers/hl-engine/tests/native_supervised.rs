@@ -1505,6 +1505,219 @@ fn auto_checkpoint_selects_native_for_capture_and_restore() {
     checkpoint_restores_a_fresh_process_after_terminating_the_original(false);
 }
 
+/// The engine's private descriptor band floor, `HL_LINUX_FD_LIMIT`.
+///
+/// `hl_private_guest_ceiling` clamps the band floor to this value on any host whose
+/// `RLIMIT_NOFILE` soft limit clears it with the 4096-slot reserve to spare, which
+/// [`band_floor_is_addressable`] establishes rather than assumes.
+#[cfg(target_arch = "x86_64")]
+const ENGINE_PRIVATE_BAND_FLOOR: libc::c_int = 65536;
+
+/// Raises this process's `RLIMIT_NOFILE` far enough that the engine's private descriptor
+/// band starts exactly at [`ENGINE_PRIVATE_BAND_FLOOR`], as `hl_private_configure_limit`
+/// does for itself.  Returns whether the band is addressable at all.
+#[cfg(target_arch = "x86_64")]
+fn band_floor_is_addressable() -> bool {
+    let desired = u64::try_from(ENGINE_PRIVATE_BAND_FLOOR).unwrap() + 4096;
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) } != 0 {
+        return false;
+    }
+    if limit.rlim_cur < desired && (limit.rlim_max == libc::RLIM_INFINITY || limit.rlim_max >= desired) {
+        let raised = libc::rlimit {
+            rlim_cur: desired,
+            rlim_max: limit.rlim_max,
+        };
+        unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raw const raised) };
+        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) } != 0 {
+            return false;
+        }
+    }
+    limit.rlim_cur >= desired
+}
+
+/// Occupies the exact descriptor the engine's next private-band relocation would be handed.
+///
+/// `hl_host_process_fd_private_adopt` relocates every borrowed host descriptor with
+/// `F_DUPFD_CLOEXEC` at the band floor, and the kernel answers that with the lowest free
+/// number at or above it.  Holding the floor itself therefore pushes the next borrow one
+/// slot higher -- deterministically, which is what makes this test a measurement rather
+/// than a race.  A sibling test's engine can hold the floor transiently, so the claim is
+/// retried until it is genuinely ours.
+#[cfg(target_arch = "x86_64")]
+fn claim_band_floor() -> std::os::fd::OwnedFd {
+    use std::os::fd::FromRawFd;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let source = std::fs::File::open("/dev/null").expect("open /dev/null");
+        let claimed = unsafe {
+            libc::fcntl(
+                std::os::fd::AsRawFd::as_raw_fd(&source),
+                libc::F_DUPFD_CLOEXEC,
+                ENGINE_PRIVATE_BAND_FLOOR,
+            )
+        };
+        assert!(claimed >= ENGINE_PRIVATE_BAND_FLOOR, "claiming the private band floor");
+        if claimed == ENGINE_PRIVATE_BAND_FLOOR {
+            return unsafe { std::os::fd::OwnedFd::from_raw_fd(claimed) };
+        }
+        assert_eq!(unsafe { libc::close(claimed) }, 0);
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the engine private band floor {ENGINE_PRIVATE_BAND_FLOOR} never became free"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// A native checkpoint must restore into an engine whose descriptor table is not the one the
+/// capture ran under.
+///
+/// `hl_native_supervised_run` executes the guest with `execveat(fd, "", AT_EMPTY_PATH)`, and for
+/// an empty path Linux names the image `/dev/fd/<fd>` and sets the new task's `comm` to the
+/// basename of that -- the DECIMAL DESCRIPTOR NUMBER.  The descriptor is one the engine borrowed
+/// into its private band, so the guest's task name is an artifact of the engine's own descriptor
+/// table: whatever else the host process had open at the instant of the borrow.  The native
+/// checkpoint records `comm` in `native/procstate.x86-v3` and `NativeProcessState::admits` refuses
+/// a restore whose target disagrees -- correctly, since `comm` has no cross-process setter -- so a
+/// restore run with a different private-band occupancy than the capture is refused outright, the
+/// fresh guest is destroyed, and the caller gets a bare `CaptureFailed`.
+///
+/// This holds the band floor across the capture and releases it before the restore, which is the
+/// same one-slot shift that intra-binary parallelism produced by accident.  It is measured, not
+/// waited for: the park is verified to be the floor itself before the capture engine launches.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn native_checkpoint_restores_under_a_shifted_engine_descriptor_band() {
+    assert!(
+        band_floor_is_addressable(),
+        "this host cannot address the engine's private descriptor band"
+    );
+    let work = TempDir::new().unwrap();
+    let executable = fixture(work.path());
+    let store = Arc::new(NativeCheckpointStore::default());
+
+    let parked = claim_band_floor();
+
+    let output = Arc::new(Output::default());
+    let mut plan = selected_plan(&executable);
+    plan.arguments.push(b"checkpoint-native-capture".to_vec());
+    plan.arguments.push(b"1111111111111111".to_vec());
+    let engine = Engine::with_checkpoint(
+        HOST_ISA,
+        plan,
+        StandardStreams::default().with_output(output.clone()),
+        store.clone(),
+        store.clone(),
+    )
+    .unwrap();
+    let mut engine_cleanup = EngineCleanup(Some(&engine));
+    engine.start().unwrap();
+    for _ in 0..5_000 {
+        if output.stdout.lock().unwrap().as_slice() == b"native-capture-ready\n" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(output.stdout.lock().unwrap().as_slice(), b"native-capture-ready\n");
+    let captured_task = await_fixture_task(&executable, &[b"1111111111111111"], "capture");
+    assert!(
+        wait_parked(captured_task, "capture"),
+        "the guest died before it parked, so the capture had no parked process to take"
+    );
+    let captured_name = task_name(captured_task);
+    let started = std::time::Instant::now();
+    if let Err(error) = engine.capture_checkpoint_until(started + std::time::Duration::from_secs(10)) {
+        let stderr = String::from_utf8_lossy(&output.stderr.lock().unwrap()).into_owned();
+        let _ = engine.destroy();
+        panic!("capture={error:?} stderr={stderr}");
+    }
+    assert!(engine.wait().is_ok(), "captured native process did not terminate cleanly");
+    engine.destroy().unwrap();
+    engine_cleanup.disarm();
+
+    // The shift.  From here the engine's private band has one more free slot at its floor than it
+    // had while the capture ran, exactly as it would in a second engine process.
+    drop(parked);
+
+    let mut restore_plan = selected_plan(&executable);
+    restore_plan.arguments.push(b"checkpoint-native-capture".to_vec());
+    restore_plan.arguments.push(b"2222222222222222".to_vec());
+    restore_plan.options.set("HL_RESTORE", "1", true).unwrap();
+    let restored_output = Arc::new(Output::default());
+    let restored = Engine::with_checkpoint(
+        HOST_ISA,
+        restore_plan,
+        StandardStreams::default().with_output(restored_output.clone()),
+        store.clone(),
+        store.clone(),
+    )
+    .unwrap();
+    let mut restored_cleanup = EngineCleanup(Some(&restored));
+    if let Err(error) = restored.start() {
+        let _ = restored.destroy();
+        panic!("native restore start failed: {error:?}");
+    }
+    let restore_task = await_fixture_task(
+        &executable,
+        &[b"2222222222222222", b"1111111111111111"],
+        "restore",
+    );
+    let restored_name = task_name(restore_task);
+    assert!(
+        wait_parked(restore_task, "restore"),
+        "the restored guest died instead of reaching the captured park: the restore was refused \
+         because the fresh task is named {restored_name:?} while the image carries {captured_name:?}, \
+         and a task name is not an engine descriptor number"
+    );
+    assert_eq!(
+        task_identity(restore_task),
+        b"1111111111111111".to_vec(),
+        "the restored task is parked, but its argv is still the fresh process's own, so no captured \
+         memory landed in it"
+    );
+    assert_eq!(
+        unsafe { libc::kill(restore_task, libc::SIGUSR1) },
+        0,
+        "waking the restored guest"
+    );
+    let restore_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while store.aborts.load(std::sync::atomic::Ordering::Acquire) == 0 && std::time::Instant::now() < restore_deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(
+        store.aborts.load(std::sync::atomic::Ordering::Acquire),
+        1,
+        "native recovery transaction did not settle"
+    );
+    let restored_exit = restored.wait().expect("restored native process result");
+    assert_eq!(restored_exit.guest_status, 0, "restored native guest status");
+    assert_eq!(
+        restored_output.stdout.lock().unwrap().as_slice(),
+        b"native-restored:1111111111111111\n",
+        "fresh process retained replacement memory instead of the captured image"
+    );
+    // The name the two incarnations carry is the state the restore refused on, and it has to be the
+    // SAME name, not merely a name that happened to be admitted.
+    assert_eq!(
+        restored_name, captured_name,
+        "the guest's task name followed the engine's descriptor table across the two launches"
+    );
+    restored.destroy().unwrap();
+    restored_cleanup.disarm();
+}
+
+/// `/proc/<pid>/comm`, the task name the native checkpoint records and admits on.
+#[cfg(target_arch = "x86_64")]
+fn task_name(pid: libc::pid_t) -> String {
+    std::fs::read_to_string(format!("/proc/{pid}/comm"))
+        .map(|text| text.trim_end().to_owned())
+        .unwrap_or_default()
+}
+
 
 /// `__NR_pause` on x86-64, as `/proc/<pid>/syscall` reports it.
 ///
