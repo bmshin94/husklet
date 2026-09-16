@@ -699,10 +699,22 @@ static int ckpt_capture_native_fd(struct ckpt_fd *records, int *count, const str
             if (S_ISDIR(status.st_mode)) r.auxiliary |= CKFA_DIRECTORY;
             if (path_copy(r.path, sizeof r.path, path) != 0) return -1;
         }
+    } else if (S_ISFIFO(status.st_mode) && fd > STDERR_FILENO) {
+        /* A FIFO the guest opened by path.  The TYPED capture path already refuses exactly this object
+         * ("guest fd %d is a pipe -- shared pipe restore is not yet supported"), but the native path used
+         * to fall through to the catch-all below and discard it with no record and no refusal: the capture
+         * committed, the restore handed the guest EBADF on a descriptor it believes is open, and both the
+         * bytes resident in the FIFO and the reader/writer open state that decides EOF were gone.  A guest
+         * that reads a restored FIFO would see a spurious end-of-stream instead of its data.  This is the
+         * same shape as the flock(2) gap: one missing arm of an otherwise-correct refusal, not a missing
+         * gate.  Launch-time stdio is excluded because it is the runtime's bridge, not guest state -- a
+         * restored engine is handed a fresh one, exactly as the typed path records it. */
+        fprintf(stderr, "[ckpt] refuse: guest fd %d is a FIFO -- shared pipe restore is not yet supported\n", fd);
+        return -1;
     } else {
-        /* Guest-owned anonymous objects are classified by ckpt_guest_kernel_fd above.  A descriptor with
-         * no guest classification, no path, and no native file type is an engine runtime handle that must
-         * be reconstructed by the new engine rather than serialized into the guest image. */
+        /* A descriptor with no guest classification and no native file type.  Engine runtime handles are
+         * already filtered above by HL_HOST_PROCESS_FD_ENGINE_PRIVATE; what reaches here is reconstructed
+         * by the new engine rather than serialized into the guest image. */
         return CKPT_FD_CAPTURED;
     }
     records[(*count)++] = r;
