@@ -339,7 +339,16 @@ static void flock_on_close(int fd) {
 #define FLOCK_HOLDERS_MAX 32
 
 struct flock_broker_record {
-    uint64_t device, object, token;
+    uint64_t device, object;
+    // Two disjoint meanings, selected by host_enforced (the two record kinds never mix):
+    //   host_enforced == 0 -> the OPEN FILE DESCRIPTION token of the companion-route lease's owner.
+    //   host_enforced == 1 -> the JOIN EPOCH: boot-relative ticks (the unit of /proc/<pid>/stat field 22)
+    //     at which a holder most recently joined this record. It is an UPPER BOUND on every holder's
+    //     process start time, which is what lets the reclaim distinguish a holder that is still the same
+    //     process from a RECYCLED pid that merely reuses the number (see flock_holder_is_live). 0 == no
+    //     epoch recorded (a record written by an older build, or a host without /proc), which disables
+    //     the recycled-pid clause in the SAFE direction: the holder is then assumed live.
+    uint64_t token;
     int32_t holders[FLOCK_HOLDERS_MAX];
     uint8_t mode;
     uint8_t active;
@@ -365,6 +374,8 @@ struct poslk_shm {
     struct flock_broker_record flock[FLOCK_BROKER_MAX];
 };
 static struct poslk_shm *g_poslk;
+// 1 == g_poslk is a PRIVATE test segment (HL_POSLK_SHM_SUFFIX), never the production table.
+static int g_poslk_private;
 // PERF: the hot path must issue ZERO host syscalls (the point of). Two process-local caches make that
 // so: (a) g_lk{dev,ino,val}[fd] memoises a guest fd's host (dev,ino) so a repeated F_SETLK on the same DB fd
 // never re-fstat()s (cleared on close in fd_reset_emul); (b) g_mypid caches getpid(). Both are per-process
@@ -401,8 +412,25 @@ static int poslk_init(void) {
     return 0;
 #else
     char name[64];
-    int length = snprintf(name, sizeof(name), "/husklet-poslk-v1-%lu", (unsigned long)getuid());
+    /* The lock domain is one shared, PERSISTENT /dev/shm object per uid, which is exactly right in
+       production and exactly wrong for a test that needs to drive the table to a known state: filling it
+       would perturb every other engine on the host, and the result would depend on whatever ran before.
+       HL_POSLK_SHM_SUFFIX opens a PRIVATE object of the identical layout instead. Unset (the production
+       default, and anything not matching [A-Za-z0-9._-]) leaves the name byte-identical to before. */
+    const char *suffix = getenv("HL_POSLK_SHM_SUFFIX");
+    if (suffix != NULL)
+        for (const char *scan = suffix; *scan; ++scan)
+            if (!((*scan >= 'a' && *scan <= 'z') || (*scan >= 'A' && *scan <= 'Z') ||
+                  (*scan >= '0' && *scan <= '9') || *scan == '.' || *scan == '_' || *scan == '-')) {
+                suffix = NULL;
+                break;
+            }
+    if (suffix != NULL && *suffix == '\0') suffix = NULL;
+    int length = suffix != NULL
+                     ? snprintf(name, sizeof(name), "/husklet-poslk-v1-%lu-%s", (unsigned long)getuid(), suffix)
+                     : snprintf(name, sizeof(name), "/husklet-poslk-v1-%lu", (unsigned long)getuid());
     if (length <= 0 || (size_t)length >= sizeof(name)) return -1;
+    g_poslk_private = suffix != NULL;
     int fd = shm_open(name, O_CREAT | O_RDWR, 0600);
     if (fd < 0) return -1;
     /* Serializing initialization on the backing object also recovers a creator
@@ -440,6 +468,69 @@ __attribute__((constructor)) static void poslk_ctor(void) {
 static inline int poslk_alive(int32_t p) {
     if (p <= 0) return 0;
     return !(kill(p, 0) < 0 && errno == ESRCH);
+}
+
+// Boot-relative "now" in the unit of /proc/<pid>/stat field 22 (`starttime`, clock ticks since boot) --
+// the same clock base, so the two are directly comparable. 0 == unavailable (never a valid epoch).
+static uint64_t poslk_boot_ticks(void) {
+#if defined(__linux__)
+    struct timespec now;
+    if (clock_gettime(CLOCK_BOOTTIME, &now) != 0) return 0;
+    long hz = sysconf(_SC_CLK_TCK);
+    if (hz <= 0) return 0;
+    uint64_t ticks = (uint64_t)now.tv_sec * (uint64_t)hz + (uint64_t)now.tv_nsec / (1000000000ULL / (uint64_t)hz);
+    return ticks ? ticks : 1; // 0 is reserved for "no epoch"
+#else
+    return 0;
+#endif
+}
+
+// Start time of host pid `p` in the same boot ticks, or 0 when it cannot be determined. /proc/<pid>/stat
+// field 2 is the comm in parentheses and may itself contain spaces and ')', so fields are counted from the
+// LAST ')' -- the standard parse.
+static uint64_t poslk_pid_start_ticks(int32_t p) {
+#if defined(__linux__)
+    char path[64];
+    if (snprintf(path, sizeof path, "/proc/%ld/stat", (long)p) <= 0) return 0;
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char buffer[512];
+    ssize_t got = read(fd, buffer, sizeof buffer - 1);
+    close(fd);
+    if (got <= 0) return 0;
+    buffer[got] = '\0';
+    char *cursor = strrchr(buffer, ')');
+    if (cursor == NULL) return 0;
+    // Token 0 is ") " itself, token n (n>=1) is stat field n+2, so starttime (field 22) is token 20.
+    for (int token = 0; token <= 20; ++token) {
+        while (*cursor == ' ') cursor++;
+        if (*cursor == '\0') return 0;
+        if (token == 20) break;
+        while (*cursor != ' ' && *cursor != '\0') cursor++;
+    }
+    uint64_t ticks = 0;
+    if (*cursor < '0' || *cursor > '9') return 0;
+    for (; *cursor >= '0' && *cursor <= '9'; ++cursor) ticks = ticks * 10 + (uint64_t)(*cursor - '0');
+    return ticks ? ticks : 1;
+#else
+    (void)p;
+    return 0;
+#endif
+}
+
+// Is the process recorded in a broker holder slot still the SAME process that joined the record?
+//   * kill(p,0) == ESRCH -> definitively gone. The host kernel released its flock(2) leases when it died,
+//     whatever killed it, so the record is stale and reclaiming it cannot take a lock from anyone.
+//   * alive, but started AFTER the record's join epoch -> the pid was RECYCLED onto an unrelated process
+//     that never joined this record; it must not keep the record alive.
+// Both unknowns (epoch == 0, or /proc unreadable) resolve to LIVE, which is the safe direction: a record
+// is kept, never reclaimed out from under a holder that might still be real.
+static int flock_holder_is_live(int32_t p, uint64_t epoch) {
+    if (p <= 0) return 0;
+    if (!poslk_alive(p)) return 0;
+    if (epoch == 0) return 1;
+    uint64_t start = poslk_pid_start_ticks(p);
+    return start == 0 || start <= epoch;
 }
 
 static void poslk_lock(void) {
@@ -488,6 +579,36 @@ static int flock_has_holders(const struct flock_broker_record *record) {
     return 0;
 }
 
+// Drop every holder slot of `record` whose process is gone (or whose pid was recycled), and retire the
+// record itself once no holder is left. Returns 1 when the record became free.
+static int flock_record_reclaim(struct flock_broker_record *record) {
+    // The epoch only exists on host-enforced records; a companion-route record's `token` is an open-file-
+    // description id, so it is NOT a time and must not be compared against one.
+    uint64_t epoch = record->host_enforced ? record->token : 0;
+    for (int holder = 0; holder < FLOCK_HOLDERS_MAX; ++holder)
+        if (record->holders[holder] > 0 && !flock_holder_is_live(record->holders[holder], epoch))
+            record->holders[holder] = 0;
+    if (flock_has_holders(record)) return 0;
+    memset(record, 0, sizeof *record);
+    return 1;
+}
+
+// Sweep the whole broker table for records no live process holds any more, and hand back one freed slot
+// (NULL when every record still has a live holder, i.e. the table is genuinely full). Held under the table
+// spinlock. See flock_host_broker_publish for WHY this runs where it does.
+static struct flock_broker_record *flock_broker_sweep_dead(void) {
+    struct flock_broker_record *freed = NULL;
+    for (int index = 0; index < FLOCK_BROKER_MAX; ++index) {
+        struct flock_broker_record *record = &g_poslk->flock[index];
+        if (!record->active) {
+            if (freed == NULL) freed = record;
+            continue;
+        }
+        if (flock_record_reclaim(record) && freed == NULL) freed = record;
+    }
+    return freed;
+}
+
 static int flock_broker_apply(const hl_linux_fd_snapshot *source, uint64_t device, uint64_t object, int operation) {
     if (g_poslk == NULL || source->flock_token == 0) {
         errno = ENOLCK;
@@ -509,15 +630,12 @@ static int flock_broker_apply(const hl_linux_fd_snapshot *source, uint64_t devic
                 if (free_record == NULL) free_record = record;
                 continue;
             }
-            for (int holder = 0; holder < FLOCK_HOLDERS_MAX; ++holder)
-                if (record->holders[holder] > 0 && kill(record->holders[holder], 0) < 0 && errno == ESRCH)
-                    record->holders[holder] = 0;
-            if (!flock_has_holders(record)) {
-                memset(record, 0, sizeof(*record));
+            if (flock_record_reclaim(record)) {
                 if (free_record == NULL) free_record = record;
                 continue;
             }
-            if (record->token == source->flock_token) {
+            // A host-enforced record's `token` is a join epoch, not an fd token: never match one as `own`.
+            if (!record->host_enforced && record->token == source->flock_token) {
                 own = record;
                 continue;
             }
@@ -571,7 +689,9 @@ static void flock_broker_detach(const hl_linux_fd_snapshot *source) {
     poslk_lock();
     for (int index = 0; index < FLOCK_BROKER_MAX; ++index) {
         struct flock_broker_record *record = &g_poslk->flock[index];
-        if (!record->active || record->token != source->flock_token) continue;
+        // host_enforced records carry a join epoch in `token`, not an fd token: they are retired by
+        // flock_host_broker_retire, never by the companion route's detach.
+        if (!record->active || record->host_enforced || record->token != source->flock_token) continue;
         int holder = flock_holder_find(record, getpid());
         if (holder >= 0) record->holders[holder] = 0;
         if (!flock_has_holders(record)) memset(record, 0, sizeof(*record));
@@ -609,6 +729,29 @@ static int flock_host_broker_publish(uint64_t device, uint64_t object, int base)
             break;
         }
     }
+    if (own == NULL && free_record == NULL) {
+        // THE TABLE IS EXHAUSTED -- and on a Linux host that is almost always a lie. A host-enforced record
+        // is retired on LOCK_UN, on the last close of the description, and at exit_group; a holder that is
+        // SIGKILLed, faults, or is force-stopped runs NONE of those, while the /dev/shm segment is named and
+        // persistent and so outlives every container that ever used it. The kernel dropped those processes'
+        // flock(2) leases when they died, but their records stayed, and once 512 of them accumulate every
+        // subsequent guest flock(2) on the host fails closed with ENOLCK for want of a slot nobody holds.
+        //
+        // RECLAIM HERE, and only here. This is the exact instant the leak becomes observable, so the fix
+        // cannot perturb the success path (which is byte-identical) and the sweep's cost -- up to
+        // 512*32 kill(2) probes plus a /proc read per LIVE holder -- is never paid on the hot path, where it
+        // would dominate a lock that is otherwise one host syscall. The alternatives do not fit: a periodic
+        // sweep needs a thread or timer the engine deliberately does not run in the guest's process, and
+        // reclaiming AT holder death is exactly what cannot be done for the case that leaks -- SIGKILL runs
+        // no code in the dying process.
+        //
+        // Nothing here changes who ENFORCES: these records are admission-gate visibility only, the host
+        // kernel remains the sole enforcer, and a lease that still cannot be published still fails the
+        // flock(2) closed with ENOLCK rather than being held invisibly.
+        free_record = flock_broker_sweep_dead();
+        if (free_record != NULL)
+            atomic_fetch_add_explicit(&g_poslk->flock_generation, 1, memory_order_release);
+    }
     if (own == NULL && free_record != NULL) {
         memset(free_record, 0, sizeof *free_record);
         free_record->active = 1;
@@ -619,6 +762,10 @@ static int flock_host_broker_publish(uint64_t device, uint64_t object, int base)
     }
     if (own != NULL && flock_holder_add(own, me) == 0) {
         own->mode = (uint8_t)base;
+        // Stamp the join epoch: an upper bound on the start time of every process now holding this record,
+        // which is what lets a later sweep tell a live holder from a recycled pid. Monotonic by construction.
+        uint64_t joined = poslk_boot_ticks();
+        if (joined > own->token) own->token = joined;
         failed = 0;
     }
     poslk_unlock();
@@ -712,7 +859,8 @@ static void flock_broker_after_fork(void) {
             if (hl_linux_fd_snapshot_get(g_linux_box, fd, &source) != HL_STATUS_OK || source.flock_token == 0) continue;
             for (int index = 0; index < FLOCK_BROKER_MAX; ++index) {
                 struct flock_broker_record *record = &g_poslk->flock[index];
-                if (record->active && record->token == source.flock_token) (void)flock_holder_add(record, getpid());
+                if (record->active && !record->host_enforced && record->token == source.flock_token)
+                    (void)flock_holder_add(record, getpid()); // host-enforced joins happened above
             }
         }
     atomic_fetch_add_explicit(&g_poslk->flock_generation, 1, memory_order_release);

@@ -791,6 +791,12 @@ HL_API int HL_TARGET_LOCAL(checkpoint_ipc_admission_test)(uint32_t scenario) {
         struct flock_broker_record *lease = NULL;
         for (int i = 0; i < FLOCK_BROKER_MAX && lease == NULL; i++)
             if (!g_poslk->flock[i].active) lease = &g_poslk->flock[i];
+        // Same discipline as the production allocator (flock_host_broker_publish): a broker table that
+        // LOOKS full is normally full of records whose holder died without retiring them, so reclaim the
+        // dead before concluding there is no slot. Without this the scenario reports 42 ("no free slot")
+        // on any host whose shared, persistent segment has accumulated 512 such records -- which is the
+        // leak this scenario is a bystander to, not the refusal semantics it exists to test.
+        if (lease == NULL) lease = flock_broker_sweep_dead();
         if (lease == NULL) {
             poslk_unlock();
             return 42;
@@ -809,6 +815,93 @@ HL_API int HL_TARGET_LOCAL(checkpoint_ipc_admission_test)(uint32_t scenario) {
         poslk_unlock();
         if (verdict == 0) return 43;
         return ckpt_admit_ipc_and_lock_state() == 0 ? 0 : 44;
+    }
+    if (scenario == 6) { // a broker table full of DEAD holders is reclaimed; a LIVE holder's record is not
+        // This scenario drives the table to a known-full state, so it must NEVER touch the production
+        // segment other engines on the host share. Refuse unless poslk_init opened a private one.
+        if (poslk_init() != 0) return 50;
+        if (!g_poslk_private) return 51;
+
+        // A definitively dead pid: a child that has exited AND been reaped, so the number names nothing.
+        pid_t dead = fork();
+        if (dead == 0) _exit(0);
+        if (dead < 0) return 52;
+        int ignored;
+        while (waitpid(dead, &ignored, 0) < 0 && errno == EINTR) {
+        }
+        // A definitively live pid: a child parked in pause() until this scenario kills it.
+        pid_t live = fork();
+        if (live == 0) {
+            for (;;) pause();
+        }
+        if (live < 0) return 53;
+        uint64_t now = poslk_boot_ticks();
+
+        poslk_lock();
+        memset(g_poslk->flock, 0, sizeof g_poslk->flock);
+        // slot 0: a LIVE holder, joined now. Must SURVIVE the sweep -- a sweep that reclaims everything is
+        // as wrong as one that reclaims nothing.
+        g_poslk->flock[0].active = 1;
+        g_poslk->flock[0].host_enforced = 1;
+        g_poslk->flock[0].device = 7;
+        g_poslk->flock[0].object = 500;
+        g_poslk->flock[0].mode = 2;
+        g_poslk->flock[0].holders[0] = (int32_t)live;
+        g_poslk->flock[0].token = now;
+        // slot 1: the SAME live pid, but joined BEFORE that process existed -- the recycled-pid shape. The
+        // number is alive, yet it cannot be the process that joined, so the record must go.
+        g_poslk->flock[1].active = 1;
+        g_poslk->flock[1].host_enforced = 1;
+        g_poslk->flock[1].device = 7;
+        g_poslk->flock[1].object = 501;
+        g_poslk->flock[1].mode = 2;
+        g_poslk->flock[1].holders[0] = (int32_t)live;
+        g_poslk->flock[1].token = 1; // one tick after boot: before every process on this host
+        // slots 2..511: the leak itself -- records whose only holder has died and was never retired.
+        for (int i = 2; i < FLOCK_BROKER_MAX; i++) {
+            g_poslk->flock[i].active = 1;
+            g_poslk->flock[i].host_enforced = 1;
+            g_poslk->flock[i].device = 7;
+            g_poslk->flock[i].object = (uint64_t)(1000 + i);
+            g_poslk->flock[i].mode = 2;
+            g_poslk->flock[i].holders[0] = (int32_t)dead;
+            g_poslk->flock[i].token = now;
+        }
+        int free_slots = 0;
+        for (int i = 0; i < FLOCK_BROKER_MAX; i++)
+            if (!g_poslk->flock[i].active) free_slots++;
+        poslk_unlock();
+
+        int verdict = 0;
+        if (free_slots != 0) verdict = 54; // the table was not actually full -- the premise failed
+        // The defect, exactly: a fresh host-enforced lease cannot be published because 510 records are held
+        // by nobody. Without reclamation this returns -1 and hl_flock hands the guest ENOLCK.
+        if (verdict == 0 && flock_host_broker_publish(9, 900, LOCK_EX) != 0) verdict = 55;
+
+        poslk_lock();
+        int live_slot_survived = g_poslk->flock[0].active && g_poslk->flock[0].host_enforced &&
+                                 g_poslk->flock[0].object == 500 && g_poslk->flock[0].holders[0] == (int32_t)live;
+        int recycled_slot_reclaimed = 1;
+        int published = 0, dead_remaining = 0;
+        for (int i = 0; i < FLOCK_BROKER_MAX; i++) {
+            const struct flock_broker_record *record = &g_poslk->flock[i];
+            if (!record->active) continue;
+            if (record->device == 7 && record->object == 501) recycled_slot_reclaimed = 0;
+            if (record->device == 9 && record->object == 900) published = 1;
+            if (record->holders[0] == (int32_t)dead) dead_remaining++;
+        }
+        memset(g_poslk->flock, 0, sizeof g_poslk->flock);
+        poslk_unlock();
+
+        kill(live, SIGKILL);
+        while (waitpid(live, &ignored, 0) < 0 && errno == EINTR) {
+        }
+        if (verdict != 0) return verdict;
+        if (!live_slot_survived) return 56;    // non-vacuity: the sweep ate a record a live process holds
+        if (!recycled_slot_reclaimed) return 57; // a recycled pid kept a record alive
+        if (!published) return 58;
+        if (dead_remaining != 0) return 59;
+        return 0;
     }
     return 99;
 }
