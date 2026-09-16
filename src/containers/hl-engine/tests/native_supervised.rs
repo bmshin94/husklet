@@ -2030,6 +2030,111 @@ fn supervised_checkpoint_lifecycle_refuses_unsupported_policy_before_storage_acc
     }
 }
 
+/// Force-stopping a supervised guest that never exits on its own must actually stop it.
+///
+/// `Engine::destroy` force stops and then WAITS, without a bound, for the worker to exit. The force
+/// stop is delivered to the worker's process GROUP so the whole activation goes with it -- but the
+/// native-supervised worker leads no group of its own name unless it was put in one: it cannot take a
+/// session, because the guest's controlling terminal has to be the PTY slave the host supplied and the
+/// clone3 child claims that with its own `setsid()`. Without the group, `kill(-worker)` fails ESRCH,
+/// the force stop is a silent no-op, and the wait behind it never ends.
+///
+/// Measured before the fix: this test's `destroy()` did not return -- the worker sat in
+/// `hl_native_supervised_wait`'s `poll(..., -1)`, the host's launcher thread sat in `waitpid` on the
+/// worker, and the guest sat in `pause()`; the three waited on each other until the binary was killed.
+/// That is the shape a refused capture reaches by construction: a refusal THAWS the workload rather
+/// than killing it -- correctly, the workload must survive a refusal -- so after any refused capture
+/// the only way out is a force stop that works.
+///
+/// Every wait here is bounded, deliberately. An unbounded one would turn this regression back into the
+/// silence it was found as instead of a failure.
+#[test]
+fn supervised_force_stop_tears_down_a_guest_that_never_exits() {
+    let work = TempDir::new().unwrap();
+    let executable = fixture(work.path());
+    let mut plan = selected_plan(&executable);
+    // The park is the point: this guest never exits on its own, so nothing but the force stop can
+    // end it, and a force stop that does nothing is indistinguishable from one that is slow -- until
+    // the bound below expires.
+    plan.arguments.push(b"checkpoint-native-capture".to_vec());
+    plan.arguments.push(b"1111111111111111".to_vec());
+    let output = Arc::new(Output::default());
+    let engine = Arc::new(
+        Engine::with_streams(
+            HOST_ISA,
+            plan,
+            StandardStreams::default().with_output(output.clone()),
+        )
+        .unwrap(),
+    );
+    engine.start().unwrap();
+    let ready = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while output.stdout.lock().unwrap().as_slice() != b"native-capture-ready\n" {
+        assert!(std::time::Instant::now() < ready, "the supervised guest never started");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let guest = {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            if let Some(pid) = supervised_park_task(&executable) {
+                break pid;
+            }
+            assert!(std::time::Instant::now() < deadline, "the supervised guest never parked");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    let stopping = Arc::clone(&engine);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(format!("{:?}", stopping.destroy()));
+    });
+    let stopped = receiver
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .unwrap_or_else(|_| {
+            panic!(
+                "destroy() did not return within 60s: the force stop never reached the supervised \
+                 worker, so the engine is waiting on a guest ({guest}) nothing asked to exit"
+            )
+        });
+    assert!(stopped.starts_with("Ok("), "destroy reported {stopped}");
+    // And it stopped the TREE, not only its root: a force stop that leaves the guest behind has
+    // orphaned a live workload onto the host.
+    let gone = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::path::Path::new(&format!("/proc/{guest}")).exists() {
+        assert!(
+            std::time::Instant::now() < gone,
+            "the force-stopped supervised guest {guest} is still alive"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// This test's own parked guest, by the argv the kernel publishes for it.
+///
+/// Located by `/proc/<pid>/cmdline` and not by `comm`, which `execveat(fd, "", AT_EMPTY_PATH)` sets to
+/// a descriptor number. The executable lives in a per-test temporary directory, so it names this
+/// test's guest and no other.
+fn supervised_park_task(executable: &Path) -> Option<libc::pid_t> {
+    for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<libc::pid_t>() else {
+            continue;
+        };
+        let Ok(cmdline) = std::fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        let mut fields = cmdline.split(|byte| *byte == 0);
+        if fields.next() != Some(executable.as_os_str().as_encoded_bytes())
+            || fields.next() != Some(b"checkpoint-native-capture".as_slice())
+        {
+            continue;
+        }
+        if std::fs::read_to_string(format!("/proc/{pid}/syscall")).is_ok_and(|text| text.starts_with("34 ")) {
+            return Some(pid);
+        }
+    }
+    None
+}
+
 fn selected_plan(executable: &Path) -> RuntimePlan {
     let mut options = Options::default();
     options.set("HL_NATIVE_SUPERVISED", "1", true).unwrap();

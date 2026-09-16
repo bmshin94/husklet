@@ -185,9 +185,24 @@ static hl_host_result hl_linux_process_wait(void *context, hl_host_handle handle
     return hl_linux_result(HL_STATUS_CORRUPT, 0, (uint64_t)(uint32_t)status);
 }
 
+/* A force stop names the worker's process GROUP, so the whole activation goes with it rather than
+ * only its root.  The worker leads a group of that name only when it took a session of its own, and
+ * not every worker does: the native-supervised worker deliberately stays in the launcher's session
+ * (the container PTY its guest claims has to be the one the host supplied), and a directly launched
+ * engine that inherited an already-owned terminal keeps that session for the same reason.  For those
+ * two, `kill(-pid)` names a group that does not exist, fails ESRCH, and the force stop is a SILENT
+ * NO-OP -- after which the caller goes on to wait, without a bound, for a process nothing ever asked
+ * to die.  Measured: destroy() on a live native-supervised guest never returned.
+ *
+ * So the process itself is signalled as well, always, and the pair succeeds if either half did. The
+ * group half still does the tree teardown wherever there is a group; the single half is what makes a
+ * force stop reach its target whether or not one exists, including in the window between fork and the
+ * child's own setpgid. Nothing outside the activation is named by either half. */
 static int hl_linux_process_signal(pid_t pid, uint32_t reason, int signal_number) {
-    pid_t target = reason == HL_HOST_PROCESS_TERMINATE_FORCE ? -pid : pid;
-    return kill(target, signal_number);
+    if (reason != HL_HOST_PROCESS_TERMINATE_FORCE) return kill(pid, signal_number);
+    int group = kill(-pid, signal_number);
+    int single = kill(pid, signal_number);
+    return group == 0 || single == 0 ? 0 : -1;
 }
 
 #if defined(HL_NATIVE_TEST_HOOKS)

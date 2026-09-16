@@ -1055,6 +1055,63 @@ mod tests {
         assert_eq!(enumerated, 1, "a session-leading peer was not enumerated");
     }
 
+    /// A force stop must also reach a worker that leads no process group of its own.
+    ///
+    /// The sibling test above covers the worker that took a session, and so leads a group `kill(-pid)`
+    /// names. Not every worker does: the native-supervised worker cannot take a session (its guest's
+    /// controlling terminal has to be the PTY slave the host supplied), and a directly launched engine
+    /// that inherited an already-owned terminal keeps that session on purpose. For those, `kill(-pid)`
+    /// names nothing, fails ESRCH, and -- before the process itself was signalled too -- the force stop
+    /// was a SILENT no-op that the caller then waited on without a bound.
+    ///
+    /// The child here is deliberately spawned WITHOUT `IsolatedTestChild`, so it stays in this process's
+    /// own group and there is no group of its name; that is the whole condition under test. Only its own
+    /// pid is ever named, so nothing else in this group is touched -- which the unrelated process and
+    /// this test process's own survival both witness.
+    #[cfg(feature = "native-test-hooks")]
+    #[test]
+    fn host_force_stop_reaches_a_child_that_leads_no_process_group() {
+        let _serial = engine_test_lock();
+        let mut child = std::process::Command::new("sleep").arg("60").spawn().unwrap();
+        let pid = i32::try_from(child.id()).unwrap();
+        let mut unrelated = std::process::Command::new("sleep").arg("60").spawn().unwrap();
+
+        // SAFETY: `pid` is a live child of this process and `-pid` names a group id, both read back
+        // from the kernel; signal zero probes without delivering.
+        unsafe {
+            assert_eq!(libc::getpgid(pid), libc::getpgid(0), "the child took a group of its own");
+            assert_eq!(
+                libc::kill(-pid, 0),
+                -1,
+                "a process group {pid} exists, so this test is not measuring the case it names"
+            );
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+            assert_eq!(
+                crate::bindings::hl_c_backend_host_process_force_test(pid),
+                0,
+                "the force stop reported a failure for a child that leads no group"
+            );
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "force-stopped child {pid} that leads no process group remained live"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            unrelated.try_wait().unwrap().is_none(),
+            "the force stop reached past its target into this process's own group"
+        );
+        unrelated.kill().unwrap();
+        unrelated.wait().unwrap();
+    }
+
     #[cfg(feature = "native-test-hooks")]
     #[test]
     fn host_force_stop_kills_exact_activation_group_and_preserves_unrelated_process() {

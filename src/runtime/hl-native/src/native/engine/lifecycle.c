@@ -667,10 +667,23 @@ static int32_t hl_production_entry(void *opaque) {
     int inherited_terminal = 0;
     int native_supervised = hl_native_supervised_selected(context->options);
     hl_status terminal_status = HL_STATUS_OK;
+    /* Every worker ends up leading a process group, because that group is what a force stop names
+     * (hl_linux_process_signal).  For most workers setsid() supplies it.  The supervised worker
+     * cannot take a session: its guest's controlling terminal has to be the PTY slave the host
+     * supplied, which the clone3 child claims with its own setsid()+TIOCSCTTY, and a session taken
+     * out here would already have consumed that claim.  So it takes the group alone -- the half
+     * teardown needs, and the half that leaves the guest's session entirely the clone3 child's to
+     * take.  With neither, the supervised worker stayed in the launcher's group, `kill(-worker)`
+     * named a group that did not exist, and the force stop reached neither the worker nor the
+     * supervised tree behind it: the guest outlived the engine that launched it, and the host
+     * waited on that guest forever.  The clone3 leader and the guest inherit this group, so one
+     * group kill now takes the whole activation. */
     if (!native_supervised) {
         terminal_status = hl_production_terminal_state(context, 0, &inherited_terminal);
         if (terminal_status != HL_STATUS_OK) return terminal_status;
         if (!inherited_terminal && setsid() < 0) return HL_STATUS_PLATFORM_FAILURE;
+    } else if (setpgid(0, 0) != 0) {
+        return HL_STATUS_PLATFORM_FAILURE;
     }
     if (context->activation_ready_read >= 0) {
         int activation_read = context->activation_ready_read;

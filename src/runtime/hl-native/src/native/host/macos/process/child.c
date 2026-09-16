@@ -206,9 +206,14 @@ static hl_host_result hl_macos_process_wait(void *context, hl_host_handle handle
     return hl_macos_result(HL_STATUS_CORRUPT, 0, (uint64_t)(uint32_t)status);
 }
 
+/* The same pairing as the Linux host, for the same reason and with the same shape: a worker that did
+ * not take a session of its own leads no process group of its own name, so the group half of a force
+ * stop fails ESRCH and stops nothing.  See host/linux/process/child.c. */
 static int hl_macos_process_signal(pid_t pid, uint32_t reason, int signal_number) {
-    pid_t target = reason == HL_HOST_PROCESS_TERMINATE_FORCE ? -pid : pid;
-    return kill(target, signal_number);
+    if (reason != HL_HOST_PROCESS_TERMINATE_FORCE) return kill(pid, signal_number);
+    int group = kill(-pid, signal_number);
+    int single = kill(pid, signal_number);
+    return group == 0 || single == 0 ? 0 : -1;
 }
 
 #if defined(HL_NATIVE_TEST_HOOKS)
